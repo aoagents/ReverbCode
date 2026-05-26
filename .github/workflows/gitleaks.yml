@@ -1,0 +1,22 @@
+name: gitleaks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # gitleaks-action v1 scans for committed secrets and needs no license
+      # key (v2 requires GITLEAKS_LICENSE for organization repos).
+      - name: Scan for secrets
+        uses: zricethezav/gitleaks-action@v1.6.0
