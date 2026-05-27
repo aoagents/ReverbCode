@@ -414,17 +414,6 @@ func TestOnKillRequested_UnseededIsNoOp(t *testing.T) {
 	}
 }
 
-func TestTickEscalationsIsNoOp(t *testing.T) {
-	mgr, store := newManager()
-	store.seed(sid, lc(domain.SessionWorking, domain.ReasonTaskInProgress, domain.RuntimeAlive))
-	if err := mgr.TickEscalations(context.Background(), t0); err != nil {
-		t.Fatalf("tick: %v", err)
-	}
-	if l := mustLoad(t, store); l.Revision != 0 {
-		t.Errorf("TickEscalations must not write, got revision=%d", l.Revision)
-	}
-}
-
 // ---- fake store contract ----
 
 func TestFakeStoreExpectedRevision(t *testing.T) {
