@@ -3,6 +3,8 @@ package tmux
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -12,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -61,14 +64,14 @@ func New(opts Options) *Runtime {
 		shellPath = os.Getenv("SHELL")
 	}
 	if shellPath == "" {
-		shellPath = "/bin/zsh"
+		shellPath = "/bin/sh"
 	}
 	return &Runtime{binary: binary, timeout: timeout, shell: shellPath, runner: execRunner{}}
 }
 
 func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
-	id := string(cfg.SessionID)
-	if err := validateSessionID(id); err != nil {
+	id, err := tmuxSessionName(cfg.SessionID)
+	if err != nil {
 		return ports.RuntimeHandle{}, err
 	}
 	if cfg.WorkspacePath == "" {
@@ -94,14 +97,11 @@ func (r *Runtime) Destroy(ctx context.Context, handle ports.RuntimeHandle) error
 	if err != nil {
 		return err
 	}
-	alive, err := r.IsAlive(ctx, handle)
-	if err != nil {
-		return err
-	}
-	if !alive {
-		return nil
-	}
 	if _, err := r.run(ctx, killSessionArgs(id)...); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return nil
+		}
 		return fmt.Errorf("tmux runtime: destroy session %s: %w", id, err)
 	}
 	return nil
@@ -203,6 +203,43 @@ func (r *Runtime) run(ctx context.Context, args ...string) ([]byte, error) {
 		return out, commandError{err: err, output: strings.TrimSpace(string(out))}
 	}
 	return out, nil
+}
+
+func tmuxSessionName(id domain.SessionID) (string, error) {
+	raw := string(id)
+	if raw == "" {
+		return "", errors.New("tmux runtime: session id is required")
+	}
+	if sessionIDPattern.MatchString(raw) {
+		return raw, nil
+	}
+	return sanitizedSessionName(raw), nil
+}
+
+func sanitizedSessionName(raw string) string {
+	var b strings.Builder
+	lastDash := false
+	for _, r := range raw {
+		valid := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-'
+		if valid {
+			b.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if !lastDash {
+			b.WriteByte('-')
+			lastDash = true
+		}
+	}
+	base := strings.Trim(b.String(), "-")
+	if base == "" {
+		base = "session"
+	}
+	if len(base) > 40 {
+		base = strings.TrimRight(base[:40], "-")
+	}
+	sum := sha256.Sum256([]byte(raw))
+	return base + "-" + hex.EncodeToString(sum[:4])
 }
 
 func validateSessionID(id string) error {

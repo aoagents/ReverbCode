@@ -12,6 +12,14 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
+func TestNewDefaultsToPortableShell(t *testing.T) {
+	t.Setenv("SHELL", "")
+	r := New(Options{})
+	if got, want := r.shell, "/bin/sh"; got != want {
+		t.Fatalf("default shell = %q, want %q", got, want)
+	}
+}
+
 func TestCommandBuilders(t *testing.T) {
 	if got, want := newSessionArgs("sess-1", "/tmp/ws", "/bin/zsh", "echo hi"), []string{"new-session", "-d", "-s", "sess-1", "-c", "/tmp/ws", "/bin/zsh", "-lc", "echo hi"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("newSessionArgs = %#v, want %#v", got, want)
@@ -30,6 +38,22 @@ func TestExactTargets(t *testing.T) {
 	}
 	if got, want := exactPaneTarget("abc"), "=abc:0.0"; got != want {
 		t.Fatalf("exactPaneTarget = %q, want %q", got, want)
+	}
+}
+
+func TestTmuxSessionNameSanitizesIssueRefs(t *testing.T) {
+	got, err := tmuxSessionName("repo/issue#42.1")
+	if err != nil {
+		t.Fatalf("tmuxSessionName: %v", err)
+	}
+	if err := validateSessionID(got); err != nil {
+		t.Fatalf("sanitized id %q is invalid: %v", got, err)
+	}
+	if !strings.HasPrefix(got, "repo-issue-42-1-") {
+		t.Fatalf("sanitized id = %q, want readable prefix", got)
+	}
+	if got == "repo/issue#42.1" {
+		t.Fatal("sanitized id still contains raw unsafe characters")
 	}
 }
 
@@ -104,6 +128,30 @@ func TestCreateRunsNewSessionAndDisablesStatus(t *testing.T) {
 	}
 }
 
+func TestCreateNormalizesUnsafeSessionID(t *testing.T) {
+	fr := &fakeRunner{}
+	r := New(Options{Binary: "tmux-test", Timeout: time.Second, Shell: "/bin/sh"})
+	r.runner = fr
+
+	handle, err := r.Create(context.Background(), ports.RuntimeConfig{
+		SessionID:     "repo/issue#42",
+		WorkspacePath: "/tmp/ws",
+		LaunchCommand: "echo ready",
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := validateSessionID(handle.ID); err != nil {
+		t.Fatalf("handle id %q invalid: %v", handle.ID, err)
+	}
+	if handle.ID == "repo/issue#42" {
+		t.Fatal("handle kept unsafe raw session id")
+	}
+	if got := fr.calls[0].args[3]; got != handle.ID {
+		t.Fatalf("tmux session arg = %q, want handle id %q", got, handle.ID)
+	}
+}
+
 func TestSendMessageUsesLiteralForShortInput(t *testing.T) {
 	fr := &fakeRunner{}
 	r := New(Options{Timeout: time.Second})
@@ -164,8 +212,8 @@ func TestDestroyIsIdempotentWhenSessionMissing(t *testing.T) {
 	if err := r.Destroy(context.Background(), ports.RuntimeHandle{ID: "sess-1", RuntimeName: runtimeName}); err != nil {
 		t.Fatalf("Destroy: %v", err)
 	}
-	if len(fr.calls) != 1 || fr.calls[0].args[0] != "has-session" {
-		t.Fatalf("calls = %#v, want only has-session", fr.calls)
+	if len(fr.calls) != 1 || fr.calls[0].args[0] != "kill-session" {
+		t.Fatalf("calls = %#v, want only kill-session", fr.calls)
 	}
 }
 
