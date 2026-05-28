@@ -19,7 +19,7 @@ func discardLogger() *slog.Logger {
 }
 
 func TestHealthProbes(t *testing.T) {
-	router := NewRouter(config.Config{})
+	router := NewRouter(config.Config{}, discardLogger())
 	srv := httptest.NewServer(router)
 	defer srv.Close()
 

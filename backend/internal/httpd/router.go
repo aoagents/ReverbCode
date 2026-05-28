@@ -5,6 +5,7 @@
 package httpd
 
 import (
+	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -18,22 +19,22 @@ import (
 //
 // Middleware order (outermost first):
 //
-//	Recoverer  → turn a handler panic into 500 instead of crashing the daemon
-//	RequestID  → attach a request id for correlation
-//	Logger     → structured access log, carrying the request id
-//	RealIP     → normalise client IP (loopback proxy from the dev server)
+//	Recoverer      → turn a handler panic into 500 instead of crashing the daemon
+//	RequestID      → attach a request id for correlation
+//	requestLogger  → slog-backed access log, stderr, carries the request id
+//	RealIP         → normalise client IP (loopback proxy from the dev server)
 //
 // The per-request Timeout from the decision table is deliberately NOT applied
 // globally: it must wrap only the /api/v1 REST surface, never the long-lived
 // SSE (/events) or WebSocket (/mux) surfaces, nor the always-must-answer health
 // probes. It is therefore applied per-surface when those subrouters are mounted
 // in Phase 1b; cfg.RequestTimeout carries the value through to that point.
-func NewRouter(cfg config.Config) chi.Router {
+func NewRouter(cfg config.Config, log *slog.Logger) chi.Router {
 	r := chi.NewRouter()
 
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.RequestID)
-	r.Use(middleware.Logger)
+	r.Use(requestLogger(log))
 	r.Use(middleware.RealIP)
 
 	mountHealth(r)

@@ -38,7 +38,7 @@ func New(cfg config.Config, log *slog.Logger) (*Server, error) {
 		log:    log,
 		listen: ln,
 		http: &http.Server{
-			Handler: NewRouter(cfg),
+			Handler: NewRouter(cfg, log),
 			// ReadHeaderTimeout guards against slow-loris even on loopback;
 			// per-request body/handler timeouts are applied per-surface.
 			ReadHeaderTimeout: 10 * time.Second,
