@@ -17,10 +17,12 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-// ProjectsController owns the 7 canonical /projects routes. Svc is nil while
-// handlers are stubs; impl PRs supply a real ProjectService.
+// ProjectsController owns the 7 canonical /projects routes. The controller
+// depends ONLY on ports.ProjectManager — it doesn't know whether the impl
+// reaches into the registry, the LCM, an adapter, or all three. Mgr is nil
+// while handlers are stubs; impl PRs supply a real ProjectManager.
 type ProjectsController struct {
-	Svc ports.ProjectService
+	Mgr ports.ProjectManager
 }
 
 // Register mounts the project routes on the supplied router. Route order

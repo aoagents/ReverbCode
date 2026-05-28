@@ -68,3 +68,18 @@ type CleanupResult struct {
 	Cleaned []domain.SessionID
 	Skipped []domain.SessionID // e.g. paths that still held uncommitted work
 }
+
+// ProjectManager is the inbound contract the API layer calls for every project
+// operation. The HTTP controllers see ONLY this interface — they never reach
+// past it to the registry, LCM, workspace adapter, or SCM. Whether a method
+// touches the global config registry, the LCM (to stop sessions on remove),
+// or an adapter (to destroy worktrees) is a private concern of the impl.
+type ProjectManager interface {
+	List(ctx context.Context) ([]domain.ProjectSummary, error)
+	Get(ctx context.Context, id domain.ProjectID) (GetProjectResult, error)
+	Add(ctx context.Context, in AddProjectInput) (domain.Project, error)
+	UpdateConfig(ctx context.Context, id domain.ProjectID, patch UpdateProjectConfigInput) (domain.Project, error)
+	Remove(ctx context.Context, id domain.ProjectID) (RemoveProjectResult, error)
+	Repair(ctx context.Context, id domain.ProjectID) (domain.Project, error)
+	Reload(ctx context.Context) (ReloadResult, error)
+}

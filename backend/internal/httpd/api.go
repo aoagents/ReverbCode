@@ -11,12 +11,17 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-// APIDeps bundles every service the API layer's controllers depend on. The
-// route-shell PR (#20) leaves all of them nil — handlers don't dereference
-// them yet. Real handler PRs in the same lane fill the relevant field and
+// APIDeps bundles every Manager the API layer's controllers depend on. There
+// is exactly one *Manager per resource and the controllers see ONLY that
+// interface — they don't reach past it to inbound/outbound ports, the LCM,
+// or adapters. Whether a Manager impl talks to the registry, the LCM, or
+// an outbound port is its own concern.
+//
+// The route-shell PR (#20) leaves every field nil — handlers don't
+// dereference them yet. Impl PRs in the same lane wire real Managers and
 // flip stubs to real logic one route at a time.
 type APIDeps struct {
-	Projects ports.ProjectService
+	Projects ports.ProjectManager
 }
 
 // API owns one controller per resource and is the single Register call the
@@ -35,7 +40,7 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 	return &API{
 		cfg: cfg,
 		projects: &controllers.ProjectsController{
-			Svc: deps.Projects,
+			Mgr: deps.Projects,
 		},
 	}
 }
