@@ -15,6 +15,7 @@ fakes) on the `feat/lcm-sm-contracts` integration branch.
 |-----|----------------|
 | [architecture.md](architecture.md) | How the lane works: the OBSERVE→DECIDE→ACT loop, the canonical state model, the package layout, every component, and the load-bearing invariants. Read this first. |
 | [status.md](status.md) | What's done (PR by PR), what's left, the integration to-dos, the open cross-lane contract questions, and how to build/test. |
+| [stack.md](stack.md) | Accepted library/runtime choices, pending stack decisions, and dependencies explicitly avoided for V1. |
 
 ## The one-paragraph mental model
 

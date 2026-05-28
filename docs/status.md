@@ -62,7 +62,7 @@ ports, and resolving the carried-forward items below.
 
 | Port | Real adapter | Owning lane |
 |------|--------------|-------------|
-| `LifecycleStore` | persistence layer (flat-file/KV + atomic write + lock + CDC) | persistence |
+| `LifecycleStore` | SQLite persistence layer (WAL + atomic state/outbox/change-log writes + CDC) | persistence |
 | `SCMFacts` producer | SCM poller (batch PR/CI/review enrichment) | SCM |
 | `Runtime` / `Agent` / `Workspace` | tmux runtime, claude-code/codex agent, git-worktree workspace | coding-agents |
 | `Notifier` | desktop/Slack notifier | notifications |
