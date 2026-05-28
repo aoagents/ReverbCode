@@ -30,7 +30,7 @@ func run() error {
 		return err
 	}
 
-	log := newLogger(cfg)
+	log := newLogger()
 
 	// Fail fast if a live daemon already owns the handshake file. A run-file
 	// left by a crashed predecessor (dead PID) is treated as stale and
@@ -54,12 +54,9 @@ func run() error {
 	return srv.Run(ctx)
 }
 
-// newLogger returns a text logger in development and JSON in production. The
-// daemon logs to stderr so the Electron supervisor can capture it separately
-// from any structured stdout protocol added later.
-func newLogger(cfg config.Config) *slog.Logger {
-	if cfg.IsProduction() {
-		return slog.New(slog.NewJSONHandler(os.Stderr, nil))
-	}
+// newLogger returns the daemon's slog logger. It writes to stderr so the
+// Electron supervisor can capture it separately from any structured stdout
+// protocol added later.
+func newLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
 }

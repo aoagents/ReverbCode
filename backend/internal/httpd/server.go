@@ -73,7 +73,7 @@ func (s *Server) Run(ctx context.Context) error {
 
 	serveErr := make(chan error, 1)
 	go func() {
-		s.log.Info("daemon listening", "addr", s.Addr().String(), "pid", info.PID, "env", s.cfg.Env)
+		s.log.Info("daemon listening", "addr", s.Addr().String(), "pid", info.PID)
 		// Serve returns ErrServerClosed on a clean Shutdown; that is success.
 		if err := s.http.Serve(s.listen); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			serveErr <- err

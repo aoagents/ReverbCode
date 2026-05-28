@@ -46,7 +46,6 @@ func TestServerLifecycle(t *testing.T) {
 	cfg := config.Config{
 		Host:            "127.0.0.1",
 		Port:            0, // let the OS pick a free port — no conflict with a real daemon
-		Env:             "development",
 		ShutdownTimeout: 5 * time.Second,
 		RunFilePath:     runPath,
 	}

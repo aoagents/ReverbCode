@@ -34,9 +34,6 @@ type Config struct {
 	Host string
 	// Port is the TCP port to bind. The daemon fails fast if it is taken.
 	Port int
-	// Env is the deployment environment label ("development" | "production").
-	// It only affects log verbosity / formatting, never bind behaviour.
-	Env string
 	// RequestTimeout bounds REST request handling.
 	RequestTimeout time.Duration
 	// ShutdownTimeout is the hard graceful-shutdown deadline.
@@ -51,9 +48,6 @@ func (c Config) Addr() string {
 	return fmt.Sprintf("%s:%d", c.Host, c.Port)
 }
 
-// IsProduction reports whether the daemon is running in production mode.
-func (c Config) IsProduction() bool { return c.Env == "production" }
-
 // Load resolves configuration from the environment, applying defaults. It
 // returns an error only for values that are present but malformed (e.g. a
 // non-numeric AO_PORT); missing values fall back to defaults.
@@ -62,7 +56,6 @@ func (c Config) IsProduction() bool { return c.Env == "production" }
 //
 //	AO_HOST              bind host           (default 127.0.0.1)
 //	AO_PORT              bind port           (default 3001)
-//	AO_ENV               environment label   (default development)
 //	AO_REQUEST_TIMEOUT   per-request timeout (Go duration, default 60s)
 //	AO_SHUTDOWN_TIMEOUT  shutdown deadline   (Go duration, default 10s)
 //	AO_RUN_FILE          running.json path   (default <state-dir>/running.json)
@@ -70,7 +63,6 @@ func Load() (Config, error) {
 	cfg := Config{
 		Host:            getEnv("AO_HOST", DefaultHost),
 		Port:            DefaultPort,
-		Env:             getEnv("AO_ENV", "development"),
 		RequestTimeout:  DefaultRequestTimeout,
 		ShutdownTimeout: DefaultShutdownTimeout,
 	}
