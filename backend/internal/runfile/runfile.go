@@ -110,4 +110,3 @@ func CheckStale(path string) (*Info, error) {
 	}
 	return nil, nil
 }
-
