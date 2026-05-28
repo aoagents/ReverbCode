@@ -7,6 +7,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
+	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apispec"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/controllers"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -59,6 +60,12 @@ func (a *API) Register(root chi.Router) {
 	}
 
 	root.Route("/api/v1", func(r chi.Router) {
+		// The OpenAPI document is the source of truth for every contract on
+		// this surface; serve it so tooling (SDK generators, the OpenAPI
+		// validator in #19, the dashboard's developer tools) can fetch the
+		// whole spec from the same origin as the routes it describes.
+		apispec.RegisterServe(r, "/openapi.yaml")
+
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.Timeout(timeout))
 			a.projects.Register(r)

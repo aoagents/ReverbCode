@@ -2,8 +2,11 @@ package controllers_test
 
 // Route-shell tests for /api/v1/projects. Builds the full router (so the
 // /api/v1 mount, middleware, NotFound, and MethodNotAllowed handlers are
-// exercised together) and asserts every canonical route returns 501 with the
-// locked envelope; legacy paths that the REST audit dropped return 404 or 405.
+// exercised together) and asserts every canonical route returns 501 with
+// the locked envelope + a `spec` slice sourced from apispec/openapi.yaml.
+// Legacy paths that the REST audit dropped return 405 (sibling method
+// exists) or 404 (no sibling); the legacy → canonical mapping itself is
+// documented in the YAML via x-replaces.
 
 import (
 	"encoding/json"
@@ -29,29 +32,28 @@ func newTestServer(t *testing.T) *httptest.Server {
 }
 
 // TestProjectsRoutes_Canonical501 walks every canonical /projects route and
-// asserts it returns 501 with the locked envelope. The "wantLegacy" cases
-// double-check that the planned body advertises the TS path it replaced.
+// asserts it returns 501 with the locked envelope. wantOpID double-checks
+// that the embedded spec slice is the right operation (not e.g. the
+// /projects/{id} block leaking into /projects/reload because of route
+// shadowing).
 func TestProjectsRoutes_Canonical501(t *testing.T) {
 	srv := newTestServer(t)
 
 	cases := []struct {
-		method     string
-		path       string
-		body       string
-		wantRoute  string
-		wantLegacy []string
+		method, path, body, wantOpID string
+		wantReplaces                 []string
 	}{
-		{method: "GET", path: "/api/v1/projects", wantRoute: "GET /api/v1/projects"},
-		{method: "POST", path: "/api/v1/projects", body: `{}`, wantRoute: "POST /api/v1/projects"},
-		{method: "GET", path: "/api/v1/projects/p1", wantRoute: "GET /api/v1/projects/{id}"},
-		{method: "PATCH", path: "/api/v1/projects/p1", body: `{}`, wantRoute: "PATCH /api/v1/projects/{id}"},
-		{method: "DELETE", path: "/api/v1/projects/p1", wantRoute: "DELETE /api/v1/projects/{id}"},
+		{method: "GET", path: "/api/v1/projects", wantOpID: "listProjects"},
+		{method: "POST", path: "/api/v1/projects", body: `{}`, wantOpID: "addProject"},
+		{method: "GET", path: "/api/v1/projects/p1", wantOpID: "getProject"},
+		{method: "PATCH", path: "/api/v1/projects/p1", body: `{}`, wantOpID: "updateProjectConfig"},
+		{method: "DELETE", path: "/api/v1/projects/p1", wantOpID: "removeProject"},
 		{
 			method: "POST", path: "/api/v1/projects/p1/repair",
-			wantRoute:  "POST /api/v1/projects/{id}/repair",
-			wantLegacy: []string{"POST /api/v1/projects/{id}"},
+			wantOpID:     "repairProject",
+			wantReplaces: []string{"POST /api/v1/projects/{id}"},
 		},
-		{method: "POST", path: "/api/v1/projects/reload", wantRoute: "POST /api/v1/projects/reload"},
+		{method: "POST", path: "/api/v1/projects/reload", wantOpID: "reloadProjects"},
 	}
 
 	for _, tc := range cases {
@@ -59,7 +61,7 @@ func TestProjectsRoutes_Canonical501(t *testing.T) {
 			body, status, headers := doRequest(t, srv, tc.method, tc.path, tc.body)
 
 			if status != http.StatusNotImplemented {
-				t.Fatalf("status = %d, want 501", status)
+				t.Fatalf("status = %d, want 501\nbody=%s", status, body)
 			}
 			if ct := headers.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
 				t.Errorf("Content-Type = %q, want JSON", ct)
@@ -75,11 +77,15 @@ func TestProjectsRoutes_Canonical501(t *testing.T) {
 			if got.Message == "" {
 				t.Error("envelope.message empty")
 			}
-			if got.Planned.Route != tc.wantRoute {
-				t.Errorf("planned.route = %q, want %q", got.Planned.Route, tc.wantRoute)
+			if got.Spec == nil {
+				t.Fatal("envelope.spec missing — apispec failed to find the operation")
 			}
-			if !equalStrings(got.Planned.Legacy, tc.wantLegacy) {
-				t.Errorf("planned.legacy = %v, want %v", got.Planned.Legacy, tc.wantLegacy)
+			if op, _ := got.Spec["operationId"].(string); op != tc.wantOpID {
+				t.Errorf("spec.operationId = %q, want %q", op, tc.wantOpID)
+			}
+			gotReplaces := stringSlice(got.Spec["x-replaces"])
+			if !equalStrings(gotReplaces, tc.wantReplaces) {
+				t.Errorf("spec.x-replaces = %v, want %v", gotReplaces, tc.wantReplaces)
 			}
 		})
 	}
@@ -87,24 +93,17 @@ func TestProjectsRoutes_Canonical501(t *testing.T) {
 
 // TestProjectsRoutes_LegacyUnregistered confirms the REST-audit-dropped TS
 // paths are deliberately unregistered. PUT and POST on /projects/{id} hit
-// sibling-method paths so chi returns 405; legacy nested paths return 404.
+// sibling-method paths so chi returns 405. The legacy → canonical mapping
+// is documented on the canonical operation via x-replaces (covered above).
 func TestProjectsRoutes_LegacyUnregistered(t *testing.T) {
 	srv := newTestServer(t)
 
 	cases := []struct {
-		method     string
-		path       string
-		wantStatus int
-		wantCode   string
-		why        string
+		method, path, wantCode, why string
+		wantStatus                  int
 	}{
-		// R3: PUT was a PATCH alias in TS; we keep PATCH only. Chi returns
-		// 405 because sibling verbs (GET/PATCH/DELETE) exist on the same path.
 		{method: "PUT", path: "/api/v1/projects/p1", wantStatus: 405, wantCode: "METHOD_NOT_ALLOWED", why: "R3 PUT not registered"},
-		// R4: POST on /projects/{id} used to repair; canonical is /repair.
-		// Same path has no sibling POST handler (POST collection is at /projects),
-		// chi returns 405.
-		{method: "POST", path: "/api/v1/projects/p1", wantStatus: 405, wantCode: "METHOD_NOT_ALLOWED", why: "R4 repair moved"},
+		{method: "POST", path: "/api/v1/projects/p1", wantStatus: 405, wantCode: "METHOD_NOT_ALLOWED", why: "R4 repair moved to /repair"},
 	}
 
 	for _, tc := range cases {
@@ -145,10 +144,10 @@ func TestProjectsRoutes_MissingRoute(t *testing.T) {
 	}
 }
 
-// TestProjectsRoutes_ReloadBeforeID is the chi-ordering safety check. If the
-// {id} wildcard were registered first, POST /projects/reload would match
-// {id}="reload" → repair handler instead of the reload handler. We assert
-// reload responds with its own planned.route.
+// TestProjectsRoutes_ReloadBeforeID is the chi-ordering safety check. If
+// the {id} wildcard were registered first, POST /projects/reload would
+// match {id}="reload" → repair handler instead of the reload handler. We
+// assert reload's spec slice (operationId=reloadProjects), not repair's.
 func TestProjectsRoutes_ReloadBeforeID(t *testing.T) {
 	srv := newTestServer(t)
 	body, status, _ := doRequest(t, srv, "POST", "/api/v1/projects/reload", "")
@@ -157,39 +156,44 @@ func TestProjectsRoutes_ReloadBeforeID(t *testing.T) {
 	}
 	var e envelope
 	_ = json.Unmarshal(body, &e)
-	if e.Planned.Route != "POST /api/v1/projects/reload" {
-		t.Errorf("reload was shadowed by {id}: planned.route = %q", e.Planned.Route)
+	if op, _ := e.Spec["operationId"].(string); op != "reloadProjects" {
+		t.Errorf("reload was shadowed by {id}: spec.operationId = %q", op)
 	}
 }
 
-// envelope mirrors the locked APIError + stubs.PlannedRoute on the wire. We
-// declare it in the test rather than importing httpd's private type so the
-// test pins the JSON contract independently of internal renames.
-type envelope struct {
-	Error     string  `json:"error"`
-	Code      string  `json:"code"`
-	Message   string  `json:"message"`
-	RequestID string  `json:"requestId"`
-	Planned   planned `json:"planned"`
+// TestOpenAPIYAMLServed confirms the embedded spec is reachable at the
+// documented path so external tooling can fetch it.
+func TestOpenAPIYAMLServed(t *testing.T) {
+	srv := newTestServer(t)
+	body, status, headers := doRequest(t, srv, "GET", "/api/v1/openapi.yaml", "")
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200", status)
+	}
+	if ct := headers.Get("Content-Type"); !strings.HasPrefix(ct, "application/yaml") {
+		t.Errorf("Content-Type = %q, want application/yaml*", ct)
+	}
+	if !strings.Contains(string(body), "openapi: 3.1.0") {
+		t.Errorf("served body did not start with an OpenAPI 3.1 doc — first bytes:\n%s", firstLine(body))
+	}
 }
 
-type planned struct {
-	Route  string   `json:"route"`
-	Legacy []string `json:"legacy"`
+// envelope mirrors the locked APIError + apispec spec field on the wire.
+// We declare it in the test rather than importing apispec's private type
+// so the test pins the JSON contract independently of internal renames.
+type envelope struct {
+	Error     string         `json:"error"`
+	Code      string         `json:"code"`
+	Message   string         `json:"message"`
+	RequestID string         `json:"requestId"`
+	Spec      map[string]any `json:"spec"`
 }
 
 func doRequest(t *testing.T, srv *httptest.Server, method, path, body string) ([]byte, int, http.Header) {
 	t.Helper()
-	var reqBody *strings.Reader
-	if body != "" {
-		reqBody = strings.NewReader(body)
-	}
-	// strings.Reader is not nilable for the no-body case via the io.Reader
-	// interface, so branch the constructor explicitly.
 	var req *http.Request
 	var err error
-	if reqBody != nil {
-		req, err = http.NewRequest(method, srv.URL+path, reqBody)
+	if body != "" {
+		req, err = http.NewRequest(method, srv.URL+path, strings.NewReader(body))
 	} else {
 		req, err = http.NewRequest(method, srv.URL+path, nil)
 	}
@@ -219,6 +223,22 @@ func doRequest(t *testing.T, srv *httptest.Server, method, path, body string) ([
 	return buf, resp.StatusCode, resp.Header
 }
 
+// stringSlice coerces an `any` that holds a YAML-decoded sequence into a
+// []string. yaml.v3 decodes sequences as []any; we only call this on slices
+// whose elements we know are strings.
+func stringSlice(v any) []string {
+	raw, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(raw))
+	for _, item := range raw {
+		s, _ := item.(string)
+		out = append(out, s)
+	}
+	return out
+}
+
 func equalStrings(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
@@ -229,4 +249,11 @@ func equalStrings(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+func firstLine(b []byte) string {
+	if i := strings.IndexByte(string(b), '\n'); i >= 0 {
+		return string(b[:i])
+	}
+	return string(b)
 }
