@@ -23,8 +23,9 @@ func TestHealthProbes(t *testing.T) {
 	srv := httptest.NewServer(router)
 	defer srv.Close()
 
+	client := &http.Client{Timeout: 2 * time.Second}
 	for _, path := range []string{"/healthz", "/readyz"} {
-		resp, err := http.Get(srv.URL + path)
+		resp, err := client.Get(srv.URL + path)
 		if err != nil {
 			t.Fatalf("GET %s: %v", path, err)
 		}
@@ -92,9 +93,13 @@ func TestServerLifecycle(t *testing.T) {
 
 func waitForHealth(t *testing.T, base string) {
 	t.Helper()
+	// Per-request timeout so a stalled connect or hung handshake doesn't park
+	// the test for the full Go test timeout; the outer deadline only bounds
+	// the polling loop, not any single GET.
+	client := &http.Client{Timeout: 500 * time.Millisecond}
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		resp, err := http.Get(base + "/healthz")
+		resp, err := client.Get(base + "/healthz")
 		if err == nil {
 			resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {

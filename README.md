@@ -31,9 +31,12 @@ curl localhost:3001/readyz        # {"status":"ready"}
 
 ### Configuration (env only)
 
+The bind host is always `127.0.0.1`: the daemon is a loopback-only sidecar
+and binding any other interface would be a security regression, so the host
+is intentionally not env-configurable.
+
 | Var | Default | Purpose |
 |---|---|---|
-| `AO_HOST` | `127.0.0.1` | bind host — keep loopback |
 | `AO_PORT` | `3001` | bind port; fails fast if taken |
 | `AO_REQUEST_TIMEOUT` | `60s` | per-request timeout (Go duration) |
 | `AO_SHUTDOWN_TIMEOUT` | `10s` | graceful-shutdown hard cap |

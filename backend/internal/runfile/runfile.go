@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"syscall"
 	"time"
 )
 
@@ -27,7 +26,11 @@ type Info struct {
 
 // Write atomically writes running.json at path, creating parent directories as
 // needed. It writes to a temp file and renames so a reader never observes a
-// partial file.
+// partial file. os.Rename overwrites an existing destination on both POSIX
+// (rename(2) is atomic by default) and Windows (Go uses MoveFileExW with
+// MOVEFILE_REPLACE_EXISTING) when source and destination are on the same
+// volume, which is always true here because the temp file lives in the same
+// directory as the target.
 func Write(path string, info Info) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create run-file dir: %w", err)
@@ -108,17 +111,3 @@ func CheckStale(path string) (*Info, error) {
 	return nil, nil
 }
 
-// processAlive reports whether a process with the given PID exists. On Unix,
-// signal 0 probes existence without delivering a signal: a nil error or
-// EPERM (alive but not ours) both mean alive; ESRCH means gone.
-func processAlive(pid int) bool {
-	proc, err := os.FindProcess(pid)
-	if err != nil {
-		return false
-	}
-	err = proc.Signal(syscall.Signal(0))
-	if err == nil {
-		return true
-	}
-	return errors.Is(err, syscall.EPERM)
-}

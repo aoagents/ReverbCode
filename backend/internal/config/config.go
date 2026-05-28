@@ -6,6 +6,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -13,9 +14,11 @@ import (
 )
 
 const (
-	// DefaultHost is loopback only. The daemon must never bind a public
-	// interface — it speaks to the Electron main process over 127.0.0.1.
-	DefaultHost = "127.0.0.1"
+	// LoopbackHost is the only host the daemon ever binds. It is intentionally
+	// not env-configurable: this daemon is a loopback sidecar talking to the
+	// Electron supervisor over 127.0.0.1, and exposing it on any other
+	// interface would be a security regression, not a feature.
+	LoopbackHost = "127.0.0.1"
 	// DefaultPort is the single port the whole surface (REST, SSE, WS, static)
 	// is served from. Single-port keeps it same-origin: no CORS, one lifecycle.
 	DefaultPort = 3001
@@ -30,7 +33,7 @@ const (
 // Config is the fully-resolved daemon configuration. It is immutable once
 // built by Load.
 type Config struct {
-	// Host is the bind address. Always loopback in normal operation.
+	// Host is the bind address. Always loopback — see LoopbackHost.
 	Host string
 	// Port is the TCP port to bind. The daemon fails fast if it is taken.
 	Port int
@@ -43,9 +46,10 @@ type Config struct {
 	RunFilePath string
 }
 
-// Addr returns the host:port the HTTP server binds.
+// Addr returns the host:port the HTTP server binds. It uses net.JoinHostPort so
+// the result is correct for IPv6 literals as well as IPv4 / hostnames.
 func (c Config) Addr() string {
-	return fmt.Sprintf("%s:%d", c.Host, c.Port)
+	return net.JoinHostPort(c.Host, strconv.Itoa(c.Port))
 }
 
 // Load resolves configuration from the environment, applying defaults. It
@@ -54,14 +58,15 @@ func (c Config) Addr() string {
 //
 // Recognised variables:
 //
-//	AO_HOST              bind host           (default 127.0.0.1)
 //	AO_PORT              bind port           (default 3001)
-//	AO_REQUEST_TIMEOUT   per-request timeout (Go duration, default 60s)
-//	AO_SHUTDOWN_TIMEOUT  shutdown deadline   (Go duration, default 10s)
+//	AO_REQUEST_TIMEOUT   per-request timeout (Go duration > 0, default 60s)
+//	AO_SHUTDOWN_TIMEOUT  shutdown deadline   (Go duration > 0, default 10s)
 //	AO_RUN_FILE          running.json path   (default <state-dir>/running.json)
+//
+// The bind host is not configurable: the daemon is loopback-only by design.
 func Load() (Config, error) {
 	cfg := Config{
-		Host:            getEnv("AO_HOST", DefaultHost),
+		Host:            LoopbackHost,
 		Port:            DefaultPort,
 		RequestTimeout:  DefaultRequestTimeout,
 		ShutdownTimeout: DefaultShutdownTimeout,
@@ -79,17 +84,17 @@ func Load() (Config, error) {
 	}
 
 	if raw := os.Getenv("AO_REQUEST_TIMEOUT"); raw != "" {
-		d, err := time.ParseDuration(raw)
+		d, err := parsePositiveDuration("AO_REQUEST_TIMEOUT", raw)
 		if err != nil {
-			return Config{}, fmt.Errorf("invalid AO_REQUEST_TIMEOUT %q: %w", raw, err)
+			return Config{}, err
 		}
 		cfg.RequestTimeout = d
 	}
 
 	if raw := os.Getenv("AO_SHUTDOWN_TIMEOUT"); raw != "" {
-		d, err := time.ParseDuration(raw)
+		d, err := parsePositiveDuration("AO_SHUTDOWN_TIMEOUT", raw)
 		if err != nil {
-			return Config{}, fmt.Errorf("invalid AO_SHUTDOWN_TIMEOUT %q: %w", raw, err)
+			return Config{}, err
 		}
 		cfg.ShutdownTimeout = d
 	}
@@ -101,6 +106,20 @@ func Load() (Config, error) {
 	cfg.RunFilePath = runFile
 
 	return cfg, nil
+}
+
+// parsePositiveDuration rejects zero and negative durations: a zero
+// RequestTimeout would expire every request instantly, and a non-positive
+// ShutdownTimeout would defeat graceful shutdown.
+func parsePositiveDuration(name, raw string) (time.Duration, error) {
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s %q: %w", name, raw, err)
+	}
+	if d <= 0 {
+		return 0, fmt.Errorf("invalid %s %q: must be > 0", name, raw)
+	}
+	return d, nil
 }
 
 // resolveRunFilePath picks where running.json lives. An explicit AO_RUN_FILE
@@ -115,11 +134,4 @@ func resolveRunFilePath() (string, error) {
 		return "", fmt.Errorf("resolve state dir: %w", err)
 	}
 	return filepath.Join(dir, "agent-orchestrator", "running.json"), nil
-}
-
-func getEnv(key, fallback string) string {
-	if v, ok := os.LookupEnv(key); ok && v != "" {
-		return v
-	}
-	return fallback
 }
