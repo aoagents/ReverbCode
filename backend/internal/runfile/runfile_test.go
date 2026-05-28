@@ -26,6 +26,29 @@ func TestWriteReadRoundTrip(t *testing.T) {
 	}
 }
 
+// TestWriteOverwritesExisting is the cross-platform overwrite check: a stale
+// running.json from a crashed predecessor must be replaced cleanly. POSIX
+// rename(2) handles this natively; Windows needs MoveFileEx with
+// MOVEFILE_REPLACE_EXISTING — atomicReplace gives us both.
+func TestWriteOverwritesExisting(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "running.json")
+
+	if err := Write(path, Info{PID: 1, Port: 3001}); err != nil {
+		t.Fatalf("first Write: %v", err)
+	}
+	if err := Write(path, Info{PID: 2, Port: 3002}); err != nil {
+		t.Fatalf("second Write (overwrite): %v", err)
+	}
+
+	got, err := Read(path)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if got == nil || got.PID != 2 || got.Port != 3002 {
+		t.Errorf("after overwrite: got %+v, want PID=2 Port=3002", got)
+	}
+}
+
 func TestReadMissingIsNotError(t *testing.T) {
 	got, err := Read(filepath.Join(t.TempDir(), "absent.json"))
 	if err != nil {

@@ -24,13 +24,12 @@ type Info struct {
 	StartedAt time.Time `json:"startedAt"`
 }
 
-// Write atomically writes running.json at path, creating parent directories as
-// needed. It writes to a temp file and renames so a reader never observes a
-// partial file. os.Rename overwrites an existing destination on both POSIX
-// (rename(2) is atomic by default) and Windows (Go uses MoveFileExW with
-// MOVEFILE_REPLACE_EXISTING) when source and destination are on the same
-// volume, which is always true here because the temp file lives in the same
-// directory as the target.
+// Write atomically writes running.json at path, creating parent directories
+// as needed. It writes to a temp file in the same directory and then calls
+// atomicReplace — POSIX rename(2) on Unix, MoveFileEx with
+// MOVEFILE_REPLACE_EXISTING on Windows — so a reader never observes a
+// partial file and a stale running.json from a crashed predecessor is
+// overwritten without an intermediate "no file" window.
 func Write(path string, info Info) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create run-file dir: %w", err)
@@ -55,8 +54,8 @@ func Write(path string, info Info) error {
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("close temp run-file: %w", err)
 	}
-	if err := os.Rename(tmpName, path); err != nil {
-		return fmt.Errorf("rename run-file into place: %w", err)
+	if err := atomicReplace(tmpName, path); err != nil {
+		return fmt.Errorf("replace run-file: %w", err)
 	}
 	return nil
 }

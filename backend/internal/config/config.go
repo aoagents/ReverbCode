@@ -14,10 +14,13 @@ import (
 )
 
 const (
-	// LoopbackHost is the only host the daemon ever binds. It is intentionally
-	// not env-configurable: this daemon is a loopback sidecar talking to the
-	// Electron supervisor over 127.0.0.1, and exposing it on any other
-	// interface would be a security regression, not a feature.
+	// LoopbackHost is the only host the daemon ever binds. There is deliberately
+	// no AO_HOST env var: the daemon has no auth/CORS/TLS and a stray
+	// AO_HOST=0.0.0.0 would turn it into a public no-auth service. The legacy
+	// TS server bound all-interfaces by accident and docs/CROSS_PLATFORM.md
+	// already calls that out as a bug; the Go rewrite fixes it by removing the
+	// knob entirely. If a non-default loopback (e.g. ::1, 127.0.0.2) is ever
+	// needed, add it back with an IsLoopback() validator — not a raw env read.
 	LoopbackHost = "127.0.0.1"
 	// DefaultPort is the single port the whole surface (REST, SSE, WS, static)
 	// is served from. Single-port keeps it same-origin: no CORS, one lifecycle.
