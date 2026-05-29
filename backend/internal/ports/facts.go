@@ -14,7 +14,7 @@ import (
 
 // SCMFacts is produced by the SCM poller and handed to ApplySCMObservation.
 //
-// Fetched is the failed-probe guard: when false, the GitHub query timed out or
+// Fetched is the failed-probe guard: when false, the SCM query timed out or
 // errored and the rest of the struct is meaningless — the LCM must NOT read it
 // as "no PR / PR closed" (the SCM analogue of "failed probe != dead").
 //

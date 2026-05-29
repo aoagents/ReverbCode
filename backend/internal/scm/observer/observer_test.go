@@ -17,6 +17,17 @@ func (f fakeProvider) ObserveSessions(context.Context, ports.SCMObserveRequest, 
 	return f.res, nil
 }
 
+type echoProvider struct {
+	provider domain.SCMProvider
+	seen     []domain.SCMSubject
+}
+
+func (e *echoProvider) Provider() domain.SCMProvider { return e.provider }
+func (e *echoProvider) ObserveSessions(_ context.Context, req ports.SCMObserveRequest, _ ports.SCMProviderCache) (ports.SCMObserveResult, error) {
+	e.seen = append([]domain.SCMSubject(nil), req.Subjects...)
+	return ports.SCMObserveResult{ProviderName: e.provider, Subjects: req.Subjects}, nil
+}
+
 type fakeLCM struct{ facts []ports.SCMFacts }
 
 func (f *fakeLCM) ApplySCMObservation(_ context.Context, _ domain.SessionID, facts ports.SCMFacts) error {
@@ -74,5 +85,52 @@ func TestFactsFromUnavailableSnapshotIsNotFetched(t *testing.T) {
 	facts := FactsFromSnapshot(domain.SCMSnapshot{Freshness: domain.SCMFreshnessUnavailable})
 	if facts.Fetched {
 		t.Fatal("unavailable snapshot must project to Fetched=false")
+	}
+}
+
+func TestObserverInfersOnlyRegisteredProviderWithoutGitHubDefault(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	provider := &echoProvider{provider: domain.SCMProviderGitLab}
+	o := New(st, nil, provider)
+	if err := o.Refresh(ctx, []domain.SCMSubject{{SessionID: "s1", ProjectID: "p1", Repo: "g/r", Branch: "feat/27"}}); err != nil {
+		t.Fatal(err)
+	}
+	if len(provider.seen) != 1 || provider.seen[0].Provider != domain.SCMProviderGitLab {
+		t.Fatalf("provider inference leaked GitHub default: %+v", provider.seen)
+	}
+}
+
+func TestObserverRequiresProviderWhenMultipleProvidersRegistered(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	o := New(st, nil, &echoProvider{provider: domain.SCMProviderGitLab}, &echoProvider{provider: domain.SCMProviderBitbucket})
+	err := o.Refresh(ctx, []domain.SCMSubject{{SessionID: "s1", ProjectID: "p1", Repo: "g/r", Branch: "feat/27"}})
+	if err == nil {
+		t.Fatal("missing provider should fail when observer has multiple providers")
+	}
+}
+
+func TestSubjectsFromSessionsUsesProviderMetadataWithoutGitHubDefaults(t *testing.T) {
+	sessions := []domain.Session{{
+		SessionRecord: domain.SessionRecord{
+			ID:        "s1",
+			ProjectID: "p1",
+			Metadata: map[string]string{
+				"scm.provider":  "gitlab",
+				"scm.host":      "gitlab.com",
+				"gitlab.repo":   "group/repo",
+				"gitlab.branch": "feat/27",
+				"gitlab.prUrl":  "https://gitlab.com/group/repo/-/merge_requests/12",
+			},
+		},
+	}}
+	subjects := SubjectsFromSessions(sessions, SubjectConfig{})
+	if len(subjects) != 1 {
+		t.Fatalf("subjects=%d", len(subjects))
+	}
+	got := subjects[0]
+	if got.Provider != domain.SCMProviderGitLab || got.Host != "gitlab.com" || got.Repo != "group/repo" || got.Branch != "feat/27" || got.PRNumber != 12 {
+		t.Fatalf("bad subject: %+v", got)
 	}
 }

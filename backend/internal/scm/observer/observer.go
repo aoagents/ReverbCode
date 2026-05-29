@@ -65,17 +65,24 @@ func (o *Observer) Refresh(ctx context.Context, subjects []domain.SCMSubject) er
 		o.Clock = time.Now
 	}
 	byProvider := map[domain.SCMProvider][]domain.SCMSubject{}
+	defaultProvider, hasDefaultProvider := o.singleProvider()
+	var firstErr error
 	for _, subj := range subjects {
-		if subj.Provider == "" {
-			subj.Provider = domain.SCMProviderGitHub
-		}
 		if subj.SessionID == "" {
+			continue
+		}
+		if subj.Provider == "" && hasDefaultProvider {
+			subj.Provider = defaultProvider
+		}
+		if subj.Provider == "" {
+			if firstErr == nil {
+				firstErr = &domain.SCMError{Kind: domain.SCMErrorUnsupported, Operation: "observe", Message: "subject provider is required when observer has zero or multiple providers"}
+			}
 			continue
 		}
 		byProvider[subj.Provider] = append(byProvider[subj.Provider], subj)
 	}
 
-	var firstErr error
 	for providerID, group := range byProvider {
 		provider := o.Providers[providerID]
 		if provider == nil {
@@ -113,6 +120,16 @@ func (o *Observer) Refresh(ctx context.Context, subjects []domain.SCMSubject) er
 		}
 	}
 	return firstErr
+}
+
+func (o *Observer) singleProvider() (domain.SCMProvider, bool) {
+	if len(o.Providers) != 1 {
+		return "", false
+	}
+	for id := range o.Providers {
+		return id, true
+	}
+	return "", false
 }
 
 func (o *Observer) saveAndApply(ctx context.Context, snap domain.SCMSnapshot) error {
@@ -238,7 +255,7 @@ func firstNonZero(a, b int) int {
 	return b
 }
 
-// SubjectConfig tells the observer how to bind sessions to GitHub subjects.
+// SubjectConfig tells the observer how to bind sessions to SCM subjects.
 type SubjectConfig struct {
 	Provider       domain.SCMProvider
 	Host           string
@@ -251,31 +268,37 @@ type SubjectConfig struct {
 // and provider come from config; branch and known PR metadata can be present on
 // the SessionRecord metadata. Terminal sessions are intentionally ignored.
 func SubjectsFromSessions(sessions []domain.Session, cfg SubjectConfig) []domain.SCMSubject {
-	if cfg.Provider == "" {
-		cfg.Provider = domain.SCMProviderGitHub
-	}
-	if cfg.Host == "" {
-		cfg.Host = "github.com"
-	}
 	out := make([]domain.SCMSubject, 0, len(sessions))
 	for _, s := range sessions {
 		if isTerminalSession(s.Lifecycle.Session.State) {
 			continue
 		}
-		branch := metadataFirst(s.Metadata, "branch", "scm.branch", "github.branch")
+		provider := domain.SCMProvider(metadataFirst(s.Metadata, "provider", "scm.provider"))
+		if provider == "" {
+			provider = cfg.Provider
+		}
+		if provider == "" {
+			continue
+		}
+		host := metadataFirst(s.Metadata, "host", "scm.host")
+		if host == "" {
+			host = cfg.Host
+		}
+		providerPrefix := string(provider)
+		branch := metadataFirst(s.Metadata, metadataKeys(providerPrefix, "branch")...)
 		if branch == "" {
 			continue
 		}
-		repo := metadataFirst(s.Metadata, "repo", "repository", "github.repo")
+		repo := metadataFirst(s.Metadata, append(metadataKeys(providerPrefix, "repo"), "repository")...)
 		if repo == "" {
 			repo = cfg.Repo
 		}
 		if repo == "" {
 			continue
 		}
-		prURL := metadataFirst(s.Metadata, "prUrl", "prURL", "github.prUrl")
-		prNumber := parsePRNumber(metadataFirst(s.Metadata, "prNumber", "github.prNumber"), prURL)
-		out = append(out, domain.SCMSubject{SessionID: s.ID, ProjectID: s.ProjectID, Provider: cfg.Provider, Host: cfg.Host, Repo: repo, Branch: branch, BaseBranch: cfg.BaseBranch, CredentialHash: cfg.CredentialHash, PRNumber: prNumber, PRURL: prURL})
+		prURL := metadataFirst(s.Metadata, metadataKeys(providerPrefix, "prUrl", "prURL")...)
+		prNumber := parsePRNumber(metadataFirst(s.Metadata, metadataKeys(providerPrefix, "prNumber")...), prURL)
+		out = append(out, domain.SCMSubject{SessionID: s.ID, ProjectID: s.ProjectID, Provider: provider, Host: host, Repo: repo, Branch: branch, BaseBranch: cfg.BaseBranch, CredentialHash: cfg.CredentialHash, PRNumber: prNumber, PRURL: prURL})
 	}
 	return out
 }
@@ -293,6 +316,17 @@ func metadataFirst(m map[string]string, keys ...string) string {
 	return ""
 }
 
+func metadataKeys(providerPrefix string, names ...string) []string {
+	keys := make([]string, 0, len(names)*3)
+	for _, name := range names {
+		keys = append(keys, name, "scm."+name)
+		if providerPrefix != "" {
+			keys = append(keys, providerPrefix+"."+name)
+		}
+	}
+	return keys
+}
+
 func parsePRNumber(raw, prURL string) int {
 	if raw != "" {
 		if n, err := strconv.Atoi(raw); err == nil {
@@ -308,7 +342,8 @@ func parsePRNumber(raw, prURL string) int {
 	}
 	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
 	for i := 0; i < len(parts)-1; i++ {
-		if parts[i] == "pull" {
+		switch parts[i] {
+		case "pull", "pulls", "pull-requests", "merge_requests", "merge-requests":
 			n, _ := strconv.Atoi(parts[i+1])
 			return n
 		}
