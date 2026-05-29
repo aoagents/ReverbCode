@@ -61,6 +61,9 @@ type Mergeability struct {
 	CIPassing   bool
 	Approved    bool
 	NoConflicts bool
+	Conflict    bool
+	BehindBase  bool
+	Unknown     bool
 	Blockers    []string
 }
 

@@ -1,6 +1,7 @@
 package lifecycle
 
 import (
+	"strings"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -128,7 +129,16 @@ func classifyPendingComments(comments []ports.ReviewComment) (hasBot, hasHuman b
 }
 
 func hasMergeConflicts(m ports.Mergeability) bool {
-	return !m.Mergeable && !m.NoConflicts && (m.CIPassing || m.Approved || len(m.Blockers) > 0)
+	if m.Conflict || m.BehindBase {
+		return true
+	}
+	for _, blocker := range m.Blockers {
+		b := strings.ToLower(blocker)
+		if strings.Contains(b, "merge conflict") || strings.Contains(b, "behind base") {
+			return true
+		}
+	}
+	return false
 }
 
 // ---- activity -> session axis mapping (activity owns working/idle/waiting) ----

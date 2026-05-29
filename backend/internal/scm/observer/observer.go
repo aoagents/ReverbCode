@@ -106,7 +106,17 @@ func (o *Observer) Refresh(ctx context.Context, subjects []domain.SCMSubject) er
 			if firstErr == nil {
 				firstErr = err
 			}
+			saved := map[domain.SessionID]bool{}
+			for _, snap := range res.Snapshots {
+				if saveErr := o.saveAndApply(ctx, snap); saveErr != nil && firstErr == nil {
+					firstErr = saveErr
+				}
+				saved[snap.SessionID] = true
+			}
 			for _, subj := range group {
+				if saved[subj.SessionID] {
+					continue
+				}
 				if saveErr := o.saveAndApply(ctx, unavailableSnapshot(subj, o.Clock(), err)); saveErr != nil && firstErr == nil {
 					firstErr = saveErr
 				}
@@ -191,6 +201,9 @@ func FactsFromSnapshot(s domain.SCMSnapshot) ports.SCMFacts {
 		CIPassing:   s.Mergeability.CIPassing,
 		Approved:    s.Mergeability.Approved,
 		NoConflicts: s.Mergeability.NoConflicts,
+		Conflict:    s.Mergeability.Conflict,
+		BehindBase:  s.Mergeability.BehindBase,
+		Unknown:     mergeabilityUnknown(s.Mergeability),
 		Blockers:    append([]string(nil), s.Mergeability.Blockers...),
 	}
 	for _, check := range s.CI.Checks {
@@ -208,6 +221,11 @@ func FactsFromSnapshot(s domain.SCMSnapshot) ports.SCMFacts {
 		}
 	}
 	return f
+}
+
+func mergeabilityUnknown(m domain.SCMMergeability) bool {
+	raw := strings.ToUpper(strings.TrimSpace(m.RawState))
+	return raw == "" || raw == "UNKNOWN"
 }
 
 func ciSummary(s string) ports.CISummary {

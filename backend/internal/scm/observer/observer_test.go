@@ -10,11 +10,14 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/scm/store"
 )
 
-type fakeProvider struct{ res ports.SCMObserveResult }
+type fakeProvider struct {
+	res ports.SCMObserveResult
+	err error
+}
 
 func (f fakeProvider) Provider() domain.SCMProvider { return domain.SCMProviderGitHub }
 func (f fakeProvider) ObserveSessions(context.Context, ports.SCMObserveRequest, ports.SCMProviderCache) (ports.SCMObserveResult, error) {
-	return f.res, nil
+	return f.res, f.err
 }
 
 type echoProvider struct {
@@ -85,6 +88,37 @@ func TestFactsFromUnavailableSnapshotIsNotFetched(t *testing.T) {
 	facts := FactsFromSnapshot(domain.SCMSnapshot{Freshness: domain.SCMFreshnessUnavailable})
 	if facts.Fetched {
 		t.Fatal("unavailable snapshot must project to Fetched=false")
+	}
+}
+
+func TestObserverPersistsProviderSnapshotsEvenWhenProviderReturnsError(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 5, 28, 12, 0, 0, 0, time.UTC)
+	subj := domain.SCMSubject{SessionID: "s1", ProjectID: "p1", Provider: domain.SCMProviderGitHub, Host: "github.com", Repo: "o/r", Branch: "feat/27", PRNumber: 7}
+	snap := domain.SCMSnapshot{
+		SessionID:  "s1",
+		Subject:    subj,
+		Freshness:  domain.SCMFreshnessUnavailable,
+		ObservedAt: now,
+		PR:         &domain.SCMPullRequest{Number: 7, URL: "https://github.com/o/r/pull/7", State: domain.PROpen},
+		CI:         domain.SCMCI{Summary: "passing"},
+		Review:     domain.SCMReview{UnresolvedThreads: []domain.SCMReviewThread{{ID: "thread-old"}}},
+	}
+	st := store.NewMemoryStore()
+	o := New(st, nil, fakeProvider{
+		res: ports.SCMObserveResult{ProviderName: domain.SCMProviderGitHub, Subjects: []domain.SCMSubject{subj}, Snapshots: []domain.SCMSnapshot{snap}},
+		err: &domain.SCMError{Kind: domain.SCMErrorNetwork, Operation: "github.graphql_pr_batch", Message: "down"},
+	})
+	o.Clock = func() time.Time { return now }
+	if err := o.Refresh(ctx, []domain.SCMSubject{subj}); err == nil {
+		t.Fatal("expected provider error")
+	}
+	latest, ok, err := st.GetLatestSnapshot(ctx, "s1")
+	if err != nil || !ok {
+		t.Fatalf("latest ok=%v err=%v", ok, err)
+	}
+	if latest.PR == nil || latest.PR.Number != 7 || latest.CI.Summary != "passing" || len(latest.Review.UnresolvedThreads) != 1 {
+		t.Fatalf("provider snapshot was not preserved: %+v", latest)
 	}
 }
 

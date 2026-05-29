@@ -16,9 +16,10 @@ type AuditSink interface {
 }
 
 // Refresher is satisfied by observer.Observer and intentionally mirrors the
-// small part commands need: invalidate caches and schedule a refresh.
+// small part commands need: schedule a refresh after provider-specific cache
+// invalidation has already been applied.
 type Refresher interface {
-	Invalidate(ctx context.Context, subject domain.SCMSubject, reason string) error
+	Refresh(ctx context.Context, subjects []domain.SCMSubject) error
 }
 
 type cacheInvalidationProvider interface {
@@ -77,6 +78,9 @@ func (s *Service) run(ctx context.Context, sessionID domain.SessionID, cmd ports
 	if !ok {
 		return ports.SCMCommandResult{}, fmt.Errorf("scm command: subject %s not found", sessionID)
 	}
+	if subj.PRNumber == 0 {
+		return ports.SCMCommandResult{}, &domain.SCMError{Kind: domain.SCMErrorNotFound, Operation: string(cmd), Message: "no change request bound to session"}
+	}
 	provider := s.Providers[subj.Provider]
 	if provider == nil {
 		return ports.SCMCommandResult{}, &domain.SCMError{Kind: domain.SCMErrorUnsupported, Operation: string(cmd), Message: fmt.Sprintf("provider %q not registered", subj.Provider)}
@@ -128,7 +132,7 @@ func (s *Service) run(ctx context.Context, sessionID domain.SessionID, cmd ports
 		return res, err
 	}
 	if s.Refresh != nil {
-		if err := s.Refresh.Invalidate(ctx, subj, string(cmd)); err != nil {
+		if err := s.Refresh.Refresh(ctx, []domain.SCMSubject{subj}); err != nil {
 			return res, err
 		}
 	}

@@ -39,6 +39,8 @@ type Provider struct {
 	host   string
 }
 
+type restCacheCommit func() error
+
 type ProviderOptions struct {
 	Client     *Client
 	HTTPClient *http.Client
@@ -74,35 +76,51 @@ func (p *Provider) ObserveSessions(ctx context.Context, req ports.SCMObserveRequ
 	}
 	var firstErr error
 	for _, subjects := range groups {
-		updated, err := p.discover(ctx, subjects, cache, now)
-		if err != nil && firstErr == nil {
-			firstErr = err
+		updated, discoverErr := p.discover(ctx, subjects, cache, now)
+		groupErr := discoverErr
+		if discoverErr != nil && firstErr == nil {
+			firstErr = discoverErr
 		}
 		res.Subjects = append(res.Subjects, updated...)
-		snaps, diags, rl, err := p.observeKnownPRs(ctx, updated, cache, now)
+		snaps, diags, rl, observeErr := p.observeKnownPRs(ctx, updated, cache, now)
 		res.Snapshots = append(res.Snapshots, snaps...)
 		res.Diagnostics = append(res.Diagnostics, diags...)
 		if rl != nil {
 			res.RateLimit = rl
 		}
-		if err != nil && firstErr == nil {
-			firstErr = err
+		if observeErr != nil {
+			if groupErr == nil {
+				groupErr = observeErr
+			}
+			if firstErr == nil {
+				firstErr = observeErr
+			}
 		}
 		for _, subj := range updated {
 			key := domain.SCMPollStateKey{Provider: subj.Provider, Host: subj.Host, Repo: subj.Repo}
 			st := domain.SCMPollState{Key: key}
-			if err != nil {
-				st.ConsecutiveFail = 1
+			if reader, ok := cache.(pollStateReader); ok {
+				if prev, ok, readErr := reader.GetPollState(ctx, key); readErr == nil && ok {
+					st = prev
+				}
+			}
+			st.Key = key
+			if groupErr != nil {
+				st.ConsecutiveFail++
 				st.LastFailureAt = now
 				st.BackoffUntil = now.Add(30 * time.Second)
-				if se, ok := err.(*domain.SCMError); ok {
+				if se, ok := groupErr.(*domain.SCMError); ok {
 					st.LastError = se
 					if se.Kind == domain.SCMErrorRateLimited && !se.RetryAfter.IsZero() {
 						st.RateLimitUntil = se.RetryAfter
 					}
 				}
 			} else {
+				st.ConsecutiveFail = 0
 				st.LastSuccessAt = now
+				st.LastError = nil
+				st.BackoffUntil = time.Time{}
+				st.RateLimitUntil = time.Time{}
 			}
 			res.PollStates = append(res.PollStates, st)
 		}
@@ -194,16 +212,16 @@ func (p *Provider) discover(ctx context.Context, subjects []domain.SCMSubject, c
 	return out, nil
 }
 
-func (p *Provider) checkOpenPullListChanged(ctx context.Context, cache ports.SCMProviderCache, scope domain.SCMProviderCacheScope, owner, repo string, now time.Time) (bool, domain.SCMDiagnostic, error) {
+func (p *Provider) checkOpenPullListChanged(ctx context.Context, cache ports.SCMProviderCache, scope domain.SCMProviderCacheScope, owner, repo string, now time.Time) (bool, domain.SCMDiagnostic, restCacheCommit, error) {
 	cacheKey := domain.SCMProviderCacheKey{SCMProviderCacheScope: scope, Namespace: cachePRList, Key: "open-guard"}
 	entry, hasEntry, _ := cache.GetProviderCache(ctx, cacheKey)
 	q := url.Values{"state": []string{"open"}, "sort": []string{"updated"}, "direction": []string{"desc"}, "per_page": []string{"1"}}
 	resp, err := p.client.DoREST(ctx, http.MethodGet, repoPath(owner, repo, "pulls"), q, nil, entry.ETag, "github.pr_list_guard")
 	if err != nil {
-		return true, resp.Diagnostic, err
+		return true, resp.Diagnostic, nil, err
 	}
-	_ = updateRESTCache(ctx, cache, cacheKey, entry, hasEntry, resp, now)
-	return !resp.NotModified, resp.Diagnostic, nil
+	_, commit := prepareRESTCache(ctx, cache, cacheKey, entry, hasEntry, resp, now)
+	return !resp.NotModified, resp.Diagnostic, commit, nil
 }
 
 func (p *Provider) fetchOpenPullsForDiscovery(ctx context.Context, cache ports.SCMProviderCache, scope domain.SCMProviderCacheScope, owner, repo string, now time.Time) ([]restPull, bool, domain.SCMDiagnostic, error) {
@@ -215,11 +233,12 @@ func (p *Provider) fetchOpenPullsForDiscovery(ctx context.Context, cache ports.S
 		return nil, true, resp.Diagnostic, err
 	}
 	changed := !resp.NotModified
-	body := updateRESTCache(ctx, cache, cacheKey, entry, hasEntry, resp, now)
+	body, commit := prepareRESTCache(ctx, cache, cacheKey, entry, hasEntry, resp, now)
 	var pulls []restPull
 	if err := json.Unmarshal(body, &pulls); err != nil {
 		return nil, changed, resp.Diagnostic, &domain.SCMError{Kind: domain.SCMErrorParse, Operation: "github.pr_list_discovery", Message: err.Error(), Cause: err}
 	}
+	commitRESTCache(commit)
 	return pulls, changed, resp.Diagnostic, nil
 }
 
@@ -255,9 +274,9 @@ func latestSnapshots(ctx context.Context, cache ports.SCMProviderCache, subjects
 	return out
 }
 
-func (p *Provider) checkRunsChanged(ctx context.Context, cache ports.SCMProviderCache, subj domain.SCMSubject, headSHA string, now time.Time) (bool, domain.SCMDiagnostic, error) {
+func (p *Provider) checkRunsChanged(ctx context.Context, cache ports.SCMProviderCache, subj domain.SCMSubject, headSHA string, now time.Time) (bool, domain.SCMDiagnostic, restCacheCommit, error) {
 	if headSHA == "" {
-		return true, domain.SCMDiagnostic{}, nil
+		return true, domain.SCMDiagnostic{}, nil, nil
 	}
 	scope := subj.CacheScope()
 	key := domain.SCMProviderCacheKey{SCMProviderCacheScope: scope, Namespace: cacheCheckGuard, Key: headSHA}
@@ -266,15 +285,15 @@ func (p *Provider) checkRunsChanged(ctx context.Context, cache ports.SCMProvider
 	q := url.Values{"per_page": []string{"1"}}
 	resp, err := p.client.DoREST(ctx, http.MethodGet, repoPath(owner, repo, "commits", headSHA, "check-runs"), q, nil, entry.ETag, "github.check_runs_guard")
 	if err != nil {
-		return true, resp.Diagnostic, err
+		return true, resp.Diagnostic, nil, err
 	}
-	_ = updateRESTCache(ctx, cache, key, entry, hasEntry, resp, now)
-	return !resp.NotModified, resp.Diagnostic, nil
+	_, commit := prepareRESTCache(ctx, cache, key, entry, hasEntry, resp, now)
+	return !resp.NotModified, resp.Diagnostic, commit, nil
 }
 
-func (p *Provider) reviewCommentsChanged(ctx context.Context, cache ports.SCMProviderCache, subj domain.SCMSubject, now time.Time) (bool, domain.SCMDiagnostic, error) {
+func (p *Provider) reviewCommentsChanged(ctx context.Context, cache ports.SCMProviderCache, subj domain.SCMSubject, now time.Time) (bool, domain.SCMDiagnostic, restCacheCommit, error) {
 	if subj.PRNumber == 0 {
-		return false, domain.SCMDiagnostic{}, nil
+		return false, domain.SCMDiagnostic{}, nil, nil
 	}
 	scope := subj.CacheScope()
 	key := domain.SCMProviderCacheKey{SCMProviderCacheScope: scope, Namespace: cacheReviews, Key: strconv.Itoa(subj.PRNumber)}
@@ -282,10 +301,10 @@ func (p *Provider) reviewCommentsChanged(ctx context.Context, cache ports.SCMPro
 	owner, repo := subj.Repository().OwnerName()
 	resp, err := p.client.DoREST(ctx, http.MethodGet, repoPath(owner, repo, "pulls", strconv.Itoa(subj.PRNumber), "comments"), nil, nil, entry.ETag, "github.review_comments_guard")
 	if err != nil {
-		return true, resp.Diagnostic, err
+		return true, resp.Diagnostic, nil, err
 	}
-	_ = updateRESTCache(ctx, cache, key, entry, hasEntry, resp, now)
-	return !resp.NotModified, resp.Diagnostic, nil
+	_, commit := prepareRESTCache(ctx, cache, key, entry, hasEntry, resp, now)
+	return !resp.NotModified, resp.Diagnostic, commit, nil
 }
 
 func chunkSubjects(subjects []domain.SCMSubject, size int) [][]domain.SCMSubject {
@@ -347,6 +366,10 @@ type snapshotReader interface {
 	GetLatestSnapshot(ctx context.Context, sessionID domain.SessionID) (domain.SCMSnapshot, bool, error)
 }
 
+type pollStateReader interface {
+	GetPollState(ctx context.Context, key domain.SCMPollStateKey) (domain.SCMPollState, bool, error)
+}
+
 func (p *Provider) observeKnownPRs(ctx context.Context, subjects []domain.SCMSubject, cache ports.SCMProviderCache, now time.Time) ([]domain.SCMSnapshot, []domain.SCMDiagnostic, *domain.SCMRateLimit, error) {
 	known := make([]domain.SCMSubject, 0, len(subjects))
 	snaps := make([]domain.SCMSnapshot, 0, len(subjects))
@@ -364,11 +387,13 @@ func (p *Provider) observeKnownPRs(ctx context.Context, subjects []domain.SCMSub
 	owner, repo := known[0].Repository().OwnerName()
 	latest := latestSnapshots(ctx, cache, known)
 	prListChanged := true
+	var prListCommit restCacheCommit
 	diags := []domain.SCMDiagnostic{}
 	if len(latest) > 0 {
 		scope := known[0].CacheScope()
-		changed, prListDiag, err := p.checkOpenPullListChanged(ctx, cache, scope, owner, repo, now)
+		changed, prListDiag, commit, err := p.checkOpenPullListChanged(ctx, cache, scope, owner, repo, now)
 		prListChanged = changed
+		prListCommit = commit
 		if prListDiag.Operation != "" {
 			diags = append(diags, prListDiag)
 		}
@@ -381,6 +406,8 @@ func (p *Provider) observeKnownPRs(ctx context.Context, subjects []domain.SCMSub
 
 	toFetch := known
 	reviewChangedBySession := map[domain.SessionID]bool{}
+	checkGuardCommits := map[domain.SessionID]restCacheCommit{}
+	reviewGuardCommits := map[domain.SessionID]restCacheCommit{}
 	if !prListChanged && len(latest) > 0 {
 		toFetch = toFetch[:0]
 		for _, subj := range known {
@@ -389,21 +416,25 @@ func (p *Provider) observeKnownPRs(ctx context.Context, subjects []domain.SCMSub
 				toFetch = append(toFetch, subj)
 				continue
 			}
-			changed, diag, err := p.checkRunsChanged(ctx, cache, subj, prev.PR.HeadSHA, now)
+			changed, diag, commit, err := p.checkRunsChanged(ctx, cache, subj, prev.PR.HeadSHA, now)
 			if diag.Operation != "" {
 				diags = append(diags, diag)
 			}
 			if err != nil || changed {
+				if err == nil && changed {
+					checkGuardCommits[subj.SessionID] = commit
+				}
 				toFetch = append(toFetch, subj)
 				continue
 			}
-			reviewChanged, diag, err := p.reviewCommentsChanged(ctx, cache, subj, now)
+			reviewChanged, diag, commit, err := p.reviewCommentsChanged(ctx, cache, subj, now)
 			if diag.Operation != "" {
 				diags = append(diags, diag)
 			}
 			if err != nil || reviewChanged {
 				if err == nil && reviewChanged {
 					reviewChangedBySession[subj.SessionID] = true
+					reviewGuardCommits[subj.SessionID] = commit
 				}
 				toFetch = append(toFetch, subj)
 				continue
@@ -421,6 +452,7 @@ func (p *Provider) observeKnownPRs(ctx context.Context, subjects []domain.SCMSub
 
 	var firstErr error
 	var lastRL *domain.SCMRateLimit
+	mainFetchOK := true
 	for _, batch := range chunkSubjects(toFetch, maxGraphQLBatchSize) {
 		data, rl, diag, err := p.fetchPRBatch(ctx, owner, repo, batch)
 		if diag.Operation != "" {
@@ -430,6 +462,7 @@ func (p *Provider) observeKnownPRs(ctx context.Context, subjects []domain.SCMSub
 			lastRL = rl
 		}
 		if err != nil {
+			mainFetchOK = false
 			if firstErr == nil {
 				firstErr = err
 			}
@@ -448,6 +481,7 @@ func (p *Provider) observeKnownPRs(ctx context.Context, subjects []domain.SCMSub
 		for _, subj := range batch {
 			prData, _ := data[aliasFor(subj.PRNumber)].(map[string]any)
 			if prData == nil {
+				mainFetchOK = false
 				err := &domain.SCMError{Kind: domain.SCMErrorNotFound, Operation: "github.graphql_pr", Message: "pull request not found"}
 				if prev, ok := latest[subj.SessionID]; ok {
 					prev.ObservedAt = now
@@ -466,13 +500,16 @@ func (p *Provider) observeKnownPRs(ctx context.Context, subjects []domain.SCMSub
 				if checkDiag.Operation != "" {
 					snap.Diagnostics = append(snap.Diagnostics, checkDiag)
 				}
-				if err == nil && len(checks) > 0 {
+				if err == nil {
 					snap.CI.Checks = checks
 					snap.CI.Summary = summarizeChecks(checks)
+					commitRESTCache(checkGuardCommits[subj.SessionID])
 				} else if err != nil && havePrev && prev.PR != nil && prev.PR.HeadSHA == snap.PR.HeadSHA {
 					snap.CI = prev.CI
 					snap.Diagnostics = append(snap.Diagnostics, diagnosticFromError("github.check_runs", err))
 				}
+			} else {
+				commitRESTCache(checkGuardCommits[subj.SessionID])
 			}
 			if snap.CI.Summary == "failing" {
 				if diag, err := p.enrichFailedCheckLogs(ctx, subj, &snap); err != nil {
@@ -500,14 +537,20 @@ func (p *Provider) observeKnownPRs(ctx context.Context, subjects []domain.SCMSub
 			case err == nil:
 				snap.Review.UnresolvedThreads = reviewThreads
 				classifyThreads(&snap.Review)
+				commitRESTCache(reviewGuardCommits[subj.SessionID])
 			case err != nil && havePrev:
 				snap.Review.UnresolvedThreads = prev.Review.UnresolvedThreads
 				classifyThreads(&snap.Review)
+				snap.Diagnostics = append(snap.Diagnostics, diagnosticFromError("github.review_threads", err))
+			case err != nil:
 				snap.Diagnostics = append(snap.Diagnostics, diagnosticFromError("github.review_threads", err))
 			}
 			finalizeMergeability(&snap)
 			snaps = append(snaps, snap)
 		}
+	}
+	if mainFetchOK {
+		commitRESTCache(prListCommit)
 	}
 	return snaps, diags, lastRL, firstErr
 }
@@ -706,11 +749,12 @@ func (p *Provider) fetchCheckRuns(ctx context.Context, cache ports.SCMProviderCa
 	key := domain.SCMProviderCacheKey{SCMProviderCacheScope: scope, Namespace: cacheChecks, Key: snap.PR.HeadSHA}
 	entry, hasEntry, _ := cache.GetProviderCache(ctx, key)
 	owner, repo := subj.Repository().OwnerName()
-	resp, err := p.client.DoREST(ctx, http.MethodGet, repoPath(owner, repo, "commits", snap.PR.HeadSHA, "check-runs"), nil, nil, entry.ETag, "github.check_runs")
+	q := url.Values{"per_page": []string{"100"}}
+	resp, err := p.client.DoREST(ctx, http.MethodGet, repoPath(owner, repo, "commits", snap.PR.HeadSHA, "check-runs"), q, nil, entry.ETag, "github.check_runs")
 	if err != nil {
 		return nil, resp.Diagnostic, err
 	}
-	body := updateRESTCache(ctx, cache, key, entry, hasEntry, resp, now)
+	body, commit := prepareRESTCache(ctx, cache, key, entry, hasEntry, resp, now)
 	var decoded struct {
 		CheckRuns []struct {
 			Name       string `json:"name"`
@@ -728,6 +772,7 @@ func (p *Provider) fetchCheckRuns(ctx context.Context, cache ports.SCMProviderCa
 	if err := json.Unmarshal(body, &decoded); err != nil {
 		return nil, resp.Diagnostic, &domain.SCMError{Kind: domain.SCMErrorParse, Operation: "github.check_runs", Message: err.Error(), Cause: err}
 	}
+	commitRESTCache(commit)
 	checks := make([]domain.SCMCheck, 0, len(decoded.CheckRuns))
 	for _, r := range decoded.CheckRuns {
 		checks = append(checks, domain.SCMCheck{Name: r.Name, Status: r.Status, Conclusion: r.Conclusion, URL: firstNonEmpty(r.HTMLURL, r.DetailsURL), Details: firstNonEmpty(r.Output.Title, r.Output.Summary), LogTail: tailLines(firstNonEmpty(r.Output.Text, r.Output.Summary), ciFailureLogTailLines)})
@@ -816,11 +861,12 @@ func (p *Provider) fetchReviewThreads(ctx context.Context, cache ports.SCMProvid
 	if err != nil {
 		return nil, diags, false, err
 	}
-	body := updateRESTCache(ctx, cache, key, entry, hasEntry, resp, now)
+	body, commit := prepareRESTCache(ctx, cache, key, entry, hasEntry, resp, now)
 	if resp.NotModified {
 		return nil, diags, false, nil
 	}
 	if reviewCommentsEmpty(body) {
+		commitRESTCache(commit)
 		return nil, diags, true, nil
 	}
 	threads, graphDiags, err := p.fetchReviewThreadsGraphQL(ctx, subj)
@@ -828,6 +874,7 @@ func (p *Provider) fetchReviewThreads(ctx context.Context, cache ports.SCMProvid
 	if err != nil {
 		return nil, diags, true, err
 	}
+	commitRESTCache(commit)
 	return threads, diags, true, nil
 }
 
@@ -1042,7 +1089,7 @@ func putCachedBranch(ctx context.Context, cache ports.SCMProviderCache, scope do
 	_ = putProviderCache(ctx, cache, domain.SCMProviderCacheEntry{Key: domain.SCMProviderCacheKey{SCMProviderCacheScope: scope, Namespace: cacheBranchMap, Key: branch}, Value: b, UpdatedAt: now})
 }
 
-func updateRESTCache(ctx context.Context, cache ports.SCMProviderCache, key domain.SCMProviderCacheKey, entry domain.SCMProviderCacheEntry, hasEntry bool, resp RESTResponse, now time.Time) []byte {
+func prepareRESTCache(ctx context.Context, cache ports.SCMProviderCache, key domain.SCMProviderCacheKey, entry domain.SCMProviderCacheEntry, hasEntry bool, resp RESTResponse, now time.Time) ([]byte, restCacheCommit) {
 	if resp.NotModified {
 		if hasEntry {
 			if resp.ETag != "" && resp.ETag != entry.ETag {
@@ -1050,13 +1097,18 @@ func updateRESTCache(ctx context.Context, cache ports.SCMProviderCache, key doma
 				entry.UpdatedAt = now
 				_ = putProviderCache(ctx, cache, entry)
 			}
-			return entry.Value
+			return entry.Value, nil
 		}
-		return resp.Body
+		return resp.Body, nil
 	}
-	entry = domain.SCMProviderCacheEntry{Key: key, ETag: resp.ETag, Value: append([]byte(nil), resp.Body...), UpdatedAt: now}
-	_ = putProviderCache(ctx, cache, entry)
-	return resp.Body
+	pending := domain.SCMProviderCacheEntry{Key: key, ETag: resp.ETag, Value: append([]byte(nil), resp.Body...), UpdatedAt: now}
+	return resp.Body, func() error { return putProviderCache(ctx, cache, pending) }
+}
+
+func commitRESTCache(commit restCacheCommit) {
+	if commit != nil {
+		_ = commit()
+	}
 }
 
 func putProviderCache(ctx context.Context, cache ports.SCMProviderCache, entry domain.SCMProviderCacheEntry) error {
