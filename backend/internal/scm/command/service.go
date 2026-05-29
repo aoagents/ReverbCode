@@ -117,6 +117,9 @@ func (s *Service) run(ctx context.Context, sessionID domain.SessionID, cmd ports
 	if err != nil {
 		return res, err
 	}
+	if cmd == ports.SCMCommandCheckout {
+		return res, nil
+	}
 	if err := s.invalidateAfterCommand(ctx, subj, cmd); err != nil {
 		return res, err
 	}

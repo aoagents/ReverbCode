@@ -28,8 +28,9 @@ func (f *fakeCommandProvider) Comment(context.Context, ports.SCMCommandRequest) 
 func (f *fakeCommandProvider) Assign(context.Context, ports.SCMCommandRequest) (ports.SCMCommandResult, error) {
 	return ports.SCMCommandResult{}, nil
 }
-func (f *fakeCommandProvider) Checkout(context.Context, ports.SCMCommandRequest) (ports.SCMCommandResult, error) {
-	return ports.SCMCommandResult{}, nil
+func (f *fakeCommandProvider) Checkout(_ context.Context, r ports.SCMCommandRequest) (ports.SCMCommandResult, error) {
+	f.called = ports.SCMCommandCheckout
+	return ports.SCMCommandResult{Provider: domain.SCMProviderGitHub, Command: r.Command, ChangeRequest: r.ChangeRequest}, nil
 }
 
 type fakeRefresh struct{ called bool }
@@ -65,5 +66,33 @@ func TestMergeInvalidatesProviderCacheAndRefreshes(t *testing.T) {
 	}
 	if !refresh.called {
 		t.Fatal("command should trigger observer refresh")
+	}
+}
+
+func TestCheckoutDoesNotInvalidateOrRefreshProviderCache(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	subj := domain.SCMSubject{SessionID: "s1", ProjectID: "p1", Provider: domain.SCMProviderGitHub, Host: "github.com", Repo: "o/r", Branch: "feat/27", PRNumber: 7, CredentialHash: "cred"}
+	if err := st.UpsertSubject(ctx, subj); err != nil {
+		t.Fatal(err)
+	}
+	key := domain.SCMProviderCacheKey{SCMProviderCacheScope: subj.CacheScope(), Namespace: "checks", Key: "sha"}
+	if err := st.PutProviderCache(ctx, domain.SCMProviderCacheEntry{Key: key, ETag: "etag"}); err != nil {
+		t.Fatal(err)
+	}
+	provider := &fakeCommandProvider{}
+	refresh := &fakeRefresh{}
+	svc := New(st, refresh, provider)
+	if _, err := svc.CheckoutChangeRequest(ctx, "s1", "/tmp/workspace"); err != nil {
+		t.Fatal(err)
+	}
+	if provider.called != ports.SCMCommandCheckout {
+		t.Fatalf("provider called=%s", provider.called)
+	}
+	if _, ok, _ := st.GetProviderCache(ctx, key); !ok {
+		t.Fatal("checkout should not invalidate provider cache")
+	}
+	if refresh.called {
+		t.Fatal("checkout should not trigger observer refresh")
 	}
 }

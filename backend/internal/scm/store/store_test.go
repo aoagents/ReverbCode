@@ -84,3 +84,24 @@ func TestFileStorePersistsSubjectsSnapshotsAndScopedCache(t *testing.T) {
 		t.Fatalf("reopened subject got=%+v ok=%v", got, ok)
 	}
 }
+
+func TestProviderCachePrunesOldestEntriesByNamespace(t *testing.T) {
+	ctx := context.Background()
+	base := time.Date(2026, 5, 28, 12, 0, 0, 0, time.UTC)
+	s := NewMemoryStore()
+	scope := domain.SCMProviderCacheScope{Provider: domain.SCMProviderGitHub, Host: "github.com", Repo: "ao/test", CredentialHash: "cred"}
+	for i := 0; i < defaultProviderCacheCaps["pr-list"]+5; i++ {
+		key := domain.SCMProviderCacheKey{SCMProviderCacheScope: scope, Namespace: "pr-list", Key: string(rune('a' + i))}
+		if err := s.PutProviderCache(ctx, domain.SCMProviderCacheEntry{Key: key, ETag: key.Key, UpdatedAt: base.Add(time.Duration(i) * time.Second)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	oldKey := domain.SCMProviderCacheKey{SCMProviderCacheScope: scope, Namespace: "pr-list", Key: string(rune('a'))}
+	if _, ok, _ := s.GetProviderCache(ctx, oldKey); ok {
+		t.Fatal("oldest pr-list cache entry should have been pruned")
+	}
+	newKey := domain.SCMProviderCacheKey{SCMProviderCacheScope: scope, Namespace: "pr-list", Key: string(rune('a' + defaultProviderCacheCaps["pr-list"] + 4))}
+	if _, ok, _ := s.GetProviderCache(ctx, newKey); !ok {
+		t.Fatal("newest pr-list cache entry should remain")
+	}
+}
