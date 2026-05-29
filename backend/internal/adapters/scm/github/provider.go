@@ -517,11 +517,6 @@ func (p *Provider) observeKnownPRs(ctx context.Context, subjects []domain.SCMSub
 				commitRESTCache(checkGuardCommits[subj.SessionID])
 			}
 			if snap.CI.Summary == "failing" {
-				if diag, err := p.enrichFailedCheckLogs(ctx, subj, &snap); err != nil {
-					snap.Diagnostics = append(snap.Diagnostics, diagnosticFromError("github.actions_job_logs", err))
-				} else if diag.Operation != "" {
-					snap.Diagnostics = append(snap.Diagnostics, diag)
-				}
 				snap.CI.FailureLogTail = combinedFailureTail(snap.CI.Checks)
 			}
 			reviewDiags := p.refreshReviewDetails(ctx, cache, subj, &snap, prev, havePrev, now)
@@ -839,71 +834,6 @@ func (p *Provider) refreshReviewDetails(ctx context.Context, cache ports.SCMProv
 	return diags
 }
 
-func (p *Provider) enrichFailedCheckLogs(ctx context.Context, subj domain.SCMSubject, snap *domain.SCMSnapshot) (domain.SCMDiagnostic, error) {
-	if snap == nil || snap.PR == nil || len(snap.CI.Checks) == 0 {
-		return domain.SCMDiagnostic{}, nil
-	}
-	owner, repo := subj.Repository().OwnerName()
-	seen := map[string]bool{}
-	var lastDiag domain.SCMDiagnostic
-	var firstErr error
-	for i := range snap.CI.Checks {
-		if !failedCheck(snap.CI.Checks[i]) {
-			continue
-		}
-		ref, ok := actionRunReferenceFromCheck(snap.CI.Checks[i])
-		if !ok || ref.jobID == "" {
-			continue
-		}
-		key := ref.runID + ":" + ref.jobID
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-		resp, err := p.client.DoREST(ctx, http.MethodGet, repoPath(owner, repo, "actions", "jobs", ref.jobID, "logs"), nil, nil, "", "github.actions_job_logs")
-		if resp.Diagnostic.Operation != "" {
-			lastDiag = resp.Diagnostic
-		}
-		if err != nil {
-			if firstErr == nil {
-				firstErr = err
-			}
-			continue
-		}
-		if tail := tailLines(string(resp.Body), ciFailureLogTailLines); tail != "" {
-			snap.CI.Checks[i].LogTail = tail
-		}
-	}
-	return lastDiag, firstErr
-}
-
-type actionRunReference struct {
-	runID string
-	jobID string
-}
-
-func actionRunReferenceFromCheck(check domain.SCMCheck) (actionRunReference, bool) {
-	rawURL := firstNonEmpty(check.URL, "")
-	if rawURL == "" {
-		return actionRunReference{}, false
-	}
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		return actionRunReference{}, false
-	}
-	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
-	var ref actionRunReference
-	for i := 0; i < len(parts); i++ {
-		if parts[i] == "runs" && i+1 < len(parts) && isDecimal(parts[i+1]) {
-			ref.runID = parts[i+1]
-		}
-		if parts[i] == "job" && i+1 < len(parts) && isDecimal(parts[i+1]) {
-			ref.jobID = parts[i+1]
-		}
-	}
-	return ref, ref.runID != "" && ref.jobID != ""
-}
-
 func (p *Provider) fetchReviewThreads(ctx context.Context, cache ports.SCMProviderCache, subj domain.SCMSubject, now time.Time) ([]domain.SCMReviewThread, []domain.SCMDiagnostic, bool, error) {
 	if subj.PRNumber == 0 {
 		return nil, nil, false, nil
@@ -1169,18 +1099,6 @@ func boolv(v any) bool {
 		return b
 	}
 	return false
-}
-
-func isDecimal(s string) bool {
-	if s == "" {
-		return false
-	}
-	for _, r := range s {
-		if r < '0' || r > '9' {
-			return false
-		}
-	}
-	return true
 }
 
 func containsString(values []string, want string) bool {

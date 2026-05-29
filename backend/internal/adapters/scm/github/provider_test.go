@@ -302,7 +302,7 @@ func TestGraphQLBatchNormalizationReviewAndMergeability(t *testing.T) {
 	}
 }
 
-func TestCompleteGraphQLCIContextsAvoidFullCheckRunsAndFetchJobLogs(t *testing.T) {
+func TestCompleteGraphQLCIContextsAvoidFullCheckRunsAndJobLogs(t *testing.T) {
 	var checkRunsCalls atomic.Int32
 	var logCalls atomic.Int32
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -316,7 +316,7 @@ func TestCompleteGraphQLCIContextsAvoidFullCheckRunsAndFetchJobLogs(t *testing.T
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"repository": map[string]any{"pr5": payload}}})
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/actions/jobs/20/logs":
 			logCalls.Add(1)
-			_, _ = w.Write([]byte(numberedLines(25)))
+			t.Fatalf("job logs should not be fetched from the SCM polling hot path")
 		case strings.Contains(r.URL.Path, "/check-runs"):
 			checkRunsCalls.Add(1)
 			t.Fatalf("full check-runs should not be fetched when GraphQL contexts are complete")
@@ -333,12 +333,11 @@ func TestCompleteGraphQLCIContextsAvoidFullCheckRunsAndFetchJobLogs(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if checkRunsCalls.Load() != 0 || logCalls.Load() != 1 {
+	if checkRunsCalls.Load() != 0 || logCalls.Load() != 0 {
 		t.Fatalf("checkRuns=%d logs=%d", checkRunsCalls.Load(), logCalls.Load())
 	}
-	tail := res.Snapshots[0].CI.Checks[0].LogTail
-	if strings.Contains(tail, "line-05") || !strings.Contains(tail, "line-06") || !strings.Contains(tail, "line-25") {
-		t.Fatalf("unexpected 20-line tail:\n%s", tail)
+	if got := res.Snapshots[0].CI.FailureLogTail; got != "" {
+		t.Fatalf("failure log tail should stay empty when only GraphQL check contexts were needed: %q", got)
 	}
 }
 
