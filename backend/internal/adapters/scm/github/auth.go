@@ -5,13 +5,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"os"
 	"os/exec"
 	"strings"
+	"sync"
 )
 
 // TokenSource supplies GitHub bearer tokens. It is intentionally tiny so tests
-// can inject a static token and production can use env/gh fallback.
+// can inject a static token and production can use gh auth.
 type TokenSource interface {
 	Token(ctx context.Context) (string, error)
 }
@@ -27,30 +27,37 @@ func (s StaticTokenSource) Token(context.Context) (string, error) {
 
 var ErrNoToken = errors.New("github scm: no token")
 
-type EnvTokenSource struct {
-	// EnvVars are checked before GITHUB_TOKEN. Values may name env vars whose
-	// values hold tokens, preserving the issue's configured-project-token order.
-	EnvVars []string
-	AllowGH bool
+// GHTokenSource uses `gh auth token` as the sole default production credential
+// source. The token is memoized because every REST/GraphQL request asks the
+// client for a token.
+type GHTokenSource struct {
+	mu      sync.Mutex
+	token   string
+	Command func(context.Context) ([]byte, error)
 }
 
-func (s EnvTokenSource) Token(ctx context.Context) (string, error) {
-	for _, name := range s.EnvVars {
-		if v := strings.TrimSpace(os.Getenv(name)); v != "" {
-			return v, nil
+func (s *GHTokenSource) Token(ctx context.Context) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.token != "" {
+		return s.token, nil
+	}
+	run := s.Command
+	if run == nil {
+		run = func(ctx context.Context) ([]byte, error) {
+			return exec.CommandContext(ctx, "gh", "auth", "token").Output()
 		}
 	}
-	if v := strings.TrimSpace(os.Getenv("GITHUB_TOKEN")); v != "" {
-		return v, nil
+	out, err := run(ctx)
+	if err != nil {
+		return "", err
 	}
-	if s.AllowGH {
-		cmd := exec.CommandContext(ctx, "gh", "auth", "token")
-		out, err := cmd.Output()
-		if err == nil && strings.TrimSpace(string(out)) != "" {
-			return strings.TrimSpace(string(out)), nil
-		}
+	token := strings.TrimSpace(string(out))
+	if token == "" {
+		return "", ErrNoToken
 	}
-	return "", ErrNoToken
+	s.token = token
+	return token, nil
 }
 
 func credentialHash(token string) string {

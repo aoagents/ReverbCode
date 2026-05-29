@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -46,6 +47,66 @@ func TestRESTETag200And304(t *testing.T) {
 	}
 }
 
+func TestGHTokenSourceMemoizesAndIgnoresGithubTokenEnv(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "env-token")
+	var calls atomic.Int32
+	src := &GHTokenSource{Command: func(context.Context) ([]byte, error) {
+		calls.Add(1)
+		return []byte("gh-token\n"), nil
+	}}
+	tok, err := src.Token(context.Background())
+	if err != nil || tok != "gh-token" {
+		t.Fatalf("token=%q err=%v", tok, err)
+	}
+	tok, err = src.Token(context.Background())
+	if err != nil || tok != "gh-token" {
+		t.Fatalf("second token=%q err=%v", tok, err)
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("gh auth token calls=%d, want 1", calls.Load())
+	}
+}
+
+func TestAuthFailureIsNormalized(t *testing.T) {
+	src := &GHTokenSource{Command: func(context.Context) ([]byte, error) { return nil, ErrNoToken }}
+	c := NewClient(ClientOptions{Token: src, RESTBase: "http://127.0.0.1:1"})
+	_, err := c.DoREST(context.Background(), http.MethodGet, "/x", nil, nil, "", "test")
+	var scmErr *domain.SCMError
+	if !errors.As(err, &scmErr) || scmErr.Kind != domain.SCMErrorAuthFailed {
+		t.Fatalf("err=%T %[1]v", err)
+	}
+}
+
+func TestRotatedETagOn304UpdatesCacheOnly(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("If-None-Match"); got != `"old"` {
+			t.Fatalf("If-None-Match=%q", got)
+		}
+		w.Header().Set("ETag", `"new"`)
+		w.WriteHeader(http.StatusNotModified)
+	}))
+	defer ts.Close()
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	scope := domain.SCMProviderCacheScope{Provider: domain.SCMProviderGitHub, Host: "github.com", Repo: "o/r", CredentialHash: "cred"}
+	key := domain.SCMProviderCacheKey{SCMProviderCacheScope: scope, Namespace: cachePRList, Key: "open-guard"}
+	if err := st.PutProviderCache(ctx, domain.SCMProviderCacheEntry{Key: key, ETag: `"old"`, Value: []byte(`[{"number":1}]`)}); err != nil {
+		t.Fatal(err)
+	}
+	p := NewProvider(ProviderOptions{RESTBase: ts.URL, GraphQLURL: ts.URL + "/graphql", Token: StaticTokenSource("token")})
+	changed, _, err := p.checkOpenPullListChanged(ctx, st, scope, "o", "r", time.Now())
+	if err != nil || changed {
+		t.Fatalf("changed=%v err=%v", changed, err)
+	}
+	got, ok, err := st.GetProviderCache(ctx, key)
+	if err != nil || !ok {
+		t.Fatalf("cache ok=%v err=%v", ok, err)
+	}
+	if got.ETag != `"new"` || string(got.Value) != `[{"number":1}]` {
+		t.Fatalf("cache=%+v body=%s", got, string(got.Value))
+	}
+}
+
 func TestBranchDiscoveryCachesPositiveMapping(t *testing.T) {
 	var pullListCalls atomic.Int32
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -84,6 +145,71 @@ func TestBranchDiscoveryCachesPositiveMapping(t *testing.T) {
 	}
 }
 
+func TestBranchDiscoveryExactFallbackAndNoNegativeCache(t *testing.T) {
+	var exactCalls atomic.Int32
+	var discoveryCalls atomic.Int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/pulls" && r.URL.Query().Get("head") == "":
+			discoveryCalls.Add(1)
+			_ = json.NewEncoder(w).Encode([]map[string]any{})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/pulls" && r.URL.Query().Get("head") == "o:feat/old":
+			exactCalls.Add(1)
+			_ = json.NewEncoder(w).Encode([]map[string]any{{"number": 9, "html_url": "https://github.com/o/r/pull/9", "head": map[string]any{"ref": "feat/old"}, "base": map[string]any{"ref": "main"}}})
+		case r.Method == http.MethodPost && r.URL.Path == "/graphql":
+			writeGraphQLPR(t, w, 9, "feat/old", "SUCCESS", "APPROVED", nil)
+		case strings.Contains(r.URL.Path, "/comments"):
+			_, _ = w.Write([]byte(`[]`))
+		default:
+			t.Fatalf("unexpected %s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
+		}
+	}))
+	defer ts.Close()
+	p := NewProvider(ProviderOptions{RESTBase: ts.URL, GraphQLURL: ts.URL + "/graphql", Token: StaticTokenSource("token")})
+	subj := domain.SCMSubject{SessionID: "s1", ProjectID: "p1", Provider: domain.SCMProviderGitHub, Host: "github.com", Repo: "o/r", Branch: "feat/old"}
+	res, err := p.ObserveSessions(context.Background(), observeReq(subj), store.NewMemoryStore())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Subjects) != 1 || res.Subjects[0].PRNumber != 9 {
+		t.Fatalf("subjects=%+v", res.Subjects)
+	}
+	if exactCalls.Load() != 1 || discoveryCalls.Load() != 1 {
+		t.Fatalf("discovery=%d exact=%d", discoveryCalls.Load(), exactCalls.Load())
+	}
+}
+
+func TestBranchDiscoveryDoesNotCacheMisses(t *testing.T) {
+	var exactCalls atomic.Int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/pulls" && r.URL.Query().Get("head") == "":
+			_ = json.NewEncoder(w).Encode([]map[string]any{})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/pulls" && r.URL.Query().Get("head") == "o:feat/missing":
+			exactCalls.Add(1)
+			_ = json.NewEncoder(w).Encode([]map[string]any{})
+		default:
+			t.Fatalf("unexpected %s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
+		}
+	}))
+	defer ts.Close()
+	p := NewProvider(ProviderOptions{RESTBase: ts.URL, GraphQLURL: ts.URL + "/graphql", Token: StaticTokenSource("token")})
+	st := store.NewMemoryStore()
+	subj := domain.SCMSubject{SessionID: "s1", ProjectID: "p1", Provider: domain.SCMProviderGitHub, Host: "github.com", Repo: "o/r", Branch: "feat/missing"}
+	for i := 0; i < 2; i++ {
+		res, err := p.ObserveSessions(context.Background(), observeReq(subj), st)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(res.Subjects) != 1 || res.Subjects[0].PRNumber != 0 {
+			t.Fatalf("subjects=%+v", res.Subjects)
+		}
+	}
+	if exactCalls.Load() != 2 {
+		t.Fatalf("exact fallback calls=%d, want 2", exactCalls.Load())
+	}
+}
+
 func TestGraphQLBatchNormalizationReviewAndMergeability(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -93,6 +219,18 @@ func TestGraphQLBatchNormalizationReviewAndMergeability(t *testing.T) {
 			}
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				t.Fatal(err)
+			}
+			if strings.Contains(req.Query, "reviewThreads") {
+				threads := []map[string]any{
+					{"id": "thread-human", "isResolved": false, "comments": map[string]any{"nodes": []map[string]any{{"id": "c1", "body": "please change", "url": "https://example/comment", "path": "main.go", "line": 12, "author": map[string]any{"login": "alice", "__typename": "User"}}}}},
+					{"id": "thread-bot", "isResolved": false, "comments": map[string]any{"nodes": []map[string]any{{"id": "c2", "body": "lint", "url": "https://example/bot", "path": "lint.go", "line": 1, "author": map[string]any{"login": "review-bot", "__typename": "Bot"}}}}},
+					{"id": "thread-resolved", "isResolved": true, "comments": map[string]any{"nodes": []map[string]any{{"id": "c3", "body": "done", "url": "https://example/done", "path": "done.go", "line": 1, "author": map[string]any{"login": "alice", "__typename": "User"}}}}},
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{
+					"repository": map[string]any{"pullRequest": map[string]any{"reviewThreads": map[string]any{"nodes": threads}}},
+					"rateLimit":  map[string]any{"limit": 5000, "remaining": 4999, "resetAt": "2026-05-28T13:00:00Z"},
+				}})
+				return
 			}
 			if strings.Contains(req.Query, "reviewThreads") || strings.Contains(req.Query, "comments(first") {
 				t.Fatalf("main batch query should not fetch review threads/comments: %s", req.Query)
@@ -131,11 +269,121 @@ func TestGraphQLBatchNormalizationReviewAndMergeability(t *testing.T) {
 	}
 }
 
+func TestCompleteGraphQLCIContextsAvoidFullCheckRunsAndFetchJobLogs(t *testing.T) {
+	var checkRunsCalls atomic.Int32
+	var logCalls atomic.Int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/graphql":
+			payload := graphQLPRPayload(5, "feat/27", "FAILURE", "APPROVED", nil)
+			withCheckContexts(payload, "FAILURE", map[string]any{
+				"nodes":    []map[string]any{{"__typename": "CheckRun", "name": "lint", "status": "COMPLETED", "conclusion": "FAILURE", "detailsUrl": "https://github.com/o/r/actions/runs/10/job/20"}},
+				"pageInfo": map[string]any{"hasNextPage": false},
+			})
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"repository": map[string]any{"pr5": payload}}})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/actions/jobs/20/logs":
+			logCalls.Add(1)
+			_, _ = w.Write([]byte(numberedLines(25)))
+		case strings.Contains(r.URL.Path, "/check-runs"):
+			checkRunsCalls.Add(1)
+			t.Fatalf("full check-runs should not be fetched when GraphQL contexts are complete")
+		case strings.Contains(r.URL.Path, "/comments"):
+			_, _ = w.Write([]byte(`[]`))
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer ts.Close()
+	p := NewProvider(ProviderOptions{RESTBase: ts.URL, GraphQLURL: ts.URL + "/graphql", Token: StaticTokenSource("token")})
+	subj := domain.SCMSubject{SessionID: "s1", ProjectID: "p1", Provider: domain.SCMProviderGitHub, Host: "github.com", Repo: "o/r", Branch: "feat/27", PRNumber: 5}
+	res, err := p.ObserveSessions(context.Background(), observeReq(subj), store.NewMemoryStore())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checkRunsCalls.Load() != 0 || logCalls.Load() != 1 {
+		t.Fatalf("checkRuns=%d logs=%d", checkRunsCalls.Load(), logCalls.Load())
+	}
+	tail := res.Snapshots[0].CI.Checks[0].LogTail
+	if strings.Contains(tail, "line-05") || !strings.Contains(tail, "line-06") || !strings.Contains(tail, "line-25") {
+		t.Fatalf("unexpected 20-line tail:\n%s", tail)
+	}
+}
+
+func TestTruncatedGraphQLCIContextsFetchFullCheckRuns(t *testing.T) {
+	var checkRunsCalls atomic.Int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/graphql":
+			payload := graphQLPRPayload(5, "feat/27", "FAILURE", "APPROVED", nil)
+			withCheckContexts(payload, "FAILURE", map[string]any{
+				"nodes":    []map[string]any{{"__typename": "CheckRun", "name": "first", "status": "COMPLETED", "conclusion": "SUCCESS", "detailsUrl": "https://checks/first"}},
+				"pageInfo": map[string]any{"hasNextPage": true},
+			})
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"repository": map[string]any{"pr5": payload}}})
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/check-runs"):
+			checkRunsCalls.Add(1)
+			_, _ = w.Write([]byte(`{"check_runs":[{"name":"late-failure","status":"completed","conclusion":"failure","html_url":"https://checks/late"}]}`))
+		case strings.Contains(r.URL.Path, "/comments"):
+			_, _ = w.Write([]byte(`[]`))
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer ts.Close()
+	p := NewProvider(ProviderOptions{RESTBase: ts.URL, GraphQLURL: ts.URL + "/graphql", Token: StaticTokenSource("token")})
+	subj := domain.SCMSubject{SessionID: "s1", ProjectID: "p1", Provider: domain.SCMProviderGitHub, Host: "github.com", Repo: "o/r", Branch: "feat/27", PRNumber: 5}
+	res, err := p.ObserveSessions(context.Background(), observeReq(subj), store.NewMemoryStore())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checkRunsCalls.Load() != 1 {
+		t.Fatalf("check-runs calls=%d", checkRunsCalls.Load())
+	}
+	if got := res.Snapshots[0].CI.Checks[0].Name; got != "late-failure" {
+		t.Fatalf("check name=%q", got)
+	}
+}
+
+func TestFailingCIWithoutFailedContextFetchesFullCheckRuns(t *testing.T) {
+	var checkRunsCalls atomic.Int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/graphql":
+			payload := graphQLPRPayload(5, "feat/27", "FAILURE", "APPROVED", nil)
+			withCheckContexts(payload, "FAILURE", map[string]any{
+				"nodes":    []map[string]any{{"__typename": "CheckRun", "name": "green", "status": "COMPLETED", "conclusion": "SUCCESS", "detailsUrl": "https://checks/green"}},
+				"pageInfo": map[string]any{"hasNextPage": false},
+			})
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"repository": map[string]any{"pr5": payload}}})
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/check-runs"):
+			checkRunsCalls.Add(1)
+			_, _ = w.Write([]byte(`{"check_runs":[{"name":"hidden-failure","status":"completed","conclusion":"failure","html_url":"https://checks/hidden"}]}`))
+		case strings.Contains(r.URL.Path, "/comments"):
+			_, _ = w.Write([]byte(`[]`))
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer ts.Close()
+	p := NewProvider(ProviderOptions{RESTBase: ts.URL, GraphQLURL: ts.URL + "/graphql", Token: StaticTokenSource("token")})
+	subj := domain.SCMSubject{SessionID: "s1", ProjectID: "p1", Provider: domain.SCMProviderGitHub, Host: "github.com", Repo: "o/r", Branch: "feat/27", PRNumber: 5}
+	res, err := p.ObserveSessions(context.Background(), observeReq(subj), store.NewMemoryStore())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checkRunsCalls.Load() != 1 || res.Snapshots[0].CI.Checks[0].Name != "hidden-failure" {
+		t.Fatalf("checkRuns=%d checks=%+v", checkRunsCalls.Load(), res.Snapshots[0].CI.Checks)
+	}
+}
+
 func TestETagGuardsReuseLatestSnapshotAndSkipGraphQL(t *testing.T) {
 	var graphQLCalls atomic.Int32
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/pulls":
+			if got := r.URL.Query().Get("per_page"); got != "1" {
+				t.Fatalf("pr-list guard per_page=%q", got)
+			}
 			if got := r.Header.Get("If-None-Match"); got != `"pulls"` {
 				t.Fatalf("pr-list If-None-Match = %q", got)
 			}
@@ -165,12 +413,12 @@ func TestETagGuardsReuseLatestSnapshotAndSkipGraphQL(t *testing.T) {
 	ctx := context.Background()
 	st := store.NewMemoryStore()
 	subj := domain.SCMSubject{SessionID: "s1", ProjectID: "p1", Provider: domain.SCMProviderGitHub, Host: "github.com", Repo: "o/r", Branch: "feat/27", PRNumber: 5, CredentialHash: "cred"}
-	snap := domain.SCMSnapshot{SessionID: "s1", Subject: subj, Freshness: domain.SCMFreshnessFresh, ObservedAt: time.Date(2026, 5, 28, 11, 0, 0, 0, time.UTC), PR: &domain.SCMPullRequest{Number: 5, URL: "https://github.com/o/r/pull/5", State: domain.PROpen, HeadSHA: "sha"}, CI: domain.SCMCI{Summary: "passing"}}
+	snap := domain.SCMSnapshot{SessionID: "s1", Subject: subj, Freshness: domain.SCMFreshnessFresh, ObservedAt: time.Date(2026, 5, 28, 11, 0, 0, 0, time.UTC), PR: &domain.SCMPullRequest{Number: 5, URL: "https://github.com/o/r/pull/5", State: domain.PROpen, HeadSHA: "sha"}, CI: domain.SCMCI{Summary: "passing"}, Review: domain.SCMReview{UnresolvedThreads: []domain.SCMReviewThread{{ID: "thread-1", Comments: []domain.SCMReviewComment{{ID: "c1", Author: "alice"}}}}}}
 	if _, _, err := st.SaveSnapshot(ctx, snap); err != nil {
 		t.Fatal(err)
 	}
 	pullsBody := []byte(`[{"number":5,"html_url":"https://github.com/o/r/pull/5","head":{"ref":"feat/27"},"base":{"ref":"main"}}]`)
-	if err := st.PutProviderCache(ctx, domain.SCMProviderCacheEntry{Key: domain.SCMProviderCacheKey{SCMProviderCacheScope: subj.CacheScope(), Namespace: cachePRList, Key: "open"}, ETag: `"pulls"`, Value: pullsBody, UpdatedAt: time.Now()}); err != nil {
+	if err := st.PutProviderCache(ctx, domain.SCMProviderCacheEntry{Key: domain.SCMProviderCacheKey{SCMProviderCacheScope: subj.CacheScope(), Namespace: cachePRList, Key: "open-guard"}, ETag: `"pulls"`, Value: pullsBody, UpdatedAt: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.PutProviderCache(ctx, domain.SCMProviderCacheEntry{Key: domain.SCMProviderCacheKey{SCMProviderCacheScope: subj.CacheScope(), Namespace: cacheCheckGuard, Key: "sha"}, ETag: `"checks"`, UpdatedAt: time.Now()}); err != nil {
@@ -190,6 +438,9 @@ func TestETagGuardsReuseLatestSnapshotAndSkipGraphQL(t *testing.T) {
 	}
 	if len(res.Snapshots) != 1 || res.Snapshots[0].Freshness != domain.SCMFreshnessUnchanged {
 		t.Fatalf("expected reused unchanged snapshot, got %+v", res.Snapshots)
+	}
+	if got := len(res.Snapshots[0].Review.UnresolvedThreads); got != 1 {
+		t.Fatalf("reused review threads=%d", got)
 	}
 }
 
@@ -262,6 +513,40 @@ func TestCommandCacheInvalidationsAreGitHubSpecific(t *testing.T) {
 	}
 }
 
+func TestMergeabilityIsConservativeForGitHubBlockers(t *testing.T) {
+	cases := []struct {
+		name       string
+		raw        string
+		mergeState string
+		draft      bool
+		blocker    string
+	}{
+		{name: "unknown", raw: "UNKNOWN", mergeState: "UNKNOWN", blocker: "merge status unknown (GitHub is computing)"},
+		{name: "empty", raw: "", mergeState: "", blocker: "merge status unknown (GitHub is computing)"},
+		{name: "blocked", raw: "MERGEABLE", mergeState: "BLOCKED", blocker: "merge blocked by branch protection"},
+		{name: "unstable", raw: "MERGEABLE", mergeState: "UNSTABLE", blocker: "required checks are failing"},
+		{name: "behind", raw: "MERGEABLE", mergeState: "BEHIND", blocker: "branch is behind base"},
+		{name: "conflict", raw: "CONFLICTING", mergeState: "DIRTY", blocker: "merge conflicts"},
+		{name: "draft", raw: "MERGEABLE", mergeState: "CLEAN", draft: true, blocker: "PR is still a draft"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			pr := map[string]any{"mergeable": tc.raw, "mergeStateStatus": tc.mergeState, "isDraft": tc.draft}
+			got := mergeabilityFromGraphQL(pr, domain.SCMCI{Summary: "passing"}, domain.SCMReview{Decision: "approved"})
+			if got.Mergeable {
+				t.Fatalf("expected not mergeable: %+v", got)
+			}
+			if !containsString(got.Blockers, tc.blocker) {
+				t.Fatalf("missing blocker %q in %+v", tc.blocker, got.Blockers)
+			}
+		})
+	}
+	got := mergeabilityFromGraphQL(map[string]any{"mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN"}, domain.SCMCI{Summary: "passing"}, domain.SCMReview{Decision: "approved"})
+	if !got.Mergeable || len(got.Blockers) != 0 {
+		t.Fatalf("expected clean mergeable: %+v", got)
+	}
+}
+
 func observeReq(subj domain.SCMSubject) ports.SCMObserveRequest {
 	return ports.SCMObserveRequest{Subjects: []domain.SCMSubject{subj}, Now: time.Date(2026, 5, 28, 12, 0, 0, 0, time.UTC)}
 }
@@ -304,4 +589,16 @@ func graphQLPRPayload(number int, branch, ciState, reviewDecision string, thread
 		"commits":          map[string]any{"nodes": []map[string]any{{"commit": commit}}},
 		"reviewThreads":    map[string]any{"nodes": threads},
 	}
+}
+
+func withCheckContexts(payload map[string]any, state string, contexts map[string]any) {
+	payload["commits"] = map[string]any{"nodes": []map[string]any{{"commit": map[string]any{"statusCheckRollup": map[string]any{"state": state, "contexts": contexts}}}}}
+}
+
+func numberedLines(n int) string {
+	var b strings.Builder
+	for i := 1; i <= n; i++ {
+		fmt.Fprintf(&b, "line-%02d\n", i)
+	}
+	return b.String()
 }
