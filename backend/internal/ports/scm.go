@@ -8,7 +8,7 @@ import (
 )
 
 // SCMProvider is the observation-side provider contract. Implementations own
-// provider-specific HTTP/GraphQL behavior and return normalized snapshots only;
+// provider-specific network/API behavior and return normalized snapshots only;
 // they do not import lifecycle/session packages.
 type SCMProvider interface {
 	Provider() domain.SCMProvider

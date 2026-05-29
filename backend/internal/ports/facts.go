@@ -14,6 +14,9 @@ import (
 // Fetched is the failed-fetch guard: when false, the provider query errored or
 // was rate-limited and the rest of the struct must NOT be interpreted as "no PR"
 // or "PR closed".
+//
+// CIFailureLogTail is a pointer because it is only populated when CI is failing;
+// it stays off the hot poll path unless a reaction needs failure context.
 type SCMFacts struct {
 	Fetched          bool
 	ObservedAt       time.Time

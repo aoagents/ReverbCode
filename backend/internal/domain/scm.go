@@ -9,14 +9,15 @@ import (
 	"time"
 )
 
-// SCMProvider identifies a source-control provider implementation. The Go
-// rewrite intentionally starts with GitHub as the first real provider, but the
-// normalized data model keeps the provider/host/repo identity explicit so later
+// SCMProvider identifies a source-control provider implementation. The
+// normalized data model keeps the provider/host/repo identity explicit so
 // providers cannot accidentally key by PR number alone.
 type SCMProvider string
 
 const (
-	SCMProviderGitHub SCMProvider = "github"
+	SCMProviderGitHub    SCMProvider = "github"
+	SCMProviderGitLab    SCMProvider = "gitlab"
+	SCMProviderBitbucket SCMProvider = "bitbucket"
 )
 
 // SCMFreshness describes whether an observation fetched current provider truth,
