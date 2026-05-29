@@ -20,6 +20,27 @@ func (p *Provider) Capabilities() ports.SCMCommandCapabilities {
 	return ports.SCMCommandCapabilities{Merge: true, Close: true, Comment: true, Assign: true, Checkout: true}
 }
 
+func (p *Provider) CacheInvalidationPrefixes(subj domain.SCMSubject, cmd ports.SCMCommand) []domain.SCMProviderCachePrefix {
+	scope := subj.CacheScope()
+	prefixes := []domain.SCMProviderCachePrefix{
+		{SCMProviderCacheScope: scope, Namespace: cachePRList},
+		{SCMProviderCacheScope: scope, Namespace: cacheBranchMap},
+	}
+	switch cmd {
+	case ports.SCMCommandMerge, ports.SCMCommandClose:
+		prefixes = append(prefixes,
+			domain.SCMProviderCachePrefix{SCMProviderCacheScope: scope, Namespace: cacheChecks},
+			domain.SCMProviderCachePrefix{SCMProviderCacheScope: scope, Namespace: cacheCheckGuard},
+			domain.SCMProviderCachePrefix{SCMProviderCacheScope: scope, Namespace: cacheReviews},
+		)
+	case ports.SCMCommandComment:
+		prefixes = append(prefixes, domain.SCMProviderCachePrefix{SCMProviderCacheScope: scope, Namespace: cacheReviews})
+	default:
+		return nil
+	}
+	return prefixes
+}
+
 func (p *Provider) Merge(ctx context.Context, req ports.SCMCommandRequest) (ports.SCMCommandResult, error) {
 	req = p.normalizeCommandRequest(ctx, req, ports.SCMCommandMerge)
 	owner, repo := req.Subject.Repository().OwnerName()

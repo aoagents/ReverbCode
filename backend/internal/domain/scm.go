@@ -337,6 +337,10 @@ type SCMProviderCacheEntry struct {
 	Value     json.RawMessage     `json:"value,omitempty"`
 	UpdatedAt time.Time           `json:"updatedAt"`
 	ExpiresAt time.Time           `json:"expiresAt,omitempty"`
+	// MaxEntries is an optional provider-owned retention hint. It is intentionally
+	// not persisted so durable cache records remain provider data, while the store
+	// only enforces the generic cap requested by the writer.
+	MaxEntries int `json:"-"`
 }
 
 func (e SCMProviderCacheEntry) Expired(now time.Time) bool {

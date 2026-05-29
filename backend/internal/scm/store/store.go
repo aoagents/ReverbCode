@@ -31,14 +31,6 @@ var _ ports.SCMStore = (*Store)(nil)
 
 type Option func(*Store)
 
-var defaultProviderCacheCaps = map[string]int{
-	"pr-list":      100,
-	"checks":       500,
-	"checks-guard": 500,
-	"reviews":      500,
-	"branch-map":   1000,
-}
-
 func WithClock(clock func() time.Time) Option {
 	return func(s *Store) {
 		if clock != nil {
@@ -298,12 +290,13 @@ func (s *Store) PutProviderCache(_ context.Context, entry domain.SCMProviderCach
 		entry.UpdatedAt = s.now()
 	}
 	s.data.ProviderCache[entry.Key.String()] = cloneCacheEntry(entry)
-	s.pruneProviderCacheLocked(entry.Key.Namespace)
+	if entry.MaxEntries > 0 {
+		s.pruneProviderCacheLocked(entry.Key.SCMProviderCacheScope, entry.Key.Namespace, entry.MaxEntries)
+	}
 	return s.persistLocked()
 }
 
-func (s *Store) pruneProviderCacheLocked(namespace string) {
-	capN := defaultProviderCacheCaps[namespace]
+func (s *Store) pruneProviderCacheLocked(scope domain.SCMProviderCacheScope, namespace string, capN int) {
 	if capN <= 0 {
 		return
 	}
@@ -312,8 +305,9 @@ func (s *Store) pruneProviderCacheLocked(namespace string) {
 		entry domain.SCMProviderCacheEntry
 	}
 	entries := make([]keyedEntry, 0)
+	prefix := domain.SCMProviderCachePrefix{SCMProviderCacheScope: scope, Namespace: namespace}
 	for key, entry := range s.data.ProviderCache {
-		if entry.Key.Namespace == namespace {
+		if prefix.Matches(entry.Key) {
 			entries = append(entries, keyedEntry{key: key, entry: entry})
 		}
 	}

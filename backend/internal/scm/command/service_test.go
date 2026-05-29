@@ -9,7 +9,10 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/scm/store"
 )
 
-type fakeCommandProvider struct{ called ports.SCMCommand }
+type fakeCommandProvider struct {
+	called        ports.SCMCommand
+	invalidations []domain.SCMProviderCachePrefix
+}
 
 func (f *fakeCommandProvider) Provider() domain.SCMProvider { return domain.SCMProviderGitHub }
 func (f *fakeCommandProvider) Capabilities() ports.SCMCommandCapabilities {
@@ -32,6 +35,9 @@ func (f *fakeCommandProvider) Checkout(_ context.Context, r ports.SCMCommandRequ
 	f.called = ports.SCMCommandCheckout
 	return ports.SCMCommandResult{Provider: domain.SCMProviderGitHub, Command: r.Command, ChangeRequest: r.ChangeRequest}, nil
 }
+func (f *fakeCommandProvider) CacheInvalidationPrefixes(domain.SCMSubject, ports.SCMCommand) []domain.SCMProviderCachePrefix {
+	return f.invalidations
+}
 
 type fakeRefresh struct{ called bool }
 
@@ -47,11 +53,11 @@ func TestMergeInvalidatesProviderCacheAndRefreshes(t *testing.T) {
 	if err := st.UpsertSubject(ctx, subj); err != nil {
 		t.Fatal(err)
 	}
-	key := domain.SCMProviderCacheKey{SCMProviderCacheScope: subj.CacheScope(), Namespace: "checks", Key: "sha"}
+	key := domain.SCMProviderCacheKey{SCMProviderCacheScope: subj.CacheScope(), Namespace: "provider-checks", Key: "sha"}
 	if err := st.PutProviderCache(ctx, domain.SCMProviderCacheEntry{Key: key, ETag: "etag"}); err != nil {
 		t.Fatal(err)
 	}
-	provider := &fakeCommandProvider{}
+	provider := &fakeCommandProvider{invalidations: []domain.SCMProviderCachePrefix{{SCMProviderCacheScope: subj.CacheScope(), Namespace: "provider-checks"}}}
 	refresh := &fakeRefresh{}
 	svc := New(st, refresh, provider)
 	res, err := svc.MergeChangeRequest(ctx, "s1", ports.SCMCommandRequest{})
@@ -76,7 +82,7 @@ func TestCheckoutDoesNotInvalidateOrRefreshProviderCache(t *testing.T) {
 	if err := st.UpsertSubject(ctx, subj); err != nil {
 		t.Fatal(err)
 	}
-	key := domain.SCMProviderCacheKey{SCMProviderCacheScope: subj.CacheScope(), Namespace: "checks", Key: "sha"}
+	key := domain.SCMProviderCacheKey{SCMProviderCacheScope: subj.CacheScope(), Namespace: "provider-checks", Key: "sha"}
 	if err := st.PutProviderCache(ctx, domain.SCMProviderCacheEntry{Key: key, ETag: "etag"}); err != nil {
 		t.Fatal(err)
 	}

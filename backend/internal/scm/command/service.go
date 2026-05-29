@@ -21,6 +21,10 @@ type Refresher interface {
 	Invalidate(ctx context.Context, subject domain.SCMSubject, reason string) error
 }
 
+type cacheInvalidationProvider interface {
+	CacheInvalidationPrefixes(subject domain.SCMSubject, cmd ports.SCMCommand) []domain.SCMProviderCachePrefix
+}
+
 type Service struct {
 	Store     ports.SCMStore
 	Providers map[domain.SCMProvider]ports.SCMCommandProvider
@@ -120,7 +124,7 @@ func (s *Service) run(ctx context.Context, sessionID domain.SessionID, cmd ports
 	if cmd == ports.SCMCommandCheckout {
 		return res, nil
 	}
-	if err := s.invalidateAfterCommand(ctx, subj, cmd); err != nil {
+	if err := s.invalidateAfterCommand(ctx, provider, subj, cmd); err != nil {
 		return res, err
 	}
 	if s.Refresh != nil {
@@ -131,18 +135,12 @@ func (s *Service) run(ctx context.Context, sessionID domain.SessionID, cmd ports
 	return res, nil
 }
 
-func (s *Service) invalidateAfterCommand(ctx context.Context, subj domain.SCMSubject, cmd ports.SCMCommand) error {
-	scope := subj.CacheScope()
-	prefixes := []domain.SCMProviderCachePrefix{{SCMProviderCacheScope: scope, Namespace: "pr-list"}, {SCMProviderCacheScope: scope, Namespace: "branch-map"}}
-	switch cmd {
-	case ports.SCMCommandMerge, ports.SCMCommandClose:
-		prefixes = append(prefixes,
-			domain.SCMProviderCachePrefix{SCMProviderCacheScope: scope, Namespace: "checks"},
-			domain.SCMProviderCachePrefix{SCMProviderCacheScope: scope, Namespace: "reviews"},
-		)
-	case ports.SCMCommandComment:
-		prefixes = append(prefixes, domain.SCMProviderCachePrefix{SCMProviderCacheScope: scope, Namespace: "reviews"})
+func (s *Service) invalidateAfterCommand(ctx context.Context, provider ports.SCMCommandProvider, subj domain.SCMSubject, cmd ports.SCMCommand) error {
+	invalidator, ok := provider.(cacheInvalidationProvider)
+	if !ok {
+		return nil
 	}
+	prefixes := invalidator.CacheInvalidationPrefixes(subj, cmd)
 	for _, p := range prefixes {
 		if err := s.Store.DeleteProviderCache(ctx, p); err != nil {
 			return err
