@@ -240,6 +240,28 @@ func TestGraphQLBatchIsCappedAtTwentyFivePRs(t *testing.T) {
 	}
 }
 
+func TestCommandCacheInvalidationsAreGitHubSpecific(t *testing.T) {
+	subj := domain.SCMSubject{SessionID: "s1", ProjectID: "p1", Provider: domain.SCMProviderGitHub, Host: "github.com", Repo: "o/r", Branch: "feat/27", PRNumber: 7}
+	prefixes := NewProvider(ProviderOptions{Token: StaticTokenSource("token")}).
+		CacheInvalidationPrefixes(subj, ports.SCMCommandMerge)
+	got := map[string]bool{}
+	for _, prefix := range prefixes {
+		got[prefix.Namespace] = true
+		if prefix.Provider != domain.SCMProviderGitHub || prefix.Repo != "o/r" {
+			t.Fatalf("bad prefix scope: %+v", prefix)
+		}
+	}
+	for _, namespace := range []string{cachePRList, cacheBranchMap, cacheChecks, cacheCheckGuard, cacheReviews} {
+		if !got[namespace] {
+			t.Fatalf("missing invalidation namespace %q in %+v", namespace, prefixes)
+		}
+	}
+	if got := NewProvider(ProviderOptions{Token: StaticTokenSource("token")}).
+		CacheInvalidationPrefixes(subj, ports.SCMCommandCheckout); got != nil {
+		t.Fatalf("checkout should not invalidate github caches: %+v", got)
+	}
+}
+
 func observeReq(subj domain.SCMSubject) ports.SCMObserveRequest {
 	return ports.SCMObserveRequest{Subjects: []domain.SCMSubject{subj}, Now: time.Date(2026, 5, 28, 12, 0, 0, 0, time.UTC)}
 }

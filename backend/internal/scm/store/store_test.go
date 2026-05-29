@@ -57,7 +57,7 @@ func TestFileStorePersistsSubjectsSnapshotsAndScopedCache(t *testing.T) {
 	if err := s.UpsertSubject(ctx, subj); err != nil {
 		t.Fatal(err)
 	}
-	keyA := domain.SCMProviderCacheKey{SCMProviderCacheScope: subj.CacheScope(), Namespace: "checks", Key: "sha"}
+	keyA := domain.SCMProviderCacheKey{SCMProviderCacheScope: subj.CacheScope(), Namespace: "provider-cache", Key: "sha"}
 	if err := s.PutProviderCache(ctx, domain.SCMProviderCacheEntry{Key: keyA, ETag: "a"}); err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func TestFileStorePersistsSubjectsSnapshotsAndScopedCache(t *testing.T) {
 	if err := s.PutProviderCache(ctx, domain.SCMProviderCacheEntry{Key: keyB, ETag: "b"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.DeleteProviderCache(ctx, domain.SCMProviderCachePrefix{SCMProviderCacheScope: subj.CacheScope(), Namespace: "checks"}); err != nil {
+	if err := s.DeleteProviderCache(ctx, domain.SCMProviderCachePrefix{SCMProviderCacheScope: subj.CacheScope(), Namespace: "provider-cache"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok, _ := s.GetProviderCache(ctx, keyA); ok {
@@ -90,18 +90,27 @@ func TestProviderCachePrunesOldestEntriesByNamespace(t *testing.T) {
 	base := time.Date(2026, 5, 28, 12, 0, 0, 0, time.UTC)
 	s := NewMemoryStore()
 	scope := domain.SCMProviderCacheScope{Provider: domain.SCMProviderGitHub, Host: "github.com", Repo: "ao/test", CredentialHash: "cred"}
-	for i := 0; i < defaultProviderCacheCaps["pr-list"]+5; i++ {
-		key := domain.SCMProviderCacheKey{SCMProviderCacheScope: scope, Namespace: "pr-list", Key: string(rune('a' + i))}
-		if err := s.PutProviderCache(ctx, domain.SCMProviderCacheEntry{Key: key, ETag: key.Key, UpdatedAt: base.Add(time.Duration(i) * time.Second)}); err != nil {
+	otherScope := domain.SCMProviderCacheScope{Provider: domain.SCMProviderGitHub, Host: "github.com", Repo: "ao/other", CredentialHash: "cred"}
+	capN := 3
+	for i := 0; i < capN+2; i++ {
+		key := domain.SCMProviderCacheKey{SCMProviderCacheScope: scope, Namespace: "provider-owned", Key: string(rune('a' + i))}
+		if err := s.PutProviderCache(ctx, domain.SCMProviderCacheEntry{Key: key, ETag: key.Key, UpdatedAt: base.Add(time.Duration(i) * time.Second), MaxEntries: capN}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	oldKey := domain.SCMProviderCacheKey{SCMProviderCacheScope: scope, Namespace: "pr-list", Key: string(rune('a'))}
-	if _, ok, _ := s.GetProviderCache(ctx, oldKey); ok {
-		t.Fatal("oldest pr-list cache entry should have been pruned")
+	otherKey := domain.SCMProviderCacheKey{SCMProviderCacheScope: otherScope, Namespace: "provider-owned", Key: "a"}
+	if err := s.PutProviderCache(ctx, domain.SCMProviderCacheEntry{Key: otherKey, ETag: "other", UpdatedAt: base, MaxEntries: capN}); err != nil {
+		t.Fatal(err)
 	}
-	newKey := domain.SCMProviderCacheKey{SCMProviderCacheScope: scope, Namespace: "pr-list", Key: string(rune('a' + defaultProviderCacheCaps["pr-list"] + 4))}
+	oldKey := domain.SCMProviderCacheKey{SCMProviderCacheScope: scope, Namespace: "provider-owned", Key: string(rune('a'))}
+	if _, ok, _ := s.GetProviderCache(ctx, oldKey); ok {
+		t.Fatal("oldest scoped cache entry should have been pruned")
+	}
+	newKey := domain.SCMProviderCacheKey{SCMProviderCacheScope: scope, Namespace: "provider-owned", Key: string(rune('a' + capN + 1))}
 	if _, ok, _ := s.GetProviderCache(ctx, newKey); !ok {
-		t.Fatal("newest pr-list cache entry should remain")
+		t.Fatal("newest scoped cache entry should remain")
+	}
+	if _, ok, _ := s.GetProviderCache(ctx, otherKey); !ok {
+		t.Fatal("cache cap should not prune another scope")
 	}
 }

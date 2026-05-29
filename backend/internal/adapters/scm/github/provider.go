@@ -24,6 +24,12 @@ const (
 
 	maxGraphQLBatchSize      = 25
 	graphQLCheckContextLimit = 20
+
+	cacheCapPRList     = 100
+	cacheCapChecks     = 500
+	cacheCapReviews    = 500
+	cacheCapBranchMap  = 1000
+	cacheCapCheckGuard = 500
 )
 
 type Provider struct {
@@ -191,7 +197,7 @@ func (p *Provider) fetchOpenPulls(ctx context.Context, cache ports.SCMProviderCa
 		body = entry.Value
 	} else {
 		body = resp.Body
-		_ = cache.PutProviderCache(ctx, domain.SCMProviderCacheEntry{Key: cacheKey, ETag: resp.ETag, Value: append([]byte(nil), resp.Body...), UpdatedAt: now})
+		_ = putProviderCache(ctx, cache, domain.SCMProviderCacheEntry{Key: cacheKey, ETag: resp.ETag, Value: append([]byte(nil), resp.Body...), UpdatedAt: now})
 	}
 	var pulls []restPull
 	if err := json.Unmarshal(body, &pulls); err != nil {
@@ -229,7 +235,7 @@ func (p *Provider) checkRunsChanged(ctx context.Context, cache ports.SCMProvider
 		return true, resp.Diagnostic, err
 	}
 	if !resp.NotModified {
-		_ = cache.PutProviderCache(ctx, domain.SCMProviderCacheEntry{Key: key, ETag: resp.ETag, Value: append([]byte(nil), resp.Body...), UpdatedAt: now})
+		_ = putProviderCache(ctx, cache, domain.SCMProviderCacheEntry{Key: key, ETag: resp.ETag, Value: append([]byte(nil), resp.Body...), UpdatedAt: now})
 	}
 	return !resp.NotModified, resp.Diagnostic, nil
 }
@@ -247,7 +253,7 @@ func (p *Provider) reviewCommentsChanged(ctx context.Context, cache ports.SCMPro
 		return true, resp.Diagnostic, err
 	}
 	if !resp.NotModified {
-		_ = cache.PutProviderCache(ctx, domain.SCMProviderCacheEntry{Key: key, ETag: resp.ETag, Value: append([]byte(nil), resp.Body...), UpdatedAt: now})
+		_ = putProviderCache(ctx, cache, domain.SCMProviderCacheEntry{Key: key, ETag: resp.ETag, Value: append([]byte(nil), resp.Body...), UpdatedAt: now})
 	}
 	return !resp.NotModified, resp.Diagnostic, nil
 }
@@ -613,7 +619,7 @@ func (p *Provider) fetchCheckRuns(ctx context.Context, cache ports.SCMProviderCa
 	if resp.NotModified && hasEntry {
 		body = entry.Value
 	} else {
-		_ = cache.PutProviderCache(ctx, domain.SCMProviderCacheEntry{Key: key, ETag: resp.ETag, Value: append([]byte(nil), resp.Body...), UpdatedAt: now})
+		_ = putProviderCache(ctx, cache, domain.SCMProviderCacheEntry{Key: key, ETag: resp.ETag, Value: append([]byte(nil), resp.Body...), UpdatedAt: now})
 	}
 	var decoded struct {
 		CheckRuns []struct {
@@ -655,7 +661,7 @@ func (p *Provider) fetchReviewComments(ctx context.Context, cache ports.SCMProvi
 	if resp.NotModified && hasEntry {
 		body = entry.Value
 	} else {
-		_ = cache.PutProviderCache(ctx, domain.SCMProviderCacheEntry{Key: key, ETag: resp.ETag, Value: append([]byte(nil), resp.Body...), UpdatedAt: now})
+		_ = putProviderCache(ctx, cache, domain.SCMProviderCacheEntry{Key: key, ETag: resp.ETag, Value: append([]byte(nil), resp.Body...), UpdatedAt: now})
 	}
 	var comments []struct {
 		ID                  int64  `json:"id"`
@@ -846,7 +852,29 @@ func getCachedBranch(ctx context.Context, cache ports.SCMProviderCache, scope do
 
 func putCachedBranch(ctx context.Context, cache ports.SCMProviderCache, scope domain.SCMProviderCacheScope, branch string, mapped branchMapping, now time.Time) {
 	b, _ := json.Marshal(mapped)
-	_ = cache.PutProviderCache(ctx, domain.SCMProviderCacheEntry{Key: domain.SCMProviderCacheKey{SCMProviderCacheScope: scope, Namespace: cacheBranchMap, Key: branch}, Value: b, UpdatedAt: now})
+	_ = putProviderCache(ctx, cache, domain.SCMProviderCacheEntry{Key: domain.SCMProviderCacheKey{SCMProviderCacheScope: scope, Namespace: cacheBranchMap, Key: branch}, Value: b, UpdatedAt: now})
+}
+
+func putProviderCache(ctx context.Context, cache ports.SCMProviderCache, entry domain.SCMProviderCacheEntry) error {
+	entry.MaxEntries = githubCacheCap(entry.Key.Namespace)
+	return cache.PutProviderCache(ctx, entry)
+}
+
+func githubCacheCap(namespace string) int {
+	switch namespace {
+	case cachePRList:
+		return cacheCapPRList
+	case cacheChecks:
+		return cacheCapChecks
+	case cacheReviews:
+		return cacheCapReviews
+	case cacheBranchMap:
+		return cacheCapBranchMap
+	case cacheCheckGuard:
+		return cacheCapCheckGuard
+	default:
+		return 0
+	}
 }
 
 func findPullForBranch(pulls []restPull, branch string) (branchMapping, bool) {
