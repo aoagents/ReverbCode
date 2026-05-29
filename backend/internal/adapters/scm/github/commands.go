@@ -104,18 +104,38 @@ func (p *Provider) Checkout(ctx context.Context, req ports.SCMCommandRequest) (p
 		return res, nil
 	}
 	branch := fmt.Sprintf("pr-%d", req.ChangeRequest.Number)
-	cmd := exec.CommandContext(ctx, "git", "fetch", "origin", fmt.Sprintf("pull/%d/head:%s", req.ChangeRequest.Number, branch))
-	cmd.Dir = req.WorkspacePath
+	if err := checkoutWithGit(ctx, req.WorkspacePath, req.ChangeRequest.Number, branch); err == nil {
+		res.Message = "checked out " + branch
+		return res, nil
+	} else if ghErr := checkoutWithGH(ctx, req.WorkspacePath, req.ChangeRequest); ghErr == nil {
+		res.Message = "checked out with gh pr checkout"
+		return res, nil
+	} else {
+		return res, &domain.SCMError{Kind: domain.SCMErrorCommand, Operation: "github.command.checkout", Message: fmt.Sprintf("git checkout failed: %v; gh fallback failed: %v", err, ghErr), Cause: err}
+	}
+}
+
+func checkoutWithGit(ctx context.Context, workspacePath string, number int, branch string) error {
+	cmd := exec.CommandContext(ctx, "git", "fetch", "origin", fmt.Sprintf("pull/%d/head:%s", number, branch))
+	cmd.Dir = workspacePath
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return res, &domain.SCMError{Kind: domain.SCMErrorCommand, Operation: "github.command.checkout", Message: strings.TrimSpace(string(out)), Cause: err}
+		return fmt.Errorf("git fetch: %s: %w", strings.TrimSpace(string(out)), err)
 	}
 	cmd = exec.CommandContext(ctx, "git", "checkout", branch)
-	cmd.Dir = req.WorkspacePath
+	cmd.Dir = workspacePath
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return res, &domain.SCMError{Kind: domain.SCMErrorCommand, Operation: "github.command.checkout", Message: strings.TrimSpace(string(out)), Cause: err}
+		return fmt.Errorf("git checkout: %s: %w", strings.TrimSpace(string(out)), err)
 	}
-	res.Message = "checked out " + branch
-	return res, nil
+	return nil
+}
+
+func checkoutWithGH(ctx context.Context, workspacePath string, cr domain.SCMChangeRequestID) error {
+	cmd := exec.CommandContext(ctx, "gh", "pr", "checkout", strconv.Itoa(cr.Number), "--repo", cr.Repo)
+	cmd.Dir = workspacePath
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("gh pr checkout: %s: %w", strings.TrimSpace(string(out)), err)
+	}
+	return nil
 }
 
 func (p *Provider) normalizeCommandRequest(ctx context.Context, req ports.SCMCommandRequest, command ports.SCMCommand) ports.SCMCommandRequest {

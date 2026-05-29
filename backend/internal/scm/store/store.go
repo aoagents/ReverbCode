@@ -31,6 +31,14 @@ var _ ports.SCMStore = (*Store)(nil)
 
 type Option func(*Store)
 
+var defaultProviderCacheCaps = map[string]int{
+	"pr-list":      100,
+	"checks":       500,
+	"checks-guard": 500,
+	"reviews":      500,
+	"branch-map":   1000,
+}
+
 func WithClock(clock func() time.Time) Option {
 	return func(s *Store) {
 		if clock != nil {
@@ -290,7 +298,34 @@ func (s *Store) PutProviderCache(_ context.Context, entry domain.SCMProviderCach
 		entry.UpdatedAt = s.now()
 	}
 	s.data.ProviderCache[entry.Key.String()] = cloneCacheEntry(entry)
+	s.pruneProviderCacheLocked(entry.Key.Namespace)
 	return s.persistLocked()
+}
+
+func (s *Store) pruneProviderCacheLocked(namespace string) {
+	capN := defaultProviderCacheCaps[namespace]
+	if capN <= 0 {
+		return
+	}
+	type keyedEntry struct {
+		key   string
+		entry domain.SCMProviderCacheEntry
+	}
+	entries := make([]keyedEntry, 0)
+	for key, entry := range s.data.ProviderCache {
+		if entry.Key.Namespace == namespace {
+			entries = append(entries, keyedEntry{key: key, entry: entry})
+		}
+	}
+	if len(entries) <= capN {
+		return
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].entry.UpdatedAt.Before(entries[j].entry.UpdatedAt)
+	})
+	for _, old := range entries[:len(entries)-capN] {
+		delete(s.data.ProviderCache, old.key)
+	}
 }
 
 func (s *Store) DeleteProviderCache(_ context.Context, prefix domain.SCMProviderCachePrefix) error {

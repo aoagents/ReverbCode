@@ -16,10 +16,14 @@ import (
 )
 
 const (
-	cachePRList    = "pr-list"
-	cacheBranchMap = "branch-map"
-	cacheChecks    = "checks"
-	cacheReviews   = "reviews"
+	cachePRList     = "pr-list"
+	cacheBranchMap  = "branch-map"
+	cacheChecks     = "checks"
+	cacheReviews    = "reviews"
+	cacheCheckGuard = "checks-guard"
+
+	maxGraphQLBatchSize      = 25
+	graphQLCheckContextLimit = 20
 )
 
 type Provider struct {
@@ -148,22 +152,10 @@ func (p *Provider) discover(ctx context.Context, subjects []domain.SCMSubject, c
 		return out, nil
 	}
 
-	cacheKey := domain.SCMProviderCacheKey{SCMProviderCacheScope: scope, Namespace: cachePRList, Key: "open"}
-	entry, hasEntry, _ := cache.GetProviderCache(ctx, cacheKey)
 	owner, repo := out[0].Repository().OwnerName()
-	q := url.Values{"state": []string{"open"}, "per_page": []string{"100"}}
-	resp, err := p.client.DoREST(ctx, http.MethodGet, repoPath(owner, repo, "pulls"), q, nil, entry.ETag, "github.pr_list")
+	pulls, _, _, err := p.fetchOpenPulls(ctx, cache, scope, owner, repo, now)
 	if err != nil {
 		return out, err
-	}
-	var pulls []restPull
-	if resp.NotModified && hasEntry {
-		_ = json.Unmarshal(entry.Value, &pulls)
-	} else {
-		if err := json.Unmarshal(resp.Body, &pulls); err != nil {
-			return out, &domain.SCMError{Kind: domain.SCMErrorParse, Operation: "github.pr_list", Message: err.Error(), Cause: err}
-		}
-		_ = cache.PutProviderCache(ctx, domain.SCMProviderCacheEntry{Key: cacheKey, ETag: resp.ETag, Value: append([]byte(nil), resp.Body...), UpdatedAt: now})
 	}
 	for _, pr := range pulls {
 		if pr.Number <= 0 || pr.Head.Ref == "" {
@@ -185,6 +177,124 @@ func (p *Provider) discover(ctx context.Context, subjects []domain.SCMSubject, c
 	return out, nil
 }
 
+func (p *Provider) fetchOpenPulls(ctx context.Context, cache ports.SCMProviderCache, scope domain.SCMProviderCacheScope, owner, repo string, now time.Time) ([]restPull, bool, domain.SCMDiagnostic, error) {
+	cacheKey := domain.SCMProviderCacheKey{SCMProviderCacheScope: scope, Namespace: cachePRList, Key: "open"}
+	entry, hasEntry, _ := cache.GetProviderCache(ctx, cacheKey)
+	q := url.Values{"state": []string{"open"}, "sort": []string{"updated"}, "direction": []string{"desc"}, "per_page": []string{"100"}}
+	resp, err := p.client.DoREST(ctx, http.MethodGet, repoPath(owner, repo, "pulls"), q, nil, entry.ETag, "github.pr_list")
+	if err != nil {
+		return nil, true, resp.Diagnostic, err
+	}
+	var body []byte
+	changed := !resp.NotModified
+	if resp.NotModified && hasEntry {
+		body = entry.Value
+	} else {
+		body = resp.Body
+		_ = cache.PutProviderCache(ctx, domain.SCMProviderCacheEntry{Key: cacheKey, ETag: resp.ETag, Value: append([]byte(nil), resp.Body...), UpdatedAt: now})
+	}
+	var pulls []restPull
+	if err := json.Unmarshal(body, &pulls); err != nil {
+		return nil, changed, resp.Diagnostic, &domain.SCMError{Kind: domain.SCMErrorParse, Operation: "github.pr_list", Message: err.Error(), Cause: err}
+	}
+	return pulls, changed, resp.Diagnostic, nil
+}
+
+func latestSnapshots(ctx context.Context, cache ports.SCMProviderCache, subjects []domain.SCMSubject) map[domain.SessionID]domain.SCMSnapshot {
+	reader, ok := cache.(snapshotReader)
+	if !ok {
+		return nil
+	}
+	out := map[domain.SessionID]domain.SCMSnapshot{}
+	for _, subj := range subjects {
+		snap, ok, err := reader.GetLatestSnapshot(ctx, subj.SessionID)
+		if err == nil && ok {
+			out[subj.SessionID] = snap
+		}
+	}
+	return out
+}
+
+func (p *Provider) checkRunsChanged(ctx context.Context, cache ports.SCMProviderCache, subj domain.SCMSubject, headSHA string, now time.Time) (bool, domain.SCMDiagnostic, error) {
+	if headSHA == "" {
+		return true, domain.SCMDiagnostic{}, nil
+	}
+	scope := subj.CacheScope()
+	key := domain.SCMProviderCacheKey{SCMProviderCacheScope: scope, Namespace: cacheCheckGuard, Key: headSHA}
+	entry, _, _ := cache.GetProviderCache(ctx, key)
+	owner, repo := subj.Repository().OwnerName()
+	q := url.Values{"per_page": []string{"1"}}
+	resp, err := p.client.DoREST(ctx, http.MethodGet, repoPath(owner, repo, "commits", headSHA, "check-runs"), q, nil, entry.ETag, "github.check_runs_guard")
+	if err != nil {
+		return true, resp.Diagnostic, err
+	}
+	if !resp.NotModified {
+		_ = cache.PutProviderCache(ctx, domain.SCMProviderCacheEntry{Key: key, ETag: resp.ETag, Value: append([]byte(nil), resp.Body...), UpdatedAt: now})
+	}
+	return !resp.NotModified, resp.Diagnostic, nil
+}
+
+func (p *Provider) reviewCommentsChanged(ctx context.Context, cache ports.SCMProviderCache, subj domain.SCMSubject, now time.Time) (bool, domain.SCMDiagnostic, error) {
+	if subj.PRNumber == 0 {
+		return false, domain.SCMDiagnostic{}, nil
+	}
+	scope := subj.CacheScope()
+	key := domain.SCMProviderCacheKey{SCMProviderCacheScope: scope, Namespace: cacheReviews, Key: strconv.Itoa(subj.PRNumber)}
+	entry, _, _ := cache.GetProviderCache(ctx, key)
+	owner, repo := subj.Repository().OwnerName()
+	resp, err := p.client.DoREST(ctx, http.MethodGet, repoPath(owner, repo, "pulls", strconv.Itoa(subj.PRNumber), "comments"), nil, nil, entry.ETag, "github.review_comments_guard")
+	if err != nil {
+		return true, resp.Diagnostic, err
+	}
+	if !resp.NotModified {
+		_ = cache.PutProviderCache(ctx, domain.SCMProviderCacheEntry{Key: key, ETag: resp.ETag, Value: append([]byte(nil), resp.Body...), UpdatedAt: now})
+	}
+	return !resp.NotModified, resp.Diagnostic, nil
+}
+
+func chunkSubjects(subjects []domain.SCMSubject, size int) [][]domain.SCMSubject {
+	if size <= 0 || len(subjects) <= size {
+		return [][]domain.SCMSubject{subjects}
+	}
+	out := make([][]domain.SCMSubject, 0, (len(subjects)+size-1)/size)
+	for start := 0; start < len(subjects); start += size {
+		end := start + size
+		if end > len(subjects) {
+			end = len(subjects)
+		}
+		out = append(out, subjects[start:end])
+	}
+	return out
+}
+
+func diagnosticFromError(operation string, err error) domain.SCMDiagnostic {
+	d := domain.SCMDiagnostic{Operation: operation, ErrorKind: domain.SCMErrorUnavailable, Message: fmt.Sprint(err)}
+	if se, ok := err.(*domain.SCMError); ok {
+		d.Operation = firstNonEmpty(se.Operation, operation)
+		d.ErrorKind = se.Kind
+		d.StatusCode = se.StatusCode
+	}
+	return d
+}
+
+func shouldFetchCheckRuns(snap domain.SCMSnapshot, prData map[string]any) bool {
+	if snap.PR == nil || snap.PR.HeadSHA == "" {
+		return false
+	}
+	return snap.CI.Summary == "failing" || checkContextsIncomplete(prData)
+}
+
+func checkContextsIncomplete(pr map[string]any) bool {
+	roll := statusRollup(pr)
+	contexts, _ := roll["contexts"].(map[string]any)
+	pageInfo, _ := contexts["pageInfo"].(map[string]any)
+	return boolv(pageInfo["hasNextPage"])
+}
+
+type snapshotReader interface {
+	GetLatestSnapshot(ctx context.Context, sessionID domain.SessionID) (domain.SCMSnapshot, bool, error)
+}
+
 func (p *Provider) observeKnownPRs(ctx context.Context, subjects []domain.SCMSubject, cache ports.SCMProviderCache, now time.Time) ([]domain.SCMSnapshot, []domain.SCMDiagnostic, *domain.SCMRateLimit, error) {
 	known := make([]domain.SCMSubject, 0, len(subjects))
 	snaps := make([]domain.SCMSnapshot, 0, len(subjects))
@@ -198,43 +308,138 @@ func (p *Provider) observeKnownPRs(ctx context.Context, subjects []domain.SCMSub
 	if len(known) == 0 {
 		return snaps, nil, nil, nil
 	}
+
 	owner, repo := known[0].Repository().OwnerName()
-	data, rl, diag, err := p.fetchPRBatch(ctx, owner, repo, known)
-	diags := []domain.SCMDiagnostic{diag}
-	if err != nil {
-		for _, subj := range known {
-			snaps = append(snaps, unavailableSnapshot(subj, now, err))
+	latest := latestSnapshots(ctx, cache, known)
+	prListChanged := true
+	diags := []domain.SCMDiagnostic{}
+	if len(latest) > 0 {
+		scope := known[0].CacheScope()
+		_, changed, prListDiag, err := p.fetchOpenPulls(ctx, cache, scope, owner, repo, now)
+		prListChanged = changed
+		if prListDiag.Operation != "" {
+			diags = append(diags, prListDiag)
 		}
-		return snaps, diags, rl, err
+		if err != nil {
+			// PR-list guard failures should not be terminal truth. Fall through to
+			// GraphQL so one failed optimization guard does not hide real PR changes.
+			prListChanged = true
+		}
 	}
-	for _, subj := range known {
-		prData, _ := data[aliasFor(subj.PRNumber)].(map[string]any)
-		if prData == nil {
-			snaps = append(snaps, unavailableSnapshot(subj, now, &domain.SCMError{Kind: domain.SCMErrorNotFound, Operation: "github.graphql_pr", Message: "pull request not found"}))
+
+	toFetch := known
+	if !prListChanged && len(latest) > 0 {
+		toFetch = toFetch[:0]
+		for _, subj := range known {
+			prev, ok := latest[subj.SessionID]
+			if !ok || prev.PR == nil || prev.PR.HeadSHA == "" {
+				toFetch = append(toFetch, subj)
+				continue
+			}
+			changed, diag, err := p.checkRunsChanged(ctx, cache, subj, prev.PR.HeadSHA, now)
+			if diag.Operation != "" {
+				diags = append(diags, diag)
+			}
+			if err != nil || changed {
+				toFetch = append(toFetch, subj)
+				continue
+			}
+			reviewChanged, diag, err := p.reviewCommentsChanged(ctx, cache, subj, now)
+			if diag.Operation != "" {
+				diags = append(diags, diag)
+			}
+			if err != nil || reviewChanged {
+				toFetch = append(toFetch, subj)
+				continue
+			}
+			reused := prev
+			reused.ObservedAt = now
+			reused.Freshness = domain.SCMFreshnessUnchanged
+			reused.Subject = subj
+			snaps = append(snaps, reused)
+		}
+	}
+	if len(toFetch) == 0 {
+		return snaps, diags, nil, nil
+	}
+
+	var firstErr error
+	var lastRL *domain.SCMRateLimit
+	for _, batch := range chunkSubjects(toFetch, maxGraphQLBatchSize) {
+		data, rl, diag, err := p.fetchPRBatch(ctx, owner, repo, batch)
+		if diag.Operation != "" {
+			diags = append(diags, diag)
+		}
+		if rl != nil {
+			lastRL = rl
+		}
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			for _, subj := range batch {
+				if prev, ok := latest[subj.SessionID]; ok {
+					prev.ObservedAt = now
+					prev.Freshness = domain.SCMFreshnessUnavailable
+					prev.Diagnostics = append(prev.Diagnostics, diagnosticFromError("github.graphql_pr_batch", err))
+					snaps = append(snaps, prev)
+				} else {
+					snaps = append(snaps, unavailableSnapshot(subj, now, err))
+				}
+			}
 			continue
 		}
-		snap := snapshotFromGraphQL(subj, prData, now)
-		checks, checkDiag, err := p.fetchCheckRuns(ctx, cache, subj, snap, now)
-		if checkDiag.Operation != "" {
-			snap.Diagnostics = append(snap.Diagnostics, checkDiag)
+		for _, subj := range batch {
+			prData, _ := data[aliasFor(subj.PRNumber)].(map[string]any)
+			if prData == nil {
+				err := &domain.SCMError{Kind: domain.SCMErrorNotFound, Operation: "github.graphql_pr", Message: "pull request not found"}
+				if prev, ok := latest[subj.SessionID]; ok {
+					prev.ObservedAt = now
+					prev.Freshness = domain.SCMFreshnessUnavailable
+					prev.Diagnostics = append(prev.Diagnostics, diagnosticFromError("github.graphql_pr", err))
+					snaps = append(snaps, prev)
+				} else {
+					snaps = append(snaps, unavailableSnapshot(subj, now, err))
+				}
+				continue
+			}
+			snap := snapshotFromGraphQL(subj, prData, now)
+			prev, havePrev := latest[subj.SessionID]
+			if shouldFetchCheckRuns(snap, prData) {
+				checks, checkDiag, err := p.fetchCheckRuns(ctx, cache, subj, snap, now)
+				if checkDiag.Operation != "" {
+					snap.Diagnostics = append(snap.Diagnostics, checkDiag)
+				}
+				if err == nil && len(checks) > 0 {
+					snap.CI.Checks = checks
+					snap.CI.Summary = summarizeChecks(checks)
+					snap.CI.FailureLogTail = combinedFailureTail(checks)
+				} else if err != nil && havePrev && prev.PR != nil && prev.PR.HeadSHA == snap.PR.HeadSHA {
+					snap.CI = prev.CI
+					snap.Diagnostics = append(snap.Diagnostics, diagnosticFromError("github.check_runs", err))
+				}
+			}
+			reviewThreads, reviewDiag, reviewChanged, err := p.fetchReviewComments(ctx, cache, subj, now)
+			if reviewDiag.Operation != "" {
+				snap.Diagnostics = append(snap.Diagnostics, reviewDiag)
+			}
+			switch {
+			case err == nil && !reviewChanged && havePrev && len(prev.Review.UnresolvedThreads) > 0:
+				snap.Review.UnresolvedThreads = prev.Review.UnresolvedThreads
+				classifyThreads(&snap.Review)
+			case err == nil && len(reviewThreads) > 0:
+				snap.Review.UnresolvedThreads = reviewThreads
+				classifyThreads(&snap.Review)
+			case err != nil && havePrev:
+				snap.Review.UnresolvedThreads = prev.Review.UnresolvedThreads
+				classifyThreads(&snap.Review)
+				snap.Diagnostics = append(snap.Diagnostics, diagnosticFromError("github.review_comments", err))
+			}
+			finalizeMergeability(&snap)
+			snaps = append(snaps, snap)
 		}
-		if err == nil && len(checks) > 0 {
-			snap.CI.Checks = checks
-			snap.CI.Summary = summarizeChecks(checks)
-			snap.CI.FailureLogTail = combinedFailureTail(checks)
-		}
-		reviewThreads, reviewDiag, err := p.fetchReviewComments(ctx, cache, subj, now)
-		if reviewDiag.Operation != "" {
-			snap.Diagnostics = append(snap.Diagnostics, reviewDiag)
-		}
-		if err == nil && len(reviewThreads) > 0 && len(snap.Review.UnresolvedThreads) == 0 {
-			snap.Review.UnresolvedThreads = reviewThreads
-			classifyThreads(&snap.Review)
-		}
-		finalizeMergeability(&snap)
-		snaps = append(snaps, snap)
 	}
-	return snaps, diags, rl, nil
+	return snaps, diags, lastRL, firstErr
 }
 
 func (p *Provider) fetchPRBatch(ctx context.Context, owner, repo string, subjects []domain.SCMSubject) (map[string]any, *domain.SCMRateLimit, domain.SCMDiagnostic, error) {
@@ -246,7 +451,7 @@ func (p *Provider) fetchPRBatch(ctx context.Context, owner, repo string, subject
 			continue
 		}
 		seen[subj.PRNumber] = true
-		fmt.Fprintf(&b, `%s: pullRequest(number:%d){ number title url state isDraft merged closed headRefName baseRefName headRefOid additions deletions mergeable reviewDecision mergeStateStatus commits(last:1){ nodes{ commit{ statusCheckRollup{ state contexts(first:50){ nodes{ __typename ... on CheckRun { name status conclusion detailsUrl url } ... on StatusContext { context state targetUrl } } } } } } } reviewThreads(first:50){ nodes{ id isResolved path line comments(first:20){ nodes{ id body url author{ __typename login } } } } } }`, aliasFor(subj.PRNumber), subj.PRNumber)
+		fmt.Fprintf(&b, `%s: pullRequest(number:%d){ number title url state isDraft merged closed headRefName baseRefName headRefOid additions deletions mergeable reviewDecision mergeStateStatus commits(last:1){ nodes{ commit{ statusCheckRollup{ state contexts(first:%d){ nodes{ __typename ... on CheckRun { name status conclusion detailsUrl url } ... on StatusContext { context state targetUrl } } pageInfo{ hasNextPage } } } } } } } }`, aliasFor(subj.PRNumber), subj.PRNumber, graphQLCheckContextLimit)
 	}
 	b.WriteString("} rateLimit{ limit remaining resetAt } }")
 	data, rl, diag, err := p.client.DoGraphQL(ctx, b.String(), map[string]any{"owner": owner, "repo": repo}, "github.graphql_pr_batch")
@@ -434,9 +639,9 @@ func (p *Provider) fetchCheckRuns(ctx context.Context, cache ports.SCMProviderCa
 	return checks, resp.Diagnostic, nil
 }
 
-func (p *Provider) fetchReviewComments(ctx context.Context, cache ports.SCMProviderCache, subj domain.SCMSubject, now time.Time) ([]domain.SCMReviewThread, domain.SCMDiagnostic, error) {
+func (p *Provider) fetchReviewComments(ctx context.Context, cache ports.SCMProviderCache, subj domain.SCMSubject, now time.Time) ([]domain.SCMReviewThread, domain.SCMDiagnostic, bool, error) {
 	if subj.PRNumber == 0 {
-		return nil, domain.SCMDiagnostic{}, nil
+		return nil, domain.SCMDiagnostic{}, false, nil
 	}
 	scope := subj.CacheScope()
 	key := domain.SCMProviderCacheKey{SCMProviderCacheScope: scope, Namespace: cacheReviews, Key: strconv.Itoa(subj.PRNumber)}
@@ -444,7 +649,7 @@ func (p *Provider) fetchReviewComments(ctx context.Context, cache ports.SCMProvi
 	owner, repo := subj.Repository().OwnerName()
 	resp, err := p.client.DoREST(ctx, http.MethodGet, repoPath(owner, repo, "pulls", strconv.Itoa(subj.PRNumber), "comments"), nil, nil, entry.ETag, "github.review_comments")
 	if err != nil {
-		return nil, resp.Diagnostic, err
+		return nil, resp.Diagnostic, false, err
 	}
 	body := resp.Body
 	if resp.NotModified && hasEntry {
@@ -466,7 +671,7 @@ func (p *Provider) fetchReviewComments(ctx context.Context, cache ports.SCMProvi
 		} `json:"user"`
 	}
 	if err := json.Unmarshal(body, &comments); err != nil {
-		return nil, resp.Diagnostic, &domain.SCMError{Kind: domain.SCMErrorParse, Operation: "github.review_comments", Message: err.Error(), Cause: err}
+		return nil, resp.Diagnostic, false, &domain.SCMError{Kind: domain.SCMErrorParse, Operation: "github.review_comments", Message: err.Error(), Cause: err}
 	}
 	threads := make([]domain.SCMReviewThread, 0, len(comments))
 	for _, c := range comments {
@@ -479,7 +684,7 @@ func (p *Provider) fetchReviewComments(ctx context.Context, cache ports.SCMProvi
 		comment := domain.SCMReviewComment{ID: strconv.FormatInt(c.ID, 10), Author: c.User.Login, Body: c.Body, URL: c.HTMLURL, IsBot: isBot, Path: c.Path, Line: line, ThreadID: threadID}
 		threads = append(threads, domain.SCMReviewThread{ID: threadID, Path: c.Path, Line: line, URL: c.HTMLURL, IsBot: isBot, Comments: []domain.SCMReviewComment{comment}})
 	}
-	return threads, resp.Diagnostic, nil
+	return threads, resp.Diagnostic, !resp.NotModified, nil
 }
 
 func repoPath(owner, repo string, elems ...string) string {
