@@ -44,7 +44,7 @@ func NewClient(opts ClientOptions) *Client {
 		c.httpClient = http.DefaultClient
 	}
 	if c.tokens == nil {
-		c.tokens = EnvTokenSource{AllowGH: true}
+		c.tokens = &GHTokenSource{}
 	}
 	if c.restBase == "" {
 		c.restBase = defaultRESTBaseURL
