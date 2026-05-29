@@ -16,22 +16,25 @@ import (
 )
 
 const (
-	cachePRList     = "pr-list"
-	cacheBranchMap  = "branch-map"
-	cacheChecks     = "checks"
-	cacheReviews    = "reviews"
-	cacheCheckGuard = "checks-guard"
+	cachePRList        = "pr-list"
+	cacheBranchMap     = "branch-map"
+	cacheChecks        = "checks"
+	cacheReviews       = "reviews"
+	cacheReviewDetails = "review-details"
+	cacheCheckGuard    = "checks-guard"
 
 	maxGraphQLBatchSize      = 25
 	graphQLCheckContextLimit = 20
 
-	cacheCapPRList     = 100
-	cacheCapChecks     = 500
-	cacheCapReviews    = 500
-	cacheCapBranchMap  = 1000
-	cacheCapCheckGuard = 500
+	cacheCapPRList        = 100
+	cacheCapChecks        = 500
+	cacheCapReviews       = 500
+	cacheCapReviewDetails = 500
+	cacheCapBranchMap     = 1000
+	cacheCapCheckGuard    = 500
 
 	ciFailureLogTailLines = 20
+	reviewDetailThrottle  = 2 * time.Minute
 )
 
 type Provider struct {
@@ -179,7 +182,7 @@ func (p *Provider) discover(ctx context.Context, subjects []domain.SCMSubject, c
 	}
 
 	owner, repo := out[0].Repository().OwnerName()
-	pulls, _, _, err := p.fetchOpenPullsForDiscovery(ctx, cache, scope, owner, repo, now)
+	pulls, changed, _, err := p.fetchOpenPullsForDiscovery(ctx, cache, scope, owner, repo, now)
 	if err != nil {
 		return out, err
 	}
@@ -198,6 +201,9 @@ func (p *Provider) discover(ctx context.Context, subjects []domain.SCMSubject, c
 			out[i].PRNumber = mapped.Number
 			out[i].PRURL = mapped.URL
 			out[i].BaseBranch = firstNonEmpty(out[i].BaseBranch, mapped.BaseBranch)
+			continue
+		}
+		if !changed {
 			continue
 		}
 		if mapped, ok, err := p.fetchPullForBranch(ctx, owner, repo, out[i].Branch); err != nil {
@@ -405,9 +411,7 @@ func (p *Provider) observeKnownPRs(ctx context.Context, subjects []domain.SCMSub
 	}
 
 	toFetch := known
-	reviewChangedBySession := map[domain.SessionID]bool{}
 	checkGuardCommits := map[domain.SessionID]restCacheCommit{}
-	reviewGuardCommits := map[domain.SessionID]restCacheCommit{}
 	if !prListChanged && len(latest) > 0 {
 		toFetch = toFetch[:0]
 		for _, subj := range known {
@@ -427,22 +431,12 @@ func (p *Provider) observeKnownPRs(ctx context.Context, subjects []domain.SCMSub
 				toFetch = append(toFetch, subj)
 				continue
 			}
-			reviewChanged, diag, commit, err := p.reviewCommentsChanged(ctx, cache, subj, now)
-			if diag.Operation != "" {
-				diags = append(diags, diag)
-			}
-			if err != nil || reviewChanged {
-				if err == nil && reviewChanged {
-					reviewChangedBySession[subj.SessionID] = true
-					reviewGuardCommits[subj.SessionID] = commit
-				}
-				toFetch = append(toFetch, subj)
-				continue
-			}
 			reused := prev
 			reused.ObservedAt = now
 			reused.Freshness = domain.SCMFreshnessUnchanged
 			reused.Subject = subj
+			reviewDiags := p.refreshReviewDetails(ctx, cache, subj, &reused, prev, true, now)
+			diags = append(diags, reviewDiags...)
 			snaps = append(snaps, reused)
 		}
 	}
@@ -467,6 +461,17 @@ func (p *Provider) observeKnownPRs(ctx context.Context, subjects []domain.SCMSub
 				firstErr = err
 			}
 			for _, subj := range batch {
+				if terminal, ok, fallbackDiag, fallbackErr := p.fetchTerminalPRFallback(ctx, subj, now); ok {
+					if fallbackDiag.Operation != "" {
+						terminal.Diagnostics = append(terminal.Diagnostics, fallbackDiag)
+					}
+					snaps = append(snaps, terminal)
+					continue
+				} else if fallbackDiag.Operation != "" {
+					diags = append(diags, fallbackDiag)
+				} else if fallbackErr != nil {
+					diags = append(diags, diagnosticFromError("github.rest_pr_fallback", fallbackErr))
+				}
 				if prev, ok := latest[subj.SessionID]; ok {
 					prev.ObservedAt = now
 					prev.Freshness = domain.SCMFreshnessUnavailable
@@ -519,32 +524,8 @@ func (p *Provider) observeKnownPRs(ctx context.Context, subjects []domain.SCMSub
 				}
 				snap.CI.FailureLogTail = combinedFailureTail(snap.CI.Checks)
 			}
-			var reviewThreads []domain.SCMReviewThread
-			var reviewDiags []domain.SCMDiagnostic
-			var reviewChangedNow bool
-			var err error
-			if reviewChangedBySession[subj.SessionID] {
-				reviewThreads, reviewDiags, err = p.fetchReviewThreadsGraphQL(ctx, subj)
-				reviewChangedNow = true
-			} else {
-				reviewThreads, reviewDiags, reviewChangedNow, err = p.fetchReviewThreads(ctx, cache, subj, now)
-			}
+			reviewDiags := p.refreshReviewDetails(ctx, cache, subj, &snap, prev, havePrev, now)
 			snap.Diagnostics = append(snap.Diagnostics, reviewDiags...)
-			switch {
-			case err == nil && !reviewChangedNow && havePrev:
-				snap.Review.UnresolvedThreads = prev.Review.UnresolvedThreads
-				classifyThreads(&snap.Review)
-			case err == nil:
-				snap.Review.UnresolvedThreads = reviewThreads
-				classifyThreads(&snap.Review)
-				commitRESTCache(reviewGuardCommits[subj.SessionID])
-			case err != nil && havePrev:
-				snap.Review.UnresolvedThreads = prev.Review.UnresolvedThreads
-				classifyThreads(&snap.Review)
-				snap.Diagnostics = append(snap.Diagnostics, diagnosticFromError("github.review_threads", err))
-			case err != nil:
-				snap.Diagnostics = append(snap.Diagnostics, diagnosticFromError("github.review_threads", err))
-			}
 			finalizeMergeability(&snap)
 			snaps = append(snaps, snap)
 		}
@@ -780,6 +761,84 @@ func (p *Provider) fetchCheckRuns(ctx context.Context, cache ports.SCMProviderCa
 	return checks, resp.Diagnostic, nil
 }
 
+type reviewDetailsCache struct {
+	Decision string                   `json:"decision,omitempty"`
+	Threads  []domain.SCMReviewThread `json:"threads,omitempty"`
+}
+
+func (p *Provider) refreshReviewDetails(ctx context.Context, cache ports.SCMProviderCache, subj domain.SCMSubject, snap *domain.SCMSnapshot, prev domain.SCMSnapshot, havePrev bool, now time.Time) []domain.SCMDiagnostic {
+	if snap == nil || subj.PRNumber == 0 {
+		return nil
+	}
+	cached, entry, hasCache := getCachedReviewDetails(ctx, cache, subj)
+	prevDecision := ""
+	if havePrev {
+		prevDecision = prev.Review.Decision
+	}
+	decisionChanged := havePrev && prevDecision != snap.Review.Decision
+	forceGraphQL := decisionChanged && (snap.Review.Decision == "changes_requested" || prevDecision == "changes_requested" || len(prev.Review.UnresolvedThreads) > 0)
+
+	attach := func(threads []domain.SCMReviewThread) {
+		snap.Review.UnresolvedThreads = cloneReviewThreads(threads)
+		classifyThreads(&snap.Review)
+	}
+	attachFallback := func() {
+		switch {
+		case hasCache:
+			attach(cached.Threads)
+		case havePrev:
+			attach(prev.Review.UnresolvedThreads)
+		default:
+			classifyThreads(&snap.Review)
+		}
+	}
+
+	if !forceGraphQL && hasCache && now.Sub(entry.UpdatedAt) < reviewDetailThrottle {
+		attach(cached.Threads)
+		return nil
+	}
+	if !forceGraphQL && !hasCache && havePrev && len(prev.Review.UnresolvedThreads) > 0 {
+		attach(prev.Review.UnresolvedThreads)
+		putCachedReviewDetails(ctx, cache, subj, snap.Review.Decision, prev.Review.UnresolvedThreads, now)
+		return nil
+	}
+
+	if forceGraphQL {
+		threads, diags, err := p.fetchReviewThreadsGraphQL(ctx, subj)
+		if err != nil {
+			attachFallback()
+			return append(diags, diagnosticFromError("github.review_threads", err))
+		}
+		attach(threads)
+		putCachedReviewDetails(ctx, cache, subj, snap.Review.Decision, threads, now)
+		return diags
+	}
+
+	threads, diags, changed, err := p.fetchReviewThreads(ctx, cache, subj, now)
+	if err != nil {
+		attachFallback()
+		return append(diags, diagnosticFromError("github.review_threads", err))
+	}
+	if changed {
+		attach(threads)
+		putCachedReviewDetails(ctx, cache, subj, snap.Review.Decision, threads, now)
+		return diags
+	}
+	if hasCache {
+		attach(cached.Threads)
+		touchCachedReviewDetails(ctx, cache, entry, now)
+		return diags
+	}
+	if havePrev {
+		attach(prev.Review.UnresolvedThreads)
+		putCachedReviewDetails(ctx, cache, subj, snap.Review.Decision, prev.Review.UnresolvedThreads, now)
+		return diags
+	}
+	attach(nil)
+	putCachedReviewDetails(ctx, cache, subj, snap.Review.Decision, nil, now)
+	return diags
+}
+
 func (p *Provider) enrichFailedCheckLogs(ctx context.Context, subj domain.SCMSubject, snap *domain.SCMSnapshot) (domain.SCMDiagnostic, error) {
 	if snap == nil || snap.PR == nil || len(snap.CI.Checks) == 0 {
 		return domain.SCMDiagnostic{}, nil
@@ -898,6 +957,71 @@ func (p *Provider) fetchReviewThreadsGraphQL(ctx context.Context, subj domain.SC
 	return review.UnresolvedThreads, diags, nil
 }
 
+func (p *Provider) fetchTerminalPRFallback(ctx context.Context, subj domain.SCMSubject, now time.Time) (domain.SCMSnapshot, bool, domain.SCMDiagnostic, error) {
+	if subj.PRNumber == 0 {
+		return domain.SCMSnapshot{}, false, domain.SCMDiagnostic{}, nil
+	}
+	owner, repo := subj.Repository().OwnerName()
+	resp, err := p.client.DoREST(ctx, http.MethodGet, repoPath(owner, repo, "pulls", strconv.Itoa(subj.PRNumber)), nil, nil, "", "github.rest_pr_fallback")
+	if err != nil {
+		return domain.SCMSnapshot{}, false, resp.Diagnostic, err
+	}
+	var decoded struct {
+		Number    int    `json:"number"`
+		HTMLURL   string `json:"html_url"`
+		Title     string `json:"title"`
+		State     string `json:"state"`
+		Draft     bool   `json:"draft"`
+		Merged    bool   `json:"merged"`
+		Additions int    `json:"additions"`
+		Deletions int    `json:"deletions"`
+		Head      struct {
+			Ref string `json:"ref"`
+			SHA string `json:"sha"`
+		} `json:"head"`
+		Base struct {
+			Ref string `json:"ref"`
+		} `json:"base"`
+	}
+	if err := json.Unmarshal(resp.Body, &decoded); err != nil {
+		return domain.SCMSnapshot{}, false, resp.Diagnostic, &domain.SCMError{Kind: domain.SCMErrorParse, Operation: "github.rest_pr_fallback", Message: err.Error(), Cause: err}
+	}
+	state := domain.PROpen
+	if decoded.Merged {
+		state = domain.PRMerged
+	} else if strings.EqualFold(decoded.State, "closed") {
+		state = domain.PRClosed
+	} else if decoded.Draft {
+		state = domain.PRDraft
+	}
+	if state != domain.PRMerged && state != domain.PRClosed {
+		return domain.SCMSnapshot{}, false, resp.Diagnostic, nil
+	}
+	number := decoded.Number
+	if number == 0 {
+		number = subj.PRNumber
+	}
+	url := firstNonEmpty(decoded.HTMLURL, subj.PRURL)
+	pull := &domain.SCMPullRequest{
+		ID:           domain.SCMChangeRequestID{Provider: subj.Provider, Host: subj.Host, Repo: subj.Repo, Number: number},
+		Number:       number,
+		URL:          url,
+		Title:        decoded.Title,
+		State:        state,
+		Draft:        decoded.Draft,
+		Merged:       decoded.Merged || state == domain.PRMerged,
+		SourceBranch: firstNonEmpty(decoded.Head.Ref, subj.Branch),
+		TargetBranch: firstNonEmpty(decoded.Base.Ref, subj.BaseBranch),
+		HeadSHA:      decoded.Head.SHA,
+		Additions:    decoded.Additions,
+		Deletions:    decoded.Deletions,
+	}
+	subj.PRNumber = number
+	subj.PRURL = url
+	subj.BaseBranch = firstNonEmpty(subj.BaseBranch, pull.TargetBranch)
+	return domain.SCMSnapshot{SessionID: subj.SessionID, Subject: subj, Freshness: domain.SCMFreshnessFresh, ObservedAt: now, PR: pull}, true, resp.Diagnostic, nil
+}
+
 func reviewCommentsEmpty(body []byte) bool {
 	var comments []json.RawMessage
 	if err := json.Unmarshal(body, &comments); err != nil {
@@ -985,6 +1109,20 @@ func classifyThreads(review *domain.SCMReview) {
 	if len(review.HumanComments) > 0 && review.Decision == "none" {
 		review.Decision = "changes_requested"
 	}
+}
+
+func cloneReviewThreads(in []domain.SCMReviewThread) []domain.SCMReviewThread {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]domain.SCMReviewThread, len(in))
+	for i := range in {
+		out[i] = in[i]
+		if len(in[i].Comments) > 0 {
+			out[i].Comments = append([]domain.SCMReviewComment(nil), in[i].Comments...)
+		}
+	}
+	return out
 }
 
 func threadIsBot(comments []domain.SCMReviewComment) bool {
@@ -1089,6 +1227,31 @@ func putCachedBranch(ctx context.Context, cache ports.SCMProviderCache, scope do
 	_ = putProviderCache(ctx, cache, domain.SCMProviderCacheEntry{Key: domain.SCMProviderCacheKey{SCMProviderCacheScope: scope, Namespace: cacheBranchMap, Key: branch}, Value: b, UpdatedAt: now})
 }
 
+func getCachedReviewDetails(ctx context.Context, cache ports.SCMProviderCache, subj domain.SCMSubject) (reviewDetailsCache, domain.SCMProviderCacheEntry, bool) {
+	key := domain.SCMProviderCacheKey{SCMProviderCacheScope: subj.CacheScope(), Namespace: cacheReviewDetails, Key: strconv.Itoa(subj.PRNumber)}
+	entry, ok, err := cache.GetProviderCache(ctx, key)
+	if err != nil || !ok {
+		return reviewDetailsCache{}, domain.SCMProviderCacheEntry{}, false
+	}
+	var cached reviewDetailsCache
+	if len(entry.Value) > 0 {
+		if err := json.Unmarshal(entry.Value, &cached); err != nil {
+			return reviewDetailsCache{}, domain.SCMProviderCacheEntry{}, false
+		}
+	}
+	return cached, entry, true
+}
+
+func putCachedReviewDetails(ctx context.Context, cache ports.SCMProviderCache, subj domain.SCMSubject, decision string, threads []domain.SCMReviewThread, now time.Time) {
+	b, _ := json.Marshal(reviewDetailsCache{Decision: decision, Threads: cloneReviewThreads(threads)})
+	_ = putProviderCache(ctx, cache, domain.SCMProviderCacheEntry{Key: domain.SCMProviderCacheKey{SCMProviderCacheScope: subj.CacheScope(), Namespace: cacheReviewDetails, Key: strconv.Itoa(subj.PRNumber)}, Value: b, UpdatedAt: now})
+}
+
+func touchCachedReviewDetails(ctx context.Context, cache ports.SCMProviderCache, entry domain.SCMProviderCacheEntry, now time.Time) {
+	entry.UpdatedAt = now
+	_ = putProviderCache(ctx, cache, entry)
+}
+
 func prepareRESTCache(ctx context.Context, cache ports.SCMProviderCache, key domain.SCMProviderCacheKey, entry domain.SCMProviderCacheEntry, hasEntry bool, resp RESTResponse, now time.Time) ([]byte, restCacheCommit) {
 	if resp.NotModified {
 		if hasEntry {
@@ -1124,6 +1287,8 @@ func githubCacheCap(namespace string) int {
 		return cacheCapChecks
 	case cacheReviews:
 		return cacheCapReviews
+	case cacheReviewDetails:
+		return cacheCapReviewDetails
 	case cacheBranchMap:
 		return cacheCapBranchMap
 	case cacheCheckGuard:

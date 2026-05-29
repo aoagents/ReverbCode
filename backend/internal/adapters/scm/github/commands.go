@@ -32,9 +32,13 @@ func (p *Provider) CacheInvalidationPrefixes(subj domain.SCMSubject, cmd ports.S
 			domain.SCMProviderCachePrefix{SCMProviderCacheScope: scope, Namespace: cacheChecks},
 			domain.SCMProviderCachePrefix{SCMProviderCacheScope: scope, Namespace: cacheCheckGuard},
 			domain.SCMProviderCachePrefix{SCMProviderCacheScope: scope, Namespace: cacheReviews},
+			domain.SCMProviderCachePrefix{SCMProviderCacheScope: scope, Namespace: cacheReviewDetails},
 		)
 	case ports.SCMCommandComment:
-		prefixes = append(prefixes, domain.SCMProviderCachePrefix{SCMProviderCacheScope: scope, Namespace: cacheReviews})
+		prefixes = append(prefixes,
+			domain.SCMProviderCachePrefix{SCMProviderCacheScope: scope, Namespace: cacheReviews},
+			domain.SCMProviderCachePrefix{SCMProviderCacheScope: scope, Namespace: cacheReviewDetails},
+		)
 	default:
 		return nil
 	}

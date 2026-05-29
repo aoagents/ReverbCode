@@ -210,6 +210,39 @@ func TestBranchDiscoveryDoesNotCacheMisses(t *testing.T) {
 	}
 }
 
+func TestBranchDiscoverySkipsExactFallbackWhenPRListUnchanged(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/pulls" && r.URL.Query().Get("head") == "":
+			if got := r.Header.Get("If-None-Match"); got != `"pulls"` {
+				t.Fatalf("If-None-Match=%q", got)
+			}
+			w.Header().Set("ETag", `"pulls"`)
+			w.WriteHeader(http.StatusNotModified)
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/pulls" && r.URL.Query().Get("head") != "":
+			t.Fatalf("exact fallback should be skipped on unchanged PR list")
+		default:
+			t.Fatalf("unexpected %s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
+		}
+	}))
+	defer ts.Close()
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	subj := domain.SCMSubject{SessionID: "s1", ProjectID: "p1", Provider: domain.SCMProviderGitHub, Host: "github.com", Repo: "o/r", Branch: "feat/missing", CredentialHash: "cred"}
+	key := domain.SCMProviderCacheKey{SCMProviderCacheScope: subj.CacheScope(), Namespace: cachePRList, Key: "open-discovery"}
+	if err := st.PutProviderCache(ctx, domain.SCMProviderCacheEntry{Key: key, ETag: `"pulls"`, Value: []byte(`[]`)}); err != nil {
+		t.Fatal(err)
+	}
+	p := NewProvider(ProviderOptions{RESTBase: ts.URL, GraphQLURL: ts.URL + "/graphql", Token: StaticTokenSource("token")})
+	res, err := p.ObserveSessions(ctx, observeReq(subj), st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Subjects) != 1 || res.Subjects[0].PRNumber != 0 {
+		t.Fatalf("subjects=%+v", res.Subjects)
+	}
+}
+
 func TestGraphQLBatchNormalizationReviewAndMergeability(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -401,12 +434,6 @@ func TestETagGuardsReuseLatestSnapshotAndSkipGraphQL(t *testing.T) {
 			}
 			w.Header().Set("ETag", `"checks"`)
 			w.WriteHeader(http.StatusNotModified)
-		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/comments"):
-			if got := r.Header.Get("If-None-Match"); got != `"reviews"` {
-				t.Fatalf("review guard If-None-Match = %q", got)
-			}
-			w.Header().Set("ETag", `"reviews"`)
-			w.WriteHeader(http.StatusNotModified)
 		case r.Method == http.MethodPost && r.URL.Path == "/graphql":
 			graphQLCalls.Add(1)
 			w.WriteHeader(http.StatusInternalServerError)
@@ -430,9 +457,7 @@ func TestETagGuardsReuseLatestSnapshotAndSkipGraphQL(t *testing.T) {
 	if err := st.PutProviderCache(ctx, domain.SCMProviderCacheEntry{Key: domain.SCMProviderCacheKey{SCMProviderCacheScope: subj.CacheScope(), Namespace: cacheCheckGuard, Key: "sha"}, ETag: `"checks"`, UpdatedAt: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.PutProviderCache(ctx, domain.SCMProviderCacheEntry{Key: domain.SCMProviderCacheKey{SCMProviderCacheScope: subj.CacheScope(), Namespace: cacheReviews, Key: "5"}, ETag: `"reviews"`, Value: []byte(`[]`), UpdatedAt: time.Now()}); err != nil {
-		t.Fatal(err)
-	}
+	putCachedReviewDetails(ctx, st, subj, "none", snap.Review.UnresolvedThreads, time.Date(2026, 5, 28, 11, 59, 0, 0, time.UTC))
 
 	p := NewProvider(ProviderOptions{RESTBase: ts.URL, GraphQLURL: ts.URL + "/graphql", Token: StaticTokenSource("token")})
 	res, err := p.ObserveSessions(ctx, observeReq(subj), st)
@@ -450,6 +475,193 @@ func TestETagGuardsReuseLatestSnapshotAndSkipGraphQL(t *testing.T) {
 	}
 }
 
+func TestReviewDetailsThrottleUsesCacheWithinTwoMinutes(t *testing.T) {
+	var graphQLCalls atomic.Int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/pulls":
+			w.Header().Set("ETag", `"pulls"`)
+			w.WriteHeader(http.StatusNotModified)
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/check-runs"):
+			w.Header().Set("ETag", `"checks"`)
+			w.WriteHeader(http.StatusNotModified)
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/comments"):
+			t.Fatalf("review comments should be throttled")
+		case r.Method == http.MethodPost && r.URL.Path == "/graphql":
+			graphQLCalls.Add(1)
+			t.Fatalf("GraphQL should be skipped")
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer ts.Close()
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	now := time.Date(2026, 5, 28, 12, 0, 0, 0, time.UTC)
+	subj := domain.SCMSubject{SessionID: "s1", ProjectID: "p1", Provider: domain.SCMProviderGitHub, Host: "github.com", Repo: "o/r", Branch: "feat/27", PRNumber: 5, CredentialHash: "cred"}
+	threads := []domain.SCMReviewThread{{ID: "thread-1", Comments: []domain.SCMReviewComment{{ID: "c1", Author: "alice"}}}}
+	snap := domain.SCMSnapshot{SessionID: "s1", Subject: subj, Freshness: domain.SCMFreshnessFresh, ObservedAt: now.Add(-time.Minute), PR: &domain.SCMPullRequest{Number: 5, State: domain.PROpen, HeadSHA: "sha"}, CI: domain.SCMCI{Summary: "passing"}, Review: domain.SCMReview{UnresolvedThreads: threads}}
+	if _, _, err := st.SaveSnapshot(ctx, snap); err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range []domain.SCMProviderCacheEntry{
+		{Key: domain.SCMProviderCacheKey{SCMProviderCacheScope: subj.CacheScope(), Namespace: cachePRList, Key: "open-guard"}, ETag: `"pulls"`, Value: []byte(`[{"number":5}]`)},
+		{Key: domain.SCMProviderCacheKey{SCMProviderCacheScope: subj.CacheScope(), Namespace: cacheCheckGuard, Key: "sha"}, ETag: `"checks"`},
+	} {
+		if err := st.PutProviderCache(ctx, entry); err != nil {
+			t.Fatal(err)
+		}
+	}
+	putCachedReviewDetails(ctx, st, subj, "none", threads, now.Add(-time.Minute))
+	p := NewProvider(ProviderOptions{RESTBase: ts.URL, GraphQLURL: ts.URL + "/graphql", Token: StaticTokenSource("token")})
+	res, err := p.ObserveSessions(ctx, ports.SCMObserveRequest{Subjects: []domain.SCMSubject{subj}, Now: now}, st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if graphQLCalls.Load() != 0 || len(res.Snapshots) != 1 || len(res.Snapshots[0].Review.UnresolvedThreads) != 1 {
+		t.Fatalf("calls=%d snapshots=%+v", graphQLCalls.Load(), res.Snapshots)
+	}
+}
+
+func TestReviewDetailsChecksETagAfterThrottleAndReusesOn304(t *testing.T) {
+	var commentCalls atomic.Int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/pulls":
+			w.Header().Set("ETag", `"pulls"`)
+			w.WriteHeader(http.StatusNotModified)
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/check-runs"):
+			w.Header().Set("ETag", `"checks"`)
+			w.WriteHeader(http.StatusNotModified)
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/comments"):
+			commentCalls.Add(1)
+			if got := r.Header.Get("If-None-Match"); got != `"reviews"` {
+				t.Fatalf("review If-None-Match=%q", got)
+			}
+			w.Header().Set("ETag", `"reviews"`)
+			w.WriteHeader(http.StatusNotModified)
+		case r.Method == http.MethodPost && r.URL.Path == "/graphql":
+			t.Fatalf("reviewThreads GraphQL should be skipped on 304")
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer ts.Close()
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	now := time.Date(2026, 5, 28, 12, 0, 0, 0, time.UTC)
+	subj := domain.SCMSubject{SessionID: "s1", ProjectID: "p1", Provider: domain.SCMProviderGitHub, Host: "github.com", Repo: "o/r", Branch: "feat/27", PRNumber: 5, CredentialHash: "cred"}
+	threads := []domain.SCMReviewThread{{ID: "thread-1", Comments: []domain.SCMReviewComment{{ID: "c1", Author: "alice"}}}}
+	snap := domain.SCMSnapshot{SessionID: "s1", Subject: subj, Freshness: domain.SCMFreshnessFresh, PR: &domain.SCMPullRequest{Number: 5, State: domain.PROpen, HeadSHA: "sha"}, CI: domain.SCMCI{Summary: "passing"}, Review: domain.SCMReview{UnresolvedThreads: threads}}
+	if _, _, err := st.SaveSnapshot(ctx, snap); err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range []domain.SCMProviderCacheEntry{
+		{Key: domain.SCMProviderCacheKey{SCMProviderCacheScope: subj.CacheScope(), Namespace: cachePRList, Key: "open-guard"}, ETag: `"pulls"`, Value: []byte(`[{"number":5}]`)},
+		{Key: domain.SCMProviderCacheKey{SCMProviderCacheScope: subj.CacheScope(), Namespace: cacheCheckGuard, Key: "sha"}, ETag: `"checks"`},
+		{Key: domain.SCMProviderCacheKey{SCMProviderCacheScope: subj.CacheScope(), Namespace: cacheReviews, Key: "5"}, ETag: `"reviews"`, Value: []byte(`[{"id":1}]`)},
+	} {
+		if err := st.PutProviderCache(ctx, entry); err != nil {
+			t.Fatal(err)
+		}
+	}
+	putCachedReviewDetails(ctx, st, subj, "none", threads, now.Add(-3*time.Minute))
+	p := NewProvider(ProviderOptions{RESTBase: ts.URL, GraphQLURL: ts.URL + "/graphql", Token: StaticTokenSource("token")})
+	res, err := p.ObserveSessions(ctx, ports.SCMObserveRequest{Subjects: []domain.SCMSubject{subj}, Now: now}, st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if commentCalls.Load() != 1 || len(res.Snapshots[0].Review.UnresolvedThreads) != 1 {
+		t.Fatalf("commentCalls=%d snapshots=%+v", commentCalls.Load(), res.Snapshots)
+	}
+	_, entry, ok := getCachedReviewDetails(ctx, st, subj)
+	if !ok || !entry.UpdatedAt.Equal(now) {
+		t.Fatalf("review details cache not touched: ok=%v entry=%+v", ok, entry)
+	}
+}
+
+func TestReviewDecisionChangeBypassesReviewThrottle(t *testing.T) {
+	var reviewGraphQLCalls atomic.Int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/pulls":
+			w.Header().Set("ETag", `"new-pulls"`)
+			_, _ = w.Write([]byte(`[{"number":5}]`))
+		case r.Method == http.MethodPost && r.URL.Path == "/graphql":
+			var req struct {
+				Query string `json:"query"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(req.Query, "reviewThreads") {
+				reviewGraphQLCalls.Add(1)
+				threads := []map[string]any{{"id": "thread-human", "isResolved": false, "comments": map[string]any{"nodes": []map[string]any{{"id": "c1", "body": "fix", "url": "https://example/comment", "path": "main.go", "line": 7, "author": map[string]any{"login": "alice", "__typename": "User"}}}}}}
+				_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"repository": map[string]any{"pullRequest": map[string]any{"reviewThreads": map[string]any{"nodes": threads}}}}})
+				return
+			}
+			writeGraphQLPR(t, w, 5, "feat/27", "SUCCESS", "CHANGES_REQUESTED", nil)
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/comments"):
+			t.Fatalf("review decision change should force GraphQL directly")
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer ts.Close()
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	now := time.Date(2026, 5, 28, 12, 0, 0, 0, time.UTC)
+	subj := domain.SCMSubject{SessionID: "s1", ProjectID: "p1", Provider: domain.SCMProviderGitHub, Host: "github.com", Repo: "o/r", Branch: "feat/27", PRNumber: 5, CredentialHash: "cred"}
+	prev := domain.SCMSnapshot{SessionID: "s1", Subject: subj, Freshness: domain.SCMFreshnessFresh, PR: &domain.SCMPullRequest{Number: 5, State: domain.PROpen, HeadSHA: "sha"}, CI: domain.SCMCI{Summary: "passing"}, Review: domain.SCMReview{Decision: "none"}}
+	if _, _, err := st.SaveSnapshot(ctx, prev); err != nil {
+		t.Fatal(err)
+	}
+	key := domain.SCMProviderCacheKey{SCMProviderCacheScope: subj.CacheScope(), Namespace: cachePRList, Key: "open-guard"}
+	if err := st.PutProviderCache(ctx, domain.SCMProviderCacheEntry{Key: key, ETag: `"old"`, Value: []byte(`[{"number":5}]`)}); err != nil {
+		t.Fatal(err)
+	}
+	putCachedReviewDetails(ctx, st, subj, "none", nil, now.Add(-time.Minute))
+	p := NewProvider(ProviderOptions{RESTBase: ts.URL, GraphQLURL: ts.URL + "/graphql", Token: StaticTokenSource("token")})
+	res, err := p.ObserveSessions(ctx, ports.SCMObserveRequest{Subjects: []domain.SCMSubject{subj}, Now: now}, st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reviewGraphQLCalls.Load() != 1 || len(res.Snapshots[0].Review.HumanComments) != 1 {
+		t.Fatalf("reviewGraphQLCalls=%d snapshot=%+v", reviewGraphQLCalls.Load(), res.Snapshots[0].Review)
+	}
+}
+
+func TestGraphQLFailureFallsBackToTerminalPRState(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/graphql":
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"message":"down"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/pulls/5":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"number":   5,
+				"state":    "closed",
+				"merged":   true,
+				"html_url": "https://github.com/o/r/pull/5",
+				"head":     map[string]any{"ref": "feat/27", "sha": "sha"},
+				"base":     map[string]any{"ref": "main"},
+			})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer ts.Close()
+	p := NewProvider(ProviderOptions{RESTBase: ts.URL, GraphQLURL: ts.URL + "/graphql", Token: StaticTokenSource("token")})
+	subj := domain.SCMSubject{SessionID: "s1", ProjectID: "p1", Provider: domain.SCMProviderGitHub, Host: "github.com", Repo: "o/r", Branch: "feat/27", PRNumber: 5}
+	res, err := p.ObserveSessions(context.Background(), observeReq(subj), store.NewMemoryStore())
+	if err == nil {
+		t.Fatal("expected GraphQL error to be reported")
+	}
+	if len(res.Snapshots) != 1 || res.Snapshots[0].PR == nil || res.Snapshots[0].PR.State != domain.PRMerged {
+		t.Fatalf("expected merged fallback snapshot, got %+v", res.Snapshots)
+	}
+}
+
 func TestPRListGuardETagIsNotAdvancedWhenGraphQLFails(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -462,6 +674,8 @@ func TestPRListGuardETagIsNotAdvancedWhenGraphQLFails(t *testing.T) {
 		case r.Method == http.MethodPost && r.URL.Path == "/graphql":
 			w.WriteHeader(http.StatusInternalServerError)
 			_, _ = w.Write([]byte(`{"message":"boom"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/pulls/5":
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 5, "state": "open", "html_url": "https://github.com/o/r/pull/5", "head": map[string]any{"ref": "feat/27", "sha": "sha"}, "base": map[string]any{"ref": "main"}})
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
@@ -532,6 +746,7 @@ func TestReviewGuardETagIsNotAdvancedWhenReviewThreadsFail(t *testing.T) {
 		{Key: domain.SCMProviderCacheKey{SCMProviderCacheScope: subj.CacheScope(), Namespace: cachePRList, Key: "open-guard"}, ETag: `"pulls"`, Value: []byte(`[{"number":5}]`)},
 		{Key: domain.SCMProviderCacheKey{SCMProviderCacheScope: subj.CacheScope(), Namespace: cacheCheckGuard, Key: "sha"}, ETag: `"checks"`},
 		{Key: domain.SCMProviderCacheKey{SCMProviderCacheScope: subj.CacheScope(), Namespace: cacheReviews, Key: "5"}, ETag: `"reviews-old"`, Value: []byte(`[{"id":0}]`)},
+		{Key: domain.SCMProviderCacheKey{SCMProviderCacheScope: subj.CacheScope(), Namespace: cacheReviewDetails, Key: "5"}, Value: []byte(`{"threads":[{"id":"old"}]}`), UpdatedAt: time.Date(2026, 5, 28, 11, 0, 0, 0, time.UTC)},
 	} {
 		if err := st.PutProviderCache(ctx, entry); err != nil {
 			t.Fatal(err)
@@ -594,6 +809,8 @@ func TestPollStateConsecutiveFailuresIncrementAndReset(t *testing.T) {
 			w.WriteHeader(http.StatusInternalServerError)
 			_, _ = w.Write([]byte(`{"message":"down"}`))
 			return
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/pulls/5" && fail.Load():
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 5, "state": "open", "html_url": "https://github.com/o/r/pull/5", "head": map[string]any{"ref": "feat/27", "sha": "sha"}, "base": map[string]any{"ref": "main"}})
 		case r.Method == http.MethodPost && r.URL.Path == "/graphql":
 			writeGraphQLPR(t, w, 5, "feat/27", "SUCCESS", "APPROVED", nil)
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/comments"):
@@ -687,7 +904,7 @@ func TestCommandCacheInvalidationsAreGitHubSpecific(t *testing.T) {
 			t.Fatalf("bad prefix scope: %+v", prefix)
 		}
 	}
-	for _, namespace := range []string{cachePRList, cacheBranchMap, cacheChecks, cacheCheckGuard, cacheReviews} {
+	for _, namespace := range []string{cachePRList, cacheBranchMap, cacheChecks, cacheCheckGuard, cacheReviews, cacheReviewDetails} {
 		if !got[namespace] {
 			t.Fatalf("missing invalidation namespace %q in %+v", namespace, prefixes)
 		}
