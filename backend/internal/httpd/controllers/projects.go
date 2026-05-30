@@ -21,10 +21,10 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apispec"
+	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
 	"github.com/aoagents/agent-orchestrator/backend/internal/project"
 )
 
@@ -65,7 +65,7 @@ func (c *ProjectsController) list(w http.ResponseWriter, r *http.Request) {
 		writeProjectError(w, r, err, http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"projects": projects})
+	envelope.WriteJSON(w, http.StatusOK, map[string]any{"projects": projects})
 }
 
 func (c *ProjectsController) add(w http.ResponseWriter, r *http.Request) {
@@ -75,7 +75,7 @@ func (c *ProjectsController) add(w http.ResponseWriter, r *http.Request) {
 	}
 	var in project.AddInput
 	if err := decodeJSON(r, &in); err != nil {
-		writeAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
 		return
 	}
 	p, err := c.Mgr.Add(r.Context(), in)
@@ -83,7 +83,7 @@ func (c *ProjectsController) add(w http.ResponseWriter, r *http.Request) {
 		writeProjectError(w, r, err, http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{"project": p})
+	envelope.WriteJSON(w, http.StatusCreated, map[string]any{"project": p})
 }
 
 func (c *ProjectsController) get(w http.ResponseWriter, r *http.Request) {
@@ -97,10 +97,10 @@ func (c *ProjectsController) get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if got.Status == "degraded" {
-		writeJSON(w, http.StatusOK, map[string]any{"status": got.Status, "project": got.Degraded})
+		envelope.WriteJSON(w, http.StatusOK, map[string]any{"status": got.Status, "project": got.Degraded})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"status": got.Status, "project": got.Project})
+	envelope.WriteJSON(w, http.StatusOK, map[string]any{"status": got.Status, "project": got.Project})
 }
 
 func (c *ProjectsController) updateConfig(w http.ResponseWriter, r *http.Request) {
@@ -109,16 +109,16 @@ func (c *ProjectsController) updateConfig(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if frozen, err := containsFrozenIdentityField(r); err != nil {
-		writeAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
 		return
 	} else if len(frozen) > 0 {
-		writeAPIError(w, r, http.StatusBadRequest, "bad_request", "IDENTITY_FROZEN", "Identity fields cannot be patched", map[string]any{"fields": frozen})
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "IDENTITY_FROZEN", "Identity fields cannot be patched", map[string]any{"fields": frozen})
 		return
 	}
 
 	var patch project.UpdateConfigInput
 	if err := decodeJSON(r, &patch); err != nil {
-		writeAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
 		return
 	}
 	p, err := c.Mgr.UpdateConfig(r.Context(), projectID(r), patch)
@@ -126,7 +126,7 @@ func (c *ProjectsController) updateConfig(w http.ResponseWriter, r *http.Request
 		writeProjectError(w, r, err, http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"project": p})
+	envelope.WriteJSON(w, http.StatusOK, map[string]any{"project": p})
 }
 
 func (c *ProjectsController) remove(w http.ResponseWriter, r *http.Request) {
@@ -139,7 +139,7 @@ func (c *ProjectsController) remove(w http.ResponseWriter, r *http.Request) {
 		writeProjectError(w, r, err, http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, http.StatusOK, result)
+	envelope.WriteJSON(w, http.StatusOK, result)
 }
 
 func (c *ProjectsController) repair(w http.ResponseWriter, r *http.Request) {
@@ -152,7 +152,7 @@ func (c *ProjectsController) repair(w http.ResponseWriter, r *http.Request) {
 		writeProjectError(w, r, err, http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"project": p})
+	envelope.WriteJSON(w, http.StatusOK, map[string]any{"project": p})
 }
 
 func (c *ProjectsController) reload(w http.ResponseWriter, r *http.Request) {
@@ -165,7 +165,7 @@ func (c *ProjectsController) reload(w http.ResponseWriter, r *http.Request) {
 		writeProjectError(w, r, err, http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, http.StatusOK, result)
+	envelope.WriteJSON(w, http.StatusOK, result)
 }
 
 func projectID(r *http.Request) domain.ProjectID {
@@ -196,24 +196,6 @@ func containsFrozenIdentityField(r *http.Request) ([]string, error) {
 	return frozen, nil
 }
 
-type apiError struct {
-	Error     string         `json:"error"`
-	Code      string         `json:"code"`
-	Message   string         `json:"message"`
-	RequestID string         `json:"requestId,omitempty"`
-	Details   map[string]any `json:"details,omitempty"`
-}
-
-func writeAPIError(w http.ResponseWriter, r *http.Request, status int, kind, code, message string, details map[string]any) {
-	writeJSON(w, status, apiError{
-		Error:     kind,
-		Code:      code,
-		Message:   message,
-		RequestID: middleware.GetReqID(r.Context()),
-		Details:   details,
-	})
-}
-
 func writeProjectError(w http.ResponseWriter, r *http.Request, err error, fallbackStatus int) {
 	var pe *project.Error
 	if errors.As(err, &pe) {
@@ -228,14 +210,8 @@ func writeProjectError(w http.ResponseWriter, r *http.Request, err error, fallba
 		case "internal":
 			status = http.StatusInternalServerError
 		}
-		writeAPIError(w, r, status, pe.Kind, pe.Code, pe.Message, pe.Details)
+		envelope.WriteAPIError(w, r, status, pe.Kind, pe.Code, pe.Message, pe.Details)
 		return
 	}
-	writeAPIError(w, r, fallbackStatus, "internal", "INTERNAL_ERROR", "Internal server error", nil)
-}
-
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
+	envelope.WriteAPIError(w, r, fallbackStatus, "internal", "INTERNAL_ERROR", "Internal server error", nil)
 }
