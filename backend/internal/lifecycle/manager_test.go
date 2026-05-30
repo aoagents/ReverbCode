@@ -2,6 +2,7 @@ package lifecycle
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -263,6 +264,40 @@ func TestApplySCMObservation(t *testing.T) {
 		}
 	})
 
+	t.Run("draft PR writes draft or ci_failed without review states", func(t *testing.T) {
+		cases := []struct {
+			name       string
+			facts      ports.SCMFacts
+			wantReason domain.PRReason
+			wantStatus domain.SessionStatus
+		}{
+			{"draft with failing CI", ports.SCMFacts{Fetched: true, PRState: domain.PRDraft, CISummary: ports.CIFailing}, domain.PRReasonCIFailing, domain.StatusCIFailed},
+			{"draft via bool with open state", ports.SCMFacts{Fetched: true, PRState: domain.PROpen, Draft: true}, domain.PRReasonInProgress, domain.StatusDraft},
+			{"draft via bool with failing CI", ports.SCMFacts{Fetched: true, PRState: domain.PROpen, Draft: true, CISummary: ports.CIFailing}, domain.PRReasonCIFailing, domain.StatusCIFailed},
+			{"draft ignores review and merge facts", ports.SCMFacts{Fetched: true, PRState: domain.PRDraft, ReviewDecision: ports.ReviewApproved, Mergeability: ports.Mergeability{Mergeable: true}}, domain.PRReasonInProgress, domain.StatusDraft},
+		}
+		for _, c := range cases {
+			t.Run(c.name, func(t *testing.T) {
+				mgr, store := newManager()
+				wantSession := domain.SessionSubstate{State: domain.SessionWorking, Reason: domain.ReasonTaskInProgress}
+				store.seed(sid, lc(wantSession.State, wantSession.Reason, domain.RuntimeAlive))
+				if err := mgr.ApplySCMObservation(context.Background(), sid, c.facts); err != nil {
+					t.Fatalf("apply: %v", err)
+				}
+				l := mustLoad(t, store)
+				if l.PR.State != domain.PRDraft || l.PR.Reason != c.wantReason {
+					t.Errorf("pr = %v/%v, want draft/%v", l.PR.State, l.PR.Reason, c.wantReason)
+				}
+				if l.Session != wantSession {
+					t.Errorf("session = %+v, want untouched %+v", l.Session, wantSession)
+				}
+				if got := domain.DeriveLegacyStatus(l); got != c.wantStatus {
+					t.Errorf("display = %v, want %v", got, c.wantStatus)
+				}
+			})
+		}
+	})
+
 	t.Run("merged PR parks the session and displays merged", func(t *testing.T) {
 		mgr, store := newManager()
 		seed := lc(domain.SessionWorking, domain.ReasonTaskInProgress, domain.RuntimeAlive)
@@ -289,13 +324,17 @@ func TestApplySCMObservation(t *testing.T) {
 			wantStatus domain.SessionStatus
 		}{
 			{"changes requested", ports.SCMFacts{Fetched: true, PRState: domain.PROpen, ReviewDecision: ports.ReviewChangesRequested}, domain.PRReasonChangesRequested, domain.StatusChangesRequested},
+			{"pending human comments", ports.SCMFacts{Fetched: true, PRState: domain.PROpen, PendingComments: []ports.ReviewComment{{Author: "human", Body: "fix"}}}, domain.PRReasonChangesRequested, domain.StatusChangesRequested},
+			{"pending bot comments", ports.SCMFacts{Fetched: true, PRState: domain.PROpen, PendingComments: []ports.ReviewComment{{Author: "bot", Body: "fix", IsBot: true}}}, domain.PRReasonBotComments, domain.StatusChangesRequested},
+			{"merge conflicts", ports.SCMFacts{Fetched: true, PRState: domain.PROpen, Mergeability: ports.Mergeability{CIPassing: true, Approved: true, NoConflicts: false, Blockers: []string{"merge conflicts"}}}, domain.PRReasonMergeConflicts, domain.StatusPROpen},
 			{"approved + mergeable", ports.SCMFacts{Fetched: true, PRState: domain.PROpen, ReviewDecision: ports.ReviewApproved, Mergeability: ports.Mergeability{Mergeable: true}}, domain.PRReasonMergeReady, domain.StatusMergeable},
 			{"review pending", ports.SCMFacts{Fetched: true, PRState: domain.PROpen, ReviewDecision: ports.ReviewPending}, domain.PRReasonReviewPending, domain.StatusReviewPending},
 		}
 		for _, c := range cases {
 			t.Run(c.name, func(t *testing.T) {
 				mgr, store := newManager()
-				store.seed(sid, lc(domain.SessionWorking, domain.ReasonTaskInProgress, domain.RuntimeAlive))
+				wantSession := domain.SessionSubstate{State: domain.SessionWorking, Reason: domain.ReasonTaskInProgress}
+				store.seed(sid, lc(wantSession.State, wantSession.Reason, domain.RuntimeAlive))
 				if err := mgr.ApplySCMObservation(context.Background(), sid, c.facts); err != nil {
 					t.Fatalf("apply: %v", err)
 				}
@@ -351,6 +390,25 @@ func TestOnSpawnCompleted(t *testing.T) {
 	meta, _ := store.GetMetadata(context.Background(), sid)
 	if meta[MetaBranch] != "feat/x" || meta[MetaAgentSessionID] != "agent-1" || meta[MetaRuntimeName] != "tmux" {
 		t.Errorf("metadata not recorded: %+v", meta)
+	}
+}
+
+func TestOnSpawnInitiated_ActiveSessionRejected(t *testing.T) {
+	mgr, store := newManager()
+	store.seed(sid, lc(domain.SessionWorking, domain.ReasonTaskInProgress, domain.RuntimeAlive))
+
+	err := mgr.OnSpawnInitiated(context.Background(), domain.SessionRecord{
+		ID:        sid,
+		ProjectID: domain.ProjectID("proj"),
+		Lifecycle: lc(domain.SessionNotStarted, domain.ReasonSpawnRequested, domain.RuntimeUnknown),
+	})
+	if err == nil {
+		t.Fatal("OnSpawnInitiated should reject a non-terminal row on top of an active session")
+	}
+
+	got := mustLoad(t, store)
+	if got.Session.State != domain.SessionWorking || got.Revision != 0 {
+		t.Fatalf("active row should be unchanged, got %+v", got)
 	}
 }
 
@@ -416,18 +474,26 @@ func TestOnKillRequested_UnseededIsNoOp(t *testing.T) {
 
 // ---- fake store contract ----
 
-func TestFakeStoreExpectedRevision(t *testing.T) {
+func TestFakeStoreUpsertFullRow(t *testing.T) {
 	store := newFakeStore()
-	store.seed(sid, lc(domain.SessionWorking, domain.ReasonTaskInProgress, domain.RuntimeAlive)) // revision 0
-	rt := domain.RuntimeSubstate{State: domain.RuntimeExited}
+	store.seed(sid, lc(domain.SessionWorking, domain.ReasonTaskInProgress, domain.RuntimeAlive))
 
-	bad := 99
-	if err := store.PatchLifecycle(context.Background(), sid, ports.LifecyclePatch{Runtime: &rt, ExpectedRevision: &bad}); err == nil {
-		t.Error("stale ExpectedRevision must be rejected")
+	rec, ok, err := store.Get(context.Background(), sid)
+	if err != nil || !ok {
+		t.Fatalf("seeded record missing: ok=%v err=%v", ok, err)
 	}
-	good := 0
-	if err := store.PatchLifecycle(context.Background(), sid, ports.LifecyclePatch{Runtime: &rt, ExpectedRevision: &good}); err != nil {
-		t.Errorf("matching ExpectedRevision must succeed, got %v", err)
+	rec.Lifecycle.Session = domain.SessionSubstate{State: domain.SessionIdle, Reason: domain.ReasonResearchComplete}
+	rec.Lifecycle.Runtime = domain.RuntimeSubstate{State: domain.RuntimeExited}
+	if err := store.Upsert(context.Background(), rec, ports.EventSessionStateChanged); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	got, _, _ := store.Get(context.Background(), sid)
+	if got.Lifecycle.Session.State != domain.SessionIdle || got.Lifecycle.Runtime.State != domain.RuntimeExited {
+		t.Fatalf("upsert should replace the full canonical row, got %+v", got.Lifecycle)
+	}
+	if got.Lifecycle.Revision != 1 {
+		t.Fatalf("upsert should bump revision inside the store, got %d want 1", got.Lifecycle.Revision)
 	}
 }
 
@@ -457,6 +523,78 @@ func TestPerSessionSerialization(t *testing.T) {
 	// change; with correct serialisation all n land without a lost update.
 	if l := mustLoad(t, store); l.Revision != n {
 		t.Errorf("revision = %d, want %d (lost update under concurrency)", l.Revision, n)
+	}
+}
+
+// ---- RunningSessions (reaper poll-set) ----
+
+func TestRunningSessions_NoListerWired_ReturnsEmpty(t *testing.T) {
+	m, _ := newManager()
+	got, err := m.RunningSessions(context.Background())
+	if err != nil {
+		t.Fatalf("RunningSessions: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("expected empty slice when no lister wired, got %d records", len(got))
+	}
+}
+
+func TestRunningSessions_ListerErrorPropagates(t *testing.T) {
+	m, _ := newManager()
+	wantErr := errors.New("boom")
+	m.WithSessionLister(func(_ context.Context) ([]domain.SessionRecord, error) {
+		return nil, wantErr
+	})
+	_, err := m.RunningSessions(context.Background())
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("expected lister error to propagate, got %v", err)
+	}
+}
+
+// TestRunningSessions_FilterIncludesProbableExcludesTerminal locks in the
+// reaper poll-set predicate. The bug we are guarding against is filtering to
+// "runtime.State == RuntimeAlive": detecting sessions (RuntimeMissing /
+// RuntimeProbeFailed) would be silently parked, breaking the probe-driven
+// recovery path proved by manager_test.go:59 and the dead+dead -> killed path
+// proved by manager_test.go:79.
+func TestRunningSessions_FilterIncludesProbableExcludesTerminal(t *testing.T) {
+	m, _ := newManager()
+	records := []domain.SessionRecord{
+		{ID: "working-alive", Lifecycle: lc(domain.SessionWorking, domain.ReasonTaskInProgress, domain.RuntimeAlive)},
+		{ID: "detecting-probefailed", Lifecycle: lc(domain.SessionDetecting, domain.ReasonProbeFailure, domain.RuntimeProbeFailed)},
+		{ID: "detecting-missing", Lifecycle: lc(domain.SessionDetecting, domain.ReasonRuntimeLost, domain.RuntimeMissing)},
+		{ID: "idle-alive", Lifecycle: lc(domain.SessionIdle, domain.ReasonResearchComplete, domain.RuntimeAlive)},
+		{ID: "needs-input-alive", Lifecycle: lc(domain.SessionNeedsInput, domain.ReasonAwaitingUserInput, domain.RuntimeAlive)},
+		{ID: "not-started", Lifecycle: lc(domain.SessionNotStarted, domain.ReasonSpawnRequested, domain.RuntimeUnknown)},
+		{ID: "terminated", Lifecycle: lc(domain.SessionTerminated, domain.ReasonManuallyKilled, domain.RuntimeExited)},
+		{ID: "done", Lifecycle: lc(domain.SessionDone, domain.ReasonPRMerged, domain.RuntimeExited)},
+	}
+	m.WithSessionLister(func(_ context.Context) ([]domain.SessionRecord, error) {
+		return records, nil
+	})
+
+	got, err := m.RunningSessions(context.Background())
+	if err != nil {
+		t.Fatalf("RunningSessions: %v", err)
+	}
+	gotIDs := map[domain.SessionID]bool{}
+	for _, r := range got {
+		gotIDs[r.ID] = true
+	}
+	wantIncluded := []domain.SessionID{
+		"working-alive", "detecting-probefailed", "detecting-missing",
+		"idle-alive", "needs-input-alive", "not-started",
+	}
+	for _, id := range wantIncluded {
+		if !gotIDs[id] {
+			t.Errorf("expected %q in poll set, missing", id)
+		}
+	}
+	wantExcluded := []domain.SessionID{"terminated", "done"}
+	for _, id := range wantExcluded {
+		if gotIDs[id] {
+			t.Errorf("expected %q NOT in poll set, found", id)
+		}
 	}
 }
 

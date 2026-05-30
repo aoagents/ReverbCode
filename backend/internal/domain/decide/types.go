@@ -14,11 +14,11 @@ import (
 // sub-state — leave it unchanged", NOT "set it to the empty value". SessionState
 // is always populated, but the probe/detecting/kill paths legitimately leave
 // PRState/PRReason empty: a liveness verdict knows nothing about the PR. When
-// the LCM turns a decision into a LifecyclePatch it must therefore map an empty
-// PRState to a nil patch.PR (left untouched) rather than writing it through —
+// the LCM folds a decision into the next full canonical row it must therefore
+// leave empty PRState/PRReason unchanged rather than writing them through —
 // writing PRNone on a routine probe tick would clobber a live PR. Detecting is
-// nil-by-default for the same reason; see LifecyclePatch's three-way
-// Detecting/ClearDetecting semantics.
+// nil-by-default; the LCM explicitly clears stale detecting memory when a probe
+// verdict leaves detecting.
 type LifecycleDecision struct {
 	Status        domain.SessionStatus
 	Evidence      string
@@ -52,10 +52,13 @@ const (
 	ProcessIndeterminate ProcessLiveness = "indeterminate"
 )
 
-// OpenPRInput drives the PR pipeline ladder for an open PR.
+// OpenPRInput drives the PR pipeline ladder for an open or draft PR.
 type OpenPRInput struct {
+	Draft            bool
 	CIFailing        bool
 	ChangesRequested bool
+	BotComments      bool
+	MergeConflicts   bool
 	Approved         bool
 	Mergeable        bool
 	ReviewPending    bool

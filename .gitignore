@@ -15,6 +15,7 @@ bin/
 vendor/
 # compiled daemon binary
 /backend/backend
+agent-orchestrator.yaml
 
 # Environment
 .env

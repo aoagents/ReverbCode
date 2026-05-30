@@ -89,8 +89,9 @@ func ResolveProbeDecision(in ProbeInput) LifecycleDecision {
 }
 
 // ResolveOpenPRDecision walks the PR pipeline ladder. CI failure dominates
-// everything, then requested changes, then the approval/merge states, then a
-// pending review, then a stalled (idle-beyond-threshold) PR, else plain open.
+// everything. Draft PRs then surface as draft and do not enter the review or
+// merge states. Open PRs continue through requested changes, approval/merge
+// states, pending review, stalled (idle-beyond-threshold), then plain open.
 func ResolveOpenPRDecision(in OpenPRInput) LifecycleDecision {
 	// evidence is a stable, timestamp-free summary "<condition> #<num> <url>"
 	// for logs/traceability; it folds in the PR identity inputs (Number/URL).
@@ -104,13 +105,17 @@ func ResolveOpenPRDecision(in OpenPRInput) LifecycleDecision {
 		}
 		return s
 	}
+	prState := domain.PROpen
+	if in.Draft {
+		prState = domain.PRDraft
+	}
 	base := func(status domain.SessionStatus, cond string, prReason domain.PRReason, ss domain.SessionState, sr domain.SessionReason) LifecycleDecision {
 		return LifecycleDecision{
 			Status:        status,
 			Evidence:      evidence(cond),
 			SessionState:  ss,
 			SessionReason: sr,
-			PRState:       domain.PROpen,
+			PRState:       prState,
 			PRReason:      prReason,
 		}
 	}
@@ -118,8 +123,14 @@ func ResolveOpenPRDecision(in OpenPRInput) LifecycleDecision {
 	switch {
 	case in.CIFailing:
 		return base(domain.StatusCIFailed, "ci_failing", domain.PRReasonCIFailing, domain.SessionWorking, domain.ReasonFixingCI)
+	case in.Draft:
+		return base(domain.StatusDraft, "draft", domain.PRReasonInProgress, domain.SessionWorking, domain.ReasonPRCreated)
 	case in.ChangesRequested:
 		return base(domain.StatusChangesRequested, "changes_requested", domain.PRReasonChangesRequested, domain.SessionWorking, domain.ReasonResolvingReviewComments)
+	case in.BotComments:
+		return base(domain.StatusChangesRequested, "bot_comments", domain.PRReasonBotComments, domain.SessionWorking, domain.ReasonResolvingReviewComments)
+	case in.MergeConflicts:
+		return base(domain.StatusPROpen, "merge_conflicts", domain.PRReasonMergeConflicts, domain.SessionWorking, domain.ReasonPRCreated)
 	case in.Mergeable:
 		// Mergeability is the authoritative merge gate, so it already folds in
 		// "approved if review is required". Checking it before Approved means a

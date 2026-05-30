@@ -41,7 +41,7 @@ func TestSpawn_HappyPath(t *testing.T) {
 		t.Errorf("status = %q, want %q", sess.Status, domain.StatusSpawning)
 	}
 
-	// Record seeded with identity + initial lifecycle, then OnSpawnCompleted flipped
+	// Record seeded by the LCM with identity + initial lifecycle, then OnSpawnCompleted flipped
 	// the runtime axis to alive.
 	rec, ok, err := h.store.Get(ctx, "sess-1")
 	if err != nil || !ok {
@@ -60,8 +60,8 @@ func TestSpawn_HappyPath(t *testing.T) {
 		t.Errorf("runtime substate = %+v, want alive/process_running", got)
 	}
 
-	// Pipeline order: workspace -> runtime -> (seed) -> LCM.
-	wantOrder := []string{"Workspace.Create", "Runtime.Create", "OnSpawnCompleted"}
+	// Pipeline order: workspace -> runtime -> LCM seed command -> LCM completion.
+	wantOrder := []string{"Workspace.Create", "Runtime.Create", "OnSpawnInitiated", "OnSpawnCompleted"}
 	if got := h.log.snapshot(); !equalStrings(got, wantOrder) {
 		t.Errorf("call order = %v, want %v", got, wantOrder)
 	}
@@ -82,13 +82,16 @@ func TestSpawn_HappyPath(t *testing.T) {
 		}
 	}
 
-	// Handles persisted to metadata for later teardown/restore.
+	// Handles persisted to metadata for later teardown/restore. The prompt is
+	// persisted too so a later Restore that finds no captured agent session id
+	// can still fall back to a fresh launch using the same prompt.
 	meta, _ := h.store.GetMetadata(ctx, "sess-1")
 	for k, want := range map[string]string{
 		lifecycle.MetaBranch:          "feat/42",
 		lifecycle.MetaWorkspacePath:   "/tmp/ws/sess-1",
 		lifecycle.MetaRuntimeHandleID: "rt-sess-1",
 		lifecycle.MetaRuntimeName:     "tmux",
+		lifecycle.MetaPrompt:          "do the thing\n\nbe careful",
 	} {
 		if meta[k] != want {
 			t.Errorf("meta[%q] = %q, want %q", k, meta[k], want)
@@ -118,6 +121,32 @@ func TestSpawn_RuntimeCreateFailure_RollsBack(t *testing.T) {
 	// LCM never told a spawn completed.
 	if h.log.indexOf("OnSpawnCompleted") != -1 {
 		t.Error("OnSpawnCompleted should not fire on a failed spawn")
+	}
+}
+
+func TestSpawn_ExistingSessionIDRejectedBeforeWork(t *testing.T) {
+	h := newHarness("sess-1")
+	ctx := context.Background()
+	if err := h.store.Upsert(ctx, domain.SessionRecord{
+		ID:        "sess-1",
+		ProjectID: testProject,
+		Lifecycle: lc(domain.SessionWorking, domain.ReasonTaskInProgress, domain.PRNone, ""),
+	}, ports.EventSessionCreated); err != nil {
+		t.Fatalf("seed existing row: %v", err)
+	}
+
+	_, err := h.sm.Spawn(ctx, spawnCfg())
+	if err == nil {
+		t.Fatal("spawn: want error for existing session id, got nil")
+	}
+	if len(h.workspace.created) != 0 {
+		t.Error("workspace should not be created when session id already exists")
+	}
+	if len(h.runtime.created) != 0 {
+		t.Error("runtime should not be created when session id already exists")
+	}
+	if h.log.indexOf("OnSpawnInitiated") != -1 || h.log.indexOf("OnSpawnCompleted") != -1 {
+		t.Error("LCM should not be called when session id already exists")
 	}
 }
 
@@ -217,11 +246,11 @@ func TestKill_IncompleteMetadata_RefusesTeardown(t *testing.T) {
 	ctx := context.Background()
 	// A record with no teardown metadata (empty runtime handle + workspace path),
 	// e.g. a partially-seeded or corrupted record.
-	if err := h.store.Seed(ctx, domain.SessionRecord{
+	if err := h.store.Upsert(ctx, domain.SessionRecord{
 		ID: "sess-1", ProjectID: testProject,
 		Lifecycle: lc(domain.SessionWorking, domain.ReasonTaskInProgress, domain.PRNone, ""),
-	}); err != nil {
-		t.Fatalf("seed: %v", err)
+	}, ports.EventSessionCreated); err != nil {
+		t.Fatalf("upsert: %v", err)
 	}
 
 	if _, err := h.sm.Kill(ctx, "sess-1", ports.KillOptions{Reason: ports.KillManual}); !errors.Is(err, ErrIncompleteTeardownMetadata) {
@@ -241,11 +270,11 @@ func TestCleanup_IncompleteMetadata_Skipped(t *testing.T) {
 	ctx := context.Background()
 	// Terminal session but no workspace path persisted — must be skipped, never
 	// handed to Destroy with an empty path.
-	if err := h.store.Seed(ctx, domain.SessionRecord{
+	if err := h.store.Upsert(ctx, domain.SessionRecord{
 		ID: "orphan-1", ProjectID: testProject,
 		Lifecycle: lc(domain.SessionTerminated, domain.ReasonManuallyKilled, domain.PRNone, ""),
-	}); err != nil {
-		t.Fatalf("seed: %v", err)
+	}, ports.EventSessionCreated); err != nil {
+		t.Fatalf("upsert: %v", err)
 	}
 
 	res, err := h.sm.Cleanup(ctx, testProject)
@@ -307,8 +336,8 @@ func TestListAndGet_DeriveStatus(t *testing.T) {
 	h := newHarness("unused")
 	ctx := context.Background()
 	for _, c := range cases {
-		if err := h.store.Seed(ctx, domain.SessionRecord{ID: domain.SessionID(c.name), ProjectID: testProject, Lifecycle: c.lc}); err != nil {
-			t.Fatalf("seed %s: %v", c.name, err)
+		if err := h.store.Upsert(ctx, domain.SessionRecord{ID: domain.SessionID(c.name), ProjectID: testProject, Lifecycle: c.lc}, ports.EventSessionCreated); err != nil {
+			t.Fatalf("upsert %s: %v", c.name, err)
 		}
 	}
 
@@ -405,7 +434,7 @@ func TestRestore_RelaunchesWithResumeCommand(t *testing.T) {
 	}
 }
 
-func TestRestore_MissingAgentSessionID_Errors(t *testing.T) {
+func TestRestore_NoAgentSessionID_FreshLaunchFallback(t *testing.T) {
 	h := newHarness("sess-1")
 	ctx := context.Background()
 	if _, err := h.sm.Spawn(ctx, spawnCfg()); err != nil {
@@ -414,13 +443,45 @@ func TestRestore_MissingAgentSessionID_Errors(t *testing.T) {
 	if _, err := h.sm.Kill(ctx, "sess-1", ports.KillOptions{Reason: ports.KillManual}); err != nil {
 		t.Fatalf("kill: %v", err)
 	}
-	// No agent session id was ever captured (spawn leaves it empty) — resume is
-	// impossible, so Restore must fail early without touching workspace/runtime.
+	// No agent session id was ever captured (the capture hook is a separate
+	// path that may never have run), but Spawn persisted the prompt, so Restore
+	// must fall back to a fresh launch instead of failing.
+	createdBefore := len(h.runtime.created)
+
+	sess, err := h.sm.Restore(ctx, "sess-1")
+	if err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	if sess.Status != domain.StatusSpawning {
+		t.Errorf("status = %q, want spawning", sess.Status)
+	}
+	if len(h.runtime.created) != createdBefore+1 {
+		t.Fatalf("runtime.created grew by %d, want 1 (fresh-launch fallback)", len(h.runtime.created)-createdBefore)
+	}
+	// Fresh launch uses GetLaunchCommand (returns "claude" in the fake) — not
+	// the resume command, which would have read "claude --resume <id>".
+	if got := h.runtime.created[createdBefore].LaunchCommand; got != "claude" {
+		t.Errorf("restore launch command = %q, want fresh-launch %q", got, "claude")
+	}
+}
+
+func TestRestore_NoIDAndNoPrompt_Errors(t *testing.T) {
+	h := newHarness("sess-1")
+	ctx := context.Background()
+	// Seed a terminal record directly without any metadata — no agent session id,
+	// no prompt. Restore has nothing to resume and nothing to relaunch from, so
+	// it must fail early without touching workspace/runtime.
+	if err := h.store.Upsert(ctx, domain.SessionRecord{
+		ID: "sess-1", ProjectID: testProject,
+		Lifecycle: lc(domain.SessionTerminated, domain.ReasonManuallyKilled, domain.PRNone, ""),
+	}, ports.EventSessionCreated); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
 	beforeRestores := len(h.workspace.restoredID)
 	beforeCreated := len(h.runtime.created)
 
 	if _, err := h.sm.Restore(ctx, "sess-1"); err == nil {
-		t.Fatal("restore: want error for missing agent session id, got nil")
+		t.Fatal("restore: want error for missing agent session id and prompt, got nil")
 	}
 	if len(h.workspace.restoredID) != beforeRestores {
 		t.Error("workspace was touched despite a doomed restore")
@@ -447,14 +508,28 @@ func TestRestore_OnSpawnCompletedFailure_RollsBackRuntime(t *testing.T) {
 	if err := h.store.PatchMetadata(ctx, "sess-1", map[string]string{lifecycle.MetaAgentSessionID: "agent-xyz"}); err != nil {
 		t.Fatalf("patch metadata: %v", err)
 	}
+	beforeMeta, _ := h.store.GetMetadata(ctx, "sess-1")
 
 	// Fail the post-create LCM call; capture teardown counts just before restore.
 	h.lcm.onSpawnErr = errors.New("lcm boom")
+	before, _, _ := h.store.Get(ctx, "sess-1")
 	destroyedBefore := len(h.runtime.destroyed)
 	wsDestroyedBefore := len(h.workspace.destroyed)
 
 	if _, err := h.sm.Restore(ctx, "sess-1"); err == nil {
 		t.Fatal("restore: want error, got nil")
+	}
+
+	rec, _, _ := h.store.Get(ctx, "sess-1")
+	if got := rec.Lifecycle.Session; got.State != domain.SessionTerminated || got.Reason != domain.ReasonManuallyKilled {
+		t.Fatalf("restore failure should restore terminal lifecycle, got %+v", got)
+	}
+	if rec.Lifecycle.Revision != before.Lifecycle.Revision+2 {
+		t.Fatalf("restore failure should advance revision twice, got %d want %d", rec.Lifecycle.Revision, before.Lifecycle.Revision+2)
+	}
+	afterMeta, _ := h.store.GetMetadata(ctx, "sess-1")
+	if !equalStringMap(afterMeta, beforeMeta) {
+		t.Fatalf("restore failure should restore metadata, got %+v want %+v", afterMeta, beforeMeta)
 	}
 
 	// The runtime created during restore is torn back down so no process is
@@ -474,11 +549,11 @@ func TestCleanup_SkipsUncommittedWork(t *testing.T) {
 	// Two terminal sessions (reclaimable) + one working session (must be ignored).
 	seedTerminal(t, h, "done-1", "/tmp/ws/done-1")
 	seedTerminal(t, h, "dirty-1", "/tmp/ws/dirty-1")
-	if err := h.store.Seed(ctx, domain.SessionRecord{
+	if err := h.store.Upsert(ctx, domain.SessionRecord{
 		ID: "live-1", ProjectID: testProject,
 		Lifecycle: lc(domain.SessionWorking, domain.ReasonTaskInProgress, domain.PRNone, ""),
-	}); err != nil {
-		t.Fatalf("seed live: %v", err)
+	}, ports.EventSessionCreated); err != nil {
+		t.Fatalf("upsert live: %v", err)
 	}
 	// dirty-1's worktree still holds uncommitted work — Destroy refuses it.
 	h.workspace.refuse["/tmp/ws/dirty-1"] = true
@@ -514,11 +589,11 @@ func lc(s domain.SessionState, r domain.SessionReason, prs domain.PRState, prr d
 func seedTerminal(t *testing.T, h *harness, id domain.SessionID, wsPath string) {
 	t.Helper()
 	ctx := context.Background()
-	if err := h.store.Seed(ctx, domain.SessionRecord{
+	if err := h.store.Upsert(ctx, domain.SessionRecord{
 		ID: id, ProjectID: testProject,
 		Lifecycle: lc(domain.SessionTerminated, domain.ReasonManuallyKilled, domain.PRNone, ""),
-	}); err != nil {
-		t.Fatalf("seed %s: %v", id, err)
+	}, ports.EventSessionCreated); err != nil {
+		t.Fatalf("upsert %s: %v", id, err)
 	}
 	if err := h.store.PatchMetadata(ctx, id, map[string]string{lifecycle.MetaWorkspacePath: wsPath}); err != nil {
 		t.Fatalf("patch metadata %s: %v", id, err)
@@ -531,6 +606,18 @@ func equalStrings(a, b []string) bool {
 	}
 	for i := range a {
 		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func equalStringMap(a, b map[string]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		if b[k] != v {
 			return false
 		}
 	}

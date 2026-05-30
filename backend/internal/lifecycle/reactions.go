@@ -135,12 +135,20 @@ var defaultReactions = map[reactionKey]reactionConfig{
 // current state has no reaction.
 //
 // A closed PR derives to the idle display status, so it is detected from the PR
-// axis directly before falling through to the status mapping. bugbot-comments
-// and merge-conflicts have no producer in the split-A decide core yet, so they
-// are dormant: configured but unreachable until DECIDE surfaces them.
+// axis directly before falling through to the status mapping. Bot review
+// comments and merge conflicts are represented as PR reasons so the ACT layer
+// can distinguish them from human-requested changes and plain open PRs.
 func reactionEventFor(l domain.CanonicalSessionLifecycle) (reactionKey, bool) {
 	if l.PR.State == domain.PRClosed {
 		return reactionPRClosed, true
+	}
+	if isActivePRState(l.PR.State) {
+		switch l.PR.Reason {
+		case domain.PRReasonBotComments:
+			return reactionBugbotComments, true
+		case domain.PRReasonMergeConflicts:
+			return reactionMergeConflicts, true
+		}
 	}
 	switch domain.DeriveLegacyStatus(l) {
 	case domain.StatusCIFailed:
@@ -182,10 +190,16 @@ type trackerKey struct {
 // a few extra agent retries before re-escalating — never a missed human
 // notification. Keeping it out of the canonical store preserves the
 // truth-vs-policy split (the store holds session truth; this is ACT policy).
+//
+// projectID is captured at first attempt so TickEscalations — which fires from
+// the reaper and has no transition on hand — can still populate ProjectID on
+// the escalation event. It is set once and never overwritten; reaction-bearing
+// transitions for a given session id always carry the same projectID.
 type reactionTracker struct {
 	attempts       int
 	escalated      bool
 	firstAttemptAt time.Time
+	projectID      domain.ProjectID
 }
 
 // react fires the ACT layer after a persisted transition: clear the tracker for
@@ -231,24 +245,29 @@ func (m *Manager) react(ctx context.Context, id domain.SessionID, tr *transition
 	}
 
 	if hasAfter && (!hadBefore || changed) {
-		return m.executeReaction(ctx, id, afterKey, rc)
+		return m.executeReaction(ctx, id, tr.projectID, afterKey, rc)
 	}
 	return nil
 }
 
 // incidentOver reports that a PR-pipeline incident has truly ended (PR no longer
-// open, or the session terminal), so all trackers for the session may reset.
+// active, or the session terminal), so all trackers for the session may reset.
 func incidentOver(l domain.CanonicalSessionLifecycle) bool {
-	return l.PR.State != domain.PROpen || isTerminal(l.Session.State)
+	return !isActivePRState(l.PR.State) || isTerminal(l.Session.State)
+}
+
+func isActivePRState(s domain.PRState) bool {
+	return s == domain.PROpen || s == domain.PRDraft
 }
 
 // recovered reports a genuinely-green open PR: an approved/mergeable state, which
 // unambiguously means CI is no longer failing (the open-PR ladder ranks ci_failing
 // above approved, so an approved display cannot coexist with failing CI). Unlike
 // the ambiguous review_pending state — which may just be CI re-running — reaching
-// this ends a ci-failed incident and re-arms its budget.
+// this ends a ci-failed incident and re-arms its budget. Draft PRs are active,
+// but not recoverable via review/merge state.
 func recovered(l domain.CanonicalSessionLifecycle) bool {
-	if l.PR.State != domain.PROpen {
+	if !isActivePRState(l.PR.State) || l.PR.State == domain.PRDraft {
 		return false
 	}
 	switch l.PR.Reason {
@@ -259,7 +278,7 @@ func recovered(l domain.CanonicalSessionLifecycle) bool {
 	}
 }
 
-func (m *Manager) executeReaction(ctx context.Context, id domain.SessionID, key reactionKey, rc reactionContext) error {
+func (m *Manager) executeReaction(ctx context.Context, id domain.SessionID, projectID domain.ProjectID, key reactionKey, rc reactionContext) error {
 	cfg := defaultReactions[key]
 	switch cfg.action {
 	case actionNotify:
@@ -269,6 +288,7 @@ func (m *Manager) executeReaction(ctx context.Context, id domain.SessionID, key 
 			Type:      cfg.eventType,
 			Priority:  cfg.priority,
 			SessionID: id,
+			ProjectID: projectID,
 			Message:   cfg.message,
 		})
 	case actionAutoMerge:
@@ -276,7 +296,7 @@ func (m *Manager) executeReaction(ctx context.Context, id domain.SessionID, key 
 		// later PR. An opt-in config could route a reaction here.
 		return nil
 	case actionSendToAgent:
-		return m.sendToAgent(ctx, id, key, cfg, rc)
+		return m.sendToAgent(ctx, id, projectID, key, cfg, rc)
 	}
 	return nil
 }
@@ -284,9 +304,16 @@ func (m *Manager) executeReaction(ctx context.Context, id domain.SessionID, key 
 // sendToAgent runs the escalation engine for an auto send-to-agent reaction:
 // count the attempt, escalate when the numeric cap or duration is exceeded
 // (silencing further auto-dispatch), else inject the message via the messenger.
-func (m *Manager) sendToAgent(ctx context.Context, id domain.SessionID, key reactionKey, cfg reactionConfig, rc reactionContext) error {
+func (m *Manager) sendToAgent(ctx context.Context, id domain.SessionID, projectID domain.ProjectID, key reactionKey, cfg reactionConfig, rc reactionContext) error {
 	m.trackerMu.Lock()
 	tk := m.trackerFor(id, key)
+	// Capture projectID once so the duration-based TickEscalations path — which
+	// has no transition on hand — can still populate ProjectID on the escalation
+	// event. A non-empty incoming projectID always wins, in case the tracker was
+	// first created from an observation that lacked one.
+	if projectID != "" {
+		tk.projectID = projectID
+	}
 	if tk.escalated {
 		m.trackerMu.Unlock()
 		return nil // silenced until the condition clears the tracker
@@ -300,7 +327,7 @@ func (m *Manager) sendToAgent(ctx context.Context, id domain.SessionID, key reac
 	if shouldEscalate(tk, cfg, now) {
 		tk.escalated = true
 		m.trackerMu.Unlock()
-		return m.escalate(ctx, id, key)
+		return m.escalate(ctx, id, tk.projectID, key)
 	}
 	m.trackerMu.Unlock()
 
@@ -336,11 +363,12 @@ func shouldEscalate(tk *reactionTracker, cfg reactionConfig, now time.Time) bool
 // escalate emits reaction.escalated and notifies the human. The caller has
 // already set tracker.escalated under the lock, which silences further
 // auto-dispatch for this reaction until the tracker clears.
-func (m *Manager) escalate(ctx context.Context, id domain.SessionID, key reactionKey) error {
+func (m *Manager) escalate(ctx context.Context, id domain.SessionID, projectID domain.ProjectID, key reactionKey) error {
 	return m.notifier.Notify(ctx, ports.OrchestratorEvent{
 		Type:      "reaction.escalated",
 		Priority:  ports.PriorityUrgent,
 		SessionID: id,
+		ProjectID: projectID,
 		Message:   fmt.Sprintf("auto-handling of %q is exhausted and needs a human.", key),
 		Data:      map[string]any{"reaction": string(key)},
 	})
@@ -390,8 +418,9 @@ func (m *Manager) clearSessionTrackers(id domain.SessionID) {
 // sent outside the lock so agent/notifier latency never blocks tracker access.
 func (m *Manager) TickEscalations(ctx context.Context, now time.Time) error {
 	type due struct {
-		id  domain.SessionID
-		key reactionKey
+		id        domain.SessionID
+		projectID domain.ProjectID
+		key       reactionKey
 	}
 	var fire []due
 
@@ -403,13 +432,13 @@ func (m *Manager) TickEscalations(ctx context.Context, now time.Time) error {
 		cfg := defaultReactions[k.key]
 		if cfg.escalateAfter > 0 && !tk.firstAttemptAt.IsZero() && now.Sub(tk.firstAttemptAt) >= cfg.escalateAfter {
 			tk.escalated = true
-			fire = append(fire, due{id: k.id, key: k.key})
+			fire = append(fire, due{id: k.id, projectID: tk.projectID, key: k.key})
 		}
 	}
 	m.trackerMu.Unlock()
 
 	for _, d := range fire {
-		if err := m.escalate(ctx, d.id, d.key); err != nil {
+		if err := m.escalate(ctx, d.id, d.projectID, d.key); err != nil {
 			return err
 		}
 	}

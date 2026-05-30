@@ -24,6 +24,7 @@ type SCMFacts struct {
 	Fetched          bool
 	ObservedAt       time.Time
 	PRState          domain.PRState
+	Draft            bool
 	PRNumber         int
 	PRURL            string
 	CISummary        CISummary
@@ -122,11 +123,17 @@ const (
 // SpawnOutcome is what the Session Manager reports to the LCM after a spawn.
 // RuntimeHandle is the same structured handle the Runtime port returns, so no
 // ad-hoc string encoding is needed for later Destroy/SendMessage calls.
+//
+// Prompt is the assembled launch prompt persisted as metadata so Restore can
+// fall back to a fresh launch (Agent.GetLaunchCommand) when the agent's native
+// session id was never captured — without it Restore would have nothing to
+// resume and nothing to re-seed a fresh run with.
 type SpawnOutcome struct {
 	Branch         string
 	WorkspacePath  string
 	RuntimeHandle  RuntimeHandle
 	AgentSessionID string
+	Prompt         string
 }
 
 // KillReason is what the Session Manager reports to the LCM when a kill is

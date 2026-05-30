@@ -155,11 +155,12 @@ func TestResolveProbeDecision(t *testing.T) {
 
 func TestResolveOpenPRDecision(t *testing.T) {
 	tests := []struct {
-		name       string
-		in         OpenPRInput
-		wantStatus domain.SessionStatus
-		wantPR     domain.PRReason
-		wantState  domain.SessionState
+		name        string
+		in          OpenPRInput
+		wantStatus  domain.SessionStatus
+		wantPR      domain.PRReason
+		wantPRState domain.PRState
+		wantState   domain.SessionState
 	}{
 		{
 			name:       "ci failing dominates everything",
@@ -169,10 +170,40 @@ func TestResolveOpenPRDecision(t *testing.T) {
 			wantState:  domain.SessionWorking,
 		},
 		{
+			name:        "draft with failing CI maps to ci_failed",
+			in:          OpenPRInput{Draft: true, CIFailing: true, ChangesRequested: true, Approved: true, Mergeable: true},
+			wantStatus:  domain.StatusCIFailed,
+			wantPR:      domain.PRReasonCIFailing,
+			wantPRState: domain.PRDraft,
+			wantState:   domain.SessionWorking,
+		},
+		{
+			name:        "draft ignores review and merge states",
+			in:          OpenPRInput{Draft: true, ChangesRequested: true, Approved: true, Mergeable: true, ReviewPending: true, IdleBeyond: true},
+			wantStatus:  domain.StatusDraft,
+			wantPR:      domain.PRReasonInProgress,
+			wantPRState: domain.PRDraft,
+			wantState:   domain.SessionWorking,
+		},
+		{
 			name:       "changes requested before approval states",
 			in:         OpenPRInput{ChangesRequested: true, Approved: true, Mergeable: true},
 			wantStatus: domain.StatusChangesRequested,
 			wantPR:     domain.PRReasonChangesRequested,
+			wantState:  domain.SessionWorking,
+		},
+		{
+			name:       "bot comments get distinct PR reason",
+			in:         OpenPRInput{BotComments: true, Approved: true, Mergeable: true},
+			wantStatus: domain.StatusChangesRequested,
+			wantPR:     domain.PRReasonBotComments,
+			wantState:  domain.SessionWorking,
+		},
+		{
+			name:       "merge conflicts get distinct PR reason",
+			in:         OpenPRInput{MergeConflicts: true, Approved: true},
+			wantStatus: domain.StatusPROpen,
+			wantPR:     domain.PRReasonMergeConflicts,
 			wantState:  domain.SessionWorking,
 		},
 		{
@@ -235,8 +266,12 @@ func TestResolveOpenPRDecision(t *testing.T) {
 			if got.PRReason != tt.wantPR {
 				t.Errorf("PRReason = %q, want %q", got.PRReason, tt.wantPR)
 			}
-			if got.PRState != domain.PROpen {
-				t.Errorf("PRState = %q, want %q", got.PRState, domain.PROpen)
+			wantPRState := tt.wantPRState
+			if wantPRState == "" {
+				wantPRState = domain.PROpen
+			}
+			if got.PRState != wantPRState {
+				t.Errorf("PRState = %q, want %q", got.PRState, wantPRState)
 			}
 			if got.SessionState != tt.wantState {
 				t.Errorf("SessionState = %q, want %q", got.SessionState, tt.wantState)
@@ -287,8 +322,12 @@ func TestDecidersDeriveConsistently(t *testing.T) {
 	var decisions []LifecycleDecision
 
 	for _, in := range []OpenPRInput{
+		{Draft: true, CIFailing: true},
+		{Draft: true, ChangesRequested: true, Approved: true, Mergeable: true, ReviewPending: true, IdleBeyond: true},
 		{CIFailing: true},
 		{ChangesRequested: true},
+		{BotComments: true},
+		{MergeConflicts: true},
 		{Approved: true, Mergeable: true},
 		{Mergeable: true},
 		{Approved: true},
@@ -359,6 +398,13 @@ func TestResolveTerminalPRStateDecision(t *testing.T) {
 		{
 			name:       "non-terminal open is a working no-op",
 			pr:         domain.PROpen,
+			wantStatus: domain.StatusWorking,
+			wantState:  domain.SessionWorking,
+			wantReason: domain.ReasonTaskInProgress,
+		},
+		{
+			name:       "non-terminal draft is a working no-op",
+			pr:         domain.PRDraft,
 			wantStatus: domain.StatusWorking,
 			wantState:  domain.SessionWorking,
 			wantReason: domain.ReasonTaskInProgress,

@@ -9,6 +9,7 @@ const (
 	StatusWorking          SessionStatus = "working"
 	StatusDetecting        SessionStatus = "detecting"
 	StatusPROpen           SessionStatus = "pr_open"
+	StatusDraft            SessionStatus = "draft"
 	StatusCIFailed         SessionStatus = "ci_failed"
 	StatusReviewPending    SessionStatus = "review_pending"
 	StatusChangesRequested SessionStatus = "changes_requested"
@@ -32,8 +33,9 @@ const (
 //  1. Terminal / hard session states (done, terminated, needs_input, stuck,
 //     detecting, not_started) map directly — these OUTRANK PR facts.
 //  2. Otherwise a merged PR wins.
-//  3. Otherwise an open PR maps by its reason.
-//  4. Otherwise fall through to the SOFT session state (idle/working).
+//  3. Otherwise a draft PR maps to draft, except CI failure still dominates.
+//  4. Otherwise an open PR maps by its reason.
+//  5. Otherwise fall through to the SOFT session state (idle/working).
 //
 // So "PR facts dominate session facts" applies only to the soft states: an idle
 // or working session with an open, CI-failing PR displays as ci_failed — but a
@@ -59,6 +61,10 @@ func DeriveLegacyStatus(l CanonicalSessionLifecycle) SessionStatus {
 		return StatusMerged
 	}
 
+	if l.PR.State == PRDraft {
+		return draftPRStatus(l.PR.Reason)
+	}
+
 	if l.PR.State == PROpen {
 		return openPRStatus(l.PR.Reason)
 	}
@@ -82,11 +88,18 @@ func terminatedStatus(r SessionReason) SessionStatus {
 	}
 }
 
+func draftPRStatus(r PRReason) SessionStatus {
+	if r == PRReasonCIFailing {
+		return StatusCIFailed
+	}
+	return StatusDraft
+}
+
 func openPRStatus(r PRReason) SessionStatus {
 	switch r {
 	case PRReasonCIFailing:
 		return StatusCIFailed
-	case PRReasonChangesRequested:
+	case PRReasonChangesRequested, PRReasonBotComments:
 		return StatusChangesRequested
 	case PRReasonApproved:
 		return StatusApproved

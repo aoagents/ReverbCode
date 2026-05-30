@@ -4,16 +4,13 @@ import (
 	"context"
 	"fmt"
 	"sync"
-	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-// fakeStore is an in-memory LifecycleStore that faithfully applies merge-patch
-// semantics (sparse field writes, the three-way Detecting/ClearDetecting rule,
-// ExpectedRevision optimistic-concurrency check, monotonic Revision bump) so
-// tests assert against the real persisted canonical.
+// fakeStore is an in-memory LifecycleStore that faithfully applies full-row
+// Upsert semantics so tests assert against the real persisted canonical.
 type fakeStore struct {
 	mu       sync.Mutex
 	records  map[domain.SessionID]*domain.SessionRecord
@@ -49,52 +46,19 @@ func (s *fakeStore) Load(_ context.Context, id domain.SessionID) (domain.Canonic
 	return rec.Lifecycle, true, nil
 }
 
-func (s *fakeStore) PatchLifecycle(_ context.Context, id domain.SessionID, p ports.LifecyclePatch) error {
+func (s *fakeStore) Upsert(_ context.Context, rec domain.SessionRecord, _ ports.EventType) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
-	rec, ok := s.records[id]
-	if !ok {
-		rec = &domain.SessionRecord{ID: id, Lifecycle: domain.CanonicalSessionLifecycle{Version: domain.LifecycleVersion}}
-		s.records[id] = rec
-	}
-	l := &rec.Lifecycle
-
-	if p.ExpectedRevision != nil && *p.ExpectedRevision != l.Revision {
-		return fmt.Errorf("revision mismatch for %s: have %d, expected %d", id, l.Revision, *p.ExpectedRevision)
-	}
-
-	if p.Session != nil {
-		l.Session = *p.Session
-	}
-	if p.PR != nil {
-		l.PR = *p.PR
-	}
-	if p.Runtime != nil {
-		l.Runtime = *p.Runtime
-	}
-	if p.Activity != nil {
-		l.Activity = *p.Activity
-	}
-	switch {
-	case p.ClearDetecting:
-		l.Detecting = nil
-	case p.Detecting != nil:
-		d := *p.Detecting
-		l.Detecting = &d
-	}
-
-	l.Version = domain.LifecycleVersion
-	l.Revision++
-	rec.UpdatedAt = time.Now()
-	return nil
-}
-
-func (s *fakeStore) Seed(_ context.Context, rec domain.SessionRecord) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if _, ok := s.records[rec.ID]; ok {
-		return fmt.Errorf("seed: session %s already exists", rec.ID)
+	if existing, ok := s.records[rec.ID]; ok {
+		if rec.Lifecycle.Revision != existing.Lifecycle.Revision {
+			return fmt.Errorf("revision mismatch for %s: have %d, want %d", rec.ID, rec.Lifecycle.Revision, existing.Lifecycle.Revision)
+		}
+		rec.Lifecycle.Revision = existing.Lifecycle.Revision + 1
+	} else {
+		if rec.Lifecycle.Revision != 0 {
+			return fmt.Errorf("revision mismatch for insert %s: have %d, want 0", rec.ID, rec.Lifecycle.Revision)
+		}
+		rec.Lifecycle.Revision = 1
 	}
 	if rec.Lifecycle.Version == 0 {
 		rec.Lifecycle.Version = domain.LifecycleVersion

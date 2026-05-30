@@ -78,6 +78,63 @@ func TestReaction_CIFailedSendsToAgentWithLogTail(t *testing.T) {
 	}
 }
 
+func TestReaction_BotAndHumanCommentsRouteSeparately(t *testing.T) {
+	tests := []struct {
+		name        string
+		comments    []ports.ReviewComment
+		wantMessage string
+	}{
+		{
+			name:        "bot comments -> bugbot-comments",
+			comments:    []ports.ReviewComment{{Author: "bugbot", Body: "fix", IsBot: true}},
+			wantMessage: "automated reviewer",
+		},
+		{
+			name:        "human comments -> changes-requested",
+			comments:    []ports.ReviewComment{{Author: "reviewer", Body: "fix"}},
+			wantMessage: "reviewer requested changes",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m, store, _, msgr := newReactive()
+			store.seed(sid, lcOpenPR(domain.PRReasonReviewPending))
+
+			if err := m.ApplySCMObservation(ctx(), sid, ports.SCMFacts{
+				Fetched: true, PRState: domain.PROpen, PendingComments: tt.comments, PRNumber: 7,
+			}); err != nil {
+				t.Fatalf("apply: %v", err)
+			}
+
+			if len(msgr.sent) != 1 {
+				t.Fatalf("want one send, got %d", len(msgr.sent))
+			}
+			if !strings.Contains(msgr.sent[0].Message, tt.wantMessage) {
+				t.Errorf("message %q does not contain %q", msgr.sent[0].Message, tt.wantMessage)
+			}
+		})
+	}
+}
+
+func TestReaction_MergeConflictsSendsToAgent(t *testing.T) {
+	m, store, _, msgr := newReactive()
+	store.seed(sid, lcOpenPR(domain.PRReasonReviewPending))
+
+	if err := m.ApplySCMObservation(ctx(), sid, ports.SCMFacts{
+		Fetched: true, PRState: domain.PROpen, PRNumber: 7,
+		Mergeability: ports.Mergeability{CIPassing: true, Approved: true, NoConflicts: false, Blockers: []string{"merge conflicts"}},
+	}); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	if len(msgr.sent) != 1 {
+		t.Fatalf("want one send, got %d", len(msgr.sent))
+	}
+	if !strings.Contains(msgr.sent[0].Message, "merge conflicts") {
+		t.Errorf("message = %q, want merge conflict nudge", msgr.sent[0].Message)
+	}
+}
+
 func TestReaction_ApprovedAndGreenNotifiesNeverAutoMerges(t *testing.T) {
 	m, store, notf, msgr := newReactive()
 	store.seed(sid, lcOpenPR(domain.PRReasonReviewPending))
@@ -208,6 +265,32 @@ func TestReaction_CIFailedNumericEscalation(t *testing.T) {
 	}
 	if c := notifyCount(notf, "reaction.escalated"); c != 1 {
 		t.Errorf("want exactly one escalation, got %d", c)
+	}
+}
+
+func TestReaction_DraftPRDoesNotEndCIFailedIncident(t *testing.T) {
+	m, store, _, _ := newReactive()
+	seed := lc(domain.SessionWorking, domain.ReasonTaskInProgress, domain.RuntimeAlive)
+	seed.PR = domain.PRSubstate{State: domain.PRDraft, Reason: domain.PRReasonInProgress, Number: 7}
+	store.seed(sid, seed)
+
+	tail := "fail"
+	if err := m.ApplySCMObservation(ctx(), sid, ports.SCMFacts{
+		Fetched: true, PRState: domain.PRDraft, CISummary: ports.CIFailing, PRNumber: 7, CIFailureLogTail: &tail,
+	}); err != nil {
+		t.Fatalf("draft fail: %v", err)
+	}
+	if sessionTrackerCount(m, sid) == 0 {
+		t.Fatalf("precondition: expected a ci-failed tracker")
+	}
+
+	if err := m.ApplySCMObservation(ctx(), sid, ports.SCMFacts{
+		Fetched: true, PRState: domain.PRDraft, CISummary: ports.CIPending, PRNumber: 7,
+	}); err != nil {
+		t.Fatalf("draft pending: %v", err)
+	}
+	if n := sessionTrackerCount(m, sid); n == 0 {
+		t.Errorf("draft PR is still active; ci-failed tracker should survive, got %d", n)
 	}
 }
 
@@ -361,6 +444,123 @@ func TestReaction_IncidentOverClearsAllSessionTrackers(t *testing.T) {
 	if n := sessionTrackerCount(m, sid); n != 0 {
 		t.Errorf("incident over must clear all trackers, %d left", n)
 	}
+}
+
+// ---- ProjectID propagation (review R11) ----
+
+// TestReaction_ProjectIDOnNotifyAndEscalateEvents asserts that both Notify call
+// sites in reactions.go (executeReaction's notify and escalate) carry the
+// record's ProjectID. The human-facing event router groups by project, so a
+// missing id would land events in the wrong bucket.
+func TestReaction_ProjectIDOnNotifyAndEscalateEvents(t *testing.T) {
+	const proj domain.ProjectID = "acme"
+
+	t.Run("notify path -> ProjectID populated", func(t *testing.T) {
+		m, store, notf, _ := newReactive()
+		// Seed via Upsert (not the lifecycle-only seed helper) so the record carries
+		// the ProjectID that mutate's transition then propagates to react.
+		if err := store.Upsert(ctx(), domain.SessionRecord{
+			ID: sid, ProjectID: proj, Lifecycle: lcOpenPR(domain.PRReasonReviewPending),
+		}, ports.EventSessionCreated); err != nil {
+			t.Fatalf("upsert: %v", err)
+		}
+
+		// approved-and-green is a notify reaction; it fires once via executeReaction.
+		err := m.ApplySCMObservation(ctx(), sid, ports.SCMFacts{
+			Fetched: true, PRState: domain.PROpen, ReviewDecision: ports.ReviewApproved,
+			Mergeability: ports.Mergeability{Mergeable: true}, PRNumber: 7,
+		})
+		if err != nil {
+			t.Fatalf("apply: %v", err)
+		}
+
+		notf.mu.Lock()
+		defer notf.mu.Unlock()
+		var got *ports.OrchestratorEvent
+		for i := range notf.events {
+			if notf.events[i].Type == "reaction.approved-and-green" {
+				got = &notf.events[i]
+				break
+			}
+		}
+		if got == nil {
+			t.Fatalf("expected approved-and-green notify, got events: %+v", notf.events)
+		}
+		if got.ProjectID != proj {
+			t.Errorf("notify ProjectID = %q, want %q", got.ProjectID, proj)
+		}
+		if got.SessionID != sid {
+			t.Errorf("notify SessionID = %q, want %q", got.SessionID, sid)
+		}
+	})
+
+	t.Run("escalate path -> ProjectID populated (numeric cap)", func(t *testing.T) {
+		m, store, notf, _ := newReactive()
+		if err := store.Upsert(ctx(), domain.SessionRecord{
+			ID: sid, ProjectID: proj, Lifecycle: lcOpenPR(domain.PRReasonReviewPending),
+		}, ports.EventSessionCreated); err != nil {
+			t.Fatalf("upsert: %v", err)
+		}
+
+		// Drain the ci-failed budget to numeric escalation (sendToAgent -> escalate).
+		for i := 0; i < 4; i++ {
+			failCI(t, m)
+			pendingCI(t, m)
+		}
+
+		notf.mu.Lock()
+		defer notf.mu.Unlock()
+		var got *ports.OrchestratorEvent
+		for i := range notf.events {
+			if notf.events[i].Type == "reaction.escalated" {
+				got = &notf.events[i]
+				break
+			}
+		}
+		if got == nil {
+			t.Fatalf("expected reaction.escalated event, got events: %+v", notf.events)
+		}
+		if got.ProjectID != proj {
+			t.Errorf("escalate ProjectID = %q, want %q", got.ProjectID, proj)
+		}
+	})
+
+	t.Run("escalate path -> ProjectID populated (TickEscalations duration)", func(t *testing.T) {
+		m, store, notf, _ := newReactive()
+		if err := store.Upsert(ctx(), domain.SessionRecord{
+			ID: sid, ProjectID: proj, Lifecycle: lcOpenPR(domain.PRReasonReviewPending),
+		}, ports.EventSessionCreated); err != nil {
+			t.Fatalf("upsert: %v", err)
+		}
+
+		// changes-requested creates a duration-based tracker on the first send;
+		// TickEscalations fires escalate from a path with no transition on hand,
+		// so the tracker's captured ProjectID is what must surface on the event.
+		if err := m.ApplySCMObservation(ctx(), sid, ports.SCMFacts{
+			Fetched: true, PRState: domain.PROpen, ReviewDecision: ports.ReviewChangesRequested, PRNumber: 7,
+		}); err != nil {
+			t.Fatalf("apply: %v", err)
+		}
+		if err := m.TickEscalations(ctx(), t0.Add(30*time.Minute)); err != nil {
+			t.Fatalf("tick: %v", err)
+		}
+
+		notf.mu.Lock()
+		defer notf.mu.Unlock()
+		var got *ports.OrchestratorEvent
+		for i := range notf.events {
+			if notf.events[i].Type == "reaction.escalated" {
+				got = &notf.events[i]
+				break
+			}
+		}
+		if got == nil {
+			t.Fatalf("expected duration-escalated event, got events: %+v", notf.events)
+		}
+		if got.ProjectID != proj {
+			t.Errorf("tick-escalate ProjectID = %q, want %q", got.ProjectID, proj)
+		}
+	})
 }
 
 func sessionTrackerCount(m *Manager, id domain.SessionID) int {

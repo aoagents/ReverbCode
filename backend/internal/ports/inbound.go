@@ -9,7 +9,7 @@ import (
 
 // LifecycleManager is the inbound contract we implement. Every Apply* method
 // runs the same synchronous pipeline: load canonical -> pure decide -> diff ->
-// persist (merge-patch) -> if the status transitioned, fire reactions. The LCM
+// persist (full-row Upsert) -> if the status transitioned, fire reactions. The LCM
 // never polls; observers (SCM poller, reaper, activity ingest) call in.
 //
 // Concurrency: the LCM serialises per session, so concurrent Apply* calls for
@@ -20,18 +20,27 @@ type LifecycleManager interface {
 	ApplyRuntimeObservation(ctx context.Context, id domain.SessionID, f RuntimeFacts) error
 	ApplyActivitySignal(ctx context.Context, id domain.SessionID, s ActivitySignal) error
 
-	// Mutation outcomes reported by the Session Manager.
+	// Mutation commands/outcomes reported by the Session Manager.
+	OnSpawnInitiated(ctx context.Context, rec domain.SessionRecord) error
 	OnSpawnCompleted(ctx context.Context, id domain.SessionID, o SpawnOutcome) error
 	OnKillRequested(ctx context.Context, id domain.SessionID, r KillReason) error
 
 	// Reaper heartbeat that drives duration-based escalation (a non-polling
 	// LCM can't wake itself to fire a "30m elapsed" escalation).
 	TickEscalations(ctx context.Context, now time.Time) error
+
+	// RunningSessions returns a snapshot of every session whose runtime axis is
+	// alive. The reaper calls it once per tick to decide whom to probe. It is a
+	// read snapshot — the slice and its elements are safe for the caller to
+	// iterate without holding any LCM lock — and does not violate the
+	// single-writer invariant (the reaper never writes; it reports facts back
+	// through ApplyRuntimeObservation).
+	RunningSessions(ctx context.Context) ([]domain.SessionRecord, error)
 }
 
 // SessionManager is the inbound contract called by the API layer and CLI. It
-// owns explicit mutations (spawn/kill/restore/cleanup) and never derives or
-// writes observed state directly — it routes outcomes to the LCM.
+// owns explicit mutations (spawn/kill/restore/cleanup) and never writes
+// sessions directly — it routes mutation commands/outcomes to the LCM.
 type SessionManager interface {
 	Spawn(ctx context.Context, cfg SpawnConfig) (domain.Session, error)
 	Kill(ctx context.Context, id domain.SessionID, opts KillOptions) (KillResult, error)

@@ -101,15 +101,34 @@ func hasRecentActivity(a domain.ActivitySubstate, now time.Time, window time.Dur
 // in split A — the idle-duration signal is owned by the escalation engine
 // (split B); the synchronous LCM has no clock of its own here.
 func openPRInput(f ports.SCMFacts) decide.OpenPRInput {
+	hasBotComments, hasHumanComments := classifyPendingComments(f.PendingComments)
 	return decide.OpenPRInput{
+		Draft:            f.PRState == domain.PRDraft || f.Draft,
 		CIFailing:        f.CISummary == ports.CIFailing,
-		ChangesRequested: f.ReviewDecision == ports.ReviewChangesRequested,
+		ChangesRequested: f.ReviewDecision == ports.ReviewChangesRequested || hasHumanComments,
+		BotComments:      hasBotComments,
+		MergeConflicts:   hasMergeConflicts(f.Mergeability),
 		Approved:         f.ReviewDecision == ports.ReviewApproved,
 		Mergeable:        f.Mergeability.Mergeable,
 		ReviewPending:    f.ReviewDecision == ports.ReviewPending,
 		Number:           f.PRNumber,
 		URL:              f.PRURL,
 	}
+}
+
+func classifyPendingComments(comments []ports.ReviewComment) (hasBot, hasHuman bool) {
+	for _, c := range comments {
+		if c.IsBot {
+			hasBot = true
+		} else {
+			hasHuman = true
+		}
+	}
+	return hasBot, hasHuman
+}
+
+func hasMergeConflicts(m ports.Mergeability) bool {
+	return !m.Mergeable && !m.NoConflicts && (m.CIPassing || m.Approved || len(m.Blockers) > 0)
 }
 
 // ---- activity -> session axis mapping (activity owns working/idle/waiting) ----

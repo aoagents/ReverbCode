@@ -1,11 +1,10 @@
 // Package session implements ports.SessionManager: the explicit-mutation half
 // of the lane. The SM is impure plumbing — it drives the Runtime/Agent/Workspace
-// plugins to create and tear down sessions, seeds the initial lifecycle record,
-// and routes mutation outcomes to the LCM (OnSpawnCompleted / OnKillRequested).
+// plugins to create and tear down sessions, and routes mutation commands and
+// outcomes to the LCM (OnSpawnInitiated / OnSpawnCompleted / OnKillRequested).
 //
-// It NEVER derives or observes lifecycle state: observed transitions are the
-// LCM's job. The SM's only canonical writes are the explicit ones — seeding a
-// new record on Spawn and re-seeding (reopening) on Restore — and it is the
+// It NEVER writes sessions directly: observed transitions and explicit
+// canonical mutations are the LCM's job under the Writer contract. The SM is the
 // single producer of the derived display status, attached on read in List/Get
 // and never persisted.
 package session
@@ -96,12 +95,17 @@ func New(d Deps) *Manager {
 
 // ---- Spawn ----
 
-// Spawn runs the create pipeline in spec order: workspace -> runtime -> seed ->
-// report to the LCM. The record is seeded LATE (after the runtime is up), so a
+// Spawn runs the create pipeline in spec order: workspace -> runtime -> route
+// seed command to the LCM -> report completion to the LCM. The record is seeded LATE (after the runtime is up), so a
 // failure before the seed leaves no record for Cleanup to reclaim — hence each
 // step eagerly rolls back the steps that already succeeded.
 func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Session, error) {
 	id := m.newID(cfg)
+	if _, ok, err := m.store.Get(ctx, id); err != nil {
+		return domain.Session{}, fmt.Errorf("spawn %s: check existing: %w", id, err)
+	} else if ok {
+		return domain.Session{}, fmt.Errorf("spawn %s: already exists", id)
+	}
 
 	ws, err := m.workspace.Create(ctx, ports.WorkspaceConfig{
 		ProjectID: cfg.ProjectID,
@@ -124,13 +128,16 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.Session{}, fmt.Errorf("spawn %s: runtime create: %w", id, err)
 	}
 
-	if err := m.store.Seed(ctx, seedRecord(id, cfg, m.clock())); err != nil {
+	if err := m.lcm.OnSpawnInitiated(ctx, seedRecord(id, cfg, m.clock())); err != nil {
 		m.rollbackRuntime(ctx, handle)
 		m.rollbackWorkspace(ctx, ws)
-		return domain.Session{}, fmt.Errorf("spawn %s: seed: %w", id, err)
+		return domain.Session{}, fmt.Errorf("spawn %s: on spawn initiated: %w", id, err)
 	}
 
-	outcome := ports.SpawnOutcome{Branch: ws.Branch, WorkspacePath: ws.Path, RuntimeHandle: handle}
+	// Prompt is persisted via OnSpawnCompleted -> spawnMetadata so a later Restore
+	// can fall back to a fresh launch if the agent's native session id was never
+	// captured (the capture path is a separate hook that may never have run).
+	outcome := ports.SpawnOutcome{Branch: ws.Branch, WorkspacePath: ws.Path, RuntimeHandle: handle, Prompt: agentCfg.Prompt}
 	if err := m.lcm.OnSpawnCompleted(ctx, id, outcome); err != nil {
 		// The record is seeded but the runtime/workspace are about to be torn
 		// down. The store has no delete, so route the orphan to a terminal
@@ -245,7 +252,7 @@ func (m *Manager) Send(ctx context.Context, id domain.SessionID, message string)
 // fallible I/O (workspace restore + runtime create) runs first so a failure
 // touches no canonical state and never destroys the worktree (it may hold the
 // agent's prior work). Only once the runtime is up do we reopen the lifecycle:
-// resetting a terminal session is an explicit mutation (the SM's authority; the
+// resetting a terminal session is an explicit mutation routed to the LCM (the
 // LCM's observe path would never resurrect a terminal session), and the PR axis
 // is cleared. OnSpawnCompleted then flips the runtime to alive.
 func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.Session, error) {
@@ -266,13 +273,15 @@ func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.Sess
 		return domain.Session{}, fmt.Errorf("restore %s: metadata: %w", id, err)
 	}
 
-	// Resume is only possible with the agent's captured session id. Without it,
-	// GetRestoreCommand would produce an ambiguous "resume nothing" launch, and
-	// we have no stored prompt to fall back to a fresh launch — so fail early,
-	// before any I/O.
+	// Resume is only possible with the agent's captured session id; without it we
+	// fall back to a fresh launch using the seeded prompt persisted at spawn time
+	// (the agent's id-capture path is a separate hook that may never have run, so
+	// "no id" is the common case rather than an error). If neither is available
+	// there is nothing to relaunch from — fail early, before any I/O.
 	agentSessionID := meta[lifecycle.MetaAgentSessionID]
-	if agentSessionID == "" {
-		return domain.Session{}, fmt.Errorf("restore %s: missing agent session id (cannot resume)", id)
+	seededPrompt := meta[lifecycle.MetaPrompt]
+	if agentSessionID == "" && seededPrompt == "" {
+		return domain.Session{}, fmt.Errorf("restore %s: no agent session id or seeded prompt (cannot resume or relaunch)", id)
 	}
 
 	ws, err := m.workspace.Restore(ctx, ports.WorkspaceConfig{
@@ -284,11 +293,15 @@ func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.Sess
 		return domain.Session{}, fmt.Errorf("restore %s: workspace restore: %w", id, err)
 	}
 
-	agentCfg := ports.AgentConfig{SessionID: id, WorkspacePath: ws.Path}
+	agentCfg := ports.AgentConfig{SessionID: id, WorkspacePath: ws.Path, Prompt: seededPrompt}
+	launchCommand := m.agent.GetRestoreCommand(agentSessionID)
+	if agentSessionID == "" {
+		launchCommand = m.agent.GetLaunchCommand(agentCfg)
+	}
 	handle, err := m.runtime.Create(ctx, ports.RuntimeConfig{
 		SessionID:     id,
 		WorkspacePath: ws.Path,
-		LaunchCommand: m.agent.GetRestoreCommand(agentSessionID),
+		LaunchCommand: launchCommand,
 		Env:           spawnEnv(m.agent.GetEnvironment(agentCfg), id, rec.ProjectID, rec.IssueID),
 	})
 	if err != nil {
@@ -298,13 +311,14 @@ func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.Sess
 	// Past this point the runtime is live: a failure must tear it back down (but
 	// never the workspace, which holds the agent's prior work) so we don't strand
 	// a process while parking the session in a terminal lifecycle.
-	reopen := ports.LifecyclePatch{
-		Session: &domain.SessionSubstate{State: domain.SessionNotStarted, Reason: domain.ReasonSpawnRequested},
-		PR:      &domain.PRSubstate{State: domain.PRNone, Reason: domain.PRReasonClearedOnRestore},
-	}
-	if err := m.store.PatchLifecycle(ctx, id, reopen); err != nil {
+	reopen := rec
+	reopen.Lifecycle.Session = domain.SessionSubstate{State: domain.SessionNotStarted, Reason: domain.ReasonSpawnRequested}
+	reopen.Lifecycle.PR = domain.PRSubstate{State: domain.PRNone, Reason: domain.PRReasonClearedOnRestore}
+	reopen.Lifecycle.Runtime = domain.RuntimeSubstate{State: domain.RuntimeUnknown, Reason: domain.RuntimeReasonSpawnIncomplete}
+	reopen.Lifecycle.Detecting = nil
+	if err := m.lcm.OnSpawnInitiated(ctx, reopen); err != nil {
 		m.rollbackRuntime(ctx, handle)
-		return domain.Session{}, fmt.Errorf("restore %s: reopen: %w", id, err)
+		return domain.Session{}, fmt.Errorf("restore %s: on spawn initiated: %w", id, err)
 	}
 
 	outcome := ports.SpawnOutcome{
@@ -312,9 +326,20 @@ func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.Sess
 		WorkspacePath:  ws.Path,
 		RuntimeHandle:  handle,
 		AgentSessionID: agentSessionID,
+		Prompt:         seededPrompt,
 	}
 	if err := m.lcm.OnSpawnCompleted(ctx, id, outcome); err != nil {
 		m.rollbackRuntime(ctx, handle)
+		// Re-upsert the original record to undo the reopen; the store will
+		// assign the next revision.
+		if revertErr := m.lcm.OnSpawnInitiated(ctx, rec); revertErr != nil {
+			return domain.Session{}, fmt.Errorf("restore %s: revert after spawn completed failure: %w (original error: %v)", id, revertErr, err)
+		}
+		if len(rec.Metadata) > 0 {
+			if revertErr := m.store.PatchMetadata(ctx, id, rec.Metadata); revertErr != nil {
+				return domain.Session{}, fmt.Errorf("restore %s: revert metadata after spawn completed failure: %w (original error: %v)", id, revertErr, err)
+			}
+		}
 		return domain.Session{}, fmt.Errorf("restore %s: on spawn completed: %w", id, err)
 	}
 	return m.Get(ctx, id)

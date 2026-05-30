@@ -20,11 +20,11 @@ const LifecycleVersion = 1
 // between observations (they are read back by the pure decide core), so they
 // live in the persisted record too.
 type CanonicalSessionLifecycle struct {
-	// Version is the schema version of this record's shape (LifecycleVersion).
-	Version int `json:"version"`
-	// Revision is a monotonic counter the store bumps on every write. It is used
-	// for optimistic-concurrency checks (LifecyclePatch.ExpectedRevision) and is
-	// distinct from the schema Version above.
+	// Version is the Go-only schema-shape constant for this record. It is not
+	// persisted and is not part of the CDC payload.
+	Version int
+	// Revision is the per-write monotonic counter. The storage layer's Upsert
+	// bumps it when the full row is persisted; the LCM does not.
 	Revision int             `json:"revision"`
 	Session  SessionSubstate `json:"session"`
 	PR       PRSubstate      `json:"pr"`
@@ -90,6 +90,7 @@ type PRState string
 
 const (
 	PRNone   PRState = "none"
+	PRDraft  PRState = "draft"
 	PROpen   PRState = "open"
 	PRMerged PRState = "merged"
 	PRClosed PRState = "closed"
@@ -103,6 +104,8 @@ const (
 	PRReasonCIFailing        PRReason = "ci_failing"
 	PRReasonReviewPending    PRReason = "review_pending"
 	PRReasonChangesRequested PRReason = "changes_requested"
+	PRReasonBotComments      PRReason = "bot_comments"
+	PRReasonMergeConflicts   PRReason = "merge_conflicts"
 	PRReasonApproved         PRReason = "approved"
 	PRReasonMergeReady       PRReason = "merge_ready"
 	PRReasonMerged           PRReason = "merged"

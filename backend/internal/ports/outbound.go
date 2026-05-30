@@ -6,60 +6,46 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
-// LifecycleStore is the persistence adapter, the ONLY disk writer. It owns
-// merge-patch, atomic write, file lock, and CDC eventing. The LCM and SM only
-// ever touch state through this narrow interface.
+// LifecycleStore is Tom's persistence adapter for session records.
 //
-// List returns persistence records (no derived status); the Session Manager
-// turns those into domain.Session by attaching the derived display status.
+// Writer contract: the Lifecycle Manager (LCM) is the sole logical writer of
+// sessions. Controllers, the Session Manager, observers, and other goroutines
+// must route mutations to the LCM; no other goroutine writes sessions directly.
+// The LCM serializes mutations and calls Upsert with the full SessionRecord and
+// the classified event_type. The storage layer owns Revision++ and performs the
+// full-row insert-or-update; the older sparse merge-patch model is gone.
 //
-// Seed and Get are the two record-with-identity methods the Session Manager
-// needs that the LCM does not: Load returns lifecycle only (all the decider
-// needs), so the SM read-model and explicit-create path would otherwise have no
-// way to write or read a record's identity (ID/ProjectID/IssueID/Kind/CreatedAt)
-// by id. (Co-owned with Tom's persistence layer — added here to close that gap.)
+// List/Get return persistence records (no derived status); the Session Manager
+// hydrates them into domain.Session by attaching DeriveLegacyStatus on read.
 type LifecycleStore interface {
+	// Upsert inserts or replaces the full session row and bumps Revision inside
+	// the storage layer. Only the LCM may call it.
+	Upsert(ctx context.Context, rec domain.SessionRecord, eventType EventType) error
 	Load(ctx context.Context, id domain.SessionID) (domain.CanonicalSessionLifecycle, bool, error)
-	PatchLifecycle(ctx context.Context, id domain.SessionID, patch LifecyclePatch) error
 	List(ctx context.Context, project domain.ProjectID) ([]domain.SessionRecord, error)
 	GetMetadata(ctx context.Context, id domain.SessionID) (map[string]string, error)
 	PatchMetadata(ctx context.Context, id domain.SessionID, kv map[string]string) error
 
-	// Seed creates a new record with its identity and initial lifecycle. It is
-	// the SM's explicit-create path (the LCM only ever patches existing records);
-	// OnSpawnCompleted requires a seeded record, so Spawn calls this first. It
-	// must reject a seed for an id that already exists rather than overwrite —
-	// re-seeding an existing session (e.g. Restore) goes through PatchLifecycle.
-	Seed(ctx context.Context, rec domain.SessionRecord) error
-
 	// Get returns a single full record (with identity) by id. Load is
-	// lifecycle-only, so the SM uses this to build the read-model and to
-	// reconstruct teardown handles for Kill/Restore on one id.
+	// lifecycle-only, so readers use this to build the read-model and reconstruct
+	// teardown handles for Kill/Restore on one id.
 	Get(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error)
 }
 
-// LifecyclePatch is a sparse merge-patch: a nil field is left untouched, a
-// non-nil field is written.
-//
-// Detecting needs three-way semantics (leave / set / clear-to-nil):
-//   - ClearDetecting == true  → store clears the detecting memory and IGNORES
-//     the Detecting field (clear wins; setting both is a caller bug).
-//   - ClearDetecting == false, Detecting != nil → set/replace the memory.
-//   - ClearDetecting == false, Detecting == nil  → leave it untouched.
-//
-// ExpectedRevision supports optimistic concurrency: when non-nil the store must
-// reject the patch if the stored Revision (the monotonic write counter, NOT the
-// schema Version) differs. This is the alternative to the LCM owning all
-// per-session serialisation itself.
-type LifecyclePatch struct {
-	Session          *domain.SessionSubstate
-	PR               *domain.PRSubstate
-	Runtime          *domain.RuntimeSubstate
-	Activity         *domain.ActivitySubstate
-	Detecting        *domain.DetectingState
-	ClearDetecting   bool
-	ExpectedRevision *int
-}
+// EventType is the schema-level event label attached to each Upsert.
+type EventType string
+
+const (
+	EventSessionCreated          EventType = "session_created"
+	EventSessionTerminated       EventType = "session_terminated"
+	EventSessionStateChanged     EventType = "session_state_changed"
+	EventSessionPRUpdated        EventType = "session_pr_updated"
+	EventSessionRuntimeUpdated   EventType = "session_runtime_updated"
+	EventSessionAttentionUpdated EventType = "session_attention_updated"
+	EventSessionActivityUpdated  EventType = "session_activity_updated"
+	EventSessionDisplayUpdated   EventType = "session_display_updated"
+	EventSessionUpdated          EventType = "session_updated"
+)
 
 // Notifier delivers events to the human (desktop/Slack later). Push, never pull.
 type Notifier interface {
