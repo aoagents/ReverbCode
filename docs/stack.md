@@ -30,7 +30,7 @@ invariants.
 | Storage | SQLite in WAL mode | Planned | Local daemon, single writer, many dashboard/API reads, no external DB setup. |
 | SQL access | `database/sql` + `sqlc` | Planned | Hand-written SQL with generated typed methods. |
 | Migrations | `goose` | Planned | Simple SQL migrations for an embedded/local database. |
-| Config | `koanf` | Planned | Explicit config loading without the heavier Cobra/Viper coupling. |
+| Config | `github.com/spf13/viper` | Planned | Standard pairing with Cobra/pflag for CLI, env, and file-based configuration. |
 | CLI | `cobra` | Planned | Standard command structure for daemon startup, diagnostics, and admin commands. |
 | Logging | `log/slog` | Planned | Stdlib structured logging before adding another logging dependency. |
 | Testing | stdlib `testing` | Implemented | Keep pure domain logic and adapter contracts easy to test. |
@@ -41,16 +41,15 @@ invariants.
 
 ### SQLite driver
 
-Use one of:
+Use `github.com/ncruces/go-sqlite3/driver` first.
 
 | Driver | When to choose it | Tradeoff |
 |--------|-------------------|----------|
-| `github.com/mattn/go-sqlite3` | Choose if CGO is acceptable. | Mature and widely used, but cross-compilation and toolchain setup are harder. |
-| `modernc.org/sqlite` | Choose if pure-Go distribution matters more. | Easier static/cross-platform builds, but should be validated against AO's WAL/outbox workload. |
+| `github.com/ncruces/go-sqlite3/driver` | Default V1 choice. | `database/sql` driver with an easier no-CGO distribution story; validate against AO's WAL/outbox workload. |
+| `github.com/mattn/go-sqlite3` | Fallback if compatibility or performance requires it. | Mature and widely used, but cross-compilation and toolchain setup are harder. |
 
-Default recommendation: start with `mattn/go-sqlite3` if CGO is acceptable;
-switch to `modernc.org/sqlite` if release packaging or user install friction
-becomes the blocker.
+Keep the driver behind `database/sql` so the persistence layer can switch
+drivers if validation exposes compatibility or performance issues.
 
 Required SQLite setup:
 
