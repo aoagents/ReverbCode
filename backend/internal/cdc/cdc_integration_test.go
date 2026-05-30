@@ -321,18 +321,18 @@ func TestRotationTriggersResync(t *testing.T) {
 // reappears via a future snapshot (if rotation ever happens again).
 //
 // Scenario:
-//   1. Consumer delivered seq 1..5 and durably stored offset = 5.
-//   2. Publisher drained seq 6..10 to the same JSONL file (still active),
-//      consumer was killed before processing them.
-//   3. JSONL rotated: jsonl -> jsonl.1 (carries seq 1..10). Fresh jsonl gets
-//      seq 11..15.
-//   4. New consumer starts with offset = 5, prevInfo = nil, cursor = 0.
-//      Without B1 it reads the fresh jsonl, sees seq 11..15 (all > lastSeq),
-//      delivers them, and seq 6..10 are lost forever from the live stream.
-//      With B1 it resyncs from the snapshot source first, so the gap is
-//      closed (subscribers see at least the final state for each session
-//      that had events in 6..10), lastSeq advances past the gap, and the
-//      live stream resumes correctly.
+//  1. Consumer delivered seq 1..5 and durably stored offset = 5.
+//  2. Publisher drained seq 6..10 to the same JSONL file (still active),
+//     consumer was killed before processing them.
+//  3. JSONL rotated: jsonl -> jsonl.1 (carries seq 1..10). Fresh jsonl gets
+//     seq 11..15.
+//  4. New consumer starts with offset = 5, prevInfo = nil, cursor = 0.
+//     Without B1 it reads the fresh jsonl, sees seq 11..15 (all > lastSeq),
+//     delivers them, and seq 6..10 are lost forever from the live stream.
+//     With B1 it resyncs from the snapshot source first, so the gap is
+//     closed (subscribers see at least the final state for each session
+//     that had events in 6..10), lastSeq advances past the gap, and the
+//     live stream resumes correctly.
 func TestConsumerStartResyncsAcrossRestartWithRotation(t *testing.T) {
 	ctx := context.Background()
 	store := newStore(t)
@@ -453,4 +453,3 @@ func TestConsumerStartResyncsAcrossRestartWithRotation(t *testing.T) {
 		t.Fatalf("B1: offset after resync = %d, want >= 15", off)
 	}
 }
-
