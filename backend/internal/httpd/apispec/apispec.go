@@ -124,7 +124,9 @@ type notImplementedResponse struct {
 // duplicated in controller code.
 func NotImplemented(w http.ResponseWriter, r *http.Request, method, path string) {
 	op := Default().Operation(method, path)
-
+	if op == nil {
+		panic(fmt.Sprintf("apispec: missing operation for %s %s", method, path))
+	}
 	body := notImplementedResponse{
 		Error:     "not_implemented",
 		Code:      "NOT_IMPLEMENTED",
