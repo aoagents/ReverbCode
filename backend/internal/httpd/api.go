@@ -39,6 +39,9 @@ type API struct {
 // per-request timeout so the REST group can apply it without re-reading the
 // environment.
 func NewAPI(cfg config.Config, deps APIDeps) *API {
+	if deps.Projects == nil {
+		deps.Projects = project.NewMemoryManager()
+	}
 	return &API{
 		cfg: cfg,
 		projects: &controllers.ProjectsController{
