@@ -1,12 +1,16 @@
 package observer
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"log/slog"
 	"testing"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	scmlog "github.com/aoagents/agent-orchestrator/backend/internal/scm/logging"
 	"github.com/aoagents/agent-orchestrator/backend/internal/scm/store"
 )
 
@@ -112,6 +116,74 @@ func TestObserverProjectsDraftAndFailingCIToLCMFacts(t *testing.T) {
 	}
 }
 
+func TestObserverLogsProviderNeutralObserveEvents(t *testing.T) {
+	ctx := scmlog.WithCorrelationID(context.Background(), "corr-observe")
+	now := time.Date(2026, 5, 28, 12, 0, 0, 0, time.UTC)
+	subj := domain.SCMSubject{SessionID: "s1", ProjectID: "p1", Provider: domain.SCMProviderGitHub, Host: "github.com", Repo: "o/r", Branch: "feat/45", PRNumber: 45}
+	snap := domain.SCMSnapshot{SessionID: "s1", Subject: subj, Freshness: domain.SCMFreshnessFresh, ObservedAt: now, PR: &domain.SCMPullRequest{Number: 45, URL: "https://github.com/o/r/pull/45", State: domain.PROpen}}
+	var logs bytes.Buffer
+	st := store.NewMemoryStore()
+	o := New(st, nil, fakeProvider{res: ports.SCMObserveResult{ProviderName: domain.SCMProviderGitHub, Subjects: []domain.SCMSubject{subj}, Snapshots: []domain.SCMSnapshot{snap}}})
+	o.Clock = func() time.Time { return now }
+	o.Logger = jsonLogger(&logs)
+	if err := o.Refresh(ctx, []domain.SCMSubject{subj}); err != nil {
+		t.Fatal(err)
+	}
+	records := decodeLogRecords(t, logs.String())
+	started := findLogRecord(t, records, scmlog.EventObserveStarted)
+	assertLogField(t, started, scmlog.FieldCorrelationID, "corr-observe")
+	assertLogField(t, started, scmlog.FieldProvider, "github")
+	assertLogField(t, started, scmlog.FieldHost, "github.com")
+	assertLogField(t, started, scmlog.FieldRepo, "o/r")
+	assertLogField(t, started, scmlog.FieldProjectID, "p1")
+	assertLogNumber(t, started, scmlog.FieldSessionCount, 1)
+	if _, ok := started["pr_number"]; ok {
+		t.Fatal("observer log used provider-specific pr_number field")
+	}
+	completed := findLogRecord(t, records, scmlog.EventObserveCompleted)
+	assertLogField(t, completed, scmlog.FieldCorrelationID, "corr-observe")
+	assertLogField(t, completed, scmlog.FieldFreshness, "fresh")
+	assertLogNumber(t, completed, scmlog.FieldSnapshotCount, 1)
+	assertLogNumber(t, completed, scmlog.FieldChangedCount, 1)
+	saved := findLogRecord(t, records, scmlog.EventSnapshotSaved)
+	assertLogNumber(t, saved, scmlog.FieldChangeRequestNumber, 45)
+}
+
+func TestObserverFailureLogsAndPersistsConciseDiagnostic(t *testing.T) {
+	ctx := scmlog.WithCorrelationID(context.Background(), "corr-fail")
+	now := time.Date(2026, 5, 28, 12, 0, 0, 0, time.UTC)
+	subj := domain.SCMSubject{SessionID: "s1", ProjectID: "p1", Provider: domain.SCMProviderGitHub, Host: "github.com", Repo: "o/r", Branch: "feat/45", PRNumber: 45}
+	err := &domain.SCMError{Kind: domain.SCMErrorRateLimited, Operation: "github.graphql_pr_batch", StatusCode: 403, Message: "rate limit exceeded " + string(bytes.Repeat([]byte("x"), 500))}
+	var logs bytes.Buffer
+	st := store.NewMemoryStore()
+	o := New(st, nil, fakeProvider{res: ports.SCMObserveResult{ProviderName: domain.SCMProviderGitHub}, err: err})
+	o.Clock = func() time.Time { return now }
+	o.Logger = jsonLogger(&logs)
+	if gotErr := o.Refresh(ctx, []domain.SCMSubject{subj}); gotErr == nil {
+		t.Fatal("expected observe error")
+	}
+	records := decodeLogRecords(t, logs.String())
+	failed := findLogRecord(t, records, scmlog.EventObserveFailed)
+	assertLogField(t, failed, scmlog.FieldCorrelationID, "corr-fail")
+	assertLogField(t, failed, scmlog.FieldErrorKind, string(domain.SCMErrorRateLimited))
+	assertLogNumber(t, failed, scmlog.FieldStatusCode, 403)
+	findLogRecord(t, records, scmlog.EventSnapshotUnavailable)
+	latest, ok, gotErr := st.GetLatestSnapshot(ctx, "s1")
+	if gotErr != nil || !ok {
+		t.Fatalf("latest ok=%v err=%v", ok, gotErr)
+	}
+	if len(latest.Diagnostics) != 1 {
+		t.Fatalf("diagnostics=%+v", latest.Diagnostics)
+	}
+	diag := latest.Diagnostics[0]
+	if diag.Operation != "github.graphql_pr_batch" || diag.ErrorKind != domain.SCMErrorRateLimited || diag.StatusCode != 403 {
+		t.Fatalf("bad diagnostic: %+v", diag)
+	}
+	if len(diag.Message) > 300 {
+		t.Fatalf("diagnostic message too large: %d", len(diag.Message))
+	}
+}
+
 func TestFactsFromUnavailableSnapshotIsNotFetched(t *testing.T) {
 	facts := FactsFromSnapshot(domain.SCMSnapshot{Freshness: domain.SCMFreshnessUnavailable})
 	if facts.Fetched {
@@ -194,5 +266,52 @@ func TestSubjectsFromSessionsUsesProviderMetadataWithoutGitHubDefaults(t *testin
 	got := subjects[0]
 	if got.Provider != domain.SCMProviderGitLab || got.Host != "gitlab.com" || got.Repo != "group/repo" || got.Branch != "feat/27" || got.PRNumber != 12 {
 		t.Fatalf("bad subject: %+v", got)
+	}
+}
+
+func jsonLogger(buf *bytes.Buffer) *slog.Logger {
+	return slog.New(slog.NewJSONHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+}
+
+func decodeLogRecords(t *testing.T, raw string) []map[string]any {
+	t.Helper()
+	lines := bytes.Split([]byte(raw), []byte("\n"))
+	records := make([]map[string]any, 0, len(lines))
+	for _, line := range lines {
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 {
+			continue
+		}
+		var rec map[string]any
+		if err := json.Unmarshal(line, &rec); err != nil {
+			t.Fatalf("decode log %s: %v", line, err)
+		}
+		records = append(records, rec)
+	}
+	return records
+}
+
+func findLogRecord(t *testing.T, records []map[string]any, msg string) map[string]any {
+	t.Helper()
+	for _, rec := range records {
+		if rec["msg"] == msg {
+			return rec
+		}
+	}
+	t.Fatalf("missing log %q in %+v", msg, records)
+	return nil
+}
+
+func assertLogField(t *testing.T, rec map[string]any, key, want string) {
+	t.Helper()
+	if got, _ := rec[key].(string); got != want {
+		t.Fatalf("%s=%q want %q in %+v", key, got, want, rec)
+	}
+}
+
+func assertLogNumber(t *testing.T, rec map[string]any, key string, want float64) {
+	t.Helper()
+	if got, _ := rec[key].(float64); got != want {
+		t.Fatalf("%s=%v want %v in %+v", key, rec[key], want, rec)
 	}
 }

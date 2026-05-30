@@ -3,6 +3,7 @@ package observer
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"strconv"
 	"strings"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	scmlog "github.com/aoagents/agent-orchestrator/backend/internal/scm/logging"
 )
 
 // Observer coordinates provider polling, durable snapshot writes, event fanout
@@ -19,6 +21,7 @@ type Observer struct {
 	LCM       ports.LifecycleManager
 	Providers map[domain.SCMProvider]ports.SCMProvider
 	Clock     func() time.Time
+	Logger    *slog.Logger
 
 	// OnSnapshot is the first-pass in-process fanout hook for API/dashboard live
 	// updates. Durable outbox/replay can replace it later without changing
@@ -58,13 +61,17 @@ func (o *Observer) Invalidate(ctx context.Context, subject domain.SCMSubject, re
 }
 
 func (o *Observer) Refresh(ctx context.Context, subjects []domain.SCMSubject) error {
+	ctx, _ = scmlog.EnsureCorrelationID(ctx)
+	logger := scmlog.Logger(o.Logger)
 	if o.Store == nil {
-		return fmt.Errorf("scm observer: nil store")
+		err := fmt.Errorf("scm observer: nil store")
+		logger.Error(scmlog.EventObserveFailed, scmlog.Args(scmlog.Add(scmlog.ErrorAttrs(err), scmlog.CorrelationAttr(ctx)))...)
+		return err
 	}
 	if o.Clock == nil {
 		o.Clock = time.Now
 	}
-	byProvider := map[domain.SCMProvider][]domain.SCMSubject{}
+	byGroup := map[observeGroupKey][]domain.SCMSubject{}
 	defaultProvider, hasDefaultProvider := o.singleProvider()
 	var firstErr error
 	for _, subj := range subjects {
@@ -75,30 +82,44 @@ func (o *Observer) Refresh(ctx context.Context, subjects []domain.SCMSubject) er
 			subj.Provider = defaultProvider
 		}
 		if subj.Provider == "" {
+			err := &domain.SCMError{Kind: domain.SCMErrorUnsupported, Operation: "observe", Message: "subject provider is required when observer has zero or multiple providers"}
+			logObserveFailure(ctx, logger, subj, 1, 0, 0, 0, nil, err)
 			if firstErr == nil {
-				firstErr = &domain.SCMError{Kind: domain.SCMErrorUnsupported, Operation: "observe", Message: "subject provider is required when observer has zero or multiple providers"}
+				firstErr = err
 			}
 			continue
 		}
-		byProvider[subj.Provider] = append(byProvider[subj.Provider], subj)
+		key := observeGroupKey{Provider: subj.Provider, Host: subj.Host, Repo: subj.Repo, ProjectID: subj.ProjectID}
+		byGroup[key] = append(byGroup[key], subj)
 	}
 
-	for providerID, group := range byProvider {
-		provider := o.Providers[providerID]
+	for key, group := range byGroup {
+		provider := o.Providers[key.Provider]
+		started := time.Now()
+		startAttrs := scmlog.Add(scmlog.RepositoryAttrs(key.Provider, key.Host, key.Repo, key.ProjectID),
+			scmlog.CorrelationAttr(ctx),
+			slog.Int(scmlog.FieldSessionCount, len(group)),
+		)
+		logger.Info(scmlog.EventObserveStarted, scmlog.Args(startAttrs)...)
 		if provider == nil {
+			err := &domain.SCMError{Kind: domain.SCMErrorUnsupported, Operation: "observe", Message: fmt.Sprintf("provider %q not registered", key.Provider)}
+			logObserveFailure(ctx, logger, group[0], len(group), 0, 0, scmlog.DurationMS(started), nil, err)
 			if firstErr == nil {
-				firstErr = &domain.SCMError{Kind: domain.SCMErrorUnsupported, Operation: "observe", Message: fmt.Sprintf("provider %q not registered", providerID)}
+				firstErr = err
 			}
 			continue
 		}
 		res, err := provider.ObserveSessions(ctx, ports.SCMObserveRequest{Subjects: group, Now: o.Clock()}, o.Store)
+		changedCount := 0
 		for _, subj := range res.Subjects {
 			if upsertErr := o.Store.UpsertSubject(ctx, subj); upsertErr != nil {
+				logObserveFailure(ctx, logger, group[0], len(group), len(res.Snapshots), changedCount, scmlog.DurationMS(started), nil, upsertErr)
 				return upsertErr
 			}
 		}
 		for _, st := range res.PollStates {
 			if pollErr := o.Store.PutPollState(ctx, st); pollErr != nil {
+				logObserveFailure(ctx, logger, group[0], len(group), len(res.Snapshots), changedCount, scmlog.DurationMS(started), nil, pollErr)
 				return pollErr
 			}
 		}
@@ -108,8 +129,17 @@ func (o *Observer) Refresh(ctx context.Context, subjects []domain.SCMSubject) er
 			}
 			saved := map[domain.SessionID]bool{}
 			for _, snap := range res.Snapshots {
-				if saveErr := o.saveAndApply(ctx, snap); saveErr != nil && firstErr == nil {
-					firstErr = saveErr
+				changed, saveErr := o.saveAndApply(ctx, snap)
+				if saveErr != nil {
+					logObserveFailure(ctx, logger, snap.Subject, len(group), len(res.Snapshots), changedCount, scmlog.DurationMS(started), res.PollStates, saveErr)
+					if firstErr == nil {
+						firstErr = saveErr
+					}
+				} else {
+					if changed {
+						changedCount++
+					}
+					logSnapshot(ctx, logger, snap, changed)
 				}
 				saved[snap.SessionID] = true
 			}
@@ -117,19 +147,56 @@ func (o *Observer) Refresh(ctx context.Context, subjects []domain.SCMSubject) er
 				if saved[subj.SessionID] {
 					continue
 				}
-				if saveErr := o.saveAndApply(ctx, unavailableSnapshot(subj, o.Clock(), err)); saveErr != nil && firstErr == nil {
-					firstErr = saveErr
+				snap := unavailableSnapshot(subj, o.Clock(), err)
+				changed, saveErr := o.saveAndApply(ctx, snap)
+				if saveErr != nil {
+					logObserveFailure(ctx, logger, subj, len(group), len(res.Snapshots), changedCount, scmlog.DurationMS(started), res.PollStates, saveErr)
+					if firstErr == nil {
+						firstErr = saveErr
+					}
+				} else {
+					if changed {
+						changedCount++
+					}
+					logSnapshot(ctx, logger, snap, changed)
 				}
 			}
+			logObserveFailure(ctx, logger, group[0], len(group), len(res.Snapshots), changedCount, scmlog.DurationMS(started), res.PollStates, err)
 			continue
 		}
 		for _, snap := range res.Snapshots {
-			if saveErr := o.saveAndApply(ctx, snap); saveErr != nil {
+			changed, saveErr := o.saveAndApply(ctx, snap)
+			if saveErr != nil {
+				logObserveFailure(ctx, logger, snap.Subject, len(group), len(res.Snapshots), changedCount, scmlog.DurationMS(started), res.PollStates, saveErr)
 				return saveErr
 			}
+			if changed {
+				changedCount++
+			}
+			logSnapshot(ctx, logger, snap, changed)
 		}
+		attrs := scmlog.Add(scmlog.RepositoryAttrs(key.Provider, key.Host, key.Repo, key.ProjectID),
+			scmlog.CorrelationAttr(ctx),
+			slog.Int(scmlog.FieldSessionCount, len(group)),
+			slog.Int(scmlog.FieldSnapshotCount, len(res.Snapshots)),
+			slog.Int(scmlog.FieldChangedCount, changedCount),
+			slog.Int64(scmlog.FieldDurationMS, scmlog.DurationMS(started)),
+		)
+		if freshness := scmlog.Freshness(res.Snapshots, res.Unavailable); freshness != "" {
+			attrs = append(attrs, slog.String(scmlog.FieldFreshness, string(freshness)))
+		}
+		attrs = append(attrs, scmlog.RateLimitAttrs(res.RateLimit)...)
+		attrs = append(attrs, scmlog.PollStateAttrs(res.PollStates)...)
+		logger.Info(scmlog.EventObserveCompleted, scmlog.Args(attrs)...)
 	}
 	return firstErr
+}
+
+type observeGroupKey struct {
+	Provider  domain.SCMProvider
+	Host      string
+	Repo      string
+	ProjectID domain.ProjectID
 }
 
 func (o *Observer) singleProvider() (domain.SCMProvider, bool) {
@@ -142,42 +209,65 @@ func (o *Observer) singleProvider() (domain.SCMProvider, bool) {
 	return "", false
 }
 
-func (o *Observer) saveAndApply(ctx context.Context, snap domain.SCMSnapshot) error {
+func (o *Observer) saveAndApply(ctx context.Context, snap domain.SCMSnapshot) (bool, error) {
 	saved, changed, err := o.Store.SaveSnapshot(ctx, snap)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if !changed {
-		return nil
+		return false, nil
 	}
 	if o.OnSnapshot != nil {
 		if err := o.OnSnapshot(ctx, saved); err != nil {
-			return err
+			return true, err
 		}
 	}
 	if o.LCM != nil {
 		if err := o.LCM.ApplySCMObservation(ctx, saved.SessionID, FactsFromSnapshot(saved)); err != nil {
-			return err
+			return true, err
 		}
 	}
-	return nil
+	return true, nil
 }
 
 func unavailableSnapshot(subj domain.SCMSubject, now time.Time, err error) domain.SCMSnapshot {
-	d := domain.SCMDiagnostic{Operation: "observe", ErrorKind: domain.SCMErrorUnavailable, Message: errString(err)}
-	if se, ok := err.(*domain.SCMError); ok {
-		d.ErrorKind = se.Kind
-		d.StatusCode = se.StatusCode
-		d.Operation = se.Operation
-	}
+	d := scmlog.DiagnosticFromError("observe", err)
 	return domain.SCMSnapshot{SessionID: subj.SessionID, Subject: subj, Freshness: domain.SCMFreshnessUnavailable, ObservedAt: now, Diagnostics: []domain.SCMDiagnostic{d}}
 }
 
-func errString(err error) string {
-	if err == nil {
-		return ""
+func logObserveFailure(ctx context.Context, logger *slog.Logger, subj domain.SCMSubject, sessionCount, snapshotCount, changedCount int, durationMS int64, pollStates []domain.SCMPollState, err error) {
+	attrs := scmlog.Add(scmlog.SubjectAttrs(subj),
+		scmlog.CorrelationAttr(ctx),
+		slog.Int(scmlog.FieldSessionCount, sessionCount),
+		slog.Int(scmlog.FieldSnapshotCount, snapshotCount),
+		slog.Int(scmlog.FieldChangedCount, changedCount),
+		slog.Int64(scmlog.FieldDurationMS, durationMS),
+	)
+	attrs = append(attrs, scmlog.ErrorAttrs(err)...)
+	attrs = append(attrs, scmlog.PollStateAttrs(pollStates)...)
+	if _, ok := scmlog.SCMError(err); ok {
+		logger.Warn(scmlog.EventObserveFailed, scmlog.Args(attrs)...)
+		return
 	}
-	return err.Error()
+	logger.Error(scmlog.EventObserveFailed, scmlog.Args(attrs)...)
+}
+
+func logSnapshot(ctx context.Context, logger *slog.Logger, snap domain.SCMSnapshot, changed bool) {
+	attrs := scmlog.Add(scmlog.SnapshotAttrs(snap), scmlog.CorrelationAttr(ctx))
+	for _, diag := range snap.Diagnostics {
+		if diag.ErrorKind != "" {
+			attrs = append(attrs, slog.String(scmlog.FieldErrorKind, string(diag.ErrorKind)))
+			break
+		}
+	}
+	switch {
+	case snap.Freshness == domain.SCMFreshnessUnavailable:
+		logger.Warn(scmlog.EventSnapshotUnavailable, scmlog.Args(attrs)...)
+	case changed:
+		logger.Debug(scmlog.EventSnapshotSaved, scmlog.Args(attrs)...)
+	default:
+		logger.Debug(scmlog.EventSnapshotUnchanged, scmlog.Args(attrs)...)
+	}
 }
 
 // FactsFromSnapshot projects normalized SCM snapshots into the existing LCM DTO.
