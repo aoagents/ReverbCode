@@ -13,6 +13,15 @@
 // Writing back to the tracker (Comment, Transition) is deferred to issue
 // #40. The observer/polling loop is deferred to issue #35.
 //
+// # Zero-config auth
+//
+// EnvTokenSource looks for a token in this order: configured env vars,
+// GITHUB_TOKEN, then `gh auth token`. If the user has already run
+// `gh auth login`, the adapter just works — no env var setup required.
+// gh-CLI errors (binary missing, not authenticated) are intentionally
+// swallowed and reported as ErrNoToken so the caller sees one uniform
+// "configure a token" signal.
+//
 // # Reverse state mapping
 //
 // GitHub Issues only have two native states (open, closed) plus a

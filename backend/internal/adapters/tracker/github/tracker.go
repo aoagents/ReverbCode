@@ -104,13 +104,17 @@ type Tracker struct {
 }
 
 // New returns a Tracker. It fails fast when no token can be obtained so
-// daemons crash at startup rather than at first issue lookup.
+// daemons crash at startup rather than at first issue lookup. The token
+// probe is bounded by a short deadline so a hung `gh auth token` fallback
+// (broken shell, unhealthy PATH) cannot stall daemon startup.
 func New(opts Options) (*Tracker, error) {
 	src := opts.Token
 	if src == nil {
 		return nil, ErrNoToken
 	}
-	if _, err := src.Token(context.Background()); err != nil {
+	bootCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := src.Token(bootCtx); err != nil {
 		return nil, err
 	}
 	t := &Tracker{
