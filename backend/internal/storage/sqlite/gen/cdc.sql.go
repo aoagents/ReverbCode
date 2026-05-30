@@ -12,9 +12,14 @@ import (
 )
 
 const deleteSentOutboxBelow = `-- name: DeleteSentOutboxBelow :execrows
-DELETE FROM outbox WHERE sent = 1 AND change_log_seq < ?
+DELETE FROM outbox WHERE sent = 1 AND change_log_seq <= ?
 `
 
+// Sweeps outbox rows that every consumer has acknowledged. The bound is the
+// MIN(consumer_offsets.last_seq), which is the highest seq each consumer has
+// already delivered — so the row at that seq is itself fully acknowledged and
+// safe to delete. Use <= so a quiet consumer eventually reaches a fully
+// vacuumed outbox; a strict < would always leave one stale row behind.
 func (q *Queries) DeleteSentOutboxBelow(ctx context.Context, changeLogSeq int64) (int64, error) {
 	result, err := q.db.ExecContext(ctx, deleteSentOutboxBelow, changeLogSeq)
 	if err != nil {

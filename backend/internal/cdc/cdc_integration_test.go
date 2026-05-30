@@ -135,14 +135,59 @@ func TestEndToEndPublishConsume(t *testing.T) {
 		t.Fatalf("offset = %d, want 3", off)
 	}
 
-	// Janitor: consumer ACKed 3, so sent rows with seq < 3 are reclaimed.
+	// Janitor: consumer ACKed 3, so all sent rows with seq <= 3 are reclaimed.
+	// The watermark itself is fully delivered and safe to delete.
 	jan := cdc.NewJanitor(store, cdc.JanitorConfig{})
 	deleted, err := jan.Sweep(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if deleted != 2 {
-		t.Fatalf("janitor deleted %d, want 2 (seq 1,2 < watermark 3)", deleted)
+	if deleted != 3 {
+		t.Fatalf("janitor deleted %d, want 3 (seq 1,2,3 <= watermark 3)", deleted)
+	}
+}
+
+// TestJanitorSweepIncludesWatermarkRow exercises the fix for the off-by-one in
+// DeleteSentOutboxBelow. With a strict `<` the row at the watermark seq lingers
+// forever in a quiet system; with `<=` a single-ACK system vacuums fully.
+func TestJanitorSweepIncludesWatermarkRow(t *testing.T) {
+	ctx := context.Background()
+	store := newStore(t)
+	dir := t.TempDir()
+	log, err := cdc.OpenLog(dir, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer log.Close()
+
+	// Exactly one event -> one outbox row.
+	if err := store.Upsert(ctx, rec("s1"), ports.EventSessionCreated); err != nil {
+		t.Fatal(err)
+	}
+	pub := cdc.NewPublisher(outboxAdapter{store}, log, cdc.PublisherConfig{})
+	if err := pub.Drain(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// Consumer ACKs seq 1.
+	if err := store.SetOffset(ctx, "fe", 1, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+
+	jan := cdc.NewJanitor(store, cdc.JanitorConfig{})
+	deleted, err := jan.Sweep(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleted != 1 {
+		t.Fatalf("janitor deleted %d, want 1 (seq 1 <= watermark 1)", deleted)
+	}
+	// Outbox should now be empty; nothing further to vacuum.
+	deleted, err = jan.Sweep(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleted != 0 {
+		t.Fatalf("second sweep deleted %d, want 0", deleted)
 	}
 }
 
