@@ -129,6 +129,52 @@ func TestNewRejectsMissingToken(t *testing.T) {
 	}
 }
 
+// TestErrNoToken_MessageIsActionable pins the contract that the
+// ErrNoToken sentinel's message string contains both the env-var name
+// the user must set AND the settings URL where they mint the key. The
+// SM surfaces this string verbatim — losing either piece turns a
+// one-step fix into a docs hunt.
+func TestErrNoToken_MessageIsActionable(t *testing.T) {
+	msg := ErrNoToken.Error()
+	for _, want := range []string{"LINEAR_API_KEY", "https://linear.app/settings/api"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("ErrNoToken.Error() missing %q; got %q", want, msg)
+		}
+	}
+}
+
+// TestEnvTokenSource_EnumeratesCheckedVars verifies the EnvTokenSource
+// failure path lists every env var it actually consulted — in lookup
+// order, no duplicates — so the user sees what to set. The wrapping
+// preserves errors.Is(err, ErrNoToken) so SM routing is unchanged.
+func TestEnvTokenSource_EnumeratesCheckedVars(t *testing.T) {
+	t.Setenv("AO_LINEAR_TOKEN", "")
+	t.Setenv("LINEAR_API_KEY", "")
+	src := EnvTokenSource{EnvVars: []string{"AO_LINEAR_TOKEN", "LINEAR_API_KEY"}}
+	_, err := src.Token(ctx())
+	if !errors.Is(err, ErrNoToken) {
+		t.Fatalf("err = %v, want errors.Is(ErrNoToken)", err)
+	}
+	msg := err.Error()
+	for _, want := range []string{"AO_LINEAR_TOKEN", "LINEAR_API_KEY", "checked:"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error missing %q; got %q", want, msg)
+		}
+	}
+	// The "(checked: ...)" suffix must not duplicate LINEAR_API_KEY when
+	// the caller already listed it. We slice on the prefix so the
+	// sentinel's own mention of LINEAR_API_KEY (which is allowed and
+	// intentional) doesn't confuse the count.
+	idx := strings.Index(msg, "checked:")
+	if idx < 0 {
+		t.Fatalf("error missing checked: list; got %q", msg)
+	}
+	suffix := msg[idx:]
+	if got := strings.Count(suffix, "LINEAR_API_KEY"); got != 1 {
+		t.Errorf("LINEAR_API_KEY appears %d times in checked-list %q, want 1 (caller listed it; default must not duplicate)", got, suffix)
+	}
+}
+
 // TestAuthHeader_NoBearerPrefix pins the single easiest bug to introduce on
 // this adapter: Linear personal API keys are sent as raw "Authorization:
 // <key>", NOT "Authorization: Bearer <key>". OAuth tokens DO use Bearer but

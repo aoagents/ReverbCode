@@ -17,6 +17,21 @@
 // Writing back to the tracker (Comment, Transition) is deferred to issue
 // #40. The observer / polling loop is deferred to #35.
 //
+// # Getting started
+//
+// Linear has no equivalent of the github gh CLI's keyring, so v1 only
+// supports a personal API key sourced from an env var. Two steps:
+//
+//  1. Mint a personal API key at https://linear.app/settings/api.
+//  2. Export it as LINEAR_API_KEY (the default EnvTokenSource fallback).
+//     Projects that need per-project tokens can configure additional
+//     env-var names via EnvTokenSource.EnvVars; the listed names are
+//     consulted in order and LINEAR_API_KEY is the final fallback.
+//
+// When no token can be sourced, the adapter returns ErrNoToken. The
+// error message names both the settings URL and the env var so a fresh
+// dev hitting it sees the fix without reading these docs first.
+//
 // # Authentication
 //
 // Linear personal API keys are sent as a RAW Authorization header value
