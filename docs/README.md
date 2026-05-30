@@ -14,6 +14,7 @@ fakes) on the `feat/lcm-sm-contracts` integration branch.
 | Doc | What it covers |
 |-----|----------------|
 | [architecture.md](architecture.md) | How the lane works: the OBSERVE→DECIDE→ACT loop, the canonical state model, the package layout, every component, and the load-bearing invariants. Read this first. |
+| [backend-code-structure.md](backend-code-structure.md) | Target package ownership rules for the Go backend: domain vs feature packages vs adapters vs HTTP. |
 | [status.md](status.md) | What's done (PR by PR), what's left, the integration to-dos, the open cross-lane contract questions, and how to build/test. |
 
 ## The one-paragraph mental model
