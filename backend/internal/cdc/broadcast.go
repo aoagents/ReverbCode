@@ -34,11 +34,25 @@ func (b *Broadcaster) Subscribe(fn func(Event)) (unsubscribe func()) {
 	}
 }
 
-// Publish delivers e to every current subscriber.
+// Publish delivers e to every current subscriber. The subscriber slice is
+// copied under RLock and the lock is released before any callback runs, so a
+// slow or re-entrant subscriber (one that Subscribes/Unsubscribes from inside
+// fn) cannot deadlock the broadcaster or block other publishers. Each callback
+// is wrapped in a recover so one panicking subscriber does not disable fan-out
+// to the rest.
 func (b *Broadcaster) Publish(e Event) {
 	b.mu.RLock()
-	defer b.mu.RUnlock()
+	fns := make([]func(Event), 0, len(b.subs))
 	for _, fn := range b.subs {
-		fn(e)
+		fns = append(fns, fn)
+	}
+	b.mu.RUnlock()
+	for _, fn := range fns {
+		func() {
+			defer func() {
+				_ = recover()
+			}()
+			fn(e)
+		}()
 	}
 }

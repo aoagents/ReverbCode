@@ -87,6 +87,15 @@ func (m *Manager) WithSessionLister(fn func(ctx context.Context) ([]domain.Sessi
 // keyedMutex hands out one lock per session id so the load->decide->persist
 // read-modify-write is serial within a session but parallel across sessions.
 //
+// Note: this lock is correctness-only at the lifecycle layer, not a throughput
+// mechanism. The SQLite adapter funnels writes through its own writeMu (see
+// storage/sqlite/store.go) so cross-session writes still serialise there; reads
+// run concurrently across the pool. The keyed mutex prevents two callers
+// operating on the *same* session from interleaving load->decide->persist —
+// the load->Upsert pair spans two store calls, so writeMu alone cannot make it
+// atomic (the CAS check at Upsert is the backstop, but the keyed lock avoids
+// the spurious revision-mismatch retries that would otherwise dominate).
+//
 // Entries are reference-counted and evicted when the last holder releases, so
 // the map stays bounded to sessions with in-flight operations rather than
 // growing unbounded over the lifetime of a long-running daemon.
