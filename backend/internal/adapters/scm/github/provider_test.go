@@ -1,10 +1,12 @@
 package github
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -15,6 +17,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	scmlog "github.com/aoagents/agent-orchestrator/backend/internal/scm/logging"
 	"github.com/aoagents/agent-orchestrator/backend/internal/scm/store"
 )
 
@@ -45,6 +48,107 @@ func TestRESTETag200And304(t *testing.T) {
 	if err != nil || !resp.NotModified {
 		t.Fatalf("second resp=%+v err=%v", resp, err)
 	}
+}
+
+func TestRESTTransportLogsUseNeutralFieldsAndDoNotLeakPayloads(t *testing.T) {
+	var logs bytes.Buffer
+	secretToken := "secret-token"
+	secretBody := "SECRET_COMMENT_BODY"
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer "+secretToken {
+			t.Fatalf("auth header %q", got)
+		}
+		w.Header().Set("ETag", `"comment"`)
+		w.Header().Set("X-RateLimit-Limit", "5000")
+		w.Header().Set("X-RateLimit-Remaining", "4999")
+		w.Header().Set("X-RateLimit-Reset", "1780000000")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer ts.Close()
+	c := NewClient(ClientOptions{RESTBase: ts.URL, GraphQLURL: ts.URL + "/graphql", Token: StaticTokenSource(secretToken), Logger: githubJSONLogger(&logs)})
+	ctx := scmlog.WithCorrelationID(context.Background(), "corr-rest")
+	resp, err := c.DoREST(ctx, http.MethodPost, "/repos/o/r/issues/45/comments", nil, map[string]any{"body": secretBody}, "", "github.command.comment")
+	if err != nil || resp.StatusCode != http.StatusCreated {
+		t.Fatalf("resp=%+v err=%v", resp, err)
+	}
+	rawLogs := logs.String()
+	for _, secret := range []string{secretToken, "Authorization", secretBody} {
+		if strings.Contains(rawLogs, secret) {
+			t.Fatalf("transport logs leaked %q: %s", secret, rawLogs)
+		}
+	}
+	records := decodeGithubLogRecords(t, rawLogs)
+	request := findGithubLogRecord(t, records, scmlog.EventTransportRequest)
+	assertGithubLogField(t, request, scmlog.FieldCorrelationID, "corr-rest")
+	assertGithubLogField(t, request, scmlog.FieldProvider, "github")
+	assertGithubLogField(t, request, scmlog.FieldOperation, "github.command.comment")
+	assertGithubLogField(t, request, scmlog.FieldMethod, http.MethodPost)
+	assertGithubLogField(t, request, scmlog.FieldEndpointTemplate, "/repos/{owner}/{repo}/issues/{number}/comments")
+	response := findGithubLogRecord(t, records, scmlog.EventTransportResponse)
+	assertGithubLogNumber(t, response, scmlog.FieldStatusCode, http.StatusCreated)
+	assertGithubLogNumber(t, response, scmlog.FieldRateLimitRemaining, 4999)
+	assertGithubLogBool(t, response, scmlog.FieldETagPresent, true)
+	if _, ok := response["url"]; ok {
+		t.Fatalf("transport log should not include full url: %+v", response)
+	}
+}
+
+func TestGraphQLTransportLogsDoNotLeakQuery(t *testing.T) {
+	var logs bytes.Buffer
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/graphql" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"viewer": map[string]any{"login": "bot"}}})
+	}))
+	defer ts.Close()
+	c := NewClient(ClientOptions{RESTBase: ts.URL, GraphQLURL: ts.URL + "/graphql", Token: StaticTokenSource("token"), Logger: githubJSONLogger(&logs)})
+	secretQueryName := "SecretGraphQLQueryName"
+	if _, _, _, err := c.DoGraphQL(scmlog.WithCorrelationID(context.Background(), "corr-graphql"), "query "+secretQueryName+" { viewer { login } }", nil, "github.graphql_test"); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(logs.String(), secretQueryName) {
+		t.Fatalf("GraphQL query leaked into transport logs: %s", logs.String())
+	}
+	response := findGithubLogRecord(t, decodeGithubLogRecords(t, logs.String()), scmlog.EventTransportResponse)
+	assertGithubLogField(t, response, scmlog.FieldEndpointTemplate, "/graphql")
+	assertGithubLogField(t, response, scmlog.FieldMethod, http.MethodPost)
+	assertGithubLogField(t, response, scmlog.FieldCorrelationID, "corr-graphql")
+}
+
+func TestTransportRateLimitLogsNormalizedKindAndHidesResponseBody(t *testing.T) {
+	var logs bytes.Buffer
+	secretTail := "CI_LOG_TAIL_SECRET"
+	reset := time.Date(2026, 5, 28, 13, 0, 0, 0, time.UTC).Unix()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-RateLimit-Limit", "5000")
+		w.Header().Set("X-RateLimit-Remaining", "0")
+		w.Header().Set("X-RateLimit-Reset", strconv.FormatInt(reset, 10))
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(secretTail + "\nline 1\nline 2"))
+	}))
+	defer ts.Close()
+	c := NewClient(ClientOptions{RESTBase: ts.URL, GraphQLURL: ts.URL + "/graphql", Token: StaticTokenSource("token"), Logger: githubJSONLogger(&logs)})
+	resp, err := c.DoREST(scmlog.WithCorrelationID(context.Background(), "corr-rate"), http.MethodGet, "/repos/o/r/pulls/45", nil, nil, "", "github.pr_get")
+	if err == nil {
+		t.Fatal("expected rate limit error")
+	}
+	var scmErr *domain.SCMError
+	if !errors.As(err, &scmErr) || scmErr.Kind != domain.SCMErrorRateLimited || scmErr.Message != http.StatusText(http.StatusForbidden) {
+		t.Fatalf("err=%T %[1]v", err)
+	}
+	if strings.Contains(resp.Diagnostic.Message, secretTail) {
+		t.Fatalf("transport diagnostic leaked response body: %+v", resp.Diagnostic)
+	}
+	if strings.Contains(logs.String(), secretTail) {
+		t.Fatalf("response body leaked into transport logs: %s", logs.String())
+	}
+	rateLimited := findGithubLogRecord(t, decodeGithubLogRecords(t, logs.String()), scmlog.EventTransportRateLimited)
+	assertGithubLogField(t, rateLimited, scmlog.FieldCorrelationID, "corr-rate")
+	assertGithubLogField(t, rateLimited, scmlog.FieldErrorKind, string(domain.SCMErrorRateLimited))
+	assertGithubLogNumber(t, rateLimited, scmlog.FieldStatusCode, http.StatusForbidden)
+	assertGithubLogNumber(t, rateLimited, scmlog.FieldRateLimitRemaining, 0)
 }
 
 func TestGHTokenSourceMemoizesAndIgnoresGithubTokenEnv(t *testing.T) {
@@ -299,6 +403,9 @@ func TestGraphQLBatchNormalizationReviewAndMergeability(t *testing.T) {
 	}
 	if !s.Mergeability.Mergeable {
 		t.Fatalf("expected mergeable: %+v", s.Mergeability)
+	}
+	if len(s.Diagnostics) != 0 {
+		t.Fatalf("successful snapshot should not persist transport diagnostics: %+v", s.Diagnostics)
 	}
 }
 
@@ -1242,4 +1349,58 @@ func numberedLines(n int) string {
 		fmt.Fprintf(&b, "line-%02d\n", i)
 	}
 	return b.String()
+}
+
+func githubJSONLogger(buf *bytes.Buffer) *slog.Logger {
+	return slog.New(slog.NewJSONHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+}
+
+func decodeGithubLogRecords(t *testing.T, raw string) []map[string]any {
+	t.Helper()
+	lines := bytes.Split([]byte(raw), []byte("\n"))
+	records := make([]map[string]any, 0, len(lines))
+	for _, line := range lines {
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 {
+			continue
+		}
+		var rec map[string]any
+		if err := json.Unmarshal(line, &rec); err != nil {
+			t.Fatalf("decode log %s: %v", line, err)
+		}
+		records = append(records, rec)
+	}
+	return records
+}
+
+func findGithubLogRecord(t *testing.T, records []map[string]any, msg string) map[string]any {
+	t.Helper()
+	for _, rec := range records {
+		if rec["msg"] == msg {
+			return rec
+		}
+	}
+	t.Fatalf("missing log %q in %+v", msg, records)
+	return nil
+}
+
+func assertGithubLogField(t *testing.T, rec map[string]any, key, want string) {
+	t.Helper()
+	if got, _ := rec[key].(string); got != want {
+		t.Fatalf("%s=%q want %q in %+v", key, got, want, rec)
+	}
+}
+
+func assertGithubLogNumber(t *testing.T, rec map[string]any, key string, want float64) {
+	t.Helper()
+	if got, _ := rec[key].(float64); got != want {
+		t.Fatalf("%s=%v want %v in %+v", key, rec[key], want, rec)
+	}
+}
+
+func assertGithubLogBool(t *testing.T, rec map[string]any, key string, want bool) {
+	t.Helper()
+	if got, _ := rec[key].(bool); got != want {
+		t.Fatalf("%s=%v want %v in %+v", key, rec[key], want, rec)
+	}
 }

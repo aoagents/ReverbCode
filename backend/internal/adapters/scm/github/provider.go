@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"path"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	scmlog "github.com/aoagents/agent-orchestrator/backend/internal/scm/logging"
 )
 
 const (
@@ -52,12 +54,13 @@ type ProviderOptions struct {
 	RESTBase   string
 	GraphQLURL string
 	Host       string
+	Logger     *slog.Logger
 }
 
 func NewProvider(opts ProviderOptions) *Provider {
 	p := &Provider{client: opts.Client, host: opts.Host}
 	if p.client == nil {
-		p.client = NewClient(ClientOptions{HTTPClient: opts.HTTPClient, Token: opts.Token, RESTBase: opts.RESTBase, GraphQLURL: opts.GraphQLURL})
+		p.client = NewClient(ClientOptions{HTTPClient: opts.HTTPClient, Token: opts.Token, RESTBase: opts.RESTBase, GraphQLURL: opts.GraphQLURL, Logger: opts.Logger})
 	}
 	if p.host == "" {
 		p.host = defaultHost
@@ -68,6 +71,7 @@ func NewProvider(opts ProviderOptions) *Provider {
 func (p *Provider) Provider() domain.SCMProvider { return domain.SCMProviderGitHub }
 
 func (p *Provider) ObserveSessions(ctx context.Context, req ports.SCMObserveRequest, cache ports.SCMProviderCache) (ports.SCMObserveResult, error) {
+	ctx, _ = scmlog.EnsureCorrelationID(ctx)
 	now := req.Now
 	if now.IsZero() {
 		now = time.Now()
@@ -113,7 +117,7 @@ func (p *Provider) ObserveSessions(ctx context.Context, req ports.SCMObserveRequ
 				st.ConsecutiveFail++
 				st.LastFailureAt = now
 				st.BackoffUntil = now.Add(30 * time.Second)
-				if se, ok := groupErr.(*domain.SCMError); ok {
+				if se, ok := scmlog.SCMError(groupErr); ok {
 					st.LastError = se
 					if se.Kind == domain.SCMErrorRateLimited && !se.RetryAfter.IsZero() {
 						st.RateLimitUntil = se.RetryAfter
@@ -358,13 +362,18 @@ func chunkSubjects(subjects []domain.SCMSubject, size int) [][]domain.SCMSubject
 }
 
 func diagnosticFromError(operation string, err error) domain.SCMDiagnostic {
-	d := domain.SCMDiagnostic{Operation: operation, ErrorKind: domain.SCMErrorUnavailable, Message: fmt.Sprint(err)}
-	if se, ok := err.(*domain.SCMError); ok {
-		d.Operation = firstNonEmpty(se.Operation, operation)
-		d.ErrorKind = se.Kind
-		d.StatusCode = se.StatusCode
+	return scmlog.DiagnosticFromError(operation, err)
+}
+
+func appendDiagnostic(diags []domain.SCMDiagnostic, diag domain.SCMDiagnostic) []domain.SCMDiagnostic {
+	if durableDiagnostic(diag) {
+		return append(diags, diag)
 	}
-	return d
+	return diags
+}
+
+func durableDiagnostic(diag domain.SCMDiagnostic) bool {
+	return diag.Operation != "" && (diag.ErrorKind != "" || diag.Message != "" || diag.StatusCode >= 400)
 }
 
 func shouldFetchCheckRuns(snap domain.SCMSnapshot, prData map[string]any) bool {
@@ -429,9 +438,7 @@ func (p *Provider) observeKnownPRs(ctx context.Context, subjects []domain.SCMSub
 		changed, prListDiag, commit, err := p.checkOpenPullListChanged(ctx, cache, scope, owner, repo, now)
 		prListChanged = changed
 		prListCommit = commit
-		if prListDiag.Operation != "" {
-			diags = append(diags, prListDiag)
-		}
+		diags = appendDiagnostic(diags, prListDiag)
 		if err != nil {
 			// PR-list guard failures should not be terminal truth. Fall through to
 			// GraphQL so one failed optimization guard does not hide real PR changes.
@@ -466,9 +473,7 @@ func (p *Provider) observeKnownPRs(ctx context.Context, subjects []domain.SCMSub
 				continue
 			}
 			changed, diag, commit, err := p.checkRunsChanged(ctx, cache, subj, prev.PR.HeadSHA, now)
-			if diag.Operation != "" {
-				diags = append(diags, diag)
-			}
+			diags = appendDiagnostic(diags, diag)
 			if err != nil || changed {
 				if err == nil && changed {
 					checkGuardCommits[subj.SessionID] = commit
@@ -494,9 +499,7 @@ func (p *Provider) observeKnownPRs(ctx context.Context, subjects []domain.SCMSub
 	mainFetchOK := true
 	for _, batch := range chunkSubjects(toFetch, maxGraphQLBatchSize) {
 		data, rl, diag, err := p.fetchPRBatch(ctx, owner, repo, batch)
-		if diag.Operation != "" {
-			diags = append(diags, diag)
-		}
+		diags = appendDiagnostic(diags, diag)
 		if rl != nil {
 			lastRL = rl
 		}
@@ -507,12 +510,12 @@ func (p *Provider) observeKnownPRs(ctx context.Context, subjects []domain.SCMSub
 			}
 			for _, subj := range batch {
 				if terminal, ok, fallbackDiag, fallbackErr := p.fetchTerminalPRFallback(ctx, subj, now); ok {
-					if fallbackDiag.Operation != "" {
+					if durableDiagnostic(fallbackDiag) {
 						terminal.Diagnostics = append(terminal.Diagnostics, fallbackDiag)
 					}
 					snaps = append(snaps, terminal)
 					continue
-				} else if fallbackDiag.Operation != "" {
+				} else if durableDiagnostic(fallbackDiag) {
 					diags = append(diags, fallbackDiag)
 				} else if fallbackErr != nil {
 					diags = append(diags, diagnosticFromError("github.rest_pr_fallback", fallbackErr))
@@ -547,9 +550,7 @@ func (p *Provider) observeKnownPRs(ctx context.Context, subjects []domain.SCMSub
 			prev, havePrev := latest[subj.SessionID]
 			if shouldFetchCheckRuns(snap, prData) {
 				checks, checkDiag, err := p.fetchCheckRuns(ctx, cache, subj, snap, now)
-				if checkDiag.Operation != "" {
-					snap.Diagnostics = append(snap.Diagnostics, checkDiag)
-				}
+				snap.Diagnostics = appendDiagnostic(snap.Diagnostics, checkDiag)
 				if err == nil {
 					snap.CI.Checks = checks
 					snap.CI.Summary = summarizeChecks(checks)
@@ -918,9 +919,7 @@ func (p *Provider) fetchReviewThreads(ctx context.Context, cache ports.SCMProvid
 	owner, repo := subj.Repository().OwnerName()
 	resp, err := p.client.DoREST(ctx, http.MethodGet, repoPath(owner, repo, "pulls", strconv.Itoa(subj.PRNumber), "comments"), nil, nil, entry.ETag, "github.review_comments")
 	diags := []domain.SCMDiagnostic{}
-	if resp.Diagnostic.Operation != "" {
-		diags = append(diags, resp.Diagnostic)
-	}
+	diags = appendDiagnostic(diags, resp.Diagnostic)
 	if err != nil {
 		return nil, diags, false, err
 	}
@@ -949,9 +948,7 @@ func (p *Provider) fetchReviewThreadsGraphQL(ctx context.Context, subj domain.SC
 	query := `query($owner:String!,$repo:String!,$number:Int!){ repository(owner:$owner,name:$repo){ pullRequest(number:$number){ reviewThreads(last:100){ nodes{ id isResolved comments(first:100){ nodes{ id author{ login __typename } body path line url } } } } } } rateLimit{ limit remaining resetAt } }`
 	data, _, diag, err := p.client.DoGraphQL(ctx, query, map[string]any{"owner": owner, "repo": repo, "number": subj.PRNumber}, "github.review_threads")
 	diags := []domain.SCMDiagnostic{}
-	if diag.Operation != "" {
-		diags = append(diags, diag)
-	}
+	diags = appendDiagnostic(diags, diag)
 	if err != nil {
 		return nil, diags, err
 	}
@@ -1347,12 +1344,7 @@ func findPullForBranch(pulls []restPull, branch string) (branchMapping, bool) {
 }
 
 func unavailableSnapshot(subj domain.SCMSubject, now time.Time, err error) domain.SCMSnapshot {
-	d := domain.SCMDiagnostic{Operation: "github.observe", ErrorKind: domain.SCMErrorUnavailable, Message: fmt.Sprint(err)}
-	if se, ok := err.(*domain.SCMError); ok {
-		d.Operation = se.Operation
-		d.ErrorKind = se.Kind
-		d.StatusCode = se.StatusCode
-	}
+	d := scmlog.DiagnosticFromError("github.observe", err)
 	return domain.SCMSnapshot{SessionID: subj.SessionID, Subject: subj, Freshness: domain.SCMFreshnessUnavailable, ObservedAt: now, Diagnostics: []domain.SCMDiagnostic{d}}
 }
 

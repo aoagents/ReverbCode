@@ -137,7 +137,7 @@ func (p *Provider) Checkout(ctx context.Context, req ports.SCMCommandRequest) (p
 		res.Message = "checked out with gh pr checkout"
 		return res, nil
 	} else {
-		return res, &domain.SCMError{Kind: domain.SCMErrorCommand, Operation: "github.command.checkout", Message: fmt.Sprintf("git checkout failed: %v; gh fallback failed: %v", err, ghErr), Cause: err}
+		return res, &domain.SCMError{Kind: domain.SCMErrorCommand, Operation: "github.command.checkout", Message: "checkout command failed", Cause: fmt.Errorf("git checkout failed: %w; gh fallback failed: %v", err, ghErr)}
 	}
 }
 
@@ -187,7 +187,7 @@ func (p *Provider) normalizeCommandRequest(ctx context.Context, req ports.SCMCom
 
 func commandResult(req ports.SCMCommandRequest, diag domain.SCMDiagnostic) ports.SCMCommandResult {
 	res := ports.SCMCommandResult{Provider: domain.SCMProviderGitHub, Command: req.Command, ChangeRequest: req.ChangeRequest, PerformedAt: req.Now}
-	if !diag.StartedAt.IsZero() || diag.Operation != "" {
+	if durableDiagnostic(diag) {
 		res.Diagnostics = []domain.SCMDiagnostic{diag}
 	}
 	return res
