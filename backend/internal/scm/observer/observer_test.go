@@ -84,6 +84,34 @@ func TestObserverPersistsSnapshotFansOutAndAppliesLCMFacts(t *testing.T) {
 	}
 }
 
+func TestObserverProjectsDraftAndFailingCIToLCMFacts(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 5, 28, 12, 0, 0, 0, time.UTC)
+	subj := domain.SCMSubject{SessionID: "s1", ProjectID: "p1", Provider: domain.SCMProviderGitHub, Host: "github.com", Repo: "o/r", Branch: "feat/27", PRNumber: 7}
+	snap := domain.SCMSnapshot{
+		SessionID:  "s1",
+		Subject:    subj,
+		Freshness:  domain.SCMFreshnessFresh,
+		ObservedAt: now,
+		PR:         &domain.SCMPullRequest{Number: 7, URL: "https://github.com/o/r/pull/7", State: domain.PRDraft, Draft: true},
+		CI:         domain.SCMCI{Summary: "failing", Checks: []domain.SCMCheck{{Name: "test", Status: "completed", Conclusion: "failure"}}},
+	}
+	st := store.NewMemoryStore()
+	lcm := &fakeLCM{}
+	o := New(st, lcm, fakeProvider{res: ports.SCMObserveResult{ProviderName: domain.SCMProviderGitHub, Subjects: []domain.SCMSubject{subj}, Snapshots: []domain.SCMSnapshot{snap}}})
+	o.Clock = func() time.Time { return now }
+	if err := o.Refresh(ctx, []domain.SCMSubject{subj}); err != nil {
+		t.Fatal(err)
+	}
+	if len(lcm.facts) != 1 {
+		t.Fatalf("facts=%+v", lcm.facts)
+	}
+	got := lcm.facts[0]
+	if got.PRState != domain.PRDraft || !got.Draft || got.CISummary != ports.CIFailing || len(got.CIFailedChecks) != 1 {
+		t.Fatalf("draft/failing CI facts not projected: %+v", got)
+	}
+}
+
 func TestFactsFromUnavailableSnapshotIsNotFetched(t *testing.T) {
 	facts := FactsFromSnapshot(domain.SCMSnapshot{Freshness: domain.SCMFreshnessUnavailable})
 	if facts.Fetched {

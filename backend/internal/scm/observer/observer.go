@@ -207,7 +207,7 @@ func FactsFromSnapshot(s domain.SCMSnapshot) ports.SCMFacts {
 		Blockers:    append([]string(nil), s.Mergeability.Blockers...),
 	}
 	for _, check := range s.CI.Checks {
-		if isFailedConclusion(check.Conclusion) || isFailedConclusion(check.Status) {
+		if failedCompletedCheck(check) {
 			f.CIFailedChecks = append(f.CIFailedChecks, ports.CICheck{Name: check.Name, Status: check.Status, Conclusion: check.Conclusion, URL: check.URL, Details: check.Details, LogTail: check.LogTail})
 		}
 	}
@@ -255,8 +255,19 @@ func reviewDecision(s string) ports.ReviewDecision {
 }
 
 func isFailedConclusion(s string) bool {
-	s = strings.ToLower(s)
+	s = strings.ToLower(strings.TrimSpace(s))
 	return s == "failure" || s == "failed" || s == "failing" || s == "error" || s == "timed_out" || s == "cancelled" || s == "action_required"
+}
+
+func failedCompletedCheck(check domain.SCMCheck) bool {
+	if check.Conclusion != "" {
+		status := strings.ToLower(strings.TrimSpace(check.Status))
+		if status == "" || status == "completed" || status == "complete" {
+			return isFailedConclusion(check.Conclusion)
+		}
+		return false
+	}
+	return isFailedConclusion(check.Status)
 }
 
 func firstNonEmpty(a, b string) string {

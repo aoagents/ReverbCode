@@ -411,17 +411,17 @@ func MustSCMSemanticHash(s SCMSnapshot) string {
 }
 
 func NormalizeSCMCI(summary string) string {
-	switch strings.ToLower(summary) {
+	switch strings.ToLower(strings.TrimSpace(summary)) {
 	case "success", "successful", "passed", "passing", "pass":
 		return "passing"
 	case "failure", "failed", "failing", "error", "timed_out", "cancelled", "action_required":
 		return "failing"
 	case "pending", "queued", "in_progress", "requested", "waiting", "expected":
 		return "pending"
-	case "", "none", "no_checks":
+	case "", "none", "no_checks", "neutral", "skipped", "stale", "not_required":
 		return "none"
 	default:
-		return strings.ToLower(summary)
+		return strings.ToLower(strings.TrimSpace(summary))
 	}
 }
 

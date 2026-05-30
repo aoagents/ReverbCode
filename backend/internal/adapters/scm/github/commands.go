@@ -25,6 +25,7 @@ func (p *Provider) CacheInvalidationPrefixes(subj domain.SCMSubject, cmd ports.S
 	prefixes := []domain.SCMProviderCachePrefix{
 		{SCMProviderCacheScope: scope, Namespace: cachePRList},
 		{SCMProviderCacheScope: scope, Namespace: cacheBranchMap},
+		{SCMProviderCacheScope: scope, Namespace: cachePRState},
 	}
 	switch cmd {
 	case ports.SCMCommandMerge, ports.SCMCommandClose:

@@ -22,6 +22,7 @@ const (
 	cacheReviews       = "reviews"
 	cacheReviewDetails = "review-details"
 	cacheCheckGuard    = "checks-guard"
+	cachePRState       = "pr-state"
 
 	maxGraphQLBatchSize      = 25
 	graphQLCheckContextLimit = 20
@@ -32,9 +33,9 @@ const (
 	cacheCapReviewDetails = 500
 	cacheCapBranchMap     = 1000
 	cacheCapCheckGuard    = 500
+	cacheCapPRState       = 500
 
 	ciFailureLogTailLines = 20
-	reviewDetailThrottle  = 2 * time.Minute
 )
 
 type Provider struct {
@@ -313,6 +314,34 @@ func (p *Provider) reviewCommentsChanged(ctx context.Context, cache ports.SCMPro
 	return !resp.NotModified, resp.Diagnostic, commit, nil
 }
 
+func (p *Provider) checkBoundPullState(ctx context.Context, cache ports.SCMProviderCache, subj domain.SCMSubject, now time.Time) (changed bool, terminal *domain.SCMSnapshot, diag domain.SCMDiagnostic, commit restCacheCommit, err error) {
+	if subj.PRNumber == 0 {
+		return false, nil, domain.SCMDiagnostic{}, nil, nil
+	}
+	scope := subj.CacheScope()
+	key := domain.SCMProviderCacheKey{SCMProviderCacheScope: scope, Namespace: cachePRState, Key: strconv.Itoa(subj.PRNumber)}
+	entry, hasEntry, _ := cache.GetProviderCache(ctx, key)
+	owner, repo := subj.Repository().OwnerName()
+	resp, err := p.client.DoREST(ctx, http.MethodGet, repoPath(owner, repo, "pulls", strconv.Itoa(subj.PRNumber)), nil, nil, entry.ETag, "github.pr_state_guard")
+	if err != nil {
+		return true, nil, resp.Diagnostic, nil, err
+	}
+	body, commit := prepareRESTCache(ctx, cache, key, entry, hasEntry, resp, now)
+	if resp.NotModified {
+		commitRESTCache(commit)
+		return false, nil, resp.Diagnostic, nil, nil
+	}
+	snap, isTerminal, err := snapshotFromRESTPull(subj, body, now, "github.pr_state_guard")
+	if err != nil {
+		return true, nil, resp.Diagnostic, nil, err
+	}
+	if isTerminal {
+		commitRESTCache(commit)
+		return true, &snap, resp.Diagnostic, nil, nil
+	}
+	return true, nil, resp.Diagnostic, commit, nil
+}
+
 func chunkSubjects(subjects []domain.SCMSubject, size int) [][]domain.SCMSubject {
 	if size <= 0 || len(subjects) <= size {
 		return [][]domain.SCMSubject{subjects}
@@ -412,11 +441,27 @@ func (p *Provider) observeKnownPRs(ctx context.Context, subjects []domain.SCMSub
 
 	toFetch := known
 	checkGuardCommits := map[domain.SessionID]restCacheCommit{}
+	pullStateCommits := map[domain.SessionID]restCacheCommit{}
 	if !prListChanged && len(latest) > 0 {
 		toFetch = toFetch[:0]
 		for _, subj := range known {
 			prev, ok := latest[subj.SessionID]
 			if !ok || prev.PR == nil || prev.PR.HeadSHA == "" {
+				toFetch = append(toFetch, subj)
+				continue
+			}
+			pullChanged, terminal, diag, commit, err := p.checkBoundPullState(ctx, cache, subj, now)
+			if diag.Operation != "" {
+				diags = append(diags, diag)
+			}
+			if terminal != nil {
+				snaps = append(snaps, *terminal)
+				continue
+			}
+			if err != nil || pullChanged {
+				if err == nil && commit != nil {
+					pullStateCommits[subj.SessionID] = commit
+				}
 				toFetch = append(toFetch, subj)
 				continue
 			}
@@ -509,12 +554,14 @@ func (p *Provider) observeKnownPRs(ctx context.Context, subjects []domain.SCMSub
 					snap.CI.Checks = checks
 					snap.CI.Summary = summarizeChecks(checks)
 					commitRESTCache(checkGuardCommits[subj.SessionID])
+					commitRESTCache(pullStateCommits[subj.SessionID])
 				} else if err != nil && havePrev && prev.PR != nil && prev.PR.HeadSHA == snap.PR.HeadSHA {
 					snap.CI = prev.CI
 					snap.Diagnostics = append(snap.Diagnostics, diagnosticFromError("github.check_runs", err))
 				}
 			} else {
 				commitRESTCache(checkGuardCommits[subj.SessionID])
+				commitRESTCache(pullStateCommits[subj.SessionID])
 			}
 			if snap.CI.Summary == "failing" {
 				snap.CI.FailureLogTail = combinedFailureTail(snap.CI.Checks)
@@ -695,21 +742,58 @@ func finalizeMergeability(s *domain.SCMSnapshot) {
 	if s.PR == nil || s.PR.State == domain.PRMerged {
 		return
 	}
-	if s.Mergeability.CIPassing == false && (s.CI.Summary == "passing" || s.CI.Summary == "none" || s.CI.Summary == "") {
-		s.Mergeability.CIPassing = true
-	}
-	if s.Mergeability.Approved == false && (s.Review.Decision == "approved" || s.Review.Decision == "none" || s.Review.Decision == "") {
-		s.Mergeability.Approved = true
-	}
-	if s.PR.Draft {
-		s.Mergeability.Mergeable = false
-		if !containsString(s.Mergeability.Blockers, "PR is still a draft") {
-			s.Mergeability.Blockers = append(s.Mergeability.Blockers, "PR is still a draft")
+	raw := strings.ToUpper(strings.TrimSpace(s.Mergeability.RawState))
+	mergeState := strings.ToUpper(strings.TrimSpace(s.Mergeability.MergeState))
+	ciSummary := domain.NormalizeSCMCI(s.CI.Summary)
+	reviewDecision := domain.NormalizeSCMReviewDecision(s.Review.Decision)
+	draft := s.PR.Draft || s.PR.State == domain.PRDraft
+
+	s.Mergeability.RawState = raw
+	s.Mergeability.MergeState = mergeState
+	s.Mergeability.CIPassing = ciSummary == "passing" || ciSummary == "none" || ciSummary == ""
+	s.Mergeability.Approved = reviewDecision == "approved" || reviewDecision == "none" || reviewDecision == ""
+	s.Mergeability.Conflict = raw == "CONFLICTING" || mergeState == "DIRTY"
+	s.Mergeability.NoConflicts = raw == "MERGEABLE" && !s.Mergeability.Conflict
+	s.Mergeability.BehindBase = mergeState == "BEHIND"
+	s.Mergeability.Blockers = nil
+	addBlocker := func(msg string) {
+		if !containsString(s.Mergeability.Blockers, msg) {
+			s.Mergeability.Blockers = append(s.Mergeability.Blockers, msg)
 		}
-		return
+	}
+	if raw == "" || raw == "UNKNOWN" {
+		addBlocker("merge status unknown (GitHub is computing)")
+	}
+	if s.Mergeability.Conflict {
+		addBlocker("merge conflicts")
+	}
+	if s.Mergeability.BehindBase {
+		addBlocker("branch is behind base")
+	}
+	if ciSummary == "failing" {
+		addBlocker("CI failing")
+	}
+	if ciSummary == "pending" {
+		addBlocker("CI pending")
+	}
+	if reviewDecision == "changes_requested" {
+		addBlocker("changes requested")
+	}
+	if reviewDecision == "pending" {
+		addBlocker("review required")
+	}
+	if mergeState == "BLOCKED" {
+		addBlocker("merge blocked by branch protection")
+	}
+	if mergeState == "UNSTABLE" {
+		addBlocker("required checks are failing")
+	}
+	if draft {
+		addBlocker("PR is still a draft")
 	}
 	s.Mergeability.Mergeable = s.PR.State == domain.PROpen &&
-		s.Mergeability.RawState == "MERGEABLE" &&
+		raw == "MERGEABLE" &&
+		!draft &&
 		s.Mergeability.NoConflicts &&
 		!s.Mergeability.BehindBase &&
 		s.Mergeability.CIPassing &&
@@ -788,16 +872,6 @@ func (p *Provider) refreshReviewDetails(ctx context.Context, cache ports.SCMProv
 		}
 	}
 
-	if !forceGraphQL && hasCache && now.Sub(entry.UpdatedAt) < reviewDetailThrottle {
-		attach(cached.Threads)
-		return nil
-	}
-	if !forceGraphQL && !hasCache && havePrev && len(prev.Review.UnresolvedThreads) > 0 {
-		attach(prev.Review.UnresolvedThreads)
-		putCachedReviewDetails(ctx, cache, subj, snap.Review.Decision, prev.Review.UnresolvedThreads, now)
-		return nil
-	}
-
 	if forceGraphQL {
 		threads, diags, err := p.fetchReviewThreadsGraphQL(ctx, subj)
 		if err != nil {
@@ -872,7 +946,7 @@ func (p *Provider) fetchReviewThreadsGraphQL(ctx context.Context, subj domain.SC
 		return nil, nil, nil
 	}
 	owner, repo := subj.Repository().OwnerName()
-	query := `query($owner:String!,$repo:String!,$number:Int!){ repository(owner:$owner,name:$repo){ pullRequest(number:$number){ reviewThreads(last:100){ nodes{ id isResolved comments(first:1){ nodes{ id author{ login __typename } body path line url } } } } } } rateLimit{ limit remaining resetAt } }`
+	query := `query($owner:String!,$repo:String!,$number:Int!){ repository(owner:$owner,name:$repo){ pullRequest(number:$number){ reviewThreads(last:100){ nodes{ id isResolved comments(first:100){ nodes{ id author{ login __typename } body path line url } } } } } } rateLimit{ limit remaining resetAt } }`
 	data, _, diag, err := p.client.DoGraphQL(ctx, query, map[string]any{"owner": owner, "repo": repo, "number": subj.PRNumber}, "github.review_threads")
 	diags := []domain.SCMDiagnostic{}
 	if diag.Operation != "" {
@@ -896,6 +970,11 @@ func (p *Provider) fetchTerminalPRFallback(ctx context.Context, subj domain.SCMS
 	if err != nil {
 		return domain.SCMSnapshot{}, false, resp.Diagnostic, err
 	}
+	snap, terminal, err := snapshotFromRESTPull(subj, resp.Body, now, "github.rest_pr_fallback")
+	return snap, terminal, resp.Diagnostic, err
+}
+
+func snapshotFromRESTPull(subj domain.SCMSubject, body []byte, now time.Time, operation string) (domain.SCMSnapshot, bool, error) {
 	var decoded struct {
 		Number    int    `json:"number"`
 		HTMLURL   string `json:"html_url"`
@@ -913,8 +992,8 @@ func (p *Provider) fetchTerminalPRFallback(ctx context.Context, subj domain.SCMS
 			Ref string `json:"ref"`
 		} `json:"base"`
 	}
-	if err := json.Unmarshal(resp.Body, &decoded); err != nil {
-		return domain.SCMSnapshot{}, false, resp.Diagnostic, &domain.SCMError{Kind: domain.SCMErrorParse, Operation: "github.rest_pr_fallback", Message: err.Error(), Cause: err}
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		return domain.SCMSnapshot{}, false, &domain.SCMError{Kind: domain.SCMErrorParse, Operation: operation, Message: err.Error(), Cause: err}
 	}
 	state := domain.PROpen
 	if decoded.Merged {
@@ -925,7 +1004,7 @@ func (p *Provider) fetchTerminalPRFallback(ctx context.Context, subj domain.SCMS
 		state = domain.PRDraft
 	}
 	if state != domain.PRMerged && state != domain.PRClosed {
-		return domain.SCMSnapshot{}, false, resp.Diagnostic, nil
+		return domain.SCMSnapshot{}, false, nil
 	}
 	number := decoded.Number
 	if number == 0 {
@@ -949,7 +1028,7 @@ func (p *Provider) fetchTerminalPRFallback(ctx context.Context, subj domain.SCMS
 	subj.PRNumber = number
 	subj.PRURL = url
 	subj.BaseBranch = firstNonEmpty(subj.BaseBranch, pull.TargetBranch)
-	return domain.SCMSnapshot{SessionID: subj.SessionID, Subject: subj, Freshness: domain.SCMFreshnessFresh, ObservedAt: now, PR: pull}, true, resp.Diagnostic, nil
+	return domain.SCMSnapshot{SessionID: subj.SessionID, Subject: subj, Freshness: domain.SCMFreshnessFresh, ObservedAt: now, PR: pull}, true, nil
 }
 
 func reviewCommentsEmpty(body []byte) bool {
@@ -988,23 +1067,49 @@ func summarizeChecks(checks []domain.SCMCheck) string {
 		return "none"
 	}
 	pending := false
+	passing := false
 	for _, c := range checks {
 		if failedCheck(c) {
 			return "failing"
 		}
-		if c.Conclusion == "" || strings.EqualFold(c.Status, "queued") || strings.EqualFold(c.Status, "in_progress") || strings.EqualFold(c.Status, "pending") {
+		if isPendingCheck(c) {
 			pending = true
+			continue
+		}
+		if isPassingCheck(c) {
+			passing = true
 		}
 	}
 	if pending {
 		return "pending"
 	}
-	return "passing"
+	if passing {
+		return "passing"
+	}
+	return "none"
 }
 
 func failedCheck(c domain.SCMCheck) bool {
-	s := strings.ToLower(firstNonEmpty(c.Conclusion, c.Status))
+	s := strings.ToLower(strings.TrimSpace(firstNonEmpty(c.Conclusion, c.Status)))
 	return s == "failure" || s == "failed" || s == "error" || s == "timed_out" || s == "cancelled" || s == "action_required"
+}
+
+func isPendingCheck(c domain.SCMCheck) bool {
+	status := strings.ToLower(strings.TrimSpace(c.Status))
+	conclusion := strings.ToLower(strings.TrimSpace(c.Conclusion))
+	if conclusion != "" {
+		return conclusion == "pending" || conclusion == "queued" || conclusion == "in_progress" || conclusion == "requested" || conclusion == "waiting" || conclusion == "expected"
+	}
+	return status == "queued" || status == "in_progress" || status == "pending" || status == "requested" || status == "waiting" || status == "expected"
+}
+
+func isPassingCheck(c domain.SCMCheck) bool {
+	status := strings.ToLower(strings.TrimSpace(c.Status))
+	conclusion := strings.ToLower(strings.TrimSpace(c.Conclusion))
+	if conclusion == "success" || conclusion == "successful" || conclusion == "passed" || conclusion == "passing" || conclusion == "pass" {
+		return true
+	}
+	return conclusion == "" && (status == "success" || status == "successful" || status == "passed" || status == "passing" || status == "pass")
 }
 
 func combinedFailureTail(checks []domain.SCMCheck) string {
@@ -1070,7 +1175,21 @@ func threadIsBot(comments []domain.SCMReviewComment) bool {
 func isBotAuthor(login, typ string) bool {
 	login = strings.ToLower(login)
 	typ = strings.ToLower(typ)
-	return typ == "bot" || strings.Contains(login, "[bot]") || strings.HasSuffix(login, "-bot") || strings.Contains(login, "bot")
+	if typ == "bot" || strings.Contains(login, "[bot]") || strings.HasSuffix(login, "-bot") {
+		return true
+	}
+	_, ok := knownBotLogins[login]
+	return ok
+}
+
+var knownBotLogins = map[string]struct{}{
+	"codecov":        {},
+	"cursor":         {},
+	"dependabot":     {},
+	"github-actions": {},
+	"renovate":       {},
+	"sonarcloud":     {},
+	"snyk":           {},
 }
 
 func nodes(v any) []map[string]any {
@@ -1211,6 +1330,8 @@ func githubCacheCap(namespace string) int {
 		return cacheCapBranchMap
 	case cacheCheckGuard:
 		return cacheCapCheckGuard
+	case cachePRState:
+		return cacheCapPRState
 	default:
 		return 0
 	}
