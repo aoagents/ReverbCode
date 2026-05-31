@@ -224,7 +224,7 @@ func (s *Store) SaveSnapshot(_ context.Context, snapshot domain.SCMSnapshot) (do
 	if len(history) > 0 {
 		latest := history[len(history)-1]
 		if latest.SemanticHash == snapshot.SemanticHash {
-			if snapshot.Subject.SessionID != "" && subjectNeedsTimestampRepair(s.data.Subjects[snapshot.Subject.SubjectKey()]) {
+			if subjectNeedsTimestampRepair(s.data.Subjects[snapshot.Subject.SubjectKey()]) {
 				s.upsertSubjectLocked(snapshot.Subject)
 				if err := s.persistLocked(); err != nil {
 					return domain.SCMSnapshot{}, false, err
@@ -236,9 +236,7 @@ func (s *Store) SaveSnapshot(_ context.Context, snapshot domain.SCMSnapshot) (do
 	} else {
 		snapshot.Revision = 1
 	}
-	if snapshot.Subject.SessionID != "" {
-		snapshot.Subject = s.upsertSubjectLocked(snapshot.Subject)
-	}
+	snapshot.Subject = s.upsertSubjectLocked(snapshot.Subject)
 	s.data.Snapshots[key] = append(history, cloneSnapshot(snapshot))
 	if err := s.persistLocked(); err != nil {
 		return domain.SCMSnapshot{}, false, err
