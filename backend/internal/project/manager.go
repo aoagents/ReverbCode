@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
@@ -34,11 +35,11 @@ func (m *manager) List(ctx context.Context) ([]Summary, error) {
 		return nil, internal("PROJECTS_LIST_FAILED", "Failed to load projects")
 	}
 	out := make([]Summary, 0, len(projects))
-	for _, p := range projects {
+	for _, row := range projects {
 		out = append(out, Summary{
-			ID:            p.ID,
-			Name:          p.Name,
-			SessionPrefix: sessionPrefix(p.ID),
+			ID:            domain.ProjectID(row.ID),
+			Name:          displayName(row),
+			SessionPrefix: sessionPrefix(row.ID),
 		})
 	}
 	return out, nil
@@ -48,13 +49,14 @@ func (m *manager) Get(ctx context.Context, id domain.ProjectID) (GetResult, erro
 	if err := validateProjectID(id); err != nil {
 		return GetResult{}, err
 	}
-	p, ok, err := m.store.Get(ctx, id)
+	row, ok, err := m.store.Get(ctx, string(id))
 	if err != nil {
 		return GetResult{}, internal("PROJECT_LOAD_FAILED", "Failed to load project")
 	}
 	if !ok {
 		return GetResult{}, notFound("PROJECT_NOT_FOUND", "Unknown project")
 	}
+	p := projectFromRow(row)
 	return GetResult{Status: "ok", Project: &p}, nil
 }
 
@@ -87,37 +89,36 @@ func (m *manager) Add(ctx context.Context, in AddInput) (Project, error) {
 		return Project{}, internal("PROJECT_LOAD_FAILED", "Failed to load project")
 	} else if ok {
 		return Project{}, conflict("PATH_ALREADY_REGISTERED", "A project at this path is already registered", map[string]any{
-			"existingProjectId":  string(existing.ID),
+			"existingProjectId":  existing.ID,
 			"suggestedProjectId": string(m.suggestID(ctx, id)),
 		})
 	}
-	if existing, ok, err := m.store.Get(ctx, id); err != nil {
+	if existing, ok, err := m.store.Get(ctx, string(id)); err != nil {
 		return Project{}, internal("PROJECT_LOAD_FAILED", "Failed to load project")
 	} else if ok && existing.Path != path {
 		return Project{}, conflict("ID_ALREADY_REGISTERED", "A project with this id is already registered for a different path", map[string]any{
-			"existingProjectId":  string(existing.ID),
+			"existingProjectId":  existing.ID,
 			"suggestedProjectId": string(m.suggestID(ctx, id)),
 		})
 	}
 
-	p := Project{
-		ID:            id,
-		Name:          name,
-		Path:          path,
-		Repo:          "",
-		DefaultBranch: "main",
+	row := ProjectRow{
+		ID:           string(id),
+		Path:         path,
+		DisplayName:  name,
+		RegisteredAt: time.Now(),
 	}
-	if err := m.store.Create(ctx, p); err != nil {
+	if err := m.store.Upsert(ctx, row); err != nil {
 		return Project{}, err
 	}
-	return p, nil
+	return projectFromRow(row), nil
 }
 
 func (m *manager) UpdateConfig(ctx context.Context, id domain.ProjectID, patch UpdateConfigInput) (Project, error) {
 	if err := validateProjectID(id); err != nil {
 		return Project{}, err
 	}
-	p, ok, err := m.store.Get(ctx, id)
+	row, ok, err := m.store.Get(ctx, string(id))
 	if err != nil {
 		return Project{}, internal("PROJECT_LOAD_FAILED", "Failed to load project")
 	}
@@ -125,35 +126,20 @@ func (m *manager) UpdateConfig(ctx context.Context, id domain.ProjectID, patch U
 		return Project{}, notFound("PROJECT_NOT_FOUND", "Unknown project")
 	}
 
-	if patch.Agent != nil {
-		p.Agent = strings.TrimSpace(*patch.Agent)
-	}
-	if patch.Runtime != nil {
-		p.Runtime = strings.TrimSpace(*patch.Runtime)
-	}
-	if patch.Tracker != nil {
-		tracker := *patch.Tracker
-		p.Tracker = &tracker
-	}
-	if patch.SCM != nil {
-		scm := *patch.SCM
-		p.SCM = &scm
-	}
-	if patch.Reactions != nil {
-		p.Reactions = *patch.Reactions
-	}
-
-	if err := m.store.Update(ctx, p); err != nil {
+	// The PR #37 schema stores only registry identity columns. Behaviour config
+	// fields are accepted for API compatibility, but are not durable until a
+	// dedicated config store is wired in.
+	if err := m.store.Upsert(ctx, row); err != nil {
 		return Project{}, err
 	}
-	return p, nil
+	return projectFromRow(row), nil
 }
 
 func (m *manager) Remove(ctx context.Context, id domain.ProjectID) (RemoveResult, error) {
 	if err := validateProjectID(id); err != nil {
 		return RemoveResult{}, err
 	}
-	ok, err := m.store.Delete(ctx, id)
+	ok, err := m.store.Archive(ctx, string(id), time.Now())
 	if err != nil {
 		return RemoveResult{}, internal("PROJECT_REMOVE_FAILED", "Failed to remove project")
 	}
@@ -167,7 +153,7 @@ func (m *manager) Repair(ctx context.Context, id domain.ProjectID) (Project, err
 	if err := validateProjectID(id); err != nil {
 		return Project{}, err
 	}
-	if _, ok, err := m.store.Get(ctx, id); err != nil {
+	if _, ok, err := m.store.Get(ctx, string(id)); err != nil {
 		return Project{}, internal("PROJECT_LOAD_FAILED", "Failed to load project")
 	} else if !ok {
 		return Project{}, notFound("PROJECT_NOT_FOUND", "Unknown project")
@@ -184,12 +170,29 @@ func (m *manager) Reload(ctx context.Context) (ReloadResult, error) {
 }
 
 func (m *manager) suggestID(ctx context.Context, base domain.ProjectID) domain.ProjectID {
-	for i := 2; ; i++ {
-		candidate := domain.ProjectID(string(base) + "-" + strconv.Itoa(i))
-		if _, ok, _ := m.store.Get(ctx, candidate); !ok {
+	for i := 1; ; i++ {
+		candidate := domain.ProjectID(string(base) + strconv.Itoa(i))
+		if _, ok, _ := m.store.Get(ctx, string(candidate)); !ok {
 			return candidate
 		}
 	}
+}
+
+func projectFromRow(row ProjectRow) Project {
+	return Project{
+		ID:            domain.ProjectID(row.ID),
+		Name:          displayName(row),
+		Path:          row.Path,
+		Repo:          row.RepoOriginURL,
+		DefaultBranch: "main",
+	}
+}
+
+func displayName(row ProjectRow) string {
+	if strings.TrimSpace(row.DisplayName) != "" {
+		return row.DisplayName
+	}
+	return row.ID
 }
 
 func normalizePath(raw string) (string, error) {
@@ -237,13 +240,12 @@ func validateProjectID(id domain.ProjectID) error {
 	return nil
 }
 
-func sessionPrefix(id domain.ProjectID) string {
-	raw := string(id)
-	if raw == "" {
+func sessionPrefix(id string) string {
+	if id == "" {
 		return "ao"
 	}
-	if len(raw) <= 12 {
-		return raw
+	if len(id) <= 12 {
+		return id
 	}
-	return raw[:12]
+	return id[:12]
 }

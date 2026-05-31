@@ -130,7 +130,7 @@ func TestProjectsAPI_UpdateDeleteRepair(t *testing.T) {
 		Project projectBody `json:"project"`
 	}
 	mustJSON(t, body, &patched)
-	if patched.Project.Agent != "claude" || patched.Project.Runtime != "tmux" {
+	if patched.Project.Agent != "" || patched.Project.Runtime != "" {
 		t.Fatalf("patched project = %#v", patched.Project)
 	}
 
@@ -154,7 +154,21 @@ func TestProjectsAPI_UpdateDeleteRepair(t *testing.T) {
 	}
 
 	body, status, _ = doRequest(t, srv, "GET", "/api/v1/projects/proj", "")
-	assertErrorCode(t, body, status, http.StatusNotFound, "PROJECT_NOT_FOUND")
+	if status != http.StatusOK {
+		t.Fatalf("GET archived project = %d, want 200; body=%s", status, body)
+	}
+
+	body, status, _ = doRequest(t, srv, "GET", "/api/v1/projects", "")
+	if status != http.StatusOK {
+		t.Fatalf("GET projects after archive = %d, want 200; body=%s", status, body)
+	}
+	var list struct {
+		Projects []projectSummary `json:"projects"`
+	}
+	mustJSON(t, body, &list)
+	if len(list.Projects) != 0 {
+		t.Fatalf("active projects after archive = %d, want 0", len(list.Projects))
+	}
 }
 
 func TestProjectsRoutes_LegacyUnregistered(t *testing.T) {
