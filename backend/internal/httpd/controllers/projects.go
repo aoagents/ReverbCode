@@ -48,7 +48,7 @@ func (c *ProjectsController) list(w http.ResponseWriter, r *http.Request) {
 		writeProjectError(w, r, err)
 		return
 	}
-	envelope.WriteJSON(w, http.StatusOK, map[string]any{"projects": projects})
+	envelope.WriteJSON(w, http.StatusOK, ListProjectsResponse{Projects: projects})
 }
 
 func (c *ProjectsController) add(w http.ResponseWriter, r *http.Request) {
@@ -66,7 +66,7 @@ func (c *ProjectsController) add(w http.ResponseWriter, r *http.Request) {
 		writeProjectError(w, r, err)
 		return
 	}
-	envelope.WriteJSON(w, http.StatusCreated, map[string]any{"project": p})
+	envelope.WriteJSON(w, http.StatusCreated, ProjectResponse{Project: p})
 }
 
 func (c *ProjectsController) get(w http.ResponseWriter, r *http.Request) {
@@ -79,11 +79,7 @@ func (c *ProjectsController) get(w http.ResponseWriter, r *http.Request) {
 		writeProjectError(w, r, err)
 		return
 	}
-	if got.Status == "degraded" {
-		envelope.WriteJSON(w, http.StatusOK, map[string]any{"status": got.Status, "project": got.Degraded})
-		return
-	}
-	envelope.WriteJSON(w, http.StatusOK, map[string]any{"status": got.Status, "project": got.Project})
+	envelope.WriteJSON(w, http.StatusOK, newGetProjectResponse(got))
 }
 
 func (c *ProjectsController) updateConfig(w http.ResponseWriter, r *http.Request) {
@@ -109,7 +105,7 @@ func (c *ProjectsController) updateConfig(w http.ResponseWriter, r *http.Request
 		writeProjectError(w, r, err)
 		return
 	}
-	envelope.WriteJSON(w, http.StatusOK, map[string]any{"project": p})
+	envelope.WriteJSON(w, http.StatusOK, ProjectResponse{Project: p})
 }
 
 func (c *ProjectsController) remove(w http.ResponseWriter, r *http.Request) {
@@ -135,7 +131,7 @@ func (c *ProjectsController) repair(w http.ResponseWriter, r *http.Request) {
 		writeProjectError(w, r, err)
 		return
 	}
-	envelope.WriteJSON(w, http.StatusOK, map[string]any{"project": p})
+	envelope.WriteJSON(w, http.StatusOK, ProjectResponse{Project: p})
 }
 
 func (c *ProjectsController) reload(w http.ResponseWriter, r *http.Request) {
