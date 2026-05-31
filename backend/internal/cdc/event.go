@@ -1,0 +1,40 @@
+// Package cdc is the change-data-capture delivery layer. Change events are
+// captured durably by SQLite triggers into the change_log table (see the storage
+// migrations); this package POLLS that log and fans new events out, in order, to
+// in-process subscribers (the WS/SSE transport, wired in the frontend task).
+//
+// There is no durable outbox/JSONL/janitor machinery: the change_log table IS
+// the durable, ordered source of truth, and clients catch up by reading it from
+// their own offset (SSE Last-Event-ID). The poller + broadcaster here are only
+// the LIVE push on top of that.
+package cdc
+
+import (
+	"encoding/json"
+	"time"
+)
+
+// EventType mirrors the event_type values the DB triggers write.
+type EventType string
+
+const (
+	EventSessionCreated  EventType = "session_created"
+	EventSessionUpdated  EventType = "session_updated"
+	EventPRCreated       EventType = "pr_created"
+	EventPRUpdated       EventType = "pr_updated"
+	EventPRCheckRecorded EventType = "pr_check_recorded"
+)
+
+// Event is one CDC change read from change_log. Seq is the monotonic ordering +
+// idempotency key (consumers dedup by it). SessionID is empty for project-level
+// events. Payload is the trigger-built JSON, kept raw so a typed transport can
+// narrow it by Type (the discriminated-union decode lives at the transport edge,
+// not here).
+type Event struct {
+	Seq       int64           `json:"seq"`
+	ProjectID string          `json:"projectId"`
+	SessionID string          `json:"sessionId,omitempty"`
+	Type      EventType       `json:"type"`
+	Payload   json.RawMessage `json:"payload"`
+	CreatedAt time.Time       `json:"createdAt"`
+}

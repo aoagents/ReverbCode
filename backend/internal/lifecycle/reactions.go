@@ -1,446 +1,397 @@
 package lifecycle
 
-// reactions.go is the ACT layer: the reaction table, the per-(session,reaction)
-// escalation engine, and the duration-driven TickEscalations the synchronous
-// LCM can't wake itself for. Reactions fire from react() after a transition is
-// persisted by the Apply* pipeline (see manager.go).
+// reactions.go is the ACT layer: after a persisted transition the engine maps
+// the session's (state, PR facts) to at most one reaction and dispatches it —
+// nudging the agent or paging the human. Two reactions inject live content (CI
+// logs, review comments) and re-fire when that content changes; the rest fire
+// once on entry, with duration escalation driven by TickEscalations.
 //
-// Dispatch is synchronous: react() runs Send/Notify inline. It is the single
-// dispatch chokepoint, so moving it onto a worker goroutine later (once a daemon
-// owns that goroutine's lifecycle) is a change confined to this one function.
+// Budgets are in-memory: a restart re-arms them, which costs a few extra nudges,
+// never a missed page.
 
 import (
 	"context"
 	"fmt"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-// reactionKey names a row in the reaction table and a tracker bucket.
 type reactionKey string
 
 const (
-	reactionCIFailed         reactionKey = "ci-failed"
-	reactionChangesRequested reactionKey = "changes-requested"
-	reactionBugbotComments   reactionKey = "bugbot-comments"
-	reactionMergeConflicts   reactionKey = "merge-conflicts"
-	reactionAgentIdle        reactionKey = "agent-idle"
-	reactionApprovedAndGreen reactionKey = "approved-and-green"
-	reactionAgentStuck       reactionKey = "agent-stuck"
-	reactionNeedsInput       reactionKey = "agent-needs-input"
-	reactionAgentExited      reactionKey = "agent-exited"
-	reactionPRClosed         reactionKey = "pr-closed"
-	reactionAllComplete      reactionKey = "all-complete"
+	rxCIFailed       reactionKey = "ci-failed"
+	rxReviewComments reactionKey = "review-comments"
+	rxMergeConflicts reactionKey = "merge-conflicts"
+	rxIdle           reactionKey = "agent-idle"
+	rxApprovedGreen  reactionKey = "approved-and-green"
+	rxStuck          reactionKey = "agent-stuck"
+	rxNeedsInput     reactionKey = "agent-needs-input"
+	rxExited         reactionKey = "agent-exited"
+	rxPRClosed       reactionKey = "pr-closed"
+	rxMerged         reactionKey = "pr-merged"
 )
 
-type actionKind string
-
+// Brakes: stop auto-handling and page a human after this many failed attempts.
 const (
-	actionSendToAgent actionKind = "send-to-agent"
-	actionNotify      actionKind = "notify"
-	actionAutoMerge   actionKind = "auto-merge"
+	ciBrakeRuns    = 3 // last N runs of a failing check all failed
+	reviewMaxNudge = 3 // re-nudged the agent N times over new review feedback
 )
 
-// reactionConfig is one row of the reaction table (distillation §4.1/§4.2).
-//
-//   - retries       numeric escalation cap: escalate once attempts exceed it.
-//   - escalateAfter  duration escalation: escalate once this elapses since the
-//     first attempt (fired by TickEscalations, since the LCM never polls).
-//   - persistent     the tracker survives the status leaving the triggering
-//     state; it only resets when the incident is truly over (PR no longer open
-//     or the session terminal). Only ci-failed is persistent, so a flapping
-//     CI (fail→pending→fail) keeps draining one shared retry budget.
+// reactionConfig is one row of the reaction table. toAgent reactions nudge the
+// agent; the rest notify the human. escalateAfter (when set) drives a
+// duration-based escalation via TickEscalations.
 type reactionConfig struct {
-	action        actionKind
+	toAgent       bool
 	message       string
-	priority      ports.EventPriority
 	eventType     string
-	retries       int
+	priority      ports.Priority
 	escalateAfter time.Duration
-	persistent    bool
 }
 
-// defaultReactions is the product's default behaviour (distillation §4.2).
-// auto-merge is intentionally absent: approved-and-green is a notify, so the
-// human decides to merge. The auto-merge action kind exists for opt-in configs,
-// but no default row uses it.
-var defaultReactions = map[reactionKey]reactionConfig{
-	reactionCIFailed: {
-		action: actionSendToAgent, persistent: true, retries: 2,
-		message:   "CI is failing on your PR. Review the failing output below and push a fix.",
-		eventType: "reaction.ci-failed", priority: ports.PriorityAction,
-	},
-	reactionChangesRequested: {
-		action: actionSendToAgent, escalateAfter: 30 * time.Minute,
-		message:   "A reviewer requested changes on your PR. Address the comments and push.",
-		eventType: "reaction.changes-requested", priority: ports.PriorityAction,
-	},
-	reactionBugbotComments: {
-		action: actionSendToAgent, escalateAfter: 30 * time.Minute,
-		message:   "An automated reviewer left comments on your PR. Address them and push.",
-		eventType: "reaction.bugbot-comments", priority: ports.PriorityAction,
-	},
-	reactionMergeConflicts: {
-		action: actionSendToAgent, escalateAfter: 15 * time.Minute,
-		message:   "Your PR has merge conflicts. Rebase onto the base branch and resolve them.",
-		eventType: "reaction.merge-conflicts", priority: ports.PriorityAction,
-	},
-	reactionAgentIdle: {
-		action: actionSendToAgent, retries: 2, escalateAfter: 15 * time.Minute,
-		message:   "You appear idle. Continue the task or explain what is blocking you.",
-		eventType: "reaction.agent-idle", priority: ports.PriorityWarning,
-	},
-	reactionApprovedAndGreen: {
-		// notify-only: a green, approved PR is the human-decision path — the human
-		// decides to merge (no auto-merge by default).
-		action: actionNotify, priority: ports.PriorityAction,
-		message:   "PR is approved and green — ready to merge.",
-		eventType: "reaction.approved-and-green",
-	},
-	reactionAgentStuck: {
-		// §4.2 lists a threshold: 10m here; it is intentionally not gated — entry
-		// into stuck is already debounced upstream by the detecting->stuck
-		// quarantine (DETECTING_MAX_ATTEMPTS/DURATION), so a second timer would be
-		// redundant.
-		action: actionNotify, priority: ports.PriorityUrgent,
-		message:   "Agent is stuck and needs attention.",
-		eventType: "reaction.agent-stuck",
-	},
-	reactionNeedsInput: {
-		action: actionNotify, priority: ports.PriorityUrgent,
-		message:   "Agent needs input to continue.",
-		eventType: "reaction.agent-needs-input",
-	},
-	reactionAgentExited: {
-		action: actionNotify, priority: ports.PriorityUrgent,
-		message:   "Agent process exited unexpectedly.",
-		eventType: "reaction.agent-exited",
-	},
-	reactionPRClosed: {
-		action: actionNotify, priority: ports.PriorityAction,
-		message:   "PR was closed without merging — decide: resume, learn, or terminate.",
-		eventType: "reaction.pr-closed",
-	},
-	reactionAllComplete: {
-		action: actionNotify, priority: ports.PriorityInfo,
-		message:   "PR merged — work complete.",
-		eventType: "reaction.all-complete",
-	},
+var reactions = map[reactionKey]reactionConfig{
+	rxCIFailed:       {toAgent: true, eventType: "reaction.ci-failed", priority: ports.PriorityAction, message: "CI is failing on your PR. Review the output below and push a fix."},
+	rxReviewComments: {toAgent: true, eventType: "reaction.review-comments", priority: ports.PriorityAction, message: "A reviewer left feedback on your PR. Address it and push."},
+	rxMergeConflicts: {toAgent: true, eventType: "reaction.merge-conflicts", priority: ports.PriorityAction, escalateAfter: 15 * time.Minute, message: "Your PR has merge conflicts. Rebase onto the base branch and resolve them."},
+	rxIdle:           {toAgent: true, eventType: "reaction.agent-idle", priority: ports.PriorityInfo, escalateAfter: 15 * time.Minute, message: "You appear idle. Continue the task or say what is blocking you."},
+	rxApprovedGreen:  {eventType: "reaction.approved-and-green", priority: ports.PriorityAction, message: "PR is approved and green — ready to merge."},
+	rxStuck:          {eventType: "reaction.agent-stuck", priority: ports.PriorityUrgent, message: "Agent is stuck and needs attention."},
+	rxNeedsInput:     {eventType: "reaction.agent-needs-input", priority: ports.PriorityUrgent, message: "Agent needs input to continue."},
+	rxExited:         {eventType: "reaction.agent-exited", priority: ports.PriorityUrgent, message: "Agent process exited unexpectedly."},
+	rxPRClosed:       {eventType: "reaction.pr-closed", priority: ports.PriorityAction, message: "PR was closed without merging."},
+	rxMerged:         {eventType: "reaction.pr-merged", priority: ports.PriorityInfo, message: "PR merged — work complete."},
 }
 
-// reactionEventFor maps a canonical record to the reaction it should drive,
-// mirroring DeriveLegacyStatus but for the ACT layer. ok is false when the
-// current state has no reaction.
-//
-// A closed PR derives to the idle display status, so it is detected from the PR
-// axis directly before falling through to the status mapping. Bot review
-// comments and merge conflicts are represented as PR reasons so the ACT layer
-// can distinguish them from human-requested changes and plain open PRs.
-func reactionEventFor(l domain.CanonicalSessionLifecycle) (reactionKey, bool) {
-	if l.PR.State == domain.PRClosed {
-		return reactionPRClosed, true
-	}
-	if isActivePRState(l.PR.State) {
-		switch l.PR.Reason {
-		case domain.PRReasonBotComments:
-			return reactionBugbotComments, true
-		case domain.PRReasonMergeConflicts:
-			return reactionMergeConflicts, true
+// reactionContent carries the live material the feedback reactions inject. Empty
+// for runtime/activity transitions; populated from a PR observation.
+type reactionContent struct {
+	ciCheck   string
+	ciCommit  string
+	ciURL     string
+	ciLogTail string
+	comments  []string
+	reviewSig string
+}
+
+// prContent extracts the CI failure + review feedback from a PR observation.
+func prContent(o ports.PRObservation) reactionContent {
+	c := reactionContent{}
+	for _, ch := range o.Checks {
+		if ch.Status == "failed" {
+			c.ciCheck, c.ciCommit, c.ciLogTail, c.ciURL = ch.Name, ch.CommitHash, ch.LogTail, o.URL
+			break
 		}
 	}
-	switch domain.DeriveLegacyStatus(l) {
-	case domain.StatusCIFailed:
-		return reactionCIFailed, true
-	case domain.StatusChangesRequested:
-		return reactionChangesRequested, true
-	case domain.StatusApproved, domain.StatusMergeable:
-		return reactionApprovedAndGreen, true
-	case domain.StatusIdle:
-		return reactionAgentIdle, true
-	case domain.StatusStuck:
-		return reactionAgentStuck, true
-	case domain.StatusNeedsInput:
-		return reactionNeedsInput, true
-	case domain.StatusKilled:
-		// Inferred death only — an explicit user kill goes through
-		// OnKillRequested, which does not react.
-		return reactionAgentExited, true
-	case domain.StatusMerged:
-		return reactionAllComplete, true
+	var ids []string
+	for _, cm := range o.Comments {
+		if cm.Resolved {
+			continue
+		}
+		c.comments = append(c.comments, cm.Body)
+		ids = append(ids, cm.ID)
 	}
-	return "", false
+	c.reviewSig = strings.Join(ids, ",")
+	return c
 }
 
-// reactionContext carries fact-derived material the message templates need. The
-// SCM path populates it (CI failure log tail); other paths pass the zero value.
-type reactionContext struct {
-	ciFailureLogTail *string
-}
+// ---- in-memory escalation state ----
 
-// trackerKey buckets an escalation tracker by session and reaction.
 type trackerKey struct {
 	id  domain.SessionID
 	key reactionKey
 }
 
-// reactionTracker is the per-(session,reaction) escalation budget. It lives in
-// memory on the Manager: a daemon restart resets budgets, which only ever costs
-// a few extra agent retries before re-escalating — never a missed human
-// notification. Keeping it out of the canonical store preserves the
-// truth-vs-policy split (the store holds session truth; this is ACT policy).
-//
-// projectID is captured at first attempt so TickEscalations — which fires from
-// the reaper and has no transition on hand — can still populate ProjectID on
-// the escalation event. It is set once and never overwritten; reaction-bearing
-// transitions for a given session id always carry the same projectID.
-type reactionTracker struct {
-	attempts       int
-	escalated      bool
-	firstAttemptAt time.Time
-	projectID      domain.ProjectID
+type tracker struct {
+	attempts  int
+	firstAt   time.Time
+	escalated bool
+	seenSig   bool
+	lastSig   string
+	projectID domain.ProjectID
 }
 
-// react fires the ACT layer after a persisted transition: clear the tracker for
-// the reaction we left, then dispatch the reaction for the one we entered. It
-// fires only on a genuine reaction change, so re-persisting the same state does
-// not re-dispatch. Synchronous by design (see file header).
-//
-// Integration-time caveat: react runs AFTER withLock releases (deliberately, so
-// a busy-waiting send-to-agent never holds the per-session mutex). Under a live
-// daemon with concurrent observers (SCM poller + reaper + activity ingest) the
-// afterLC snapshot can be stale by dispatch time — e.g. a ci-failed send firing
-// after the session already moved to approved. Tests are single-threaded so it
-// is not observable yet; when the daemon lands, give react a per-session
-// ordering (a small react queue) or re-check the triggering state before
-// dispatching.
-func (m *Manager) react(ctx context.Context, id domain.SessionID, tr *transition, rc reactionContext) error {
-	if tr == nil {
-		return nil
+type reactionState struct {
+	mu       sync.Mutex
+	trackers map[trackerKey]*tracker
+	lastKey  map[domain.SessionID]reactionKey
+}
+
+func newReactionState() reactionState {
+	return reactionState{trackers: map[trackerKey]*tracker{}, lastKey: map[domain.SessionID]reactionKey{}}
+}
+
+// trackerFor returns the (id,key) tracker, creating it on first use. Caller holds mu.
+func (rs *reactionState) trackerFor(id domain.SessionID, key reactionKey) *tracker {
+	k := trackerKey{id, key}
+	t := rs.trackers[k]
+	if t == nil {
+		t = &tracker{}
+		rs.trackers[k] = t
 	}
-	beforeKey, hadBefore := reactionEventFor(tr.beforeLC)
-	afterKey, hasAfter := reactionEventFor(tr.afterLC)
+	return t
+}
 
-	changed := beforeKey != afterKey
-
-	switch {
-	case incidentOver(tr.afterLC) || recovered(tr.afterLC):
-		// The PR-pipeline incident has ended — the PR resolved (merged/closed),
-		// the session went terminal, or it reached an approved/green state. Every
-		// tracker for this session is now stale, including a persistent ci-failed
-		// one. This is keyed on the state REACHED, not the one left: the recovery
-		// transition is typically review_pending->approved (beforeKey empty), so
-		// clearing only beforeKey would leak the ci-failed tracker and leave its
-		// escalated=true to silence a future regression. Clear them all.
-		m.clearSessionTrackers(id)
-	case hadBefore && (!hasAfter || changed):
-		// Within an unresolved open PR: a normal tracker resets when its state is
-		// left. A persistent one (ci-failed) is NOT cleared here — it must survive
-		// the ambiguous review_pending limbo (the fail->pending->fail flap, §4.2);
-		// it only resets via the recovery/incident-over branch above.
-		if !defaultReactions[beforeKey].persistent {
-			m.clearTracker(id, beforeKey)
+func (m *Manager) clearReactions(id domain.SessionID) {
+	m.react.mu.Lock()
+	defer m.react.mu.Unlock()
+	for k := range m.react.trackers {
+		if k.id == id {
+			delete(m.react.trackers, k)
 		}
 	}
-
-	if hasAfter && (!hadBefore || changed) {
-		return m.executeReaction(ctx, id, tr.projectID, afterKey, rc)
-	}
-	return nil
+	delete(m.react.lastKey, id)
 }
 
-// incidentOver reports that a PR-pipeline incident has truly ended (PR no longer
-// active, or the session terminal), so all trackers for the session may reset.
-func incidentOver(l domain.CanonicalSessionLifecycle) bool {
-	return !isActivePRState(l.PR.State) || isTerminal(l.Session.State)
-}
+// ---- dispatch ----
 
-func isActivePRState(s domain.PRState) bool {
-	return s == domain.PROpen || s == domain.PRDraft
-}
-
-// recovered reports a genuinely-green open PR: an approved/mergeable state, which
-// unambiguously means CI is no longer failing (the open-PR ladder ranks ci_failing
-// above approved, so an approved display cannot coexist with failing CI). Unlike
-// the ambiguous review_pending state — which may just be CI re-running — reaching
-// this ends a ci-failed incident and re-arms its budget. Draft PRs are active,
-// but not recoverable via review/merge state.
-func recovered(l domain.CanonicalSessionLifecycle) bool {
-	if !isActivePRState(l.PR.State) || l.PR.State == domain.PRDraft {
-		return false
-	}
-	switch l.PR.Reason {
-	case domain.PRReasonApproved, domain.PRReasonMergeReady:
-		return true
-	default:
-		return false
-	}
-}
-
-func (m *Manager) executeReaction(ctx context.Context, id domain.SessionID, projectID domain.ProjectID, key reactionKey, rc reactionContext) error {
-	cfg := defaultReactions[key]
-	switch cfg.action {
-	case actionNotify:
-		// notify reactions are human-attention terminals: fire once on the
-		// triggering transition, no retry/escalation budget.
-		return m.notifier.Notify(ctx, ports.OrchestratorEvent{
-			Type:      cfg.eventType,
-			Priority:  cfg.priority,
-			SessionID: id,
-			ProjectID: projectID,
-			Message:   cfg.message,
-		})
-	case actionAutoMerge:
-		// Off by default: no default row maps here, and wiring a merge port is a
-		// later PR. An opt-in config could route a reaction here.
-		return nil
-	case actionSendToAgent:
-		return m.sendToAgent(ctx, id, projectID, key, cfg, rc)
-	}
-	return nil
-}
-
-// sendToAgent runs the escalation engine for an auto send-to-agent reaction:
-// count the attempt, escalate when the numeric cap or duration is exceeded
-// (silencing further auto-dispatch), else inject the message via the messenger.
-func (m *Manager) sendToAgent(ctx context.Context, id domain.SessionID, projectID domain.ProjectID, key reactionKey, cfg reactionConfig, rc reactionContext) error {
-	m.trackerMu.Lock()
-	tk := m.trackerFor(id, key)
-	// Capture projectID once so the duration-based TickEscalations path — which
-	// has no transition on hand — can still populate ProjectID on the escalation
-	// event. A non-empty incoming projectID always wins, in case the tracker was
-	// first created from an observation that lacked one.
-	if projectID != "" {
-		tk.projectID = projectID
-	}
-	if tk.escalated {
-		m.trackerMu.Unlock()
-		return nil // silenced until the condition clears the tracker
-	}
-	now := m.clock()
-	freshFirst := tk.firstAttemptAt.IsZero()
-	if freshFirst {
-		tk.firstAttemptAt = now
-	}
-	tk.attempts++
-	if shouldEscalate(tk, cfg, now) {
-		tk.escalated = true
-		m.trackerMu.Unlock()
-		return m.escalate(ctx, id, tk.projectID, key)
-	}
-	m.trackerMu.Unlock()
-
-	if err := m.messenger.Send(ctx, id, composeMessage(cfg, rc)); err != nil {
-		// A delivery failure must not consume escalation budget: roll this
-		// attempt back so the next relevant transition retries from the same
-		// point rather than marching toward escalation on undelivered messages
-		// (distillation §4.3).
-		m.trackerMu.Lock()
-		tk.attempts--
-		if freshFirst {
-			tk.firstAttemptAt = time.Time{}
-		}
-		m.trackerMu.Unlock()
+// runReactions is the chokepoint called after every persisted transition. It
+// runs unlocked (the write lock is already released) so a busy agent send never
+// blocks the write path.
+func (m *Manager) runReactions(ctx context.Context, id domain.SessionID, content reactionContent) error {
+	rec, ok, err := m.store.GetSession(ctx, id)
+	if err != nil || !ok {
 		return err
 	}
-	return nil
+	lc := rec.Lifecycle
+	project := rec.ProjectID
+
+	if isTerminal(lc.Session.State) {
+		err := m.dispatch(ctx, id, project, terminalReaction(lc.TerminationReason))
+		m.clearReactions(id) // incident over: drop budgets after the final notify
+		return err
+	}
+
+	pr, err := m.store.PRFactsForSession(ctx, id)
+	if err != nil {
+		return err
+	}
+
+	// Feedback reactions inject live content and re-fire as it changes — only
+	// while the agent can actually act on it.
+	if pr.Exists && !pr.Closed && !needsHuman(lc.Session.State) {
+		if pr.CI == domain.CIFailing && content.ciCheck != "" {
+			if err := m.handleCIFailure(ctx, id, project, content); err != nil {
+				return err
+			}
+		}
+		if hasReviewFeedback(pr) {
+			if err := m.handleReviewFeedback(ctx, id, project, content); err != nil {
+				return err
+			}
+		}
+	}
+
+	return m.dispatch(ctx, id, project, reactionFor(lc, pr))
 }
 
-// shouldEscalate uses inclusive boundaries: escalate once the numeric cap is
-// exceeded or once exactly escalateAfter has elapsed (don't wait for the next
-// tick to cross a strict threshold).
-func shouldEscalate(tk *reactionTracker, cfg reactionConfig, now time.Time) bool {
-	if cfg.retries > 0 && tk.attempts > cfg.retries {
-		return true
+// dispatch fires the entry reaction for key, deduped so a steady state does not
+// re-fire. Leaving a reaction drops its budget.
+func (m *Manager) dispatch(ctx context.Context, id domain.SessionID, project domain.ProjectID, key reactionKey) error {
+	m.react.mu.Lock()
+	if m.react.lastKey[id] == key {
+		m.react.mu.Unlock()
+		return nil
 	}
-	if cfg.escalateAfter > 0 && !tk.firstAttemptAt.IsZero() && now.Sub(tk.firstAttemptAt) >= cfg.escalateAfter {
-		return true
+	if prev := m.react.lastKey[id]; prev != "" {
+		delete(m.react.trackers, trackerKey{id, prev})
 	}
-	return false
+	m.react.lastKey[id] = key
+	m.react.mu.Unlock()
+
+	if key == "" {
+		return nil
+	}
+	cfg := reactions[key]
+	if cfg.toAgent {
+		return m.fireAgentEntry(ctx, id, project, key, cfg)
+	}
+	return m.fireNotify(ctx, id, project, cfg)
 }
 
-// escalate emits reaction.escalated and notifies the human. The caller has
-// already set tracker.escalated under the lock, which silences further
-// auto-dispatch for this reaction until the tracker clears.
-func (m *Manager) escalate(ctx context.Context, id domain.SessionID, projectID domain.ProjectID, key reactionKey) error {
-	return m.notifier.Notify(ctx, ports.OrchestratorEvent{
-		Type:      "reaction.escalated",
-		Priority:  ports.PriorityUrgent,
-		SessionID: id,
-		ProjectID: projectID,
-		Message:   fmt.Sprintf("auto-handling of %q is exhausted and needs a human.", key),
-		Data:      map[string]any{"reaction": string(key)},
+// reactionFor maps (session state, PR facts) to the reaction to enter. CI failure
+// and review feedback return "" here — they are handled by the feedback path.
+func reactionFor(lc domain.CanonicalSessionLifecycle, pr domain.PRFacts) reactionKey {
+	switch lc.Session.State {
+	case domain.SessionStuck:
+		return rxStuck
+	case domain.SessionNeedsInput:
+		return rxNeedsInput
+	}
+	if pr.Exists {
+		if pr.Closed {
+			if !pr.Merged {
+				return rxPRClosed
+			}
+			return ""
+		}
+		switch {
+		case pr.CI == domain.CIFailing, hasReviewFeedback(pr):
+			return "" // feedback path
+		case pr.Mergeability == domain.MergeConflicting:
+			return rxMergeConflicts
+		case pr.Mergeability == domain.MergeMergeable, pr.Review == domain.ReviewApproved:
+			return rxApprovedGreen
+		}
+	}
+	if lc.Session.State == domain.SessionIdle {
+		return rxIdle
+	}
+	return ""
+}
+
+func hasReviewFeedback(pr domain.PRFacts) bool {
+	return pr.Review == domain.ReviewChangesRequest || pr.ReviewComments
+}
+
+func needsHuman(s domain.SessionState) bool {
+	return s == domain.SessionStuck || s == domain.SessionNeedsInput
+}
+
+// terminalReaction is the notify fired when a session reaches a terminal state by
+// inferred death. An explicit kill goes through OnKillRequested (no reaction);
+// auto_cleanup / pr_merged are notified elsewhere.
+func terminalReaction(r domain.TerminationReason) reactionKey {
+	switch r {
+	case domain.TermRuntimeLost, domain.TermAgentProcessExited, domain.TermProbeFailure, domain.TermErrorInProcess:
+		return rxExited
+	default:
+		return ""
+	}
+}
+
+// ---- feedback reactions (content-driven re-fire + brake) ----
+
+func (m *Manager) handleCIFailure(ctx context.Context, id domain.SessionID, project domain.ProjectID, c reactionContent) error {
+	msg := reactions[rxCIFailed].message + "\n\nFailing output:\n" + c.ciLogTail
+	return m.fireFeedback(ctx, id, project, rxCIFailed, c.ciCommit, msg, func(int) (bool, error) {
+		st, err := m.pr.RecentCheckStatuses(ctx, c.ciURL, c.ciCheck, ciBrakeRuns)
+		if err != nil {
+			return false, err
+		}
+		return allFailed(st, ciBrakeRuns), nil
 	})
 }
 
-func composeMessage(cfg reactionConfig, rc reactionContext) string {
-	if rc.ciFailureLogTail != nil && *rc.ciFailureLogTail != "" {
-		return cfg.message + "\n\nFailing output:\n" + *rc.ciFailureLogTail
+func (m *Manager) handleReviewFeedback(ctx context.Context, id domain.SessionID, project domain.ProjectID, c reactionContent) error {
+	msg := reactions[rxReviewComments].message
+	if len(c.comments) > 0 {
+		msg += "\n\n" + strings.Join(c.comments, "\n\n")
 	}
-	return cfg.message
+	return m.fireFeedback(ctx, id, project, rxReviewComments, c.reviewSig, msg, func(attempts int) (bool, error) {
+		return attempts > reviewMaxNudge, nil
+	})
 }
 
-// trackerFor returns the tracker for (id,key), creating it on first use. The
-// caller must hold trackerMu.
-func (m *Manager) trackerFor(id domain.SessionID, key reactionKey) *reactionTracker {
-	k := trackerKey{id: id, key: key}
-	tk := m.trackers[k]
-	if tk == nil {
-		tk = &reactionTracker{}
-		m.trackers[k] = tk
+// fireFeedback nudges the agent with fresh content, deduped by signature so the
+// same content is not re-sent each poll. braked decides whether to escalate to a
+// human instead (CI: history; review: attempt count).
+func (m *Manager) fireFeedback(ctx context.Context, id domain.SessionID, project domain.ProjectID, key reactionKey, sig, message string, braked func(attempts int) (bool, error)) error {
+	m.react.mu.Lock()
+	t := m.react.trackerFor(id, key)
+	if project != "" {
+		t.projectID = project
 	}
-	return tk
-}
-
-func (m *Manager) clearTracker(id domain.SessionID, key reactionKey) {
-	m.trackerMu.Lock()
-	delete(m.trackers, trackerKey{id: id, key: key})
-	m.trackerMu.Unlock()
-}
-
-// clearSessionTrackers drops every tracker for a session — used when its
-// incident is over, so no budget (and no stale escalated=true) survives into a
-// later unrelated incident.
-func (m *Manager) clearSessionTrackers(id domain.SessionID) {
-	m.trackerMu.Lock()
-	for k := range m.trackers {
-		if k.id == id {
-			delete(m.trackers, k)
-		}
+	if t.escalated || (t.seenSig && t.lastSig == sig) {
+		m.react.mu.Unlock()
+		return nil
 	}
-	m.trackerMu.Unlock()
+	t.seenSig, t.lastSig = true, sig
+	t.attempts++
+	attempts, pid := t.attempts, t.projectID
+	m.react.lastKey[id] = key // feedback owns the slot so a later dispatch("") clears it
+	m.react.mu.Unlock()
+
+	brake, err := braked(attempts)
+	if err != nil {
+		return err
+	}
+	if brake {
+		m.react.mu.Lock()
+		t.escalated = true
+		m.react.mu.Unlock()
+		return m.escalate(ctx, id, pid, key)
+	}
+	return m.messenger.Send(ctx, id, message)
 }
 
-// TickEscalations fires the duration-based escalations the synchronous LCM
-// cannot wake itself for. The reaper calls it on a timer; it escalates any
-// not-yet-escalated tracker whose escalateAfter has elapsed. Notifications are
-// sent outside the lock so agent/notifier latency never blocks tracker access.
+// ---- entry reactions ----
+
+// fireAgentEntry nudges the agent once on entry into a static reaction
+// (idle/merge-conflicts); escalation is duration-based via TickEscalations.
+func (m *Manager) fireAgentEntry(ctx context.Context, id domain.SessionID, project domain.ProjectID, key reactionKey, cfg reactionConfig) error {
+	m.react.mu.Lock()
+	t := m.react.trackerFor(id, key)
+	if project != "" {
+		t.projectID = project
+	}
+	if t.escalated {
+		m.react.mu.Unlock()
+		return nil
+	}
+	if t.firstAt.IsZero() {
+		t.firstAt = m.clock()
+	}
+	t.attempts++
+	m.react.mu.Unlock()
+	return m.messenger.Send(ctx, id, cfg.message)
+}
+
+func (m *Manager) fireNotify(ctx context.Context, id domain.SessionID, project domain.ProjectID, cfg reactionConfig) error {
+	return m.notifier.Notify(ctx, ports.Event{
+		Type: cfg.eventType, Priority: cfg.priority,
+		SessionID: id, ProjectID: project, Message: cfg.message,
+	})
+}
+
+func (m *Manager) escalate(ctx context.Context, id domain.SessionID, project domain.ProjectID, key reactionKey) error {
+	return m.notifier.Notify(ctx, ports.Event{
+		Type: "reaction.escalated", Priority: ports.PriorityUrgent,
+		SessionID: id, ProjectID: project,
+		Message: fmt.Sprintf("Automatic handling of %q is exhausted — needs a human.", key),
+	})
+}
+
+// TickEscalations fires the duration-based escalations the synchronous engine
+// cannot wake itself for. The reaper calls it on a timer.
 func (m *Manager) TickEscalations(ctx context.Context, now time.Time) error {
 	type due struct {
-		id        domain.SessionID
-		projectID domain.ProjectID
-		key       reactionKey
+		id      domain.SessionID
+		project domain.ProjectID
+		key     reactionKey
 	}
 	var fire []due
-
-	m.trackerMu.Lock()
-	for k, tk := range m.trackers {
-		if tk.escalated {
+	m.react.mu.Lock()
+	for k, t := range m.react.trackers {
+		if t.escalated {
 			continue
 		}
-		cfg := defaultReactions[k.key]
-		if cfg.escalateAfter > 0 && !tk.firstAttemptAt.IsZero() && now.Sub(tk.firstAttemptAt) >= cfg.escalateAfter {
-			tk.escalated = true
-			fire = append(fire, due{id: k.id, projectID: tk.projectID, key: k.key})
+		cfg := reactions[k.key]
+		if cfg.escalateAfter > 0 && !t.firstAt.IsZero() && now.Sub(t.firstAt) >= cfg.escalateAfter {
+			t.escalated = true
+			fire = append(fire, due{k.id, t.projectID, k.key})
 		}
 	}
-	m.trackerMu.Unlock()
+	m.react.mu.Unlock()
 
 	for _, d := range fire {
-		if err := m.escalate(ctx, d.id, d.projectID, d.key); err != nil {
+		if err := m.escalate(ctx, d.id, d.project, d.key); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func allFailed(statuses []string, n int) bool {
+	if len(statuses) < n {
+		return false
+	}
+	for i := 0; i < n; i++ {
+		if statuses[i] != "failed" {
+			return false
+		}
+	}
+	return true
 }

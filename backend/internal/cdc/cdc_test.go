@@ -1,0 +1,192 @@
+package cdc_test
+
+import (
+	"context"
+	"encoding/json"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/cdc"
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
+)
+
+// storeSource adapts sqlite.Store to cdc.Source — the same glue the daemon wires.
+type storeSource struct{ s *sqlite.Store }
+
+func (a storeSource) EventsAfter(ctx context.Context, after int64, limit int) ([]cdc.Event, error) {
+	rows, err := a.s.ReadChangeLogAfter(ctx, after, limit)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]cdc.Event, len(rows))
+	for i, r := range rows {
+		out[i] = cdc.Event{
+			Seq:       r.Seq,
+			ProjectID: r.ProjectID,
+			SessionID: r.SessionID,
+			Type:      cdc.EventType(r.EventType),
+			Payload:   json.RawMessage(r.Payload),
+			CreatedAt: r.CreatedAt,
+		}
+	}
+	return out, nil
+}
+
+func (a storeSource) LatestSeq(ctx context.Context) (int64, error) { return a.s.MaxChangeLogSeq(ctx) }
+
+func newStore(t *testing.T) *sqlite.Store {
+	t.Helper()
+	s, err := sqlite.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	return s
+}
+
+func seedSession(t *testing.T, s *sqlite.Store) domain.SessionRecord {
+	t.Helper()
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+	if err := s.UpsertProject(ctx, sqlite.ProjectRow{ID: "mer", Path: "/m", RegisteredAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	r, err := s.CreateSession(ctx, domain.SessionRecord{
+		ProjectID: "mer", Kind: domain.KindWorker,
+		Lifecycle: domain.CanonicalSessionLifecycle{
+			Session:  domain.SessionSubstate{State: domain.SessionWorking},
+			Activity: domain.ActivitySubstate{State: domain.ActivityActive, LastActivityAt: now, Source: domain.SourceNative},
+		},
+		CreatedAt: now, UpdatedAt: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
+// TestE2E_StoreWriteToBroadcast drives the whole path: a store write fires a DB
+// trigger that appends to change_log; the poller reads it and broadcasts.
+func TestE2E_StoreWriteToBroadcast(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+	r := seedSession(t, s) // -> session_created (seq 1)
+
+	r.Lifecycle.Session.State = domain.SessionIdle
+	if err := s.UpdateSession(ctx, r); err != nil { // -> session_updated (seq 2)
+		t.Fatal(err)
+	}
+	if err := s.UpsertPR(ctx, sqlite.PRRow{URL: "pr1", SessionID: string(r.ID), State: "open", UpdatedAt: r.UpdatedAt}); err != nil { // -> pr_created (seq 3)
+		t.Fatal(err)
+	}
+
+	var got []cdc.Event
+	bc := cdc.NewBroadcaster()
+	bc.Subscribe(func(e cdc.Event) { got = append(got, e) })
+	p := cdc.NewPoller(storeSource{s}, bc, cdc.PollerConfig{}) // StartSeq 0: read from the top
+	if err := p.Poll(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(got) != 3 {
+		t.Fatalf("delivered %d events, want 3", len(got))
+	}
+	for i, e := range got {
+		if e.Seq != int64(i+1) {
+			t.Fatalf("event %d seq=%d, want %d", i, e.Seq, i+1)
+		}
+		if e.ProjectID != "mer" {
+			t.Fatalf("event %d project=%q, want mer", i, e.ProjectID)
+		}
+	}
+	if got[0].Type != cdc.EventSessionCreated || got[1].Type != cdc.EventSessionUpdated || got[2].Type != cdc.EventPRCreated {
+		t.Fatalf("types = %s, %s, %s", got[0].Type, got[1].Type, got[2].Type)
+	}
+	// the trigger-built JSON payload survives as a usable RawMessage.
+	var payload map[string]any
+	if err := json.Unmarshal(got[0].Payload, &payload); err != nil {
+		t.Fatalf("payload not JSON: %v", err)
+	}
+	if payload["id"] != string(r.ID) || payload["state"] != "working" {
+		t.Fatalf("payload = %v", payload)
+	}
+
+	// idempotent: a second poll with no new rows delivers nothing more.
+	if err := p.Poll(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("re-poll delivered extra events: %d", len(got))
+	}
+}
+
+// TestE2E_ConcurrentPollerLiveDelivery runs the poller as a goroutine (the daemon
+// model) and asserts every store change is delivered exactly once, in order.
+func TestE2E_ConcurrentPollerLiveDelivery(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s := newStore(t)
+	r := seedSession(t, s) // seq 1
+
+	var mu sync.Mutex
+	var got []cdc.Event
+	bc := cdc.NewBroadcaster()
+	bc.Subscribe(func(e cdc.Event) { mu.Lock(); got = append(got, e); mu.Unlock() })
+
+	p := cdc.NewPoller(storeSource{s}, bc, cdc.PollerConfig{}) // from the top
+	done := p.Start(ctx)
+
+	const n = 6
+	for i := 0; i < n; i++ {
+		r.Lifecycle.IsAlive = i%2 == 0 // toggles is_alive -> sessions_cdc_update fires
+		if err := s.UpdateSession(ctx, r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want := 1 + n // session_created + n updates
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		mu.Lock()
+		c := len(got)
+		mu.Unlock()
+		if c >= want {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out: delivered %d/%d", c, want)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	cancel()
+	<-done
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(got) != want {
+		t.Fatalf("delivered %d events, want %d", len(got), want)
+	}
+	for i, e := range got {
+		if e.Seq != int64(i+1) {
+			t.Fatalf("event %d has seq %d, want %d (out-of-order/duplicate)", i, e.Seq, i+1)
+		}
+	}
+}
+
+// TestBroadcasterRecoversPanickingSubscriber: one panicking subscriber must not
+// kill delivery to the others (or crash the poller goroutine).
+func TestBroadcasterRecoversPanickingSubscriber(t *testing.T) {
+	bc := cdc.NewBroadcaster()
+	good := 0
+	bc.Subscribe(func(cdc.Event) { panic("boom") })
+	bc.Subscribe(func(cdc.Event) { good++ })
+
+	bc.Publish(cdc.Event{Seq: 1}) // must not panic
+	bc.Publish(cdc.Event{Seq: 2})
+
+	if good != 2 {
+		t.Fatalf("good subscriber got %d, want 2 (panic was not isolated)", good)
+	}
+}

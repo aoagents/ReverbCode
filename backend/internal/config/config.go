@@ -47,6 +47,9 @@ type Config struct {
 	// RunFilePath is where the PID + port handshake file (running.json) is
 	// written so the Electron supervisor can discover and reap the daemon.
 	RunFilePath string
+	// DataDir is the directory holding durable state (the SQLite database and
+	// the CDC JSONL log). It is created on first use by the storage layer.
+	DataDir string
 }
 
 // Addr returns the host:port the HTTP server binds. It uses net.JoinHostPort so
@@ -65,6 +68,7 @@ func (c Config) Addr() string {
 //	AO_REQUEST_TIMEOUT   per-request timeout (Go duration > 0, default 60s)
 //	AO_SHUTDOWN_TIMEOUT  shutdown deadline   (Go duration > 0, default 10s)
 //	AO_RUN_FILE          running.json path   (default <state-dir>/running.json)
+//	AO_DATA_DIR          durable state dir   (default <state-dir>/data)
 //
 // The bind host is not configurable: the daemon is loopback-only by design.
 func Load() (Config, error) {
@@ -108,6 +112,12 @@ func Load() (Config, error) {
 	}
 	cfg.RunFilePath = runFile
 
+	dataDir, err := resolveDataDir()
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.DataDir = dataDir
+
 	return cfg, nil
 }
 
@@ -137,4 +147,18 @@ func resolveRunFilePath() (string, error) {
 		return "", fmt.Errorf("resolve state dir: %w", err)
 	}
 	return filepath.Join(dir, "agent-orchestrator", "running.json"), nil
+}
+
+// resolveDataDir picks where durable state (the SQLite DB) lives. An explicit
+// AO_DATA_DIR wins; otherwise it sits under the per-user state directory
+// alongside running.json.
+func resolveDataDir() (string, error) {
+	if p, ok := os.LookupEnv("AO_DATA_DIR"); ok && p != "" {
+		return p, nil
+	}
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve state dir: %w", err)
+	}
+	return filepath.Join(dir, "agent-orchestrator", "data"), nil
 }

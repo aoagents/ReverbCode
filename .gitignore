@@ -17,6 +17,15 @@ vendor/
 /backend/backend
 agent-orchestrator.yaml
 
+# Backend runtime data artifacts (SQLite store + WAL, CDC event log).
+# Created at AO_DATA_DIR (outside the repo by default); ignored here so a
+# data dir pointed at the tree never gets committed.
+*.db
+*.db-shm
+*.db-wal
+session-events.jsonl
+session-events.jsonl.*
+
 # Environment
 .env
 .env.*

@@ -11,29 +11,34 @@ import "time"
 // Greenfield: we start at 1 and carry no migration/synthesis code.
 const LifecycleVersion = 1
 
-// CanonicalSessionLifecycle is the ONLY thing persisted for a session's state.
-// The display status is derived from it on read (see DeriveLegacyStatus) and is
-// never stored — this prevents canonical truth and display from drifting.
+// CanonicalSessionLifecycle is the ONLY lifecycle state persisted for a session.
+// The display status is derived from it (plus the session's PR facts, which live
+// in the separate pr table) on read — see DeriveStatus — and is never stored, so
+// canonical truth and display cannot drift.
 //
-// Three orthogonal (state, reason) sub-states describe the session, its PR, and
-// its runtime. Activity and Detecting are decider *inputs* that must survive
-// between observations (they are read back by the pure decide core), so they
-// live in the persisted record too.
+// PR facts are deliberately NOT here: a session can own several PRs over its
+// life, and PR state is owned by the pr table. The runtime axis is collapsed to
+// a single IsAlive boolean. Activity and Detecting are decider *inputs* that
+// must survive between observations, so they live in the persisted record.
 type CanonicalSessionLifecycle struct {
 	// Version is the Go-only schema-shape constant for this record. It is not
 	// persisted and is not part of the CDC payload.
 	Version int
-	// Revision is the per-write monotonic counter. The storage layer's Upsert
-	// bumps it when the full row is persisted; the LCM does not.
-	Revision int             `json:"revision"`
-	Session  SessionSubstate `json:"session"`
-	PR       PRSubstate      `json:"pr"`
-	Runtime  RuntimeSubstate `json:"runtime"`
 
-	// Activity is the last-known agent activity. It arrives on a different
-	// cadence (ApplyActivitySignal) than runtime probes (the reaper), so the
-	// probe decider reads it from here to answer "was there recent activity?".
+	Session  SessionSubstate  `json:"session"`
 	Activity ActivitySubstate `json:"activity"`
+
+	// TerminationReason is set only when Session.State is terminated; '' otherwise.
+	TerminationReason TerminationReason `json:"terminationReason,omitempty"`
+
+	// IsAlive is the single liveness fact: is the runtime/process backing this
+	// session still up? It replaces the old runtime (state, reason) axis — the
+	// nuance the probe decider needs (failed-probe != dead, anti-flap) lives in
+	// the decide core's inputs, not in a persisted enum.
+	IsAlive bool `json:"isAlive"`
+
+	// Harness is the agent harness the session runs (claude-code, codex, ...).
+	Harness AgentHarness `json:"harness,omitempty"`
 
 	// Detecting is the anti-flap quarantine memory. It is non-nil only while
 	// the session is in the detecting state; it carries the attempt counter,
@@ -41,6 +46,18 @@ type CanonicalSessionLifecycle struct {
 	// the decider can tell "same ambiguous signal N times" from "signal moved".
 	Detecting *DetectingState `json:"detecting,omitempty"`
 }
+
+// ---- agent harness ----
+
+// AgentHarness identifies which agent CLI/runtime a session drives.
+type AgentHarness string
+
+const (
+	HarnessClaudeCode AgentHarness = "claude-code"
+	HarnessCodex      AgentHarness = "codex"
+	HarnessAider      AgentHarness = "aider"
+	HarnessOpenCode   AgentHarness = "opencode"
+)
 
 // ---- session sub-state ----
 
@@ -57,98 +74,74 @@ const (
 	SessionTerminated SessionState = "terminated"
 )
 
-type SessionReason string
+// TerminationReason is the typed "why" for a terminated session — the only
+// state that carries a reason. Empty for every non-terminal state. It decides
+// the terminal display status (killed / cleanup / errored). The PR-pipeline
+// "why" (fixing CI, awaiting review, …) is NOT here; it is derived on read from
+// the pr table, not persisted on the session.
+type TerminationReason string
 
 const (
-	ReasonSpawnRequested          SessionReason = "spawn_requested"
-	ReasonAgentAcknowledged       SessionReason = "agent_acknowledged"
-	ReasonTaskInProgress          SessionReason = "task_in_progress"
-	ReasonPRCreated               SessionReason = "pr_created"
-	ReasonFixingCI                SessionReason = "fixing_ci"
-	ReasonResolvingReviewComments SessionReason = "resolving_review_comments"
-	ReasonAwaitingUserInput       SessionReason = "awaiting_user_input"
-	ReasonAwaitingExternalReview  SessionReason = "awaiting_external_review"
-	ReasonResearchComplete        SessionReason = "research_complete"
-	ReasonMergedWaitingDecision   SessionReason = "merged_waiting_decision"
-	ReasonManuallyKilled          SessionReason = "manually_killed"
-	ReasonPRMerged                SessionReason = "pr_merged"
-	ReasonAutoCleanup             SessionReason = "auto_cleanup"
-	ReasonRuntimeLost             SessionReason = "runtime_lost"
-	ReasonAgentProcessExited      SessionReason = "agent_process_exited"
-	ReasonProbeFailure            SessionReason = "probe_failure"
-	ReasonErrorInProcess          SessionReason = "error_in_process"
+	TermNone               TerminationReason = ""
+	TermManuallyKilled     TerminationReason = "manually_killed"
+	TermRuntimeLost        TerminationReason = "runtime_lost"
+	TermAgentProcessExited TerminationReason = "agent_process_exited"
+	TermProbeFailure       TerminationReason = "probe_failure"
+	TermErrorInProcess     TerminationReason = "error_in_process"
+	TermAutoCleanup        TerminationReason = "auto_cleanup"
+	TermPRMerged           TerminationReason = "pr_merged"
 )
 
 type SessionSubstate struct {
-	State  SessionState  `json:"state"`
-	Reason SessionReason `json:"reason"`
+	State SessionState `json:"state"`
 }
 
-// ---- PR sub-state ----
+// ---- PR facts (NOT persisted on the session; sourced from the pr table) ----
 
-type PRState string
-
-const (
-	PRNone   PRState = "none"
-	PRDraft  PRState = "draft"
-	PROpen   PRState = "open"
-	PRMerged PRState = "merged"
-	PRClosed PRState = "closed"
-)
-
-type PRReason string
-
-const (
-	PRReasonNotCreated       PRReason = "not_created"
-	PRReasonInProgress       PRReason = "in_progress"
-	PRReasonCIFailing        PRReason = "ci_failing"
-	PRReasonReviewPending    PRReason = "review_pending"
-	PRReasonChangesRequested PRReason = "changes_requested"
-	PRReasonBotComments      PRReason = "bot_comments"
-	PRReasonMergeConflicts   PRReason = "merge_conflicts"
-	PRReasonApproved         PRReason = "approved"
-	PRReasonMergeReady       PRReason = "merge_ready"
-	PRReasonMerged           PRReason = "merged"
-	PRReasonClosedUnmerged   PRReason = "closed_unmerged"
-	PRReasonClearedOnRestore PRReason = "cleared_on_restore"
-)
-
-type PRSubstate struct {
-	State  PRState  `json:"state"`
-	Reason PRReason `json:"reason"`
-	Number int      `json:"number,omitempty"`
-	URL    string   `json:"url,omitempty"`
+// PRFacts is the per-session PR snapshot the status/reaction derivation reads
+// from the pr table. It is the decider input that replaces the old persisted PR
+// axis. The zero value (Exists=false) means "no PR", which derivation treats as
+// "session has no PR".
+type PRFacts struct {
+	URL            string
+	Number         int
+	Exists         bool
+	Draft          bool
+	Merged         bool
+	Closed         bool
+	CI             CIState
+	Review         ReviewDecision
+	Mergeability   Mergeability
+	ReviewComments bool // has unresolved review comments (any author) to address
 }
 
-// ---- runtime sub-state ----
-
-type RuntimeState string
+type CIState string
 
 const (
-	RuntimeUnknown     RuntimeState = "unknown"
-	RuntimeAlive       RuntimeState = "alive"
-	RuntimeExited      RuntimeState = "exited"
-	RuntimeMissing     RuntimeState = "missing"
-	RuntimeProbeFailed RuntimeState = "probe_failed"
+	CIUnknown CIState = "unknown"
+	CIPending CIState = "pending"
+	CIPassing CIState = "passing"
+	CIFailing CIState = "failing"
 )
 
-type RuntimeReason string
+type ReviewDecision string
 
 const (
-	RuntimeReasonSpawnIncomplete     RuntimeReason = "spawn_incomplete"
-	RuntimeReasonProcessRunning      RuntimeReason = "process_running"
-	RuntimeReasonProcessMissing      RuntimeReason = "process_missing"
-	RuntimeReasonTmuxMissing         RuntimeReason = "tmux_missing"
-	RuntimeReasonManualKillRequested RuntimeReason = "manual_kill_requested"
-	RuntimeReasonPRMergedCleanup     RuntimeReason = "pr_merged_cleanup"
-	RuntimeReasonAutoCleanup         RuntimeReason = "auto_cleanup"
-	RuntimeReasonProbeError          RuntimeReason = "probe_error"
+	ReviewNone           ReviewDecision = "none"
+	ReviewApproved       ReviewDecision = "approved"
+	ReviewChangesRequest ReviewDecision = "changes_requested"
+	ReviewRequired       ReviewDecision = "review_required"
 )
 
-type RuntimeSubstate struct {
-	State  RuntimeState  `json:"state"`
-	Reason RuntimeReason `json:"reason"`
-}
+type Mergeability string
+
+const (
+	MergeUnknown     Mergeability = "unknown"
+	MergeMergeable   Mergeability = "mergeable"
+	MergeConflicting Mergeability = "conflicting"
+	MergeBlocked     Mergeability = "blocked"
+	MergeUnstable    Mergeability = "unstable"
+)
 
 // ---- activity sub-state (decider input) ----
 
