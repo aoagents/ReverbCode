@@ -222,13 +222,13 @@ func isGitRepo(path string) bool {
 	top := filepath.Clean(strings.TrimSpace(string(out)))
 	path = filepath.Clean(path)
 	top, err = filepath.EvalSymlinks(top)
-    if err != nil {
-        return false
-    }
-    path, err = filepath.EvalSymlinks(path)
-    if err != nil {
-        return false
-    }
+	if err != nil {
+		return false
+	}
+	path, err = filepath.EvalSymlinks(path)
+	if err != nil {
+		return false
+	}
 
 	if strings.EqualFold(top, path) {
 		return true
