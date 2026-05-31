@@ -1122,9 +1122,6 @@ func classifyThreads(review *domain.SCMReview) {
 			review.HumanComments = append(review.HumanComments, review.UnresolvedThreads[i])
 		}
 	}
-	if len(review.HumanComments) > 0 && review.Decision == "none" {
-		review.Decision = "changes_requested"
-	}
 }
 
 func cloneReviewThreads(in []domain.SCMReviewThread) []domain.SCMReviewThread {

@@ -984,6 +984,25 @@ func TestReviewThreadsFetchAllCommentsForClassification(t *testing.T) {
 	}
 }
 
+func TestClassifyThreadsDoesNotPromoteCommentThreadsToChangesRequested(t *testing.T) {
+	review := domain.SCMReview{
+		Decision: "none",
+		UnresolvedThreads: []domain.SCMReviewThread{{
+			ID: "thread-human",
+			Comments: []domain.SCMReviewComment{{
+				ID: "comment-review", Author: "alice", Body: "non-blocking comment", IsBot: false,
+			}},
+		}},
+	}
+	classifyThreads(&review)
+	if review.Decision != "none" {
+		t.Fatalf("comment-only human thread should not override formal review decision: %+v", review)
+	}
+	if len(review.HumanComments) != 1 || len(review.BotComments) != 0 {
+		t.Fatalf("thread classification changed unexpectedly: %+v", review)
+	}
+}
+
 func TestGraphQLFailureFallsBackToTerminalPRState(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
