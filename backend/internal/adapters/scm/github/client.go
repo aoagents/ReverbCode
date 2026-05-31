@@ -142,6 +142,9 @@ func (c *Client) DoREST(ctx context.Context, method, path string, q url.Values, 
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		se := githubStatusError(operation, resp.StatusCode, b, rl)
+		if se.Kind == domain.SCMErrorAuthFailed {
+			c.invalidateToken()
+		}
 		out.Diagnostic.ErrorKind = se.Kind
 		out.Diagnostic.Message = scmlog.SafeDiagnosticMessage(se)
 		logTransportFailure(ctx, logger, operation, method, endpoint, started, resp.StatusCode, rl, false, out.ETag != "" || etag != "", se)
@@ -194,6 +197,9 @@ func (c *Client) DoGraphQL(ctx context.Context, query string, variables map[stri
 	diag := domain.SCMDiagnostic{Operation: operation, StatusCode: resp.StatusCode, StartedAt: started, DurationMS: time.Since(started).Milliseconds()}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		se := githubStatusError(operation, resp.StatusCode, respBody, rl)
+		if se.Kind == domain.SCMErrorAuthFailed {
+			c.invalidateToken()
+		}
 		diag.ErrorKind = se.Kind
 		diag.Message = scmlog.SafeDiagnosticMessage(se)
 		logTransportFailure(ctx, logger, operation, http.MethodPost, endpoint, started, resp.StatusCode, rl, false, false, se)
@@ -218,9 +224,14 @@ func (c *Client) DoGraphQL(ctx context.Context, query string, variables map[stri
 		msg := decoded.Errors[0].Message
 		if strings.Contains(strings.ToLower(msg), "rate limit") {
 			kind = domain.SCMErrorRateLimited
+		} else if strings.Contains(strings.ToLower(msg), "bad credentials") || strings.Contains(strings.ToLower(msg), "credentials") {
+			kind = domain.SCMErrorAuthFailed
 		}
 		rl = graphqlRateLimit(decoded.Data, rl)
 		se := &domain.SCMError{Kind: kind, Operation: operation, Message: scmlog.SafeDiagnosticMessage(&domain.SCMError{Kind: kind, Message: msg})}
+		if se.Kind == domain.SCMErrorAuthFailed {
+			c.invalidateToken()
+		}
 		diag.ErrorKind = se.Kind
 		diag.Message = scmlog.SafeDiagnosticMessage(se)
 		logTransportFailure(ctx, logger, operation, http.MethodPost, endpoint, started, resp.StatusCode, rl, false, false, se)
@@ -238,6 +249,12 @@ func (c *Client) authorize(ctx context.Context, req *http.Request) error {
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	return nil
+}
+
+func (c *Client) invalidateToken() {
+	if src, ok := c.tokens.(tokenInvalidator); ok {
+		src.InvalidateToken()
+	}
 }
 
 func (c *Client) restURL(path string, q url.Values) (string, error) {

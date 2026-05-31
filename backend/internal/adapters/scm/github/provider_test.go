@@ -154,20 +154,81 @@ func TestTransportRateLimitLogsNormalizedKindAndHidesResponseBody(t *testing.T) 
 func TestGHTokenSourceMemoizesAndIgnoresGithubTokenEnv(t *testing.T) {
 	t.Setenv("GITHUB_TOKEN", "env-token")
 	var calls atomic.Int32
+	now := time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC)
 	src := &GHTokenSource{Command: func(context.Context) ([]byte, error) {
 		calls.Add(1)
 		return []byte("gh-token\n"), nil
-	}}
+	}, Clock: func() time.Time { return now }}
 	tok, err := src.Token(context.Background())
 	if err != nil || tok != "gh-token" {
 		t.Fatalf("token=%q err=%v", tok, err)
 	}
+	now = now.Add(defaultGHTokenCacheTTL - time.Second)
 	tok, err = src.Token(context.Background())
 	if err != nil || tok != "gh-token" {
 		t.Fatalf("second token=%q err=%v", tok, err)
 	}
 	if calls.Load() != 1 {
 		t.Fatalf("gh auth token calls=%d, want 1", calls.Load())
+	}
+}
+
+func TestGHTokenSourceRefreshesAfterTTL(t *testing.T) {
+	var calls atomic.Int32
+	now := time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC)
+	src := &GHTokenSource{
+		TokenTTL: time.Minute,
+		Clock:    func() time.Time { return now },
+		Command: func(context.Context) ([]byte, error) {
+			return []byte(fmt.Sprintf("gh-token-%d\n", calls.Add(1))), nil
+		},
+	}
+	tok, err := src.Token(context.Background())
+	if err != nil || tok != "gh-token-1" {
+		t.Fatalf("token=%q err=%v", tok, err)
+	}
+	tok, err = src.Token(context.Background())
+	if err != nil || tok != "gh-token-1" {
+		t.Fatalf("cached token=%q err=%v", tok, err)
+	}
+	now = now.Add(time.Minute + time.Nanosecond)
+	tok, err = src.Token(context.Background())
+	if err != nil || tok != "gh-token-2" {
+		t.Fatalf("refreshed token=%q err=%v", tok, err)
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("gh auth token calls=%d, want 2", calls.Load())
+	}
+}
+
+func TestAuthFailureInvalidatesCachedGHToken(t *testing.T) {
+	var calls atomic.Int32
+	src := &GHTokenSource{Command: func(context.Context) ([]byte, error) {
+		return []byte(fmt.Sprintf("gh-token-%d\n", calls.Add(1))), nil
+	}}
+	var seen []string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = append(seen, r.Header.Get("Authorization"))
+		if len(seen) == 1 {
+			http.Error(w, `{"message":"Bad credentials"}`, http.StatusUnauthorized)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer ts.Close()
+	c := NewClient(ClientOptions{RESTBase: ts.URL, GraphQLURL: ts.URL + "/graphql", Token: src})
+	if _, err := c.DoREST(context.Background(), http.MethodGet, "/x", nil, nil, "", "test.auth_failure"); err == nil {
+		t.Fatal("expected first request to fail auth")
+	}
+	if _, err := c.DoREST(context.Background(), http.MethodGet, "/x", nil, nil, "", "test.after_auth_failure"); err != nil {
+		t.Fatalf("second request should refetch token after auth failure: %v", err)
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("gh auth token calls=%d, want 2", calls.Load())
+	}
+	if strings.Join(seen, ",") != "Bearer gh-token-1,Bearer gh-token-2" {
+		t.Fatalf("auth headers=%v", seen)
 	}
 }
 

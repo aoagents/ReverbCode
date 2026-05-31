@@ -302,22 +302,6 @@ func (p *Provider) checkRunsChanged(ctx context.Context, cache ports.SCMProvider
 	return !resp.NotModified, resp.Diagnostic, commit, nil
 }
 
-func (p *Provider) reviewCommentsChanged(ctx context.Context, cache ports.SCMProviderCache, subj domain.SCMSubject, now time.Time) (bool, domain.SCMDiagnostic, restCacheCommit, error) {
-	if subj.PRNumber == 0 {
-		return false, domain.SCMDiagnostic{}, nil, nil
-	}
-	scope := subj.CacheScope()
-	key := domain.SCMProviderCacheKey{SCMProviderCacheScope: scope, Namespace: cacheReviews, Key: strconv.Itoa(subj.PRNumber)}
-	entry, hasEntry, _ := cache.GetProviderCache(ctx, key)
-	owner, repo := subj.Repository().OwnerName()
-	resp, err := p.client.DoREST(ctx, http.MethodGet, repoPath(owner, repo, "pulls", strconv.Itoa(subj.PRNumber), "comments"), nil, nil, entry.ETag, "github.review_comments_guard")
-	if err != nil {
-		return true, resp.Diagnostic, nil, err
-	}
-	_, commit := prepareRESTCache(ctx, cache, key, entry, hasEntry, resp, now)
-	return !resp.NotModified, resp.Diagnostic, commit, nil
-}
-
 func (p *Provider) checkBoundPullState(ctx context.Context, cache ports.SCMProviderCache, subj domain.SCMSubject, now time.Time) (changed bool, terminal *domain.SCMSnapshot, diag domain.SCMDiagnostic, commit restCacheCommit, err error) {
 	if subj.PRNumber == 0 {
 		return false, nil, domain.SCMDiagnostic{}, nil, nil
