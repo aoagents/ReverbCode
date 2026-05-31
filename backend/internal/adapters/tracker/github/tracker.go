@@ -37,6 +37,12 @@ const (
 	// (matching the legacy gh CLI default) when the caller passes 0.
 	defaultListLimit = 30
 	maxListLimit     = 100
+
+	// bootTokenProbeTimeout bounds the construction-time token probe so a
+	// hung `gh auth token` fallback (broken shell, unhealthy PATH) cannot
+	// stall daemon startup. gh is sub-100ms on a healthy box; 5s gives
+	// ~50x headroom without making daemon-start feel slow.
+	bootTokenProbeTimeout = 5 * time.Second
 )
 
 // Sentinel errors. Adapter-level callers should match on these via
@@ -104,13 +110,17 @@ type Tracker struct {
 }
 
 // New returns a Tracker. It fails fast when no token can be obtained so
-// daemons crash at startup rather than at first issue lookup.
+// daemons crash at startup rather than at first issue lookup. The token
+// probe is bounded by a short deadline so a hung `gh auth token` fallback
+// (broken shell, unhealthy PATH) cannot stall daemon startup.
 func New(opts Options) (*Tracker, error) {
 	src := opts.Token
 	if src == nil {
 		return nil, ErrNoToken
 	}
-	if _, err := src.Token(context.Background()); err != nil {
+	bootCtx, cancel := context.WithTimeout(context.Background(), bootTokenProbeTimeout)
+	defer cancel()
+	if _, err := src.Token(bootCtx); err != nil {
 		return nil, err
 	}
 	t := &Tracker{

@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
 	"reflect"
 	"strconv"
 	"strings"
@@ -99,6 +101,158 @@ func TestNewRejectsMissingToken(t *testing.T) {
 	if _, err := New(Options{}); !errors.Is(err, ErrNoToken) {
 		t.Fatalf("New with no source = %v, want ErrNoToken", err)
 	}
+}
+
+// TestNewBoundsTokenProbe pins the construction-time deadline so a future
+// refactor can't silently drop it. The TokenSource stub blocks until ctx
+// is cancelled; New() must return within the configured timeout + slack.
+func TestNewBoundsTokenProbe(t *testing.T) {
+	blocking := EnvTokenSource{
+		GH: func(ctx context.Context) (string, error) {
+			<-ctx.Done()
+			return "", ctx.Err()
+		},
+	}
+	t.Setenv("GITHUB_TOKEN", "") // force chain to reach the gh stub
+	started := time.Now()
+	_, err := New(Options{Token: blocking})
+	elapsed := time.Since(started)
+
+	if !errors.Is(err, ErrNoToken) {
+		t.Fatalf("err = %v, want ErrNoToken", err)
+	}
+	// Generous CI margin: deadline is 5s, accept 4-8s.
+	if elapsed < 4*time.Second {
+		t.Fatalf("New() returned in %v — deadline not enforced", elapsed)
+	}
+	if elapsed > 8*time.Second {
+		t.Fatalf("New() took %v — deadline ineffective", elapsed)
+	}
+}
+
+// TestEnvTokenSource covers the auth lookup chain that gives us zero-config
+// behavior on a stock dev machine: configured env vars beat GITHUB_TOKEN
+// beats `gh auth token`. All three paths must work, AND a failing gh
+// fallback must surface as ErrNoToken (errors.Is) — the exec error is
+// wrapped under it for debuggability but never propagated as its own type.
+func TestEnvTokenSource(t *testing.T) {
+	// t.Setenv handles its own restore, but several subtests call
+	// os.Unsetenv directly (Go has no t.Unsetenv). Save-and-restore at
+	// the parent level so an explicit unset in one subtest doesn't leak
+	// into the next or into other tests in the package.
+	saved := map[string]string{}
+	for _, k := range []string{"GITHUB_TOKEN", "AO_GITHUB_TOKEN"} {
+		saved[k] = os.Getenv(k)
+		_ = os.Unsetenv(k)
+	}
+	t.Cleanup(func() {
+		for k, v := range saved {
+			if v == "" {
+				_ = os.Unsetenv(k)
+			} else {
+				_ = os.Setenv(k, v)
+			}
+		}
+	})
+
+	t.Run("configured env var wins over everything", func(t *testing.T) {
+		t.Setenv("AO_GITHUB_TOKEN", "from-configured")
+		t.Setenv("GITHUB_TOKEN", "from-github-token")
+		ghCalled := false
+		src := EnvTokenSource{
+			EnvVars: []string{"AO_GITHUB_TOKEN"},
+			GH:      func(context.Context) (string, error) { ghCalled = true; return "from-gh", nil },
+		}
+		got, err := src.Token(context.Background())
+		if err != nil || got != "from-configured" {
+			t.Fatalf("got=%q err=%v", got, err)
+		}
+		if ghCalled {
+			t.Fatal("GH fallback called despite env var being set")
+		}
+	})
+
+	t.Run("GITHUB_TOKEN used when configured env empty", func(t *testing.T) {
+		_ = os.Unsetenv("AO_GITHUB_TOKEN")
+		t.Setenv("GITHUB_TOKEN", "from-github-token")
+		ghCalled := false
+		src := EnvTokenSource{
+			EnvVars: []string{"AO_GITHUB_TOKEN"},
+			GH:      func(context.Context) (string, error) { ghCalled = true; return "from-gh", nil },
+		}
+		got, err := src.Token(context.Background())
+		if err != nil || got != "from-github-token" {
+			t.Fatalf("got=%q err=%v", got, err)
+		}
+		if ghCalled {
+			t.Fatal("GH fallback called despite GITHUB_TOKEN being set")
+		}
+	})
+
+	t.Run("gh fallback used when env empty", func(t *testing.T) {
+		_ = os.Unsetenv("AO_GITHUB_TOKEN")
+		_ = os.Unsetenv("GITHUB_TOKEN")
+		src := EnvTokenSource{
+			EnvVars: []string{"AO_GITHUB_TOKEN"},
+			GH:      func(context.Context) (string, error) { return "  from-gh  \n", nil }, // trimmed
+		}
+		got, err := src.Token(context.Background())
+		if err != nil || got != "from-gh" {
+			t.Fatalf("got=%q err=%v", got, err)
+		}
+	})
+
+	t.Run("gh exec.ErrNotFound surfaces as bare ErrNoToken", func(t *testing.T) {
+		// Binary missing is the uninteresting case — operator hasn't
+		// installed gh. No useful explanation to surface; plain ErrNoToken.
+		_ = os.Unsetenv("AO_GITHUB_TOKEN")
+		_ = os.Unsetenv("GITHUB_TOKEN")
+		src := EnvTokenSource{
+			EnvVars: []string{"AO_GITHUB_TOKEN"},
+			GH:      func(context.Context) (string, error) { return "", &exec.Error{Name: "gh", Err: exec.ErrNotFound} },
+		}
+		_, err := src.Token(context.Background())
+		if !errors.Is(err, ErrNoToken) {
+			t.Fatalf("err = %v, want ErrNoToken", err)
+		}
+		// Bare ErrNoToken: no wrapping suffix.
+		if got := err.Error(); strings.Contains(got, "gh fallback") {
+			t.Fatalf("err = %q, expected no gh-fallback annotation for missing-binary case", got)
+		}
+	})
+
+	t.Run("gh runtime error wrapped under ErrNoToken with cause", func(t *testing.T) {
+		// gh exists but failed (not logged in, etc). errors.Is contract still
+		// holds, AND the operator-useful explanation is in the message.
+		_ = os.Unsetenv("AO_GITHUB_TOKEN")
+		_ = os.Unsetenv("GITHUB_TOKEN")
+		src := EnvTokenSource{
+			EnvVars: []string{"AO_GITHUB_TOKEN"},
+			GH: func(context.Context) (string, error) {
+				return "", errors.New("not logged in to any GitHub hosts. Try `gh auth login`")
+			},
+		}
+		_, err := src.Token(context.Background())
+		if !errors.Is(err, ErrNoToken) {
+			t.Fatalf("err = %v, want errors.Is(err, ErrNoToken)", err)
+		}
+		if got := err.Error(); !strings.Contains(got, "not logged in") {
+			t.Fatalf("err = %q, expected gh's explanation in the wrapped message", got)
+		}
+	})
+
+	t.Run("gh fallback empty stdout falls through", func(t *testing.T) {
+		_ = os.Unsetenv("AO_GITHUB_TOKEN")
+		_ = os.Unsetenv("GITHUB_TOKEN")
+		src := EnvTokenSource{
+			EnvVars: []string{"AO_GITHUB_TOKEN"},
+			GH:      func(context.Context) (string, error) { return "  \n\t  ", nil },
+		}
+		_, err := src.Token(context.Background())
+		if !errors.Is(err, ErrNoToken) {
+			t.Fatalf("err = %v, want ErrNoToken", err)
+		}
+	})
 }
 
 func TestParseID(t *testing.T) {
