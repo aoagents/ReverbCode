@@ -7,6 +7,8 @@ package gen
 
 import (
 	"context"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
 const maxChangeLogSeq = `-- name: MaxChangeLogSeq :one
@@ -66,7 +68,7 @@ FROM change_log WHERE project_id = ? AND seq > ? ORDER BY seq LIMIT ?
 `
 
 type ReadChangeLogAfterForProjectParams struct {
-	ProjectID string
+	ProjectID domain.ProjectID
 	Seq       int64
 	Limit     int64
 }

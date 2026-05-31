@@ -70,13 +70,13 @@ func (f *fakeStore) PRFactsForSession(_ context.Context, id domain.SessionID) (d
 	return facts, nil
 }
 func (f *fakeStore) WritePR(_ context.Context, pr domain.PRRow, checks []domain.PRCheckRow, comments []domain.PRComment) error {
-	f.pr[domain.SessionID(pr.SessionID)] = pr
+	f.pr[pr.SessionID] = pr
 	f.checks = append(f.checks, checks...)
 	f.comments[pr.URL] = comments
 	return nil
 }
-func (f *fakeStore) RecentCheckStatuses(_ context.Context, url, name string, limit int) ([]string, error) {
-	var out []string
+func (f *fakeStore) RecentCheckStatuses(_ context.Context, url, name string, limit int) ([]domain.PRCheckStatus, error) {
+	var out []domain.PRCheckStatus
 	for i := len(f.checks) - 1; i >= 0 && len(out) < limit; i-- {
 		if f.checks[i].PRURL == url && f.checks[i].Name == name {
 			out = append(out, f.checks[i].Status)

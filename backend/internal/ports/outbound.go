@@ -30,7 +30,7 @@ type PRWriter interface {
 	// events they emit are all-or-nothing.
 	WritePR(ctx context.Context, pr domain.PRRow, checks []domain.PRCheckRow, comments []domain.PRComment) error
 	// RecentCheckStatuses reads the last `limit` runs of a check (the CI brake).
-	RecentCheckStatuses(ctx context.Context, prURL, name string, limit int) ([]string, error)
+	RecentCheckStatuses(ctx context.Context, prURL, name string, limit int) ([]domain.PRCheckStatus, error)
 }
 
 // Notifier delivers an event to the human (desktop/Slack later). Push, never poll.

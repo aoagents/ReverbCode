@@ -384,7 +384,7 @@ func (m *Manager) TickEscalations(ctx context.Context, now time.Time) error {
 	return nil
 }
 
-func allFailed(statuses []string, n int) bool {
+func allFailed(statuses []domain.PRCheckStatus, n int) bool {
 	if len(statuses) < n {
 		return false
 	}

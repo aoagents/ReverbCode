@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/gen"
 )
 
@@ -38,7 +39,7 @@ func (s *Store) ReadChangeLogAfter(ctx context.Context, after int64, limit int) 
 // subscribed to one project reads only its events.
 func (s *Store) ReadChangeLogAfterForProject(ctx context.Context, project string, after int64, limit int) ([]ChangeLogRow, error) {
 	rows, err := s.qr.ReadChangeLogAfterForProject(ctx, gen.ReadChangeLogAfterForProjectParams{
-		ProjectID: project, Seq: after, Limit: int64(limit),
+		ProjectID: domain.ProjectID(project), Seq: after, Limit: int64(limit),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("read change_log for %s after %d: %w", project, after, err)
@@ -63,8 +64,8 @@ func (s *Store) MaxChangeLogSeq(ctx context.Context) (int64, error) {
 func changeLogRowFromGen(r gen.ChangeLog) ChangeLogRow {
 	row := ChangeLogRow{
 		Seq:       r.Seq,
-		ProjectID: r.ProjectID,
-		EventType: r.EventType,
+		ProjectID: string(r.ProjectID),
+		EventType: string(r.EventType),
 		Payload:   r.Payload,
 		CreatedAt: r.CreatedAt,
 	}

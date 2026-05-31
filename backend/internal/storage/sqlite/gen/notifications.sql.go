@@ -9,6 +9,8 @@ import (
 	"context"
 	"database/sql"
 	"time"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
 const archiveNotification = `-- name: ArchiveNotification :one
@@ -22,7 +24,7 @@ RETURNING seq, id, project_id, session_id, source, event_type, semantic_type, pr
 type ArchiveNotificationParams struct {
 	ArchivedAt sql.NullTime
 	UpdatedAt  time.Time
-	ID         string
+	ID         domain.NotificationID
 }
 
 func (q *Queries) ArchiveNotification(ctx context.Context, arg ArchiveNotificationParams) (Notification, error) {
@@ -56,7 +58,7 @@ SELECT seq, id, project_id, session_id, source, event_type, semantic_type, prior
 FROM notifications WHERE id = ?
 `
 
-func (q *Queries) GetNotification(ctx context.Context, id string) (Notification, error) {
+func (q *Queries) GetNotification(ctx context.Context, id domain.NotificationID) (Notification, error) {
 	row := q.db.QueryRowContext(ctx, getNotification, id)
 	var i Notification
 	err := row.Scan(
@@ -123,12 +125,12 @@ RETURNING seq, id, project_id, session_id, source, event_type, semantic_type, pr
 `
 
 type InsertNotificationParams struct {
-	ProjectID    string
-	SessionID    string
-	Source       string
-	EventType    string
-	SemanticType string
-	Priority     string
+	ProjectID    domain.ProjectID
+	SessionID    domain.SessionID
+	Source       domain.NotificationSource
+	EventType    domain.NotificationEventType
+	SemanticType domain.NotificationSemanticType
+	Priority     domain.NotificationPriority
 	Message      string
 	PayloadJson  string
 	ActionsJson  string
@@ -236,7 +238,7 @@ LIMIT ?
 `
 
 type ListNotificationsByProjectParams struct {
-	ProjectID string
+	ProjectID domain.ProjectID
 	Limit     int64
 }
 
@@ -291,7 +293,7 @@ LIMIT ?
 `
 
 type ListNotificationsBySessionParams struct {
-	SessionID string
+	SessionID domain.SessionID
 	Limit     int64
 }
 
@@ -397,7 +399,7 @@ RETURNING seq, id, project_id, session_id, source, event_type, semantic_type, pr
 type MarkNotificationReadParams struct {
 	ReadAt    sql.NullTime
 	UpdatedAt time.Time
-	ID        string
+	ID        domain.NotificationID
 }
 
 func (q *Queries) MarkNotificationRead(ctx context.Context, arg MarkNotificationReadParams) (Notification, error) {
@@ -435,7 +437,7 @@ RETURNING seq, id, project_id, session_id, source, event_type, semantic_type, pr
 
 type MarkNotificationUnreadParams struct {
 	UpdatedAt time.Time
-	ID        string
+	ID        domain.NotificationID
 }
 
 func (q *Queries) MarkNotificationUnread(ctx context.Context, arg MarkNotificationUnreadParams) (Notification, error) {

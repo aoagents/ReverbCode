@@ -8,6 +8,33 @@ import (
 // NotificationID is the stable public identifier for a persisted notification.
 type NotificationID string
 
+// NotificationSource identifies the subsystem that produced a durable
+// notification.
+type NotificationSource string
+
+// Notification sources.
+const (
+	NotificationSourceLifecycle NotificationSource = "lifecycle"
+)
+
+// NotificationEventType is the internal event that produced a durable
+// notification.
+type NotificationEventType string
+
+// NotificationSemanticType is the stable public category consumed by clients.
+type NotificationSemanticType string
+
+// NotificationPriority ranks urgency for human-facing notification delivery.
+type NotificationPriority string
+
+// Notification priorities, highest urgency first.
+const (
+	NotificationPriorityUrgent  NotificationPriority = "urgent"
+	NotificationPriorityAction  NotificationPriority = "action"
+	NotificationPriorityWarning NotificationPriority = "warning"
+	NotificationPriorityInfo    NotificationPriority = "info"
+)
+
 // Notification is the provider-neutral durable notification read model. It is
 // sink-agnostic: desktop, dashboard, Slack, webhooks, etc. all consume the same
 // semantic payload and actions later.
@@ -16,10 +43,10 @@ type Notification struct {
 	ID           NotificationID
 	ProjectID    ProjectID
 	SessionID    SessionID
-	Source       string
-	EventType    string
-	SemanticType string
-	Priority     string
+	Source       NotificationSource
+	EventType    NotificationEventType
+	SemanticType NotificationSemanticType
+	Priority     NotificationPriority
 	Message      string
 	Payload      json.RawMessage
 	Actions      []NotificationAction

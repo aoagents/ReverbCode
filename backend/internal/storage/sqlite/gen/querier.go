@@ -6,6 +6,8 @@ package gen
 
 import (
 	"context"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
 type Querier interface {
@@ -13,12 +15,12 @@ type Querier interface {
 	ArchiveProject(ctx context.Context, arg ArchiveProjectParams) error
 	DeletePR(ctx context.Context, url string) error
 	DeletePRComments(ctx context.Context, prUrl string) error
-	DeleteSession(ctx context.Context, id string) error
-	GetNotification(ctx context.Context, id string) (Notification, error)
+	DeleteSession(ctx context.Context, id domain.SessionID) error
+	GetNotification(ctx context.Context, id domain.NotificationID) (Notification, error)
 	GetNotificationByDedupeKey(ctx context.Context, dedupeKey string) (Notification, error)
 	GetPR(ctx context.Context, url string) (Pr, error)
-	GetProject(ctx context.Context, id string) (Project, error)
-	GetSession(ctx context.Context, id string) (Session, error)
+	GetProject(ctx context.Context, id domain.ProjectID) (Project, error)
+	GetSession(ctx context.Context, id domain.SessionID) (Session, error)
 	InsertNotification(ctx context.Context, arg InsertNotificationParams) (Notification, error)
 	InsertSession(ctx context.Context, arg InsertSessionParams) error
 	ListAllSessions(ctx context.Context) ([]Session, error)
@@ -27,15 +29,15 @@ type Querier interface {
 	ListNotificationsByProject(ctx context.Context, arg ListNotificationsByProjectParams) ([]Notification, error)
 	ListNotificationsBySession(ctx context.Context, arg ListNotificationsBySessionParams) ([]Notification, error)
 	ListPRComments(ctx context.Context, prUrl string) ([]PrComment, error)
-	ListPRsBySession(ctx context.Context, sessionID string) ([]Pr, error)
+	ListPRsBySession(ctx context.Context, sessionID domain.SessionID) ([]Pr, error)
 	ListProjects(ctx context.Context) ([]Project, error)
 	ListRecentChecks(ctx context.Context, arg ListRecentChecksParams) ([]ListRecentChecksRow, error)
-	ListSessionsByProject(ctx context.Context, projectID string) ([]Session, error)
+	ListSessionsByProject(ctx context.Context, projectID domain.ProjectID) ([]Session, error)
 	ListUnreadNotifications(ctx context.Context, limit int64) ([]Notification, error)
 	MarkNotificationRead(ctx context.Context, arg MarkNotificationReadParams) (Notification, error)
 	MarkNotificationUnread(ctx context.Context, arg MarkNotificationUnreadParams) (Notification, error)
 	MaxChangeLogSeq(ctx context.Context) (interface{}, error)
-	NextSessionNum(ctx context.Context, projectID string) (int64, error)
+	NextSessionNum(ctx context.Context, projectID domain.ProjectID) (int64, error)
 	ReadChangeLogAfter(ctx context.Context, arg ReadChangeLogAfterParams) ([]ChangeLog, error)
 	ReadChangeLogAfterForProject(ctx context.Context, arg ReadChangeLogAfterForProjectParams) ([]ChangeLog, error)
 	UpdateSession(ctx context.Context, arg UpdateSessionParams) error

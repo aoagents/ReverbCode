@@ -16,7 +16,7 @@ const deleteSession = `-- name: DeleteSession :exec
 DELETE FROM sessions WHERE id = ?
 `
 
-func (q *Queries) DeleteSession(ctx context.Context, id string) error {
+func (q *Queries) DeleteSession(ctx context.Context, id domain.SessionID) error {
 	_, err := q.db.ExecContext(ctx, deleteSession, id)
 	return err
 }
@@ -25,7 +25,7 @@ const getSession = `-- name: GetSession :one
 SELECT id, project_id, num, issue_id, kind, harness, activity_state, activity_last_at, activity_source, branch, workspace_path, runtime_handle_id, agent_session_id, prompt, created_at, updated_at, is_terminated FROM sessions WHERE id = ?
 `
 
-func (q *Queries) GetSession(ctx context.Context, id string) (Session, error) {
+func (q *Queries) GetSession(ctx context.Context, id domain.SessionID) (Session, error) {
 	row := q.db.QueryRowContext(ctx, getSession, id)
 	var i Session
 	err := row.Scan(
@@ -60,10 +60,10 @@ INSERT INTO sessions (
 `
 
 type InsertSessionParams struct {
-	ID              string
-	ProjectID       string
+	ID              domain.SessionID
+	ProjectID       domain.ProjectID
 	Num             int64
-	IssueID         string
+	IssueID         domain.IssueID
 	Kind            domain.SessionKind
 	Harness         domain.AgentHarness
 	ActivityState   domain.ActivityState
@@ -151,7 +151,7 @@ const listSessionsByProject = `-- name: ListSessionsByProject :many
 SELECT id, project_id, num, issue_id, kind, harness, activity_state, activity_last_at, activity_source, branch, workspace_path, runtime_handle_id, agent_session_id, prompt, created_at, updated_at, is_terminated FROM sessions WHERE project_id = ? ORDER BY num
 `
 
-func (q *Queries) ListSessionsByProject(ctx context.Context, projectID string) ([]Session, error) {
+func (q *Queries) ListSessionsByProject(ctx context.Context, projectID domain.ProjectID) ([]Session, error) {
 	rows, err := q.db.QueryContext(ctx, listSessionsByProject, projectID)
 	if err != nil {
 		return nil, err
@@ -196,7 +196,7 @@ const nextSessionNum = `-- name: NextSessionNum :one
 SELECT COALESCE(MAX(num), 0) + 1 AS next FROM sessions WHERE project_id = ?
 `
 
-func (q *Queries) NextSessionNum(ctx context.Context, projectID string) (int64, error) {
+func (q *Queries) NextSessionNum(ctx context.Context, projectID domain.ProjectID) (int64, error) {
 	row := q.db.QueryRowContext(ctx, nextSessionNum, projectID)
 	var next int64
 	err := row.Scan(&next)
@@ -213,7 +213,7 @@ WHERE id = ?
 `
 
 type UpdateSessionParams struct {
-	IssueID         string
+	IssueID         domain.IssueID
 	Kind            domain.SessionKind
 	Harness         domain.AgentHarness
 	ActivityState   domain.ActivityState
@@ -226,7 +226,7 @@ type UpdateSessionParams struct {
 	AgentSessionID  string
 	Prompt          string
 	UpdatedAt       time.Time
-	ID              string
+	ID              domain.SessionID
 }
 
 func (q *Queries) UpdateSession(ctx context.Context, arg UpdateSessionParams) error {

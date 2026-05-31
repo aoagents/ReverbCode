@@ -24,7 +24,7 @@ func newTestStore(t *testing.T) *sqlite.Store {
 func seedProject(t *testing.T, s *sqlite.Store, id string) {
 	t.Helper()
 	if err := s.UpsertProject(context.Background(), sqlite.ProjectRow{
-		ID: id, Path: "/tmp/" + id, RegisteredAt: time.Now().UTC().Truncate(time.Second),
+		ID: domain.ProjectID(id), Path: "/tmp/" + id, RegisteredAt: time.Now().UTC().Truncate(time.Second),
 	}); err != nil {
 		t.Fatalf("seed project %s: %v", id, err)
 	}
@@ -134,7 +134,7 @@ func TestPRCRUD(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 
 	pr := domain.PRRow{
-		URL: "https://gh/pr/1", SessionID: string(r.ID), Number: 1,
+		URL: "https://gh/pr/1", SessionID: r.ID, Number: 1,
 		Review: domain.ReviewRequired, CI: domain.CIFailing, Mergeability: domain.MergeBlocked, UpdatedAt: now,
 	}
 	if err := s.UpsertPR(ctx, pr); err != nil {
@@ -161,7 +161,7 @@ func TestPRChecksLoopBrakeQuery(t *testing.T) {
 	seedProject(t, s, "mer")
 	r, _ := s.CreateSession(ctx, sampleRecord("mer"))
 	now := time.Now().UTC().Truncate(time.Second)
-	_ = s.UpsertPR(ctx, domain.PRRow{URL: "pr1", SessionID: string(r.ID), UpdatedAt: now})
+	_ = s.UpsertPR(ctx, domain.PRRow{URL: "pr1", SessionID: r.ID, UpdatedAt: now})
 
 	// three consecutive failing runs of "build" (one per commit).
 	for i := 1; i <= 3; i++ {
@@ -193,7 +193,7 @@ func TestPRCommentsReplace(t *testing.T) {
 	seedProject(t, s, "mer")
 	r, _ := s.CreateSession(ctx, sampleRecord("mer"))
 	now := time.Now().UTC().Truncate(time.Second)
-	_ = s.UpsertPR(ctx, domain.PRRow{URL: "pr1", SessionID: string(r.ID), UpdatedAt: now})
+	_ = s.UpsertPR(ctx, domain.PRRow{URL: "pr1", SessionID: r.ID, UpdatedAt: now})
 
 	_ = s.ReplacePRComments(ctx, "pr1", []domain.PRComment{
 		{ID: "c1", Author: "a", File: "a.go", Line: 1, Body: "nit", CreatedAt: now},
@@ -221,7 +221,7 @@ func TestCDCTriggersPopulateChangeLog(t *testing.T) {
 	r.Metadata.Prompt = "only metadata changed"
 	_ = s.UpdateSession(ctx, r)
 	// a PR insert logs too.
-	_ = s.UpsertPR(ctx, domain.PRRow{URL: "pr1", SessionID: string(r.ID), UpdatedAt: r.UpdatedAt})
+	_ = s.UpsertPR(ctx, domain.PRRow{URL: "pr1", SessionID: r.ID, UpdatedAt: r.UpdatedAt})
 
 	evs, err := s.ReadChangeLogAfter(ctx, 0, 100)
 	if err != nil {

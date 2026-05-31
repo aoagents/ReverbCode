@@ -12,7 +12,7 @@ import "time"
 // derived from these for display status; PRRow is what gets written.
 type PRRow struct {
 	URL          string
-	SessionID    string
+	SessionID    SessionID
 	Number       int
 	Draft        bool
 	Merged       bool
@@ -23,12 +23,38 @@ type PRRow struct {
 	UpdatedAt    time.Time
 }
 
+// PRState is the normalized lifecycle of one tracked pull request as stored in
+// the pr table.
+type PRState string
+
+// PR states.
+const (
+	PRStateDraft  PRState = "draft"
+	PRStateOpen   PRState = "open"
+	PRStateMerged PRState = "merged"
+	PRStateClosed PRState = "closed"
+)
+
+// PRCheckStatus is one CI check run's normalized status.
+type PRCheckStatus string
+
+// PR check statuses.
+const (
+	PRCheckUnknown    PRCheckStatus = "unknown"
+	PRCheckQueued     PRCheckStatus = "queued"
+	PRCheckInProgress PRCheckStatus = "in_progress"
+	PRCheckPassed     PRCheckStatus = "passed"
+	PRCheckFailed     PRCheckStatus = "failed"
+	PRCheckSkipped    PRCheckStatus = "skipped"
+	PRCheckCancelled  PRCheckStatus = "cancelled"
+)
+
 // PRCheckRow is one CI check run — one row per check name per commit.
 type PRCheckRow struct {
 	PRURL      string
 	Name       string
 	CommitHash string
-	Status     string
+	Status     PRCheckStatus
 	URL        string
 	LogTail    string
 	CreatedAt  time.Time

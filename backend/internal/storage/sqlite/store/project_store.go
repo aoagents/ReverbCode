@@ -7,13 +7,14 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/gen"
 )
 
 // ProjectRow is one registered repo (the projects table). id is a short slug
 // (mer, ao). ArchivedAt zero means active.
 type ProjectRow struct {
-	ID            string
+	ID            domain.ProjectID
 	Path          string
 	RepoOriginURL string
 	DisplayName   string
@@ -37,7 +38,7 @@ func (s *Store) UpsertProject(ctx context.Context, r ProjectRow) error {
 
 // GetProject returns a project by id (active or archived), or ok=false.
 func (s *Store) GetProject(ctx context.Context, id string) (ProjectRow, bool, error) {
-	p, err := s.qr.GetProject(ctx, id)
+	p, err := s.qr.GetProject(ctx, domain.ProjectID(id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return ProjectRow{}, false, nil
 	}
@@ -67,7 +68,7 @@ func (s *Store) ArchiveProject(ctx context.Context, id string, at time.Time) err
 	defer s.writeMu.Unlock()
 	return s.qw.ArchiveProject(ctx, gen.ArchiveProjectParams{
 		ArchivedAt: nullTime(at),
-		ID:         id,
+		ID:         domain.ProjectID(id),
 	})
 }
 

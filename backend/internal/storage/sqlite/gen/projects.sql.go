@@ -9,6 +9,8 @@ import (
 	"context"
 	"database/sql"
 	"time"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
 const archiveProject = `-- name: ArchiveProject :exec
@@ -17,7 +19,7 @@ UPDATE projects SET archived_at = ? WHERE id = ?
 
 type ArchiveProjectParams struct {
 	ArchivedAt sql.NullTime
-	ID         string
+	ID         domain.ProjectID
 }
 
 func (q *Queries) ArchiveProject(ctx context.Context, arg ArchiveProjectParams) error {
@@ -30,7 +32,7 @@ SELECT id, path, repo_origin_url, display_name, registered_at, archived_at
 FROM projects WHERE id = ?
 `
 
-func (q *Queries) GetProject(ctx context.Context, id string) (Project, error) {
+func (q *Queries) GetProject(ctx context.Context, id domain.ProjectID) (Project, error) {
 	row := q.db.QueryRowContext(ctx, getProject, id)
 	var i Project
 	err := row.Scan(
@@ -90,7 +92,7 @@ ON CONFLICT (id) DO UPDATE SET
 `
 
 type UpsertProjectParams struct {
-	ID            string
+	ID            domain.ProjectID
 	Path          string
 	RepoOriginUrl string
 	DisplayName   string

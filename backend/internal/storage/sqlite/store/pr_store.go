@@ -76,7 +76,7 @@ func (s *Store) GetPR(ctx context.Context, url string) (domain.PRRow, bool, erro
 
 // ListPRsBySession returns every PR owned by a session, newest first.
 func (s *Store) ListPRsBySession(ctx context.Context, sessionID string) ([]domain.PRRow, error) {
-	rows, err := s.qr.ListPRsBySession(ctx, sessionID)
+	rows, err := s.qr.ListPRsBySession(ctx, domain.SessionID(sessionID))
 	if err != nil {
 		return nil, fmt.Errorf("list prs for %s: %w", sessionID, err)
 	}
@@ -104,14 +104,14 @@ func (s *Store) RecordCheck(ctx context.Context, r domain.PRCheckRow) error {
 
 // RecentCheckStatuses returns the statuses of the last `limit` runs of a check,
 // most-recent first. The CI-fix-loop brake reads this: "last 3 all failed?".
-func (s *Store) RecentCheckStatuses(ctx context.Context, prURL, name string, limit int) ([]string, error) {
+func (s *Store) RecentCheckStatuses(ctx context.Context, prURL, name string, limit int) ([]domain.PRCheckStatus, error) {
 	rows, err := s.qr.ListRecentChecks(ctx, gen.ListRecentChecksParams{
 		PrUrl: prURL, Name: name, Limit: int64(limit),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("recent checks %s/%s: %w", prURL, name, err)
 	}
-	out := make([]string, 0, len(rows))
+	out := make([]domain.PRCheckStatus, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, r.Status)
 	}
@@ -165,16 +165,16 @@ func (s *Store) ListPRComments(ctx context.Context, prURL string) ([]domain.PRCo
 // ---- domain <-> gen mapping ----
 
 // prState collapses the PR's bools into the single pr.state column value.
-func prState(r domain.PRRow) string {
+func prState(r domain.PRRow) domain.PRState {
 	switch {
 	case r.Merged:
-		return "merged"
+		return domain.PRStateMerged
 	case r.Closed:
-		return "closed"
+		return domain.PRStateClosed
 	case r.Draft:
-		return "draft"
+		return domain.PRStateDraft
 	default:
-		return "open"
+		return domain.PRStateOpen
 	}
 }
 
@@ -191,9 +191,9 @@ func genPRParams(r domain.PRRow) gen.UpsertPRParams {
 		SessionID:      r.SessionID,
 		Number:         int64(r.Number),
 		PrState:        prState(r),
-		ReviewDecision: orDefault(string(r.Review), "none"),
-		CiState:        orDefault(string(r.CI), "unknown"),
-		Mergeability:   orDefault(string(r.Mergeability), "unknown"),
+		ReviewDecision: domain.ReviewDecision(orDefault(string(r.Review), string(domain.ReviewNone))),
+		CiState:        domain.CIState(orDefault(string(r.CI), string(domain.CIUnknown))),
+		Mergeability:   domain.Mergeability(orDefault(string(r.Mergeability), string(domain.MergeUnknown))),
 		UpdatedAt:      r.UpdatedAt,
 	}
 }
@@ -203,12 +203,12 @@ func prRowFromGen(p gen.Pr) domain.PRRow {
 		URL:          p.Url,
 		SessionID:    p.SessionID,
 		Number:       int(p.Number),
-		Draft:        p.PrState == "draft",
-		Merged:       p.PrState == "merged",
-		Closed:       p.PrState == "closed",
-		CI:           domain.CIState(p.CiState),
-		Review:       domain.ReviewDecision(p.ReviewDecision),
-		Mergeability: domain.Mergeability(p.Mergeability),
+		Draft:        p.PrState == domain.PRStateDraft,
+		Merged:       p.PrState == domain.PRStateMerged,
+		Closed:       p.PrState == domain.PRStateClosed,
+		CI:           p.CiState,
+		Review:       p.ReviewDecision,
+		Mergeability: p.Mergeability,
 		UpdatedAt:    p.UpdatedAt,
 	}
 }
@@ -216,7 +216,7 @@ func prRowFromGen(p gen.Pr) domain.PRRow {
 func genCheckParams(c domain.PRCheckRow) gen.UpsertPRCheckParams {
 	status := c.Status
 	if status == "" {
-		status = "unknown"
+		status = domain.PRCheckUnknown
 	}
 	return gen.UpsertPRCheckParams{
 		PrUrl: c.PRURL, Name: c.Name, CommitHash: c.CommitHash,
@@ -234,13 +234,13 @@ func checkRowFromGen(c gen.PrCheck) domain.PRCheckRow {
 func genCommentParams(prURL string, c domain.PRComment) gen.UpsertPRCommentParams {
 	return gen.UpsertPRCommentParams{
 		PrUrl: prURL, CommentID: c.ID, Author: c.Author, File: c.File,
-		Line: int64(c.Line), Body: c.Body, Resolved: boolToInt(c.Resolved), CreatedAt: c.CreatedAt,
+		Line: int64(c.Line), Body: c.Body, Resolved: c.Resolved, CreatedAt: c.CreatedAt,
 	}
 }
 
 func commentFromGen(c gen.PrComment) domain.PRComment {
 	return domain.PRComment{
 		ID: c.CommentID, Author: c.Author, File: c.File, Line: int(c.Line),
-		Body: c.Body, Resolved: c.Resolved != 0, CreatedAt: c.CreatedAt,
+		Body: c.Body, Resolved: c.Resolved, CreatedAt: c.CreatedAt,
 	}
 }

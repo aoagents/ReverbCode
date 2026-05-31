@@ -138,8 +138,8 @@ func TestNotificationJSONConstraintsRejectInvalidPayloadAndActions(t *testing.T)
 
 	now := time.Now().UTC().Truncate(time.Second)
 	_, err = gen.New(rawDB).InsertNotification(ctx, gen.InsertNotificationParams{
-		ProjectID:    string(rec.ProjectID),
-		SessionID:    string(rec.ID),
+		ProjectID:    rec.ProjectID,
+		SessionID:    rec.ID,
 		Source:       "lifecycle",
 		EventType:    "reaction.agent-needs-input",
 		SemanticType: "session.needs_input",

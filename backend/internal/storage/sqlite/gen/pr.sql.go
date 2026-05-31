@@ -8,6 +8,8 @@ package gen
 import (
 	"context"
 	"time"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
 const deletePR = `-- name: DeletePR :exec
@@ -43,7 +45,7 @@ const listPRsBySession = `-- name: ListPRsBySession :many
 SELECT url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at FROM pr WHERE session_id = ? ORDER BY updated_at DESC
 `
 
-func (q *Queries) ListPRsBySession(ctx context.Context, sessionID string) ([]Pr, error) {
+func (q *Queries) ListPRsBySession(ctx context.Context, sessionID domain.SessionID) ([]Pr, error) {
 	rows, err := q.db.QueryContext(ctx, listPRsBySession, sessionID)
 	if err != nil {
 		return nil, err
@@ -90,12 +92,12 @@ ON CONFLICT (url) DO UPDATE SET
 
 type UpsertPRParams struct {
 	Url            string
-	SessionID      string
+	SessionID      domain.SessionID
 	Number         int64
-	PrState        string
-	ReviewDecision string
-	CiState        string
-	Mergeability   string
+	PrState        domain.PRState
+	ReviewDecision domain.ReviewDecision
+	CiState        domain.CIState
+	Mergeability   domain.Mergeability
 	UpdatedAt      time.Time
 }
 

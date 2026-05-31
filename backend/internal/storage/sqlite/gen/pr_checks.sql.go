@@ -8,6 +8,8 @@ package gen
 import (
 	"context"
 	"time"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
 const listChecksByPR = `-- name: ListChecksByPR :many
@@ -58,7 +60,7 @@ type ListRecentChecksParams struct {
 }
 
 type ListRecentChecksRow struct {
-	Status     string
+	Status     domain.PRCheckStatus
 	CommitHash string
 	CreatedAt  time.Time
 }
@@ -99,7 +101,7 @@ type UpsertPRCheckParams struct {
 	PrUrl      string
 	Name       string
 	CommitHash string
-	Status     string
+	Status     domain.PRCheckStatus
 	Url        string
 	LogTail    string
 	CreatedAt  time.Time

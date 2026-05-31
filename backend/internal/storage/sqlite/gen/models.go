@@ -8,27 +8,28 @@ import (
 	"database/sql"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/cdc"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
 type ChangeLog struct {
 	Seq       int64
-	ProjectID string
+	ProjectID domain.ProjectID
 	SessionID sql.NullString
-	EventType string
+	EventType cdc.EventType
 	Payload   string
 	CreatedAt time.Time
 }
 
 type Notification struct {
 	Seq          int64
-	ID           string
-	ProjectID    string
-	SessionID    string
-	Source       string
-	EventType    string
-	SemanticType string
-	Priority     string
+	ID           domain.NotificationID
+	ProjectID    domain.ProjectID
+	SessionID    domain.SessionID
+	Source       domain.NotificationSource
+	EventType    domain.NotificationEventType
+	SemanticType domain.NotificationSemanticType
+	Priority     domain.NotificationPriority
 	Message      string
 	PayloadJson  string
 	ActionsJson  string
@@ -42,12 +43,12 @@ type Notification struct {
 
 type Pr struct {
 	Url            string
-	SessionID      string
+	SessionID      domain.SessionID
 	Number         int64
-	PrState        string
-	ReviewDecision string
-	CiState        string
-	Mergeability   string
+	PrState        domain.PRState
+	ReviewDecision domain.ReviewDecision
+	CiState        domain.CIState
+	Mergeability   domain.Mergeability
 	UpdatedAt      time.Time
 }
 
@@ -55,7 +56,7 @@ type PrCheck struct {
 	PrUrl      string
 	Name       string
 	CommitHash string
-	Status     string
+	Status     domain.PRCheckStatus
 	Url        string
 	LogTail    string
 	CreatedAt  time.Time
@@ -68,12 +69,12 @@ type PrComment struct {
 	File      string
 	Line      int64
 	Body      string
-	Resolved  int64
+	Resolved  bool
 	CreatedAt time.Time
 }
 
 type Project struct {
-	ID            string
+	ID            domain.ProjectID
 	Path          string
 	RepoOriginUrl string
 	DisplayName   string
@@ -82,10 +83,10 @@ type Project struct {
 }
 
 type Session struct {
-	ID              string
-	ProjectID       string
+	ID              domain.SessionID
+	ProjectID       domain.ProjectID
 	Num             int64
-	IssueID         string
+	IssueID         domain.IssueID
 	Kind            domain.SessionKind
 	Harness         domain.AgentHarness
 	ActivityState   domain.ActivityState

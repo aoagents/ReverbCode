@@ -75,7 +75,7 @@ func TestE2E_StoreWriteToBroadcast(t *testing.T) {
 	if err := s.UpdateSession(ctx, r); err != nil { // -> session_updated (seq 2)
 		t.Fatal(err)
 	}
-	if err := s.UpsertPR(ctx, domain.PRRow{URL: "pr1", SessionID: string(r.ID), UpdatedAt: r.UpdatedAt}); err != nil { // -> pr_created (seq 3)
+	if err := s.UpsertPR(ctx, domain.PRRow{URL: "pr1", SessionID: r.ID, UpdatedAt: r.UpdatedAt}); err != nil { // -> pr_created (seq 3)
 		t.Fatal(err)
 	}
 

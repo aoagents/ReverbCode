@@ -70,7 +70,7 @@ type UpsertPRCommentParams struct {
 	File      string
 	Line      int64
 	Body      string
-	Resolved  int64
+	Resolved  bool
 	CreatedAt time.Time
 }
 

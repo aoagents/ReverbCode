@@ -41,8 +41,8 @@ func (s *Store) EnqueueNotification(ctx context.Context, row NotificationRow) (N
 	defer s.writeMu.Unlock()
 
 	got, err := s.qw.InsertNotification(ctx, gen.InsertNotificationParams{
-		ProjectID:    string(row.ProjectID),
-		SessionID:    string(row.SessionID),
+		ProjectID:    row.ProjectID,
+		SessionID:    row.SessionID,
 		Source:       row.Source,
 		EventType:    row.EventType,
 		SemanticType: row.SemanticType,
@@ -72,7 +72,7 @@ func (s *Store) EnqueueNotification(ctx context.Context, row NotificationRow) (N
 
 // GetNotification returns one notification by id, or ok=false if absent.
 func (s *Store) GetNotification(ctx context.Context, id string) (NotificationRow, bool, error) {
-	row, err := s.qr.GetNotification(ctx, id)
+	row, err := s.qr.GetNotification(ctx, domain.NotificationID(id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return NotificationRow{}, false, nil
 	}
@@ -98,9 +98,9 @@ func (s *Store) ListNotifications(ctx context.Context, filter NotificationFilter
 	case filter.UnreadOnly:
 		rows, err = s.qr.ListUnreadNotifications(ctx, limit)
 	case filter.SessionID != "":
-		rows, err = s.qr.ListNotificationsBySession(ctx, gen.ListNotificationsBySessionParams{SessionID: filter.SessionID, Limit: limit})
+		rows, err = s.qr.ListNotificationsBySession(ctx, gen.ListNotificationsBySessionParams{SessionID: domain.SessionID(filter.SessionID), Limit: limit})
 	case filter.ProjectID != "":
-		rows, err = s.qr.ListNotificationsByProject(ctx, gen.ListNotificationsByProjectParams{ProjectID: filter.ProjectID, Limit: limit})
+		rows, err = s.qr.ListNotificationsByProject(ctx, gen.ListNotificationsByProjectParams{ProjectID: domain.ProjectID(filter.ProjectID), Limit: limit})
 	default:
 		rows, err = s.qr.ListNotifications(ctx, limit)
 	}
@@ -123,7 +123,7 @@ func (s *Store) MarkNotificationRead(ctx context.Context, id string, at time.Tim
 	row, err := s.qw.MarkNotificationRead(ctx, gen.MarkNotificationReadParams{
 		ReadAt:    sql.NullTime{Time: at, Valid: true},
 		UpdatedAt: at,
-		ID:        id,
+		ID:        domain.NotificationID(id),
 	})
 	return s.changedNotificationResult(ctx, row, id, true, err)
 }
@@ -135,7 +135,7 @@ func (s *Store) MarkNotificationUnread(ctx context.Context, id string) (Notifica
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 
-	row, err := s.qw.MarkNotificationUnread(ctx, gen.MarkNotificationUnreadParams{UpdatedAt: now, ID: id})
+	row, err := s.qw.MarkNotificationUnread(ctx, gen.MarkNotificationUnreadParams{UpdatedAt: now, ID: domain.NotificationID(id)})
 	return s.changedNotificationResult(ctx, row, id, true, err)
 }
 
@@ -151,14 +151,14 @@ func (s *Store) ArchiveNotification(ctx context.Context, id string, at time.Time
 	row, err := s.qw.ArchiveNotification(ctx, gen.ArchiveNotificationParams{
 		ArchivedAt: sql.NullTime{Time: at, Valid: true},
 		UpdatedAt:  at,
-		ID:         id,
+		ID:         domain.NotificationID(id),
 	})
 	return s.changedNotificationResult(ctx, row, id, true, err)
 }
 
 func (s *Store) changedNotificationResult(ctx context.Context, row gen.Notification, id string, changed bool, err error) (NotificationRow, bool, error) {
 	if errors.Is(err, sql.ErrNoRows) {
-		existing, readErr := s.qw.GetNotification(ctx, id)
+		existing, readErr := s.qw.GetNotification(ctx, domain.NotificationID(id))
 		if errors.Is(readErr, sql.ErrNoRows) {
 			return NotificationRow{}, false, nil
 		}
@@ -178,7 +178,7 @@ func (s *Store) changedNotificationResult(ctx context.Context, row gen.Notificat
 func normalizeNotification(row NotificationRow) NotificationRow {
 	now := time.Now().UTC()
 	if row.Source == "" {
-		row.Source = "lifecycle"
+		row.Source = domain.NotificationSourceLifecycle
 	}
 	if len(row.Payload) == 0 {
 		row.Payload = json.RawMessage(`{}`)
@@ -217,9 +217,9 @@ func notificationFromGen(r gen.Notification) (NotificationRow, error) {
 	}
 	row := NotificationRow{
 		Seq:          r.Seq,
-		ID:           domain.NotificationID(r.ID),
-		ProjectID:    domain.ProjectID(r.ProjectID),
-		SessionID:    domain.SessionID(r.SessionID),
+		ID:           r.ID,
+		ProjectID:    r.ProjectID,
+		SessionID:    r.SessionID,
 		Source:       r.Source,
 		EventType:    r.EventType,
 		SemanticType: r.SemanticType,
