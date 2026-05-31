@@ -1,6 +1,7 @@
 package controllers_test
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -13,9 +14,36 @@ import (
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd"
 	"github.com/aoagents/agent-orchestrator/backend/internal/project"
 )
+
+// emptyGetManager returns a GetResult that sets neither Project nor Degraded —
+// a Manager-contract violation — so the test can prove the handler answers a
+// clean 500 before writing the 200 status, rather than flushing a truncated
+// body when the discriminated union fails to marshal. Other methods are
+// unused; the embedded nil interface would panic if one were called.
+type emptyGetManager struct{ project.Manager }
+
+func (emptyGetManager) Get(context.Context, domain.ProjectID) (project.GetResult, error) {
+	return project.GetResult{}, nil
+}
+
+// TestProjectsAPI_GetEmptyResultIs500 locks the fix for the discriminated-union
+// invariant: a degenerate GetResult must surface as a parseable 500 envelope,
+// not a 200 with truncated JSON.
+func TestProjectsAPI_GetEmptyResultIs500(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := httptest.NewServer(httpd.NewRouterWithAPI(config.Config{}, log, nil, httpd.APIDeps{
+		Projects: emptyGetManager{},
+	}))
+	t.Cleanup(srv.Close)
+
+	body, status, headers := doRequest(t, srv, "GET", "/api/v1/projects/whatever", "")
+	assertJSON(t, headers)
+	assertErrorCode(t, body, status, http.StatusInternalServerError, "INTERNAL_ERROR")
+}
 
 func newTestServer(t *testing.T) *httptest.Server {
 	t.Helper()

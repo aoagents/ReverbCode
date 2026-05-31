@@ -56,14 +56,20 @@ func (p ProjectOrDegraded) MarshalJSON() ([]byte, error) {
 	case p.Project != nil:
 		return json.Marshal(p.Project)
 	default:
-		// Neither variant set — the spec declares `project` as a required
-		// oneOf[Project, Degraded], so emitting `null` would silently breach
-		// the contract. Fail loudly instead: a GetResult with both pointers
-		// nil is a Manager bug, and the encode error surfaces it rather than
-		// shipping an invalid body.
-		return nil, errors.New("controllers: ProjectOrDegraded has neither Project nor Degraded set")
+		// Unreachable in practice: the handler validates the GetResult via
+		// newGetProjectResponse and writes a 500 before committing the 200
+		// status, so this never encodes. Kept as a last-resort backstop —
+		// erroring is still better than emitting a contract-breaking `null`,
+		// though by here the status is already sent, so the real guard is
+		// upstream.
+		return nil, errEmptyProjectOrDegraded
 	}
 }
+
+// errEmptyProjectOrDegraded marks a GetResult that set neither variant — a
+// Manager-contract violation. newGetProjectResponse returns it so the handler
+// can map it to a 500 before any response bytes are written.
+var errEmptyProjectOrDegraded = errors.New("controllers: GetResult has neither Project nor Degraded set")
 
 // JSONSchemaOneOf is read by swaggest's reflector (apispec.Build) to emit the
 // oneOf for this field; it is not used at runtime.
@@ -72,10 +78,15 @@ func (ProjectOrDegraded) JSONSchemaOneOf() []interface{} {
 }
 
 // newGetProjectResponse maps the internal GetResult onto the wire envelope —
-// the explicit project→httpd boundary the result type exists for.
-func newGetProjectResponse(res project.GetResult) GetProjectResponse {
+// the explicit project→httpd boundary the result type exists for. It errors
+// when the result sets neither variant, so the handler can return a clean 500
+// BEFORE writing the 200 status rather than flushing a truncated body.
+func newGetProjectResponse(res project.GetResult) (GetProjectResponse, error) {
+	if res.Project == nil && res.Degraded == nil {
+		return GetProjectResponse{}, errEmptyProjectOrDegraded
+	}
 	return GetProjectResponse{
 		Status:  res.Status,
 		Project: ProjectOrDegraded{Project: res.Project, Degraded: res.Degraded},
-	}
+	}, nil
 }
