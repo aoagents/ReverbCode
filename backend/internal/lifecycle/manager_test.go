@@ -307,6 +307,17 @@ func TestPR_FailedFetchIsDropped(t *testing.T) {
 	}
 }
 
+func TestSCMMergeabilityUnknownWithBlockerIsNotConflict(t *testing.T) {
+	got := scmMergeability(ports.Mergeability{
+		Unknown:     true,
+		NoConflicts: false,
+		Blockers:    []string{"merge status unknown (GitHub is computing)"},
+	})
+	if got != domain.MergeUnknown {
+		t.Fatalf("unknown mergeability should stay unknown, got %q", got)
+	}
+}
+
 // ---- explicit kill ----
 
 func TestKill_TerminatesWithoutReacting(t *testing.T) {

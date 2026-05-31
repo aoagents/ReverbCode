@@ -291,14 +291,14 @@ func scmReviewDecision(d ports.ReviewDecision) domain.ReviewDecision {
 
 func scmMergeability(m ports.Mergeability) domain.Mergeability {
 	switch {
-	case m.Conflict || (!m.NoConflicts && len(m.Blockers) > 0):
+	case m.Unknown:
+		return domain.MergeUnknown
+	case m.Conflict:
 		return domain.MergeConflicting
 	case m.Mergeable:
 		return domain.MergeMergeable
 	case m.BehindBase || len(m.Blockers) > 0:
 		return domain.MergeBlocked
-	case m.Unknown:
-		return domain.MergeUnknown
 	default:
 		return domain.MergeUnknown
 	}
