@@ -1,4 +1,4 @@
-package sqlite
+package store_test
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 )
 
 // A check can change status on the same commit (in_progress -> failed) via
@@ -39,7 +40,7 @@ func TestPRChecksCDC_EmitsOnInsertAndStatusUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var checkEvents []ChangeLogRow
+	var checkEvents []sqlite.ChangeLogRow
 	for _, r := range rows {
 		if r.EventType == "pr_check_recorded" {
 			checkEvents = append(checkEvents, r)

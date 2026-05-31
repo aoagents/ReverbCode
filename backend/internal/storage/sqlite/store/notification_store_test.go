@@ -1,15 +1,18 @@
-package sqlite
+package store_test
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/gen"
 )
 
@@ -38,12 +41,12 @@ func TestNotificationInsertListGetAndDedupe(t *testing.T) {
 	if created || dup.ID != row.ID || dup.Seq != row.Seq {
 		t.Fatalf("duplicate should return existing row created=false: created=%v dup=%+v first=%+v", created, dup, row)
 	}
-	all, err := s.ListNotifications(ctx, NotificationFilter{Limit: 10})
+	all, err := s.ListNotifications(ctx, sqlite.NotificationFilter{Limit: 10})
 	if err != nil || len(all) != 1 {
 		t.Fatalf("list all len=%d err=%v", len(all), err)
 	}
-	byProject, _ := s.ListNotifications(ctx, NotificationFilter{ProjectID: string(rec.ProjectID), Limit: 10})
-	bySession, _ := s.ListNotifications(ctx, NotificationFilter{SessionID: string(rec.ID), Limit: 10})
+	byProject, _ := s.ListNotifications(ctx, sqlite.NotificationFilter{ProjectID: string(rec.ProjectID), Limit: 10})
+	bySession, _ := s.ListNotifications(ctx, sqlite.NotificationFilter{SessionID: string(rec.ID), Limit: 10})
 	if len(byProject) != 1 || len(bySession) != 1 {
 		t.Fatalf("project/session lists = %d/%d", len(byProject), len(bySession))
 	}
@@ -83,7 +86,7 @@ func TestNotificationReadUnreadArchiveAndIdempotentCDC(t *testing.T) {
 	if err != nil || !changed || !unread.ReadAt.IsZero() {
 		t.Fatalf("mark unread changed=%v err=%v row=%+v", changed, err, unread)
 	}
-	unreadList, err := s.ListNotifications(ctx, NotificationFilter{UnreadOnly: true, Limit: 10})
+	unreadList, err := s.ListNotifications(ctx, sqlite.NotificationFilter{UnreadOnly: true, Limit: 10})
 	if err != nil || len(unreadList) != 1 {
 		t.Fatalf("unread list len=%d err=%v", len(unreadList), err)
 	}
@@ -108,7 +111,17 @@ func TestNotificationReadUnreadArchiveAndIdempotentCDC(t *testing.T) {
 }
 
 func TestNotificationJSONConstraintsRejectInvalidPayloadAndActions(t *testing.T) {
-	s, rec := newNotificationTestSession(t)
+	dir := t.TempDir()
+	s, err := sqlite.Open(dir)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	seedProject(t, s, "ao")
+	rec, err := s.CreateSession(context.Background(), sampleRecord("ao"))
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
 	ctx := context.Background()
 
 	badPayload := sampleNotification(rec, "bad-payload")
@@ -117,8 +130,14 @@ func TestNotificationJSONConstraintsRejectInvalidPayloadAndActions(t *testing.T)
 		t.Fatal("invalid payload JSON should be rejected")
 	}
 
+	rawDB, err := sql.Open("sqlite", "file:"+filepath.Join(dir, "ao.db"))
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	t.Cleanup(func() { _ = rawDB.Close() })
+
 	now := time.Now().UTC().Truncate(time.Second)
-	_, err := s.qw.InsertNotification(ctx, gen.InsertNotificationParams{
+	_, err = gen.New(rawDB).InsertNotification(ctx, gen.InsertNotificationParams{
 		ProjectID:    string(rec.ProjectID),
 		SessionID:    string(rec.ID),
 		Source:       "lifecycle",
@@ -195,13 +214,13 @@ func TestConcurrentNotificationEnqueueSameDedupeCreatesOneRow(t *testing.T) {
 			t.Fatalf("all callers should see same id, got %q and %q", first, id)
 		}
 	}
-	rows, err := s.ListNotifications(ctx, NotificationFilter{Limit: 10})
+	rows, err := s.ListNotifications(ctx, sqlite.NotificationFilter{Limit: 10})
 	if err != nil || len(rows) != 1 {
 		t.Fatalf("list len=%d err=%v", len(rows), err)
 	}
 }
 
-func newNotificationTestSession(t *testing.T) (*Store, domain.SessionRecord) {
+func newNotificationTestSession(t *testing.T) (*sqlite.Store, domain.SessionRecord) {
 	t.Helper()
 	s := newTestStore(t)
 	seedProject(t, s, "ao")
@@ -212,9 +231,9 @@ func newNotificationTestSession(t *testing.T) (*Store, domain.SessionRecord) {
 	return s, rec
 }
 
-func sampleNotification(rec domain.SessionRecord, dedupe string) NotificationRow {
+func sampleNotification(rec domain.SessionRecord, dedupe string) sqlite.NotificationRow {
 	now := time.Now().UTC().Truncate(time.Second)
-	return NotificationRow{
+	return sqlite.NotificationRow{
 		ProjectID:    rec.ProjectID,
 		SessionID:    rec.ID,
 		Source:       "lifecycle",

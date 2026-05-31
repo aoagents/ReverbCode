@@ -1,4 +1,4 @@
-package sqlite
+package store_test
 
 import (
 	"context"
@@ -8,11 +8,12 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 )
 
-func newTestStore(t *testing.T) *Store {
+func newTestStore(t *testing.T) *sqlite.Store {
 	t.Helper()
-	s, err := Open(t.TempDir())
+	s, err := sqlite.Open(t.TempDir())
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -20,9 +21,9 @@ func newTestStore(t *testing.T) *Store {
 	return s
 }
 
-func seedProject(t *testing.T, s *Store, id string) {
+func seedProject(t *testing.T, s *sqlite.Store, id string) {
 	t.Helper()
-	if err := s.UpsertProject(context.Background(), ProjectRow{
+	if err := s.UpsertProject(context.Background(), sqlite.ProjectRow{
 		ID: id, Path: "/tmp/" + id, RegisteredAt: time.Now().UTC().Truncate(time.Second),
 	}); err != nil {
 		t.Fatalf("seed project %s: %v", id, err)

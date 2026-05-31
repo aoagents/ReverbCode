@@ -1,4 +1,6 @@
-package sqlite
+// Package store contains SQLite-backed table stores built on sqlc-generated
+// queries.
+package store
 
 import (
 	"context"
