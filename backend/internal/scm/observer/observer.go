@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"net/url"
-	"strconv"
 	"strings"
 	"time"
 
@@ -383,89 +381,33 @@ type SubjectConfig struct {
 	CredentialHash string
 }
 
-// SubjectsFromSessions creates/updates SCM subjects from active sessions. Repo
-// and provider come from config; branch and known PR metadata can be present on
-// the SessionRecord metadata. Terminal sessions are intentionally ignored.
+// SubjectsFromSessions creates/updates SCM subjects from active sessions. Repo,
+// provider and host come from observer config; the source branch comes from the
+// typed SessionRecord metadata. Terminal sessions are intentionally ignored.
 func SubjectsFromSessions(sessions []domain.Session, cfg SubjectConfig) []domain.SCMSubject {
 	out := make([]domain.SCMSubject, 0, len(sessions))
 	for _, s := range sessions {
 		if isTerminalSession(s.Lifecycle.Session.State) {
 			continue
 		}
-		provider := domain.SCMProvider(metadataFirst(s.Metadata, "provider", "scm.provider"))
-		if provider == "" {
-			provider = cfg.Provider
-		}
+		provider := cfg.Provider
 		if provider == "" {
 			continue
 		}
-		host := metadataFirst(s.Metadata, "host", "scm.host")
-		if host == "" {
-			host = cfg.Host
-		}
-		providerPrefix := string(provider)
-		branch := metadataFirst(s.Metadata, metadataKeys(providerPrefix, "branch")...)
+		host := cfg.Host
+		branch := strings.TrimSpace(s.Metadata.Branch)
 		if branch == "" {
 			continue
 		}
-		repo := metadataFirst(s.Metadata, append(metadataKeys(providerPrefix, "repo"), "repository")...)
-		if repo == "" {
-			repo = cfg.Repo
-		}
+		repo := cfg.Repo
 		if repo == "" {
 			continue
 		}
-		prURL := metadataFirst(s.Metadata, metadataKeys(providerPrefix, "prUrl", "prURL")...)
-		prNumber := parsePRNumber(metadataFirst(s.Metadata, metadataKeys(providerPrefix, "prNumber")...), prURL)
-		out = append(out, domain.SCMSubject{SessionID: s.ID, ProjectID: s.ProjectID, Provider: provider, Host: host, Repo: repo, Branch: branch, BaseBranch: cfg.BaseBranch, CredentialHash: cfg.CredentialHash, PRNumber: prNumber, PRURL: prURL})
+		out = append(out, domain.SCMSubject{SessionID: s.ID, ProjectID: s.ProjectID, Provider: provider, Host: host, Repo: repo, Branch: branch, BaseBranch: cfg.BaseBranch, CredentialHash: cfg.CredentialHash})
 	}
 	return out
 }
 
 func isTerminalSession(s domain.SessionState) bool {
 	return s == domain.SessionDone || s == domain.SessionTerminated
-}
-
-func metadataFirst(m map[string]string, keys ...string) string {
-	for _, k := range keys {
-		if v := strings.TrimSpace(m[k]); v != "" {
-			return v
-		}
-	}
-	return ""
-}
-
-func metadataKeys(providerPrefix string, names ...string) []string {
-	keys := make([]string, 0, len(names)*3)
-	for _, name := range names {
-		keys = append(keys, name, "scm."+name)
-		if providerPrefix != "" {
-			keys = append(keys, providerPrefix+"."+name)
-		}
-	}
-	return keys
-}
-
-func parsePRNumber(raw, prURL string) int {
-	if raw != "" {
-		if n, err := strconv.Atoi(raw); err == nil {
-			return n
-		}
-	}
-	if prURL == "" {
-		return 0
-	}
-	u, err := url.Parse(prURL)
-	if err != nil {
-		return 0
-	}
-	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
-	for i := 0; i < len(parts)-1; i++ {
-		switch parts[i] {
-		case "pull", "pulls", "pull-requests", "merge_requests", "merge-requests":
-			n, _ := strconv.Atoi(parts[i+1])
-			return n
-		}
-	}
-	return 0
 }

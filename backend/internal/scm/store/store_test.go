@@ -23,6 +23,13 @@ func TestSaveSnapshotRevisionAndSemanticHash(t *testing.T) {
 	if saved.Revision != 1 || saved.SemanticHash == "" {
 		t.Fatalf("revision/hash = %d/%q", saved.Revision, saved.SemanticHash)
 	}
+	gotSubject, ok, err := s.GetSubject(ctx, "s1")
+	if err != nil || !ok {
+		t.Fatalf("subject from snapshot ok=%v err=%v", ok, err)
+	}
+	if gotSubject.CreatedAt.IsZero() || gotSubject.UpdatedAt.IsZero() {
+		t.Fatalf("snapshot subject timestamps were not initialized: %+v", gotSubject)
+	}
 
 	snap.ObservedAt = now.Add(time.Hour)
 	saved2, changed, err := s.SaveSnapshot(ctx, snap)

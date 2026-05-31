@@ -47,11 +47,13 @@ func (f *fakeLCM) ApplyRuntimeObservation(context.Context, domain.SessionID, por
 func (f *fakeLCM) ApplyActivitySignal(context.Context, domain.SessionID, ports.ActivitySignal) error {
 	return nil
 }
-func (f *fakeLCM) OnSpawnInitiated(context.Context, domain.SessionRecord) error { return nil }
+func (f *fakeLCM) ApplyPRObservation(context.Context, domain.SessionID, ports.PRObservation) error {
+	return nil
+}
 func (f *fakeLCM) OnSpawnCompleted(context.Context, domain.SessionID, ports.SpawnOutcome) error {
 	return nil
 }
-func (f *fakeLCM) OnKillRequested(context.Context, domain.SessionID, ports.KillReason) error {
+func (f *fakeLCM) OnKillRequested(context.Context, domain.SessionID, domain.TerminationReason) error {
 	return nil
 }
 func (f *fakeLCM) TickEscalations(context.Context, time.Time) error { return nil }
@@ -245,26 +247,20 @@ func TestObserverRequiresProviderWhenMultipleProvidersRegistered(t *testing.T) {
 	}
 }
 
-func TestSubjectsFromSessionsUsesProviderMetadataWithoutGitHubDefaults(t *testing.T) {
+func TestSubjectsFromSessionsUsesConfigAndTypedBranchMetadataWithoutGitHubDefaults(t *testing.T) {
 	sessions := []domain.Session{{
 		SessionRecord: domain.SessionRecord{
 			ID:        "s1",
 			ProjectID: "p1",
-			Metadata: map[string]string{
-				"scm.provider":  "gitlab",
-				"scm.host":      "gitlab.com",
-				"gitlab.repo":   "group/repo",
-				"gitlab.branch": "feat/27",
-				"gitlab.prUrl":  "https://gitlab.com/group/repo/-/merge_requests/12",
-			},
+			Metadata:  domain.SessionMetadata{Branch: "feat/27"},
 		},
 	}}
-	subjects := SubjectsFromSessions(sessions, SubjectConfig{})
+	subjects := SubjectsFromSessions(sessions, SubjectConfig{Provider: domain.SCMProviderGitLab, Host: "gitlab.com", Repo: "group/repo"})
 	if len(subjects) != 1 {
 		t.Fatalf("subjects=%d", len(subjects))
 	}
 	got := subjects[0]
-	if got.Provider != domain.SCMProviderGitLab || got.Host != "gitlab.com" || got.Repo != "group/repo" || got.Branch != "feat/27" || got.PRNumber != 12 {
+	if got.Provider != domain.SCMProviderGitLab || got.Host != "gitlab.com" || got.Repo != "group/repo" || got.Branch != "feat/27" || got.PRNumber != 0 {
 		t.Fatalf("bad subject: %+v", got)
 	}
 }

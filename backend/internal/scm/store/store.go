@@ -140,6 +140,11 @@ func (s *Store) now() time.Time {
 func (s *Store) UpsertSubject(_ context.Context, subject domain.SCMSubject) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.upsertSubjectLocked(subject)
+	return s.persistLocked()
+}
+
+func (s *Store) upsertSubjectLocked(subject domain.SCMSubject) domain.SCMSubject {
 	now := s.now()
 	if subject.CreatedAt.IsZero() {
 		if existing, ok := s.data.Subjects[subject.SubjectKey()]; ok && !existing.CreatedAt.IsZero() {
@@ -150,7 +155,7 @@ func (s *Store) UpsertSubject(_ context.Context, subject domain.SCMSubject) erro
 	}
 	subject.UpdatedAt = now
 	s.data.Subjects[subject.SubjectKey()] = subject
-	return s.persistLocked()
+	return subject
 }
 
 func (s *Store) GetSubject(_ context.Context, sessionID domain.SessionID) (domain.SCMSubject, bool, error) {
@@ -219,20 +224,30 @@ func (s *Store) SaveSnapshot(_ context.Context, snapshot domain.SCMSnapshot) (do
 	if len(history) > 0 {
 		latest := history[len(history)-1]
 		if latest.SemanticHash == snapshot.SemanticHash {
+			if snapshot.Subject.SessionID != "" && subjectNeedsTimestampRepair(s.data.Subjects[snapshot.Subject.SubjectKey()]) {
+				s.upsertSubjectLocked(snapshot.Subject)
+				if err := s.persistLocked(); err != nil {
+					return domain.SCMSnapshot{}, false, err
+				}
+			}
 			return latest, false, nil
 		}
 		snapshot.Revision = latest.Revision + 1
 	} else {
 		snapshot.Revision = 1
 	}
-	s.data.Snapshots[key] = append(history, cloneSnapshot(snapshot))
 	if snapshot.Subject.SessionID != "" {
-		s.data.Subjects[snapshot.Subject.SubjectKey()] = snapshot.Subject
+		snapshot.Subject = s.upsertSubjectLocked(snapshot.Subject)
 	}
+	s.data.Snapshots[key] = append(history, cloneSnapshot(snapshot))
 	if err := s.persistLocked(); err != nil {
 		return domain.SCMSnapshot{}, false, err
 	}
 	return snapshot, true, nil
+}
+
+func subjectNeedsTimestampRepair(subject domain.SCMSubject) bool {
+	return subject.SessionID == "" || subject.CreatedAt.IsZero() || subject.UpdatedAt.IsZero()
 }
 
 func (s *Store) GetLatestSnapshot(_ context.Context, sessionID domain.SessionID) (domain.SCMSnapshot, bool, error) {

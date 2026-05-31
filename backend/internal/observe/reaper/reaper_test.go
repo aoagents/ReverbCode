@@ -34,6 +34,9 @@ func (l *fakeLCM) TickEscalations(context.Context, time.Time) error { l.escalate
 func (l *fakeLCM) ApplyActivitySignal(context.Context, domain.SessionID, ports.ActivitySignal) error {
 	return nil
 }
+func (l *fakeLCM) ApplySCMObservation(context.Context, domain.SessionID, ports.SCMFacts) error {
+	return nil
+}
 func (l *fakeLCM) ApplyPRObservation(context.Context, domain.SessionID, ports.PRObservation) error {
 	return nil
 }
