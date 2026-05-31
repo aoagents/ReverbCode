@@ -34,8 +34,8 @@ func NewRouter(cfg config.Config, log *slog.Logger) chi.Router {
 }
 
 // NewRouterWithAPI is the dependency-injected variant. main.go calls it with
-// real Managers; tests and the zero-dep NewRouter call it with empty APIDeps
-// so route-shell 501 stubs work without wiring every port.
+// real Managers when they exist; tests/dev wiring inject mocks explicitly.
+// Missing Managers intentionally keep the route-shell 501 behavior.
 func NewRouterWithAPI(cfg config.Config, log *slog.Logger, deps APIDeps) chi.Router {
 	r := chi.NewRouter()
 

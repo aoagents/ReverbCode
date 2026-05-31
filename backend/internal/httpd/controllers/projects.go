@@ -207,6 +207,8 @@ func writeProjectError(w http.ResponseWriter, r *http.Request, err error, fallba
 			status = http.StatusNotFound
 		case "conflict":
 			status = http.StatusConflict
+		case "not_implemented":
+			status = http.StatusNotImplemented
 		case "internal":
 			status = http.StatusInternalServerError
 		}

@@ -22,7 +22,7 @@ paths:
     get:
       operationId: listProjects
       tags: [projects]
-      summary: List all registered projects (active + degraded)
+      summary: List active registered projects
       responses:
         "200":
           description: Projects listed
@@ -138,26 +138,19 @@ paths:
       x-rest-audit-notes: |
         R5: degraded projects return 200 with a `status` discriminator
         instead of 200 with an `error` field (as the legacy TS surface did).
+        Archived projects are hidden from list responses but still resolve by
+        id so historical sessions can keep their project_id reference.
 
     patch:
       operationId: updateProjectConfig
       tags: [projects]
-      summary: Patch behaviour-only fields (identity is frozen)
+      summary: Patch behaviour-only fields (not implemented until config persistence lands)
       requestBody:
         required: true
         content:
           application/json:
             schema: { $ref: "#/components/schemas/UpdateProjectConfigRequest" }
       responses:
-        "200":
-          description: Project updated
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [project]
-                properties:
-                  project: { $ref: "#/components/schemas/Project" }
         "400":
           description: Bad request
           content:
@@ -181,19 +174,26 @@ paths:
               examples:
                 degraded: { value: { error: conflict, code: PROJECT_DEGRADED, message: "Project config is degraded; repair before patching" } }
                 missingPath: { value: { error: conflict, code: PROJECT_MISSING_PATH, message: "Project registry entry is missing a path" } }
-        "501": { $ref: "#/components/responses/NotImplemented" }
+        "501":
+          description: Behaviour config persistence is not wired yet
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/APIError" }
+              example: { error: not_implemented, code: PROJECT_CONFIG_NOT_IMPLEMENTED, message: "Project config patching is not available until config persistence is wired" }
       x-rest-audit-notes: |
         R3: legacy `PUT /projects/{id}` (a TS alias of PATCH) is NOT
         registered. PUT returns 405 Method Not Allowed.
-        R6: returns { project }, not { ok: true }.
+        R6: when config persistence lands this route returns { project }, not
+        { ok: true }. Until then, config patches return 501 instead of
+        pretending to persist fields the current project store cannot store.
 
     delete:
       operationId: removeProject
       tags: [projects]
-      summary: Remove a project; stops sessions, cleans workspaces, unregisters
+      summary: Archive a project; hides it from active lists while preserving id references
       responses:
         "200":
-          description: Project removed
+          description: Project archived
           content:
             application/json:
               schema: { $ref: "#/components/schemas/RemoveProjectResult" }
@@ -368,7 +368,9 @@ components:
       type: object
       description: |
         Behaviour-only patch. Identity fields (projectId, path, repo,
-        defaultBranch) are rejected with 400 IDENTITY_FROZEN.
+        defaultBranch) are rejected with 400 IDENTITY_FROZEN. The current Go
+        handler returns 501 PROJECT_CONFIG_NOT_IMPLEMENTED until config
+        persistence exists.
       properties:
         agent: { type: string }
         runtime: { type: string }
@@ -394,8 +396,8 @@ components:
         degradedCount: { type: integer }
 
     # ---- Behaviour config blobs (ported from the TS Zod schemas) ----
-    # All carry .passthrough() semantics — extra keys are preserved on
-    # the wire and re-emitted by the manager impl.
+    # These are the known config shapes only. The current Go handler does not
+    # preserve unknown passthrough keys until config persistence is implemented.
 
     TrackerConfig:
       type: object

@@ -7,20 +7,34 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd"
+	"github.com/aoagents/agent-orchestrator/backend/internal/project"
 )
 
 func newTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := httptest.NewServer(httpd.NewRouter(config.Config{}, log))
+	srv := httptest.NewServer(httpd.NewRouterWithAPI(config.Config{}, log, httpd.APIDeps{
+		Projects: project.NewMemoryManager(),
+	}))
 	t.Cleanup(srv.Close)
 	return srv
+}
+
+func TestProjectsRoutes_DefaultToStubsWithoutManager(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := httptest.NewServer(httpd.NewRouter(config.Config{}, log))
+	t.Cleanup(srv.Close)
+
+	body, status, headers := doRequest(t, srv, "GET", "/api/v1/projects", "")
+	assertJSON(t, headers)
+	assertErrorCode(t, body, status, http.StatusNotImplemented, "NOT_IMPLEMENTED")
 }
 
 func TestProjectsAPI_ListAddGetReload(t *testing.T) {
@@ -123,16 +137,7 @@ func TestProjectsAPI_UpdateDeleteRepair(t *testing.T) {
 	}
 
 	body, status, _ = doRequest(t, srv, "PATCH", "/api/v1/projects/proj", `{"agent":"claude","runtime":"tmux"}`)
-	if status != http.StatusOK {
-		t.Fatalf("PATCH = %d, want 200; body=%s", status, body)
-	}
-	var patched struct {
-		Project projectBody `json:"project"`
-	}
-	mustJSON(t, body, &patched)
-	if patched.Project.Agent != "" || patched.Project.Runtime != "" {
-		t.Fatalf("patched project = %#v", patched.Project)
-	}
+	assertErrorCode(t, body, status, http.StatusNotImplemented, "PROJECT_CONFIG_NOT_IMPLEMENTED")
 
 	body, status, _ = doRequest(t, srv, "PATCH", "/api/v1/projects/proj", `{"path":"elsewhere"}`)
 	assertErrorCode(t, body, status, http.StatusBadRequest, "IDENTITY_FROZEN")
@@ -265,8 +270,11 @@ func doRequest(t *testing.T, srv *httptest.Server, method, path, body string) ([
 func gitRepo(t *testing.T, name string) string {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), name)
-	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("create git repo fixture: %v", err)
+	}
+	if out, err := exec.Command("git", "init", dir).CombinedOutput(); err != nil {
+		t.Fatalf("git init fixture: %v\n%s", err, out)
 	}
 	return dir
 }

@@ -3,6 +3,7 @@ package project
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -114,11 +115,11 @@ func (m *manager) Add(ctx context.Context, in AddInput) (Project, error) {
 	return projectFromRow(row), nil
 }
 
-func (m *manager) UpdateConfig(ctx context.Context, id domain.ProjectID, patch UpdateConfigInput) (Project, error) {
+func (m *manager) UpdateConfig(ctx context.Context, id domain.ProjectID, _ UpdateConfigInput) (Project, error) {
 	if err := validateProjectID(id); err != nil {
 		return Project{}, err
 	}
-	row, ok, err := m.store.Get(ctx, string(id))
+	_, ok, err := m.store.Get(ctx, string(id))
 	if err != nil {
 		return Project{}, internal("PROJECT_LOAD_FAILED", "Failed to load project")
 	}
@@ -126,13 +127,7 @@ func (m *manager) UpdateConfig(ctx context.Context, id domain.ProjectID, patch U
 		return Project{}, notFound("PROJECT_NOT_FOUND", "Unknown project")
 	}
 
-	// The PR #37 schema stores only registry identity columns. Behaviour config
-	// fields are accepted for API compatibility, but are not durable until a
-	// dedicated config store is wired in.
-	if err := m.store.Upsert(ctx, row); err != nil {
-		return Project{}, err
-	}
-	return projectFromRow(row), nil
+	return Project{}, notImplemented("PROJECT_CONFIG_NOT_IMPLEMENTED", "Project config patching is not available until config persistence is wired")
 }
 
 func (m *manager) Remove(ctx context.Context, id domain.ProjectID) (RemoveResult, error) {
@@ -219,8 +214,17 @@ func normalizePath(raw string) (string, error) {
 }
 
 func isGitRepo(path string) bool {
-	info, err := os.Stat(filepath.Join(path, ".git"))
-	return err == nil && (info.IsDir() || info.Mode().IsRegular())
+	cmd := exec.Command("git", "-C", path, "rev-parse", "--show-toplevel")
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	top := filepath.Clean(strings.TrimSpace(string(out)))
+	path = filepath.Clean(path)
+	if strings.EqualFold(top, path) {
+		return true
+	}
+	return top == path
 }
 
 func defaultProjectID(path string) domain.ProjectID {
