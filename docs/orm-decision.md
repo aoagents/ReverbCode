@@ -1,138 +1,235 @@
 # GORM vs sqlc for the Go + SQLite Agent-Orchestrator Backend
 
-## Executive Summary
+The agent-orchestrator — many concurrent agent sessions, event streams, job queues, and a hot mixed read/write path against a single SQLite file — is a workload where correctness under refactoring, predictable performance under concurrency, and tight control over the single SQLite writer matter more than CRUD velocity. On those axes **sqlc (compile-time codegen from raw SQL) is the better default**, because it pushes schema/query errors to build time, generates near-`database/sql`-speed code with no reflection, and hands you the raw `*sql.DB` so you can enforce the WAL + single-writer pool pattern. **GORM (runtime reflection ORM)** wins decisively on developer velocity and dynamic query building, but its strongest features (dynamic `Where`, associations, `AutoMigrate`, hooks) come paired with runtime-only error surfacing and several silent-correctness footguns (zero-value updates dropped, soft-delete + unique-index collisions, accidental N+1) that bite hardest in exactly this write-heavy, concurrency-sensitive system. sqlc's real costs are a less-mature SQLite engine (Beta) and the inability to build dynamic queries at runtime — both manageable with a small `database/sql`/sqlx escape hatch for the handful of genuinely dynamic queue/filter endpoints. The recommended shape is **sqlc for the static hot paths + a thin sqlx/raw-SQL layer for dynamic queries**, with migrations on golang-migrate or goose.
 
-This report evaluates two Go data-layer approaches for rewriting the agent-orchestrator on a **Go + SQLite** stack: **GORM**, a mature runtime ORM built on reflection, and **sqlc**, a compile-time code generator that turns hand-written SQL into type-safe Go. The two tools sit at opposite ends of the abstraction spectrum. GORM optimizes for *developer velocity and convenience* — you describe structs and GORM writes the SQL — at the cost of runtime reflection overhead, hidden queries, and a class of well-documented footguns (N+1 loading, soft-delete filtering, zero-value update surprises). sqlc optimizes for *explicitness and correctness* — you write the SQL, sqlc verifies it against your schema at build time and generates fully-typed Go — at the cost of needing an external migration tool and some friction with dynamic queries.
-
-For an agent-orchestrator workload (many concurrent sessions, event streams, job queues, heavy mixed reads/writes against a single SQLite file), the dominant constraint is **SQLite's single-writer model**, which is orthogonal to the ORM choice and must be solved with WAL mode, a busy_timeout, and a one-connection write pool regardless. Given that the schema is well-known up front and correctness/observability of SQL matters for a queue/event system, this report recommends **sqlc as the primary data layer**, with hand-written `database/sql` (or sqlx) for the small set of genuinely dynamic queries.
-
-| Dimension | GORM | sqlc |
-|---|---|---|
-| Approach | Runtime ORM (reflection) | Compile-time codegen from SQL |
-| You write | Go structs + method chains | Raw SQL + schema |
-| Type safety | Runtime (`interface{}`) | Compile-time (generated structs) |
-| SQL visibility | Hidden/generated | Explicit, reviewed |
-| Migrations | Built-in AutoMigrate (+ external recommended) | None — bring your own (goose/golang-migrate/atlas) |
-| Dynamic queries | Excellent | Limited (needs workarounds) |
-| Performance | Reflection overhead | ~ raw database/sql |
-| Footguns | N+1, soft-delete, zero-value updates | Dynamic SQL, newer SQLite engine |
-| Build pipeline | None | `sqlc generate` step |
+| Dimension | GORM | sqlc | Edge |
+|---|---|---|---|
+| Model | Runtime, reflection-based ORM | Build-time codegen from raw SQL | — |
+| Type safety | Mostly runtime (string clauses opaque) | Compile/generate-time validated | **sqlc** |
+| Performance | ~2–5x slower than raw, more allocs (directional) | ~`database/sql` baseline | **sqlc** |
+| Dynamic queries | Native, elegant fluent builder | Not supported at runtime; needs workarounds | **GORM** |
+| Batch insert ergonomics | `CreateInBatches` first-class | Loop-in-transaction or hand-rolled multi-VALUES | **GORM** |
+| SQLite engine maturity | First-class dialect, mature drivers | **Beta** engine, balky parser | **GORM** |
+| Migrations | `AutoMigrate` (not prod-grade) + external | None by design; pair with external tool | wash |
+| Refactoring safety | Silent runtime drift | Breaks loudly at generate/compile | **sqlc** |
+| Testing | In-memory SQLite good; sqlmock brittle; no free mock seam | Generated `Querier` interface; high-fidelity real-DB | **sqlc** |
+| Single-writer control | `db.DB()` reachable, but implicit txns hold locks longer | Direct `*sql.DB`, explicit short txns | **sqlc** |
+| GitHub stars (2026-05) | ~39.8k | ~17.8k | GORM (popularity) |
 
 ---
 
-## 1. Philosophy & Approach
+## 1. Philosophy & approach
 
-**GORM** is a full-featured runtime ORM. The developer defines Go structs annotated with tags, and GORM uses **reflection** to map those structs to tables, build SQL dynamically, and scan results back. The mental model is object-centric: you think in terms of models and associations (`db.Preload("Sessions").Find(&jobs)`), and SQL is an implementation detail GORM produces for you. This maximizes convenience and lets you write very little code for CRUD, but the actual SQL executed is not visible in your source and is constructed at runtime.
+The two tools sit on opposite sides of one question: is the Go struct or the SQL the source of truth?
 
-**sqlc** inverts this. You write **hand-authored SQL** in `.sql` files, annotated with `-- name: GetSession :one` directives, plus a `schema.sql` describing your tables. At build time, `sqlc generate` parses both, type-checks the queries against the schema, and emits plain Go functions returning concrete structs. The mental model is SQL-first: the database and its queries are the source of truth, and Go code is a generated, type-safe binding. There is no runtime ORM layer — generated code calls `database/sql` directly.
+**GORM — the database is a projection of your Go structs.** You declare a struct, and GORM derives table names, snake_case columns, primary keys, and associations via **runtime reflection**. Queries are assembled dynamically on every call through a fluent, chained API (`db.Where("status = ?", "running").Find(&sessions)`), with SQL rendered through a callback pipeline that inspects struct tags and field types via `reflect`. The mental model is object-centric: models, associations, hooks (`BeforeCreate`/`AfterSave`), and `AutoMigrate` that pushes struct shape into DDL. The DB schema is conceptually downstream of the Go code. You write structs + tags + method chains, mostly no `.sql` files; the cost is paid at runtime and the column/join behavior is implicit.
 
-The core trade is **convenience and dynamism (GORM)** vs **explicitness and compile-time verification (sqlc)**.
+**sqlc — Go is a projection of your SQL.** You write a schema source (DDL) and a `query.sql` of annotated named queries:
 
-## 2. SQLite-Specific Support and Quirks
+```sql
+-- name: GetRunningSessions :many
+SELECT id, agent_name, status, created_at
+FROM sessions WHERE status = ?;
+```
 
-**Drivers.** Both work with the two main SQLite drivers: `mattn/go-sqlite3` (cgo, the most battle-tested, requires a C toolchain) and `modernc.org/sqlite` (pure-Go, no cgo, simpler cross-compilation, slightly slower historically). GORM ships an official SQLite driver wrapper (`gorm.io/driver/sqlite`, built on mattn by default; a pure-Go variant exists). sqlc is driver-agnostic — it generates `database/sql` code and you register whichever driver you want, making the pure-Go `modernc` route especially clean.
+At build time, `sqlc generate` parses the schema and each query with a real SQL parser, infers parameter/result types, and emits plain Go — a `Queries` struct with one typed method per query plus model structs. There is **no reflection and no runtime SQL building**; generated code is hand-written-quality `database/sql` (or pgx). The mental model is SQL-centric. The "ORM" disappears: no associations, no hooks, no lazy loading — just functions that run the SQL you wrote, committed and reviewable in the repo.
 
-**FTS5 / JSON1.** Because sqlc passes your SQL through largely untouched, FTS5 full-text search and JSON1 functions "just work" as long as the driver's SQLite build includes them (both common builds do). With GORM, FTS5 and advanced JSON queries typically require dropping to `db.Raw(...)`/`db.Exec(...)` since they aren't first-class in the ORM. **Caveat:** sqlc's SQLite parser is newer than its PostgreSQL parser and may not understand every exotic FTS5/virtual-table or JSON construct at codegen time; such queries sometimes need to be written so sqlc can parse them, or handled outside sqlc.
+**The fork for this project:** GORM optimizes for abstraction and velocity (good when the model is in flux); sqlc optimizes for transparency and control (good for a high-throughput read/write system where you hand-tune SQL and use SQLite features). The line blurs slightly — GORM also exposes raw SQL and a builder, and GORM Gen/CLI now do codegen for type-safe DAOs — but *idiomatic* GORM is reflection-driven and *idiomatic* sqlc is codegen-driven. Notably, if you adopt GORM Gen you are already buying into codegen, at which point sqlc's SQL-first model is the cleaner version of that bet for this workload.
 
-**Concurrency.** SQLite permits only **one writer at a time** regardless of which Go library you use. The standard mitigation — WAL mode, a `busy_timeout`, and capping the write connection pool to a single connection — is identical for both and is covered in section 9.
+---
 
-## 3. Type Safety, Ergonomics, and Refactoring
+## 2. SQLite-specific support and quirks
 
-**sqlc** provides **compile-time type safety**: queries are checked against the schema during `sqlc generate`, and the generated Go uses concrete types. If you rename or drop a column, regeneration fails (or the regenerated code no longer compiles against your call sites), so breakage surfaces **loudly at build time**. This is the strongest argument for sqlc on a long-lived schema: the compiler is your migration safety net, and IDE autocomplete works on real generated structs.
+### Drivers — both ecosystems route to the same two engines
 
-**GORM** resolves much at **runtime via reflection**. A renamed column referenced in a string (`Where("status = ?")`, `Order("created_at")`, `Select("...")`) compiles fine and fails — or silently misbehaves — only when executed. Struct-field changes are safer, but the large surface of string-based query building means refactors can break silently. Ergonomically GORM is terser for CRUD and associations; sqlc requires writing SQL but rewards it with certainty.
+| | cgo `mattn/go-sqlite3` | pure-Go `modernc.org/sqlite` |
+|---|---|---|
+| Activity | ~8.3k stars, actively maintained | cznic (GitLab-hosted), actively maintained, machine-transpiled SQLite C port |
+| Build | requires CGO + C toolchain; cross-compile pain | no CGO, trivial static binaries |
+| Speed | fastest, closest to native C | very close; competitive |
+| FTS5 / JSON1 | **not compiled in by default** — needs `-tags "sqlite_fts5"` / `sqlite_json` | **included by default** |
+
+- **sqlc** officially lists both drivers (both Beta) and is driver-agnostic at runtime — you pick in your own `sql.Open`.
+- **GORM**'s official `gorm.io/driver/sqlite` wraps mattn (CGO required). The pure-Go path depends on the community `glebarez/sqlite` shim (~362 stars, push cadence slowed to May 2025). So GORM's pure-Go option leans on a smaller, less-active third party.
+
+For an orchestrator you'll want as a single static binary, the **pure-Go (modernc) path is attractive**, and FTS5/JSON1 compiled-in-by-default removes a whole class of build-tag gotchas. sqlc supports modernc directly; GORM only via the slower-moving shim.
+
+### FTS5 and JSON1: neither tool models them natively
+
+Both work at runtime, but **neither GORM nor sqlc abstracts FTS5**. With GORM you drop to `db.Exec`/`db.Raw` for `CREATE VIRTUAL TABLE ... USING fts5` and `MATCH` queries — no ergonomic gain. With sqlc the risk is the **parser**: FTS5 DDL and some constructs have historically tripped sqlc's SQLite parser (e.g., issues #3739 ORDER BY expression parser error, #1733 parser limitations), so keep FTS5 DDL in migration-only files sqlc doesn't generate from, and hand-write those few accessors. JSON1 (`json_extract`, `->>`) is just function calls in your SQL for sqlc (you scan-and-unmarshal yourself); GORM offers a thin `datatypes.JSONQuery` helper but complex filtering falls back to raw SQL anyway.
+
+### WAL, busy_timeout, and the single-writer model (the load-bearing concern)
+
+This is a **SQLite-level** concern and is **orthogonal to GORM vs sqlc** — the controls live in the DSN/PRAGMAs and `database/sql` pool settings, configured identically for both. SQLite allows exactly **one writer at a time** regardless of library; a second writer gets `SQLITE_BUSY`. The standard mitigation:
+
+- **WAL mode** (`journal_mode=WAL`) — one writer concurrent with many readers.
+- **busy_timeout** (e.g. 5000ms) — a blocked writer waits/retries instead of erroring.
+- **Serialize writers**: `db.SetMaxOpenConns(1)` on the write path, often a split design — a single-conn writer pool plus a multi-conn read-only pool (`mode=ro`).
+- **Use `BEGIN IMMEDIATE` for write transactions.** busy_timeout alone does *not* cure read-to-write upgrade deadlocks: two DEFERRED transactions that each start as readers then try to upgrade can deadlock and return the non-retriable `SQLITE_BUSY_SNAPSHOT`. Starting write transactions as IMMEDIATE avoids this. Neither GORM nor sqlc does this for you.
+
+Where the tools differ is in how easily you apply this pattern. **sqlc** generates plain `database/sql` calls, so you own the `*sql.DB` directly — the split-pool and IMMEDIATE patterns are natural and you can reason about which statement runs on which connection. **GORM** keeps a long-lived `*gorm.DB`; you reach the pool via `db.DB()`, but its implicit transactions (default-on for writes), hooks, association cascades, and prepared-statement cache add a layer where lock contention is harder to reason about, and "database is locked" reports under GORM+SQLite are common (root cause almost always the pool/WAL config). For a lock-sensitive orchestrator, sqlc's transparency is a genuine edge.
+
+### Engine maturity and `ALTER TABLE`
+
+sqlc treats SQLite as **Beta** (PostgreSQL/MySQL are mature); its parser lags real SQLite syntax, and type inference is weaker because of SQLite's dynamic typing — expect more `interface{}`/`sql.Null*` and the occasional `CAST(...)` hint. GORM treats SQLite as a first-class dialect, but its `AutoMigrate` is especially weak on SQLite because SQLite's `ALTER TABLE` is limited (GORM emulates some changes by table-copy; type/constraint changes are unreliable). Net: sqlc's SQLite risk is at build time (parser/inference); GORM's is at migration time.
+
+---
+
+## 3. Type safety, ergonomics, and the refactoring story
+
+**sqlc — errors surface at build time.** Because queries are parsed and type-checked against the schema during `sqlc generate`, a renamed column, wrong arity, or type mismatch **fails generation or compilation**, not production. Results bind to generated structs, so IDE autocomplete and `go vet` cover your data layer. The refactoring loop is: change schema → `sqlc generate` → compiler flags every broken call site. For a system meant to evolve (new event types, queue columns), this "breaks loudly" property is the single biggest safety win.
+
+**GORM — flexibility paid for in runtime drift.** Struct-tag mapping is convenient, but large parts of the API take **strings**: `Where("statuss = ?")`, `Order("craeted_at")`, `Select("...")`, `Pluck("col", ...)`. Typos and renames compile fine and fail (or silently return wrong/empty data) at runtime. There's no generate step to catch schema/code drift; `AutoMigrate` can even mask drift by reshaping the DB to match the structs. GORM Gen recovers some compile-time safety by generating typed DAOs, but that's opting into the codegen model sqlc gives you natively.
+
+**Ergonomics trade:** GORM writes less code for CRUD and dynamic filters; sqlc writes explicit SQL but yields total clarity on what runs. For a team that values "the compiler is my migration checklist," sqlc wins; for rapid model churn with many ad-hoc queries, GORM is faster to move in.
+
+---
 
 ## 4. Performance
 
-**sqlc** generates code that calls `database/sql` directly with no reflection, so its overhead is essentially that of the raw driver — minimal allocations, predictable behavior. **GORM** adds reflection-based struct mapping and dynamic SQL construction on every call, which measurably increases CPU and allocations versus raw `database/sql`/sqlc; community benchmarks consistently show GORM as one of the heavier options, though for most workloads the DB round-trip dominates and the difference is not the bottleneck. Both can use prepared statements (GORM via `PrepareStmt: true`; sqlc/`database/sql` via the standard statement cache). For a write-heavy SQLite system the real ceiling is SQLite's single-writer serialization, not ORM CPU — but sqlc's lower overhead and explicit SQL make hot paths easier to reason about and optimize.
+**Directional, not gospel** (benchmarks vary wildly by workload, and the SQLite writer is usually the real ceiling):
 
-## 5. Migration Tooling & Schema Evolution
+- **sqlc** generates straight-line `database/sql` calls — **no reflection**, allocations close to hand-written code, baseline driver speed. Prepared statements are explicit and cacheable.
+- **GORM** adds reflection, a callback pipeline, and dynamic SQL building per call. Community microbenchmarks put it on the order of **~2–5× slower with more allocations than raw `database/sql`** on hot paths (directional — some workloads show less). GORM supports `PrepareStmt: true` to cache statements and reduce parse overhead, narrowing the gap.
 
-**This is a key operational difference. sqlc does NOT run migrations** — it only reads a schema definition to type-check queries. You must pair it with an external tool: **goose**, **golang-migrate**, or **atlas**. The typical workflow: write a migration → apply it → ensure sqlc's `schema` input reflects the new schema → `sqlc generate` → fix any now-broken Go. Atlas can even derive migrations from a desired schema and has first-class sqlc integration.
+For this orchestrator, **SQLite's single-writer serialization dominates write throughput** far more than ORM CPU. Where sqlc's lower overhead matters is the **high-frequency read path** (polling sessions, draining event streams) and predictable GC behavior under load. Net: sqlc has the edge, but for many endpoints the difference is dwarfed by disk and lock contention.
 
-**GORM** ships **AutoMigrate**, which inspects structs and creates/alters tables to match. It's convenient for prototyping but is widely considered insufficient for production: it **adds columns/indexes but does not drop or safely rename** them, offers no down-migrations, and gives limited control over destructive changes. Most serious GORM projects therefore *also* adopt golang-migrate/goose/atlas, narrowing GORM's apparent advantage here. Net: both realistically use an external migration tool; sqlc just makes that mandatory and explicit.
+---
 
-## 6. Testing Story
+## 5. Migration tooling and schema evolution
 
-Both test best against **real in-memory SQLite** (`:memory:` or a temp file), which is fast and exercises real SQL. Because sqlc generates an interface (`Querier`) and concrete `Queries` type, you can either (a) run queries against a real in-memory DB for integration tests, or (b) mock the generated `Querier` interface for unit tests of business logic — a clean, idiomatic split. GORM is harder to mock at the SQL level (`go-sqlmock` is brittle against GORM's generated SQL); the pragmatic approach is real SQLite. Overall sqlc's generated interfaces give a more natural mocking seam, while both favor real-SQLite integration tests with fixtures. **SQLite `:memory:` caveat:** each connection gets its own database, so use a shared-cache DSN or a single connection in tests.
+**sqlc does not do migrations — by design.** It only *reads* a schema (a `schema` path that can point at your migration files or a dedicated DDL file) to type-check queries; it never applies DDL. **Confirmed:** you pair it with an external migration tool. It understands the up-migrations of **golang-migrate, goose, and atlas** directly as schema input, so the same files drive both migration and codegen.
 
-## 7. Code Generation / Build Pipeline Implications (sqlc)
+**Typical sqlc workflow:**
+1. Write a new migration (golang-migrate/goose).
+2. Point sqlc's `schema` at the migrations dir (or maintain `schema.sql`).
+3. `sqlc generate`.
+4. Compiler flags any query/call-site now invalid.
+5. Apply the migration at deploy via the migration tool.
 
-Adopting sqlc adds a **build step**. You maintain `sqlc.yaml` (engine = sqlite, paths to `schema` and `queries`), write SQL with `-- name:` annotations, and run `sqlc generate` to emit Go. Implications:
+**GORM** ships **`AutoMigrate`**, which reflects structs and creates tables/missing columns/indexes. Convenient for prototyping, but **not production-grade**: it **won't drop columns, won't rename safely (rename = add new + leave old), and has no down-migrations or destructive-change control.** Real GORM deployments therefore **also** adopt golang-migrate/goose/atlas — so migrations end up an external concern for *both* tools. The difference: sqlc forces the explicit, versioned workflow from day one; GORM tempts you with `AutoMigrate` and you discover its limits later.
 
-- **Regeneration discipline:** any schema or query change requires re-running `sqlc generate`; forgetting to commit regenerated code, or schema drift between the migration and sqlc's schema input, is the main friction point. CI should run `sqlc generate` and fail if the working tree changes (drift check), plus `sqlc vet`.
-- **Build breakage is a feature:** an invalid query or a column that no longer exists fails generation, catching errors before runtime.
-- **Tooling cost:** contributors need the sqlc binary (pinned version) installed/available in CI. Generated files are checked in.
+---
 
-GORM has **no codegen step** — lower setup friction, at the cost of moving error detection to runtime.
+## 6. Testing story
 
-## 8. Community Health, Maintenance, Known Footguns
+**Both favor real in-memory SQLite** for high-fidelity tests — fast, real SQL semantics. Use a shared-cache DSN (`file::memory:?cache=shared`) or a single connection, because each `:memory:` connection otherwise gets its **own** database (a classic surprise in concurrent test setups).
 
-Both projects are **healthy and widely used** (GORM and sqlc each have tens of thousands of GitHub stars, active maintenance, and frequent releases as of 2026). GORM is the most popular Go ORM; sqlc is the leading SQL-first codegen tool.
+- **sqlc** generates a **`Querier` interface** plus a concrete `*Queries`. That interface is a free mocking seam for unit-testing business logic, while integration tests run the same generated code against in-memory SQLite. High-fidelity and naturally testable.
+- **GORM** has **no built-in interface seam**; `go-sqlmock` exists but is **brittle** against GORM's dynamically generated SQL (you assert on SQL strings GORM may change between versions). The pragmatic path is real SQLite + fixtures, accepting that pure unit isolation is harder.
 
-**GORM footguns (well-documented):**
-- **N+1 queries:** lazy/association access without `Preload`/`Joins` issues a query per row; you must remember to eager-load.
-- **Soft delete:** a `gorm.DeletedAt` field silently turns every query into `WHERE deleted_at IS NULL`. Forgetting this surprises people ("rows are gone"); you need `Unscoped()` to see/really-delete them. A genuine, common gotcha.
-- **Zero-value updates:** `Updates` with a struct **skips zero-valued fields** (0, "", false), so updating a field to its zero value silently does nothing — you must use a `map` or `Select` to force it. Classic source of bugs.
-- Hooks and implicit transactions add hidden behavior.
+For a queue/event system where you want to test claim/transition logic precisely, sqlc's interface + real-DB combination is the stronger story.
 
-**sqlc limitations/footguns:**
-- **Dynamic SQL:** sqlc generates static queries; **variable-length `IN (...)`**, runtime-built `WHERE`/sorting, and conditional filters don't map cleanly. Workarounds: `sqlc.slice()` (supported for some engines/drivers), SQLite `json_each`-based array params, generating per-shape queries, or dropping to hand-written `database/sql` for those cases.
-- **SQLite engine maturity:** sqlc's SQLite support is newer than PostgreSQL; some SQL features/functions may not parse and need rewording.
+---
+
+## 7. Code generation / build pipeline implications (sqlc)
+
+Adopting sqlc introduces a **codegen step** into the build:
+
+- **Inputs:** `sqlc.yaml` (engine: `sqlite`), a schema source, and `query.sql` files with `-- name: X :one|:many|:exec` annotations.
+- **Output:** committed generated Go (`models.go`, `query.sql.go`, `querier.go`) — checked into the repo.
+- **Regeneration discipline:** every schema/query change requires `sqlc generate`; forgetting it, or letting the schema input drift from actual migrations, is the **main friction point**. Mitigate with a **CI drift check** (`sqlc generate` then fail if `git diff` is non-empty) plus **`sqlc vet`** for lint rules.
+- **Build-breakage is a feature:** an invalid query won't generate, so bad SQL never reaches runtime.
+- **Tooling cost:** contributors and CI need the pinned `sqlc` binary; `:memory:`-style local iteration is unaffected.
+
+**GORM has no codegen step** (unless you adopt GORM Gen), which is less upfront friction but moves error detection to runtime. The sqlc pipeline cost is real but small, and it buys the compile-time guarantees above.
+
+---
+
+## 8. Community health, maintenance, known footguns
+
+**Both are healthy and actively maintained (2026):**
+
+| | GORM | sqlc |
+|---|---|---|
+| Stars (2026-05) | ~39.8k | ~17.8k |
+| Position | Most popular Go ORM | Leading SQL-first codegen tool |
+| Releases | Frequent, stable v2 | Frequent; SQLite engine still **Beta** |
+
+**GORM footguns (all confirmed, all relevant here):**
+- **Zero-value updates silently dropped.** `db.Model(&s).Updates(Session{Status: "", Retries: 0})` **skips** zero-valued struct fields (`""`, `0`, `false`), so setting a column *to* its zero value does nothing. You must use a `map[string]interface{}` or `Select("col")` to force it. A live correctness bug magnet for status/counter fields.
+- **Soft delete (`gorm.DeletedAt`)** silently adds `WHERE deleted_at IS NULL` to every query. Surprises ("my rows vanished"); requires `Unscoped()` to see/really-delete. Worse, **soft-deleted rows still occupy unique indexes**, so re-inserting a "deleted" natural key throws a uniqueness violation — a real schema-design trap.
+- **N+1 — with nuance.** Naively walking associations issues a query per parent. But GORM's **`Preload` batches related rows into a single additional `IN (...)` query (1 + 1, not 1 + N)** — so eager-loading is fine; the footgun is *forgetting* to Preload/Joins and lazily accessing in a loop.
+- **Hooks & default transactions** add implicit behavior and hold write locks longer (see §2).
+
+**sqlc footguns:**
+- **No runtime-dynamic SQL.** Generated queries are static. **Nuance:** a variable-length `IN (...)` is *partly* solvable — sqlc supports `sqlc.slice()` for several engines/drivers to expand a slice param, and on SQLite a `json_each(?)` array param works. What remains genuinely hard is **runtime-composed `WHERE`/sort/optional filters** (search endpoints), which need per-shape queries or a raw-SQL fallback.
+- **SQLite engine is Beta** and its parser rejects some valid SQL (FTS5 DDL, certain `ORDER BY` expressions, window/CTE edge cases — see issues #3739, #1733). Keep unsupported DDL out of the generate path.
 - Less convenient for sprawling ad-hoc query shapes.
 
-## 9. Best Fit for the Agent-Orchestrator Workload
+---
 
-The workload — **many concurrent sessions, event streams, job queues, heavy mixed reads/writes on one SQLite file** — is dominated by SQLite's concurrency model, not the ORM:
+## 9. Best fit for the agent-orchestrator workload
 
-- **Single writer:** SQLite serializes writes. Required setup (same for both tools): enable **WAL** (`PRAGMA journal_mode=WAL`) for concurrent readers alongside one writer, set a **`busy_timeout`** (e.g. 5000ms) to avoid `SQLITE_BUSY`, and **cap the write pool to one connection** (`db.SetMaxOpenConns(1)` for the writer, or a dedicated writer connection with a separate read pool). This is the single most important decision and is independent of GORM vs sqlc.
-- **Job queue / event semantics:** queue claim patterns (`UPDATE ... RETURNING`, `SELECT ... LIMIT` with status filters), batch inserts for event streams, and careful transaction scoping benefit from **explicit, reviewable SQL** — sqlc's strength. You can see and tune exactly what hits the disk.
-- **Dynamic filtering:** session/event list endpoints with optional filters are where **GORM shines** and sqlc needs workarounds. In practice this is a small, contained part of the surface and can use hand-written SQL.
-- **Performance headroom:** sqlc's near-zero overhead is a mild plus on hot read paths, but again the writer is the bottleneck.
+The workload — **many concurrent sessions, event streams, job queues, heavy mixed reads/writes on one SQLite file** — breaks down as:
 
-**Verdict for this workload:** the queue/event core favors **explicit SQL (sqlc)** for correctness and observability; the dynamic-listing edges favor GORM-style flexibility, which can be met with a thin hand-written-SQL escape hatch.
+**Where sqlc fits well:**
+- **Job-queue claim/transition** logic (`UPDATE ... WHERE status='queued' ... RETURNING`, atomic state machines) benefits from **explicit, reviewable, tunable SQL** and short, controllable transactions (`BEGIN IMMEDIATE`) over a raw `*sql.DB`.
+- **Event-stream appends** are static high-frequency inserts — sqlc's low overhead and prepared statements shine; batch via a transaction loop or a generated multi-VALUES query.
+- **Hot read paths** (poll session state, tail events) get baseline `database/sql` speed and predictable GC.
+- **Refactoring safety** as the event/queue schema grows — compile-time breakage is worth a lot in a system of record.
 
-## 10. Alternatives Worth Flagging (brief)
+**Where you'll feel sqlc's limits:**
+- **Dynamic list/filter endpoints** (sessions by optional status/agent/time range, sortable) — sqlc can't compose these at runtime. This is the one area to carve out.
+- **Batch insert ergonomics** are nicer in GORM (`CreateInBatches`).
 
-- **sqlx** — a thin extension of `database/sql` (named params, struct scanning) with **no codegen and no ORM**. Best when you want hand-written SQL like sqlc but prefer zero build step and full runtime dynamism; you give up sqlc's compile-time query checking. A natural companion to sqlc for the dynamic-query escape hatch.
-- **ent** (ent.io) — a schema-as-Go-code graph ORM with strong codegen, type-safe traversals, and great support for complex relations/graphs. Heavier and opinionated; shines when your domain is highly relational. SQLite supported.
-- **bun** — a lightweight SQL-first ORM (successor to go-pg) with a fluent query builder, good performance, migrations, and multi-DB support including SQLite. A middle ground between GORM's convenience and sqlc's explicitness if you want a builder without full codegen.
-- **jet** — like sqlc in spirit (codegen, type-safe) but generates a **type-safe query *builder*** from your DB schema rather than from hand-written SQL, giving compile-time-checked **dynamic** queries. Worth a look precisely where sqlc struggles (dynamic filters) while keeping type safety.
+**The pragmatic architecture:** **sqlc for the static hot paths** (queue ops, event appends, keyed lookups, state transitions) **+ a thin `sqlx`/`database/sql` layer for the handful of dynamic query/filter endpoints**, all over **one shared, WAL-mode, single-writer-pool `*sql.DB`**. This keeps correctness and speed where they matter and dynamism where you need it — without paying GORM's runtime-drift and footgun tax across the whole codebase.
 
-## 11. Recommendation & Rationale
+GORM would suit this workload if the priority were **velocity and pervasive dynamic queries** over compile-time safety — e.g., an early-stage prototype with a churning schema and a small team that values `AutoMigrate` and fluent filters more than predictable performance and loud refactors.
 
-**Recommendation: adopt sqlc as the primary data layer**, paired with an external migration tool (**goose** or **golang-migrate**, or **atlas** if you want schema-diff-driven migrations) and a thin **hand-written `database/sql`/sqlx** escape hatch for the handful of genuinely dynamic queries (filtered list endpoints, variable `IN` clauses).
+---
 
-**Why sqlc fits this project:**
-- The schema is known up front and long-lived; **compile-time query checking** turns schema evolution into a build-time safety net rather than a runtime risk — valuable for a queue/event system where a silent bad query is costly.
-- A job-queue/event-stream core benefits from **explicit, reviewable, tunable SQL** and **near-zero runtime overhead**.
-- Generated **`Querier` interfaces** give a clean testing/mocking seam, and the driver-agnostic output makes the pure-Go `modernc.org/sqlite` driver (no cgo) easy to adopt.
-- It sidesteps GORM's documented footguns (N+1, soft-delete filtering, zero-value updates) entirely.
+## 10. Alternatives worth flagging (brief)
 
-**When GORM (or another choice) would be better:**
-- If the team prioritizes **raw development velocity** and lots of **ad-hoc/dynamic queries** over compile-time guarantees, GORM's convenience wins and the build step disappears.
-- If the domain is **highly relational with complex graph traversals**, **ent** is a stronger fit.
-- If you want **type-safe *dynamic* queries** (sqlc's weak spot) without a runtime ORM, evaluate **jet**.
-- If you want SQL-first with a fluent builder and built-in migrations in one package, **bun** is a reasonable middle path.
+- **sqlx** — thin extension of `database/sql` (named params, `StructScan`); **no codegen, no ORM, fully dynamic**. Best as the **dynamic-query companion to sqlc**: hand-written SQL, runtime flexibility, zero build step — at the cost of sqlc's compile-time checking. Strong fit for the filter endpoints above.
+- **ent** (Meta, entgo.io) — schema-as-Go-code **graph ORM** with heavy codegen, type-safe traversals, hooks, and strong support for complex relations. Powerful but opinionated and heavier; shines when the domain is deeply relational/graph-like. SQLite supported.
+- **bun** — lightweight SQL-first ORM (successor to go-pg): fluent, type-aware query builder, migrations, good performance, multi-DB incl. SQLite. A **middle ground** between GORM's convenience and sqlc's explicitness if you want one tool with a builder + migrations and some dynamism.
+- **jet** — codegen like sqlc, but generates a **type-safe query *builder*** from the live DB schema rather than from hand-written SQL — giving **compile-time-checked *dynamic* queries**. Directly targets sqlc's weak spot; evaluate it if dynamic-but-type-safe matters more than committing raw SQL.
 
-Whatever the choice, **the SQLite concurrency setup (WAL + busy_timeout + single-writer pool) is mandatory and matters more than the ORM decision.**
+Keep focus on GORM vs sqlc; the above are escape hatches/contenders, not the main decision.
+
+---
+
+## 11. Recommendation and rationale
+
+**Adopt sqlc as the primary data layer**, paired with **golang-migrate or goose** for migrations and a **thin sqlx/`database/sql` escape hatch** for genuinely dynamic queries. Use the **pure-Go `modernc.org/sqlite`** driver (no CGO, FTS5/JSON1 built in) over **one shared `*sql.DB`** configured for **WAL + busy_timeout + single-writer pool + `BEGIN IMMEDIATE`** writes.
+
+**Why sqlc wins for this project:**
+1. **Compile-time safety on an evolving schema** — queue/event schemas will change; sqlc turns drift into build errors, not 2 a.m. incidents.
+2. **Explicit, tunable SQL + low overhead** — ideal for queue claims, event appends, and hot reads where you want to see and control exactly what hits the single SQLite writer.
+3. **Clean testing seam** — generated `Querier` interface + in-memory SQLite.
+4. **Sidesteps GORM's footguns** (zero-value updates, soft-delete/unique-index traps, accidental N+1, lock-holding implicit txns) that are most dangerous in a write-heavy concurrent system.
+5. **Operational fit** — raw `*sql.DB` makes the mandatory SQLite single-writer discipline natural; pure-Go driver yields a clean static binary.
+
+**Accept these costs:** a codegen step (mitigated by CI drift-check + `sqlc vet`), a Beta SQLite engine (keep exotic DDL out of the generate path), and writing dynamic queries by hand in the sqlx layer.
+
+**Choose GORM instead if:** the team prioritizes raw development speed and pervasive dynamic queries over compile-time guarantees, the schema is highly volatile, or CRUD-heavy breadth matters more than hot-path control. **Choose ent** for a deeply relational/graph domain; **bun** if you want one SQL-first tool with builder + migrations and moderate dynamism; **jet** if you specifically need type-safe *dynamic* queries (sqlc's main gap).
+
+Whatever you pick, **the decisive lever is SQLite tuning — WAL + busy_timeout + single writer connection + BEGIN IMMEDIATE — which matters more than the ORM choice itself.**
+
+---
 
 ## TL;DR
 
-**Use sqlc** for the Go + SQLite agent-orchestrator. You get compile-time-checked, explicit, low-overhead SQL — ideal for a job-queue/event-stream core with a stable schema — plus clean generated interfaces for testing. Pair it with **goose/golang-migrate/atlas** for migrations (sqlc does none) and a small **sqlx/`database/sql`** escape hatch for dynamic filter queries. Choose **GORM** instead only if development velocity and pervasive dynamic queries outweigh compile-time safety; consider **ent** for graph-heavy domains or **jet** for type-safe dynamic queries. Regardless of ORM, the decisive lever is SQLite tuning: **WAL mode + busy_timeout + a single writer connection.**
+**Use sqlc** for the Go + SQLite agent-orchestrator: compile-time-checked, explicit, low-overhead SQL is the right fit for a job-queue/event-stream core with an evolving schema, and its generated `Querier` interface makes testing clean. Pair it with **golang-migrate/goose** for migrations (sqlc does none by design) and a **thin sqlx/`database/sql` layer** for the few genuinely dynamic filter queries (sqlc's one real weakness). Prefer the **pure-Go `modernc.org/sqlite`** driver. Reach for **GORM** only if velocity and pervasive dynamic queries outweigh compile-time safety; consider **ent** (graph-heavy), **bun** (SQL-first all-in-one), or **jet** (type-safe dynamic queries) at the margins. Above all, **tune SQLite: WAL mode + busy_timeout + a single writer connection + BEGIN IMMEDIATE** — that decision outweighs the ORM itself.
 
 ## References
 
-- https://gorm.io/docs/
-- https://docs.sqlc.dev/
-- https://github.com/go-gorm/gorm
-- https://github.com/sqlc-dev/sqlc
-- https://pkg.go.dev/modernc.org/sqlite
-- https://github.com/mattn/go-sqlite3
-- https://github.com/pressly/goose
-- https://github.com/golang-migrate/migrate
-- https://atlasgo.io/
-- https://github.com/jmoiron/sqlx
-- https://entgo.io/
-- https://bun.uptrace.dev/
-- https://github.com/go-jet/jet
+- GORM docs — https://gorm.io/docs/
+- GORM GitHub — https://github.com/go-gorm/gorm
+- GORM SQLite driver — https://github.com/go-gorm/sqlite
+- glebarez/sqlite (pure-Go GORM driver) — https://github.com/glebarez/sqlite
+- sqlc docs — https://docs.sqlc.dev/
+- sqlc GitHub — https://github.com/sqlc-dev/sqlc
+- sqlc SQLite engine status & issues — https://github.com/sqlc-dev/sqlc/issues/3739 , https://github.com/sqlc-dev/sqlc/issues/1733
+- mattn/go-sqlite3 — https://github.com/mattn/go-sqlite3
+- modernc.org/sqlite — https://pkg.go.dev/modernc.org/sqlite
+- golang-migrate — https://github.com/golang-migrate/migrate
+- goose — https://github.com/pressly/goose
+- atlas — https://atlasgo.io/
+- sqlx — https://github.com/jmoiron/sqlx
+- ent — https://entgo.io/
+- bun — https://bun.uptrace.dev/
+- jet — https://github.com/go-jet/jet
+- SQLite WAL — https://www.sqlite.org/wal.html
+- SQLite locking / BEGIN IMMEDIATE — https://www.sqlite.org/lang_transaction.html
