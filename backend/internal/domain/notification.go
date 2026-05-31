@@ -32,9 +32,11 @@ type Notification struct {
 	UpdatedAt    time.Time
 }
 
-// NotificationAction is a provider-neutral action descriptor. Renderers may use
-// Route for app-local navigation, URL for external navigation, or Method for a
-// future command/action endpoint.
+// NotificationAction is a provider-neutral, allowlisted action descriptor.
+// Kind is the public action kind (open-session, open-pr, mark-read, ...).
+// Renderers may use Route for app-local navigation or URL for trusted external
+// navigation. Method is kept for backward-compatible decoding but action
+// execution rejects arbitrary callback/method payloads.
 type NotificationAction struct {
 	ID     string `json:"id"`
 	Kind   string `json:"kind"`

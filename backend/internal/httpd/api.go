@@ -6,9 +6,11 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/cdc"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apispec"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/controllers"
+	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/sse"
 	"github.com/aoagents/agent-orchestrator/backend/internal/project"
 )
 
@@ -23,7 +25,11 @@ import (
 // apispec.NotImplemented and don't dereference them yet. The handler-impl PR
 // wires real Managers and flips stubs to real logic one route at a time.
 type APIDeps struct {
-	Projects project.Manager
+	Projects      project.Manager
+	Notifications controllers.NotificationStore
+	ActionToken   string
+	EventSource   cdc.Source
+	Broadcaster   *cdc.Broadcaster
 }
 
 // API owns one controller per resource and is the single Register call the
@@ -31,8 +37,11 @@ type APIDeps struct {
 // later PRs can land a controller's real handlers without touching the
 // surrounding wiring.
 type API struct {
-	cfg      config.Config
-	projects *controllers.ProjectsController
+	cfg           config.Config
+	projects      *controllers.ProjectsController
+	notifications *controllers.NotificationsController
+	eventSource   cdc.Source
+	broadcaster   *cdc.Broadcaster
 }
 
 // NewAPI constructs the API surface from its dependencies. cfg carries the
@@ -44,6 +53,12 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 		projects: &controllers.ProjectsController{
 			Mgr: deps.Projects,
 		},
+		notifications: &controllers.NotificationsController{
+			Store:       deps.Notifications,
+			ActionToken: deps.ActionToken,
+		},
+		eventSource: deps.EventSource,
+		broadcaster: deps.Broadcaster,
 	}
 }
 
@@ -70,12 +85,13 @@ func (a *API) Register(root chi.Router) {
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.Timeout(timeout))
 			a.projects.Register(r)
+			a.notifications.Register(r)
 			// Sibling controllers (sessions, issues, prs, ...) plug in here in
 			// follow-up PRs #21 / #22 without touching the timeout group.
 		})
 		// Surfaces that intentionally bypass the REST timeout (SSE, future WS)
-		// register at this level — none exist in the route-shell PR.
 	})
+	root.Get("/events", sse.Handler{Source: a.eventSource, Broadcaster: a.broadcaster}.ServeHTTP)
 }
 
 // notFoundJSON returns the locked envelope for unmatched routes. Chi's default

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -19,13 +20,18 @@ type NotificationRow = domain.Notification
 // NotificationFilter constrains ListNotifications. A zero filter returns the
 // newest notifications across projects.
 type NotificationFilter struct {
-	ProjectID  string
-	SessionID  string
-	UnreadOnly bool
-	Limit      int
+	ProjectID       string
+	SessionID       string
+	UnreadOnly      bool
+	IncludeArchived bool
+	Limit           int
+	BeforeSeq       int64
 }
 
 const defaultNotificationLimit = 100
+
+const notificationSelectColumns = `seq, id, project_id, session_id, source, event_type, semantic_type, priority,
+    message, payload_json, actions_json, dedupe_key, cause_key, read_at, archived_at, created_at, updated_at, routed_at`
 
 // EnqueueNotification inserts a notification exactly once per dedupe key. The
 // returned bool is true when a new row was created; false means the existing row
@@ -90,24 +96,81 @@ func (s *Store) ListNotifications(ctx context.Context, filter NotificationFilter
 		limit = defaultNotificationLimit
 	}
 
-	var (
-		rows []gen.Notification
-		err  error
-	)
-	switch {
-	case filter.UnreadOnly:
-		rows, err = s.qr.ListUnreadNotifications(ctx, limit)
-	case filter.SessionID != "":
-		rows, err = s.qr.ListNotificationsBySession(ctx, gen.ListNotificationsBySessionParams{SessionID: filter.SessionID, Limit: limit})
-	case filter.ProjectID != "":
-		rows, err = s.qr.ListNotificationsByProject(ctx, gen.ListNotificationsByProjectParams{ProjectID: filter.ProjectID, Limit: limit})
-	default:
-		rows, err = s.qr.ListNotifications(ctx, limit)
-	}
+	query, args := buildNotificationListQuery(filter, limit)
+	rows, err := s.readDB.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list notifications: %w", err)
 	}
-	return notificationsFromGen(rows)
+	defer rows.Close()
+
+	out := make([]NotificationRow, 0, limit)
+	for rows.Next() {
+		row, err := scanNotification(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list notifications: %w", err)
+	}
+	return out, nil
+}
+
+// CountUnreadNotifications returns the current unread badge count. Archived
+// notifications never contribute to the badge, even when an API list includes
+// archived rows for history/backfill.
+func (s *Store) CountUnreadNotifications(ctx context.Context, filter NotificationFilter) (int, error) {
+	var (
+		clauses = []string{"read_at IS NULL", "archived_at IS NULL"}
+		args    []any
+	)
+	if filter.ProjectID != "" {
+		clauses = append(clauses, "project_id = ?")
+		args = append(args, filter.ProjectID)
+	}
+	if filter.SessionID != "" {
+		clauses = append(clauses, "session_id = ?")
+		args = append(args, filter.SessionID)
+	}
+	query := "SELECT COUNT(*) FROM notifications WHERE " + strings.Join(clauses, " AND ")
+	var count int
+	if err := s.readDB.QueryRowContext(ctx, query, args...).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count unread notifications: %w", err)
+	}
+	return count, nil
+}
+
+// MarkAllNotificationsRead marks visible unread notifications read, optionally
+// scoped by project/session, and returns the number of rows changed. SQLite
+// fires the notification_updated CDC trigger once per changed row.
+func (s *Store) MarkAllNotificationsRead(ctx context.Context, filter NotificationFilter, at time.Time) (int, error) {
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	clauses := []string{"read_at IS NULL", "archived_at IS NULL"}
+	args := []any{sql.NullTime{Time: at, Valid: true}, at}
+	if filter.ProjectID != "" {
+		clauses = append(clauses, "project_id = ?")
+		args = append(args, filter.ProjectID)
+	}
+	if filter.SessionID != "" {
+		clauses = append(clauses, "session_id = ?")
+		args = append(args, filter.SessionID)
+	}
+	query := "UPDATE notifications SET read_at = ?, updated_at = ? WHERE " + strings.Join(clauses, " AND ")
+
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	result, err := s.writeDB.ExecContext(ctx, query, args...)
+	if err != nil {
+		return 0, fmt.Errorf("mark all notifications read: %w", err)
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("mark all notifications read rows affected: %w", err)
+	}
+	return int(n), nil
 }
 
 // MarkNotificationRead marks an unread notification read. The returned bool is
@@ -154,6 +217,42 @@ func (s *Store) ArchiveNotification(ctx context.Context, id string, at time.Time
 		ID:         id,
 	})
 	return s.changedNotificationResult(ctx, row, id, true, err)
+}
+
+// UnarchiveNotification clears archived_at. Product flows currently avoid
+// surfacing unarchive, but the primitive is useful for idempotent PATCH handling
+// and tests; callers can decide whether to expose it.
+func (s *Store) UnarchiveNotification(ctx context.Context, id string, at time.Time) (NotificationRow, bool, error) {
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
+	row, err := s.writeDB.QueryContext(ctx, `UPDATE notifications
+SET archived_at = NULL, updated_at = ?
+WHERE id = ? AND archived_at IS NOT NULL
+RETURNING `+notificationSelectColumns, at, id)
+	if err != nil {
+		return NotificationRow{}, false, err
+	}
+	defer row.Close()
+	if row.Next() {
+		got, scanErr := scanNotification(row)
+		return got, scanErr == nil, scanErr
+	}
+	if err := row.Err(); err != nil {
+		return NotificationRow{}, false, err
+	}
+	existing, readErr := s.qw.GetNotification(ctx, id)
+	if errors.Is(readErr, sql.ErrNoRows) {
+		return NotificationRow{}, false, nil
+	}
+	if readErr != nil {
+		return NotificationRow{}, false, fmt.Errorf("get notification %s: %w", id, readErr)
+	}
+	mapped, mapErr := notificationFromGen(existing)
+	return mapped, false, mapErr
 }
 
 func (s *Store) changedNotificationResult(ctx context.Context, row gen.Notification, id string, changed bool, err error) (NotificationRow, bool, error) {
@@ -205,6 +304,68 @@ func notificationsFromGen(rows []gen.Notification) ([]NotificationRow, error) {
 		out = append(out, row)
 	}
 	return out, nil
+}
+
+func buildNotificationListQuery(filter NotificationFilter, limit int64) (string, []any) {
+	var (
+		clauses []string
+		args    []any
+	)
+	if filter.ProjectID != "" {
+		clauses = append(clauses, "project_id = ?")
+		args = append(args, filter.ProjectID)
+	}
+	if filter.SessionID != "" {
+		clauses = append(clauses, "session_id = ?")
+		args = append(args, filter.SessionID)
+	}
+	if filter.UnreadOnly {
+		clauses = append(clauses, "read_at IS NULL")
+	}
+	if !filter.IncludeArchived {
+		clauses = append(clauses, "archived_at IS NULL")
+	}
+	if filter.BeforeSeq > 0 {
+		clauses = append(clauses, "seq < ?")
+		args = append(args, filter.BeforeSeq)
+	}
+	where := ""
+	if len(clauses) > 0 {
+		where = " WHERE " + strings.Join(clauses, " AND ")
+	}
+	args = append(args, limit)
+	return "SELECT " + notificationSelectColumns + " FROM notifications" + where + " ORDER BY seq DESC LIMIT ?", args
+}
+
+type notificationScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanNotification(scanner notificationScanner) (NotificationRow, error) {
+	var r gen.Notification
+	if err := scanner.Scan(
+		&r.Seq,
+		&r.ID,
+		&r.ProjectID,
+		&r.SessionID,
+		&r.Source,
+		&r.EventType,
+		&r.SemanticType,
+		&r.Priority,
+		&r.Message,
+		&r.PayloadJson,
+		&r.ActionsJson,
+		&r.DedupeKey,
+		&r.CauseKey,
+		&r.ReadAt,
+		&r.ArchivedAt,
+		&r.CreatedAt,
+		&r.UpdatedAt,
+		&r.RoutedAt,
+	); err != nil {
+		return NotificationRow{}, err
+	}
+	return notificationFromGen(r)
 }
 
 func notificationFromGen(r gen.Notification) (NotificationRow, error) {

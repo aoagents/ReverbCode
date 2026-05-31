@@ -161,12 +161,12 @@ func mergePayload(m domain.Mergeability) *MergePayload {
 func actionsFor(projectID domain.ProjectID, sessionID domain.SessionID, pr domain.PRFacts) []domain.NotificationAction {
 	actions := []domain.NotificationAction{{
 		ID:    "open-session",
-		Kind:  "route",
+		Kind:  ActionOpenSession,
 		Label: "Open session",
 		Route: fmt.Sprintf("/projects/%s/sessions/%s", projectID, sessionID),
 	}}
 	if pr.Exists && pr.URL != "" {
-		actions = append(actions, domain.NotificationAction{ID: "open-pr", Kind: "url", Label: "Open PR", URL: pr.URL})
+		actions = append(actions, domain.NotificationAction{ID: "open-pr", Kind: ActionOpenPR, Label: "Open PR", URL: pr.URL})
 	}
 	return actions
 }

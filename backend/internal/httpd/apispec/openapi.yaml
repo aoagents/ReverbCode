@@ -16,6 +16,10 @@ servers:
 tags:
   - name: projects
     description: Project registry, configuration, and lifecycle administration
+  - name: notifications
+    description: Durable notification snapshot, state, and safe actions
+  - name: events
+    description: Durable CDC replay and live Server-Sent Events
 
 paths:
   /api/v1/projects:
@@ -246,6 +250,160 @@ paths:
         "404": { $ref: "#/components/responses/ProjectNotFound" }
         "501": { $ref: "#/components/responses/NotImplemented" }
 
+  /api/v1/notifications:
+    get:
+      operationId: listNotifications
+      tags: [notifications]
+      summary: List durable notifications with unread badge count
+      parameters:
+        - { name: projectId, in: query, schema: { type: string } }
+        - { name: sessionId, in: query, schema: { type: string } }
+        - { name: unreadOnly, in: query, schema: { type: boolean, default: false } }
+        - { name: includeArchived, in: query, schema: { type: boolean, default: false } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500, default: 50 } }
+        - { name: beforeSeq, in: query, schema: { type: integer, format: int64, minimum: 0 } }
+      responses:
+        "200":
+          description: Notifications listed
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [notifications, unreadCount, limit, nextBeforeSeq]
+                properties:
+                  notifications:
+                    type: array
+                    items: { $ref: "#/components/schemas/NotificationRecord" }
+                  unreadCount: { type: integer }
+                  limit: { type: integer }
+                  nextBeforeSeq:
+                    oneOf:
+                      - { type: integer, format: int64 }
+                      - { type: "null" }
+        "400": { $ref: "#/components/responses/APIErrorResponse" }
+        "500": { $ref: "#/components/responses/APIErrorResponse" }
+
+  /api/v1/notifications/read-all:
+    post:
+      operationId: markAllNotificationsRead
+      tags: [notifications]
+      summary: Mark visible notifications read, optionally scoped
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NotificationsReadAllRequest" }
+      responses:
+        "200":
+          description: Notifications updated
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [updated]
+                properties:
+                  updated: { type: integer }
+        "400": { $ref: "#/components/responses/APIErrorResponse" }
+        "500": { $ref: "#/components/responses/APIErrorResponse" }
+
+  /api/v1/notifications/{id}:
+    parameters:
+      - $ref: "#/components/parameters/NotificationIDPath"
+    get:
+      operationId: getNotification
+      tags: [notifications]
+      summary: Fetch one notification
+      responses:
+        "200":
+          description: Notification found
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [notification]
+                properties:
+                  notification: { $ref: "#/components/schemas/NotificationRecord" }
+        "404": { $ref: "#/components/responses/NotificationNotFound" }
+        "500": { $ref: "#/components/responses/APIErrorResponse" }
+    patch:
+      operationId: updateNotification
+      tags: [notifications]
+      summary: Update server-side read/archive state
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NotificationPatchRequest" }
+      responses:
+        "200":
+          description: Notification updated
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [notification]
+                properties:
+                  notification: { $ref: "#/components/schemas/NotificationRecord" }
+        "400": { $ref: "#/components/responses/APIErrorResponse" }
+        "404": { $ref: "#/components/responses/NotificationNotFound" }
+        "500": { $ref: "#/components/responses/APIErrorResponse" }
+
+  /api/v1/notifications/{id}/actions/{actionId}:
+    parameters:
+      - $ref: "#/components/parameters/NotificationIDPath"
+      - $ref: "#/components/parameters/NotificationActionIDPath"
+    post:
+      operationId: invokeNotificationAction
+      tags: [notifications]
+      summary: Invoke an allowlisted notification action
+      parameters:
+        - name: X-AO-Action-Token
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+      responses:
+        "200":
+          description: Action accepted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NotificationActionResult" }
+        "403": { $ref: "#/components/responses/APIErrorResponse" }
+        "404": { $ref: "#/components/responses/APIErrorResponse" }
+        "409": { $ref: "#/components/responses/APIErrorResponse" }
+        "422": { $ref: "#/components/responses/APIErrorResponse" }
+
+  /events:
+    get:
+      operationId: streamEvents
+      tags: [events]
+      summary: Replay durable CDC events and continue with live Server-Sent Events
+      parameters:
+        - { name: after, in: query, schema: { type: integer, format: int64, minimum: 0 } }
+        - { name: Last-Event-ID, in: header, schema: { type: integer, format: int64, minimum: 0 } }
+        - { name: projectId, in: query, schema: { type: string } }
+        - name: topics
+          in: query
+          schema:
+            type: string
+            enum: [sessions, prs, notifications]
+          description: Comma-separated list of topics.
+      responses:
+        "200":
+          description: Event stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "400": { $ref: "#/components/responses/APIErrorResponse" }
+        "503": { $ref: "#/components/responses/APIErrorResponse" }
+
 components:
   parameters:
     ProjectIDPath:
@@ -254,6 +412,16 @@ components:
       required: true
       schema: { type: string, minLength: 1 }
       description: Project identifier (registry key).
+    NotificationIDPath:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, minLength: 1 }
+    NotificationActionIDPath:
+      name: actionId
+      in: path
+      required: true
+      schema: { type: string, minLength: 1 }
 
   responses:
     NotImplemented:
@@ -272,6 +440,17 @@ components:
         application/json:
           schema: { $ref: "#/components/schemas/APIError" }
           example: { error: not_found, code: PROJECT_NOT_FOUND, message: "Unknown project" }
+    NotificationNotFound:
+      description: Notification not found
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/APIError" }
+          example: { error: not_found, code: NOTIFICATION_NOT_FOUND, message: "Notification not found" }
+    APIErrorResponse:
+      description: API error
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/APIError" }
 
   schemas:
     APIError:
@@ -394,6 +573,79 @@ components:
         reloaded: { type: boolean }
         projectCount: { type: integer }
         degradedCount: { type: integer }
+
+    NotificationRecord:
+      type: object
+      required: [seq, id, receivedAt, readAt, archivedAt, event, actions]
+      properties:
+        seq: { type: integer, format: int64 }
+        id: { type: string }
+        receivedAt: { type: string, format: date-time }
+        readAt:
+          oneOf:
+            - { type: string, format: date-time }
+            - { type: "null" }
+        archivedAt:
+          oneOf:
+            - { type: string, format: date-time }
+            - { type: "null" }
+        event: { $ref: "#/components/schemas/NotificationEvent" }
+        actions:
+          type: array
+          items: { $ref: "#/components/schemas/NotificationAction" }
+
+    NotificationEvent:
+      type: object
+      required: [id, type, priority, sessionId, projectId, timestamp, message, data]
+      properties:
+        id: { type: string }
+        type: { type: string }
+        priority:
+          type: string
+          enum: [urgent, action, warning, info]
+        sessionId: { type: string }
+        projectId: { type: string }
+        timestamp: { type: string, format: date-time }
+        message: { type: string }
+        data:
+          type: object
+          additionalProperties: true
+
+    NotificationAction:
+      type: object
+      required: [id, kind, label]
+      properties:
+        id: { type: string }
+        kind:
+          type: string
+          enum: [open-session, open-pr, open-review, open-ci, restore-session, send-message, merge-pr, mark-read, dismiss]
+        label: { type: string }
+        route: { type: string }
+        url: { type: string, format: uri }
+
+    NotificationPatchRequest:
+      type: object
+      properties:
+        read: { type: boolean }
+        archived: { type: boolean }
+      minProperties: 1
+
+    NotificationsReadAllRequest:
+      type: object
+      properties:
+        projectId: { type: string }
+        sessionId: { type: string }
+
+    NotificationActionResult:
+      type: object
+      required: [ok, actionId, kind]
+      properties:
+        ok: { type: boolean }
+        actionId: { type: string }
+        kind: { type: string }
+        result:
+          type: object
+          additionalProperties: true
 
     # ---- Behaviour config blobs (ported from the TS Zod schemas) ----
     # These are the known config shapes only. The current Go handler does not

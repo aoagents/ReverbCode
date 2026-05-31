@@ -5,6 +5,8 @@ package daemon
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"log/slog"
 	"os"
@@ -71,7 +73,21 @@ func Run() error {
 	termMgr := terminal.NewManager(runtimeAdapter, cdcPipe.Broadcaster, log)
 	defer termMgr.Close()
 
-	srv, err := httpd.New(cfg, log, termMgr)
+	actionToken, err := newActionToken()
+	if err != nil {
+		stop()
+		notifier.Stop()
+		if cdcErr := cdcPipe.Stop(); cdcErr != nil {
+			log.Error("cdc pipeline shutdown", "err", cdcErr)
+		}
+		return fmt.Errorf("generate action token: %w", err)
+	}
+	srv, err := httpd.NewWithAPI(cfg, log, termMgr, httpd.APIDeps{
+		Notifications: store,
+		ActionToken:   actionToken,
+		EventSource:   cdcSource{store},
+		Broadcaster:   cdcPipe.Broadcaster,
+	})
 	if err != nil {
 		stop()
 		notifier.Stop()
@@ -137,4 +153,15 @@ func Run() error {
 // can capture it separately from any structured stdout protocol added later.
 func newLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
+}
+
+func newActionToken() (string, error) {
+	if token := os.Getenv("AO_ACTION_TOKEN"); token != "" {
+		return token, nil
+	}
+	var b [32]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b[:]), nil
 }

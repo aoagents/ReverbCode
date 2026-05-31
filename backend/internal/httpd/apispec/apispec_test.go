@@ -21,6 +21,30 @@ func TestDefaultLoadsEmbeddedSpec(t *testing.T) {
 	}
 }
 
+func TestDefaultIncludesNotificationsAndEvents(t *testing.T) {
+	cases := []struct {
+		method string
+		path   string
+		opID   string
+	}{
+		{"GET", "/api/v1/notifications", "listNotifications"},
+		{"GET", "/api/v1/notifications/{id}", "getNotification"},
+		{"PATCH", "/api/v1/notifications/{id}", "updateNotification"},
+		{"POST", "/api/v1/notifications/read-all", "markAllNotificationsRead"},
+		{"POST", "/api/v1/notifications/{id}/actions/{actionId}", "invokeNotificationAction"},
+		{"GET", "/events", "streamEvents"},
+	}
+	for _, tc := range cases {
+		op := apispec.Default().Operation(tc.method, tc.path)
+		if op == nil {
+			t.Fatalf("missing %s %s", tc.method, tc.path)
+		}
+		if got, _ := op["operationId"].(string); got != tc.opID {
+			t.Fatalf("%s %s operationId=%q want %q", tc.method, tc.path, got, tc.opID)
+		}
+	}
+}
+
 // TestOperation_MissingPath returns nil for unknown paths — that's how the
 // controller-side test catches "route registered without spec coverage".
 func TestOperation_MissingPath(t *testing.T) {
