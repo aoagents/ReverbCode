@@ -16,5 +16,3 @@ SELECT * FROM pr WHERE url = ?;
 -- name: ListPRsBySession :many
 SELECT * FROM pr WHERE session_id = ? ORDER BY updated_at DESC;
 
--- name: DeletePR :exec
-DELETE FROM pr WHERE url = ?;

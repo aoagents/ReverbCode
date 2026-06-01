@@ -70,13 +70,6 @@ func (s *Store) ListAllSessions(ctx context.Context) ([]domain.SessionRecord, er
 	return mapSessionRows(rows), nil
 }
 
-// DeleteSession removes a session (cascades to its pr/checks/comments).
-func (s *Store) DeleteSession(ctx context.Context, id domain.SessionID) error {
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
-	return s.qw.DeleteSession(ctx, id)
-}
-
 func mapSessionRows(rows []gen.Session) []domain.SessionRecord {
 	out := make([]domain.SessionRecord, 0, len(rows))
 	for _, r := range rows {

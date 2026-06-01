@@ -6,21 +6,6 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
-// LifecycleManager is the inbound contract for durable session lifecycle facts
-// and lifecycle-owned agent nudges. PR row writes live in the PR service; PR
-// observations are passed here after persistence so lifecycle can prompt agents
-// to fix CI, review comments, or merge conflicts.
-type LifecycleManager interface {
-	ApplyRuntimeObservation(ctx context.Context, id domain.SessionID, f RuntimeFacts) error
-	ApplyActivitySignal(ctx context.Context, id domain.SessionID, s ActivitySignal) error
-	ApplyPRObservation(ctx context.Context, id domain.SessionID, o PRObservation) error
-
-	// MarkSpawned marks a session live and records its handles. It works for a
-	// fresh spawn and a restore.
-	MarkSpawned(ctx context.Context, id domain.SessionID, o SpawnOutcome) error
-	MarkTerminated(ctx context.Context, id domain.SessionID) error
-}
-
 // SessionManager is the inbound contract the API/CLI call for explicit
 // mutations. It drives the runtime/agent/workspace plugins and routes durable
 // session-fact writes to the LCM.

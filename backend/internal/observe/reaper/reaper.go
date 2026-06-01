@@ -39,10 +39,14 @@ type sessionLister interface {
 	ListAllSessions(ctx context.Context) ([]domain.SessionRecord, error)
 }
 
+type runtimeObserver interface {
+	ApplyRuntimeObservation(ctx context.Context, id domain.SessionID, f ports.RuntimeFacts) error
+}
+
 // Reaper is the polling timer. Construct it with New; start the background
 // goroutine with Start, or drive a single cycle synchronously with Tick.
 type Reaper struct {
-	lcm      ports.LifecycleManager
+	lcm      runtimeObserver
 	sessions sessionLister
 	runtime  ports.Runtime
 	tick     time.Duration
@@ -53,7 +57,7 @@ type Reaper struct {
 // New constructs a Reaper. The LCM is the writer destination; sessions supplies
 // the rows to probe; runtime is the single configured backend used for every
 // session.
-func New(lcm ports.LifecycleManager, sessions sessionLister, runtime ports.Runtime, cfg Config) *Reaper {
+func New(lcm runtimeObserver, sessions sessionLister, runtime ports.Runtime, cfg Config) *Reaper {
 	r := &Reaper{
 		lcm:      lcm,
 		sessions: sessions,

@@ -1,7 +1,7 @@
-// Package lifecycle implements ports.LifecycleManager: the synchronous reducer
-// that writes durable session lifecycle facts. It deliberately keeps the session
-// model small: activity_state plus an is_terminated bit are the only persisted
-// status-like facts on the session row.
+// Package lifecycle implements the synchronous reducer that writes durable
+// session lifecycle facts. It deliberately keeps the session model small:
+// activity_state plus an is_terminated bit are the only persisted status-like
+// facts on the session row.
 package lifecycle
 
 import (
@@ -26,14 +26,12 @@ type Manager struct {
 	react  reactionState
 }
 
-var _ ports.LifecycleManager = (*Manager)(nil)
-
 // New builds a Lifecycle Manager over the session store it writes and the messenger it uses for agent nudges.
 func New(store ports.SessionStore, messenger ports.AgentMessenger) *Manager {
 	return &Manager{store: store, messenger: messenger, window: defaultRecentActivityWindow, clock: time.Now, react: newReactionState()}
 }
 
-func (m *Manager) mutate(ctx context.Context, id domain.SessionID, fn func(domain.SessionRecord) (domain.SessionRecord, bool)) error {
+func (m *Manager) mutate(ctx context.Context, id domain.SessionID, fn func(domain.SessionRecord, time.Time) (domain.SessionRecord, bool)) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -41,11 +39,12 @@ func (m *Manager) mutate(ctx context.Context, id domain.SessionID, fn func(domai
 	if err != nil || !ok {
 		return err
 	}
-	next, changed := fn(rec)
+	now := m.clock()
+	next, changed := fn(rec, now)
 	if !changed {
 		return nil
 	}
-	next.UpdatedAt = m.clock()
+	next.UpdatedAt = now
 	if err := m.store.UpdateSession(ctx, next); err != nil {
 		return err
 	}
@@ -55,13 +54,13 @@ func (m *Manager) mutate(ctx context.Context, id domain.SessionID, fn func(domai
 // ApplyRuntimeObservation only writes when runtime liveness is unambiguous. A
 // failed/unknown probe or disagreement is ignored; no transient lifecycle state is stored.
 func (m *Manager) ApplyRuntimeObservation(ctx context.Context, id domain.SessionID, f ports.RuntimeFacts) error {
-	return m.mutate(ctx, id, func(cur domain.SessionRecord) (domain.SessionRecord, bool) {
-		if cur.IsTerminated || !runtimeClearlyDead(f, cur.Activity, m.window) {
+	return m.mutate(ctx, id, func(cur domain.SessionRecord, now time.Time) (domain.SessionRecord, bool) {
+		if cur.IsTerminated || !runtimeClearlyDead(f, cur.Activity, now, m.window) {
 			return cur, false
 		}
 		next := cur
 		next.IsTerminated = true
-		next.Activity = domain.ActivitySubstate{State: domain.ActivityExited, LastActivityAt: nowOr(f.ObservedAt), Source: domain.SourceRuntime}
+		next.Activity = domain.ActivitySubstate{State: domain.ActivityExited, LastActivityAt: timeOr(f.ObservedAt, now), Source: domain.SourceRuntime}
 		return next, true
 	})
 }
@@ -71,12 +70,12 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	if !s.Valid {
 		return nil
 	}
-	return m.mutate(ctx, id, func(cur domain.SessionRecord) (domain.SessionRecord, bool) {
+	return m.mutate(ctx, id, func(cur domain.SessionRecord, now time.Time) (domain.SessionRecord, bool) {
 		if cur.IsTerminated {
 			return cur, false
 		}
 		next := cur
-		act := domain.ActivitySubstate{State: s.State, LastActivityAt: nowOr(s.Timestamp), Source: s.Source}
+		act := domain.ActivitySubstate{State: s.State, LastActivityAt: timeOr(s.Timestamp, now), Source: s.Source}
 		if sameActivity(cur.Activity, act) {
 			return cur, false
 		}
@@ -99,21 +98,22 @@ func (m *Manager) MarkSpawned(ctx context.Context, id domain.SessionID, o ports.
 	if !ok {
 		return fmt.Errorf("lifecycle: MarkSpawned for unknown session %q", id)
 	}
+	now := m.clock()
 	rec.IsTerminated = false
-	rec.Activity = domain.ActivitySubstate{State: domain.ActivityReady, LastActivityAt: m.clock(), Source: domain.SourceRuntime}
+	rec.Activity = domain.ActivitySubstate{State: domain.ActivityReady, LastActivityAt: now, Source: domain.SourceRuntime}
 	rec.Metadata = mergeMetadata(rec.Metadata, spawnMetadata(o))
-	rec.UpdatedAt = m.clock()
+	rec.UpdatedAt = now
 	return m.store.UpdateSession(ctx, rec)
 }
 
 // MarkTerminated marks a session terminated without tearing down external resources.
 func (m *Manager) MarkTerminated(ctx context.Context, id domain.SessionID) error {
-	return m.mutate(ctx, id, func(cur domain.SessionRecord) (domain.SessionRecord, bool) {
+	return m.mutate(ctx, id, func(cur domain.SessionRecord, now time.Time) (domain.SessionRecord, bool) {
 		if cur.IsTerminated {
 			return cur, false
 		}
 		cur.IsTerminated = true
-		cur.Activity = domain.ActivitySubstate{State: domain.ActivityExited, LastActivityAt: m.clock(), Source: domain.SourceRuntime}
+		cur.Activity = domain.ActivitySubstate{State: domain.ActivityExited, LastActivityAt: now, Source: domain.SourceRuntime}
 		return cur, true
 	})
 }

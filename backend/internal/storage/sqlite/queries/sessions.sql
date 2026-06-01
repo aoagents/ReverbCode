@@ -26,5 +26,3 @@ SELECT * FROM sessions WHERE project_id = ? ORDER BY num;
 -- name: ListAllSessions :many
 SELECT * FROM sessions ORDER BY project_id, num;
 
--- name: DeleteSession :exec
-DELETE FROM sessions WHERE id = ?;

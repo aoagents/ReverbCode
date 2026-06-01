@@ -12,15 +12,6 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
-const deletePR = `-- name: DeletePR :exec
-DELETE FROM pr WHERE url = ?
-`
-
-func (q *Queries) DeletePR(ctx context.Context, url string) error {
-	_, err := q.db.ExecContext(ctx, deletePR, url)
-	return err
-}
-
 const getPR = `-- name: GetPR :one
 SELECT url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at FROM pr WHERE url = ?
 `

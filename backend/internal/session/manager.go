@@ -1,6 +1,6 @@
 // Package session implements ports.SessionManager. It drives the runtime/agent/
 // workspace plugins to create and tear down sessions, routes durable lifecycle fact writes
-// through the LCM, and attaches derived display status on read.
+// through lifecycle, and attaches derived display status on read.
 package session
 
 import (
@@ -27,6 +27,11 @@ const (
 	EnvIssueID   = "AO_ISSUE_ID"
 )
 
+type lifecycleRecorder interface {
+	MarkSpawned(ctx context.Context, id domain.SessionID, o ports.SpawnOutcome) error
+	MarkTerminated(ctx context.Context, id domain.SessionID) error
+}
+
 // Manager implements ports.SessionManager over the outbound ports.
 type Manager struct {
 	runtime   ports.Runtime
@@ -34,7 +39,7 @@ type Manager struct {
 	workspace ports.Workspace
 	store     ports.SessionStore
 	messenger ports.AgentMessenger
-	lcm       ports.LifecycleManager
+	lcm       lifecycleRecorder
 	clock     func() time.Time
 }
 
@@ -47,7 +52,7 @@ type Deps struct {
 	Workspace ports.Workspace
 	Store     ports.SessionStore
 	Messenger ports.AgentMessenger
-	Lifecycle ports.LifecycleManager
+	Lifecycle lifecycleRecorder
 	Clock     func() time.Time
 }
 

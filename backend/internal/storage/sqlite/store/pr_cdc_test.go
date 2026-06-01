@@ -22,13 +22,9 @@ func TestPRChecksCDC_EmitsOnInsertAndStatusUpdate(t *testing.T) {
 		t.Fatal(err)
 	}
 	url := "https://example/pr/1"
-	if err := s.UpsertPR(ctx, domain.PRRow{URL: url, SessionID: rec.ID, Number: 1}); err != nil {
-		t.Fatal(err)
-	}
-
 	now := time.Now()
 	mustCheck := func(status domain.PRCheckStatus) {
-		if err := s.RecordCheck(ctx, domain.PRCheckRow{PRURL: url, Name: "build", CommitHash: "c1", Status: status, CreatedAt: now}); err != nil {
+		if err := s.WritePR(ctx, domain.PRRow{URL: url, SessionID: rec.ID, Number: 1, UpdatedAt: now}, []domain.PRCheckRow{{PRURL: url, Name: "build", CommitHash: "c1", Status: status, CreatedAt: now}}, nil); err != nil {
 			t.Fatal(err)
 		}
 	}

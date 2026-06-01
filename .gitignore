@@ -26,6 +26,9 @@ agent-orchestrator.yaml
 session-events.jsonl
 session-events.jsonl.*
 
+# Agent Orchestrator local session state
+.ao/
+
 # Environment
 .env
 .env.*

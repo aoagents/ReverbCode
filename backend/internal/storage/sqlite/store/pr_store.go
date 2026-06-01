@@ -26,13 +26,6 @@ var (
 	_ ports.PRWriter     = (*Store)(nil)
 )
 
-// UpsertPR inserts or replaces the scalar PR facts for a PR URL.
-func (s *Store) UpsertPR(ctx context.Context, r domain.PRRow) error {
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
-	return s.qw.UpsertPR(ctx, genPRParams(r))
-}
-
 // WritePR persists a full PR observation — scalar facts, check runs, and the
 // replacement comment set — in one write transaction, so the rows and the
 // change_log events their triggers emit are committed all-or-nothing. The scalar
@@ -87,21 +80,6 @@ func (s *Store) ListPRsBySession(ctx context.Context, sessionID string) ([]domai
 	return out, nil
 }
 
-// DeletePR removes a PR (cascades to its checks + comments).
-func (s *Store) DeletePR(ctx context.Context, url string) error {
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
-	return s.qw.DeletePR(ctx, url)
-}
-
-// RecordCheck upserts a CI check run. Re-polling the same (pr, name, commit)
-// updates the same row; a new commit creates a new row (a fresh agent attempt).
-func (s *Store) RecordCheck(ctx context.Context, r domain.PRCheckRow) error {
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
-	return s.qw.UpsertPRCheck(ctx, genCheckParams(r))
-}
-
 // ListChecks returns every recorded check run for a PR.
 func (s *Store) ListChecks(ctx context.Context, prURL string) ([]domain.PRCheckRow, error) {
 	rows, err := s.qr.ListChecksByPR(ctx, prURL)
@@ -113,24 +91,6 @@ func (s *Store) ListChecks(ctx context.Context, prURL string) ([]domain.PRCheckR
 		out = append(out, checkRowFromGen(c))
 	}
 	return out, nil
-}
-
-// ReplacePRComments atomically replaces the full comment set for a PR (each SCM
-// fetch reports the current set, so a replace keeps it in sync).
-func (s *Store) ReplacePRComments(ctx context.Context, prURL string, comments []domain.PRComment) error {
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
-	return s.inTx(ctx, "replace pr comments", func(q *gen.Queries) error {
-		if err := q.DeletePRComments(ctx, prURL); err != nil {
-			return err
-		}
-		for _, c := range comments {
-			if err := q.UpsertPRComment(ctx, genCommentParams(prURL, c)); err != nil {
-				return fmt.Errorf("comment %q: %w", c.ID, err)
-			}
-		}
-		return nil
-	})
 }
 
 // ListPRComments returns a PR's review comments, oldest first.

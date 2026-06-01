@@ -22,14 +22,14 @@ func hasRecentActivity(a domain.ActivitySubstate, now time.Time, window time.Dur
 	}
 }
 
-func runtimeClearlyDead(f ports.RuntimeFacts, activity domain.ActivitySubstate, window time.Duration) bool {
-	now := nowOr(f.ObservedAt)
-	return f.Runtime == ports.ProbeDead && f.Process == ports.ProbeDead && !hasRecentActivity(activity, now, window)
+func runtimeClearlyDead(f ports.RuntimeFacts, activity domain.ActivitySubstate, now time.Time, window time.Duration) bool {
+	observedAt := timeOr(f.ObservedAt, now)
+	return f.Runtime == ports.ProbeDead && f.Process == ports.ProbeDead && !hasRecentActivity(activity, observedAt, window)
 }
 
-func nowOr(t time.Time) time.Time {
+func timeOr(t, fallback time.Time) time.Time {
 	if t.IsZero() {
-		return time.Now()
+		return fallback
 	}
 	return t
 }

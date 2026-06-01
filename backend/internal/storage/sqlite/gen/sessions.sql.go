@@ -12,15 +12,6 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
-const deleteSession = `-- name: DeleteSession :exec
-DELETE FROM sessions WHERE id = ?
-`
-
-func (q *Queries) DeleteSession(ctx context.Context, id domain.SessionID) error {
-	_, err := q.db.ExecContext(ctx, deleteSession, id)
-	return err
-}
-
 const getSession = `-- name: GetSession :one
 SELECT id, project_id, num, issue_id, kind, harness, activity_state, activity_last_at, activity_source, branch, workspace_path, runtime_handle_id, agent_session_id, prompt, created_at, updated_at, is_terminated FROM sessions WHERE id = ?
 `

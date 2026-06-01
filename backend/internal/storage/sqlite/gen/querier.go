@@ -12,9 +12,7 @@ import (
 
 type Querier interface {
 	ArchiveProject(ctx context.Context, arg ArchiveProjectParams) error
-	DeletePR(ctx context.Context, url string) error
 	DeletePRComments(ctx context.Context, prUrl string) error
-	DeleteSession(ctx context.Context, id domain.SessionID) error
 	GetPR(ctx context.Context, url string) (Pr, error)
 	GetProject(ctx context.Context, id domain.ProjectID) (Project, error)
 	GetSession(ctx context.Context, id domain.SessionID) (Session, error)
@@ -25,10 +23,9 @@ type Querier interface {
 	ListPRsBySession(ctx context.Context, sessionID domain.SessionID) ([]Pr, error)
 	ListProjects(ctx context.Context) ([]Project, error)
 	ListSessionsByProject(ctx context.Context, projectID domain.ProjectID) ([]Session, error)
-	MaxChangeLogSeq(ctx context.Context) (interface{}, error)
+	MaxChangeLogSeq(ctx context.Context) (int64, error)
 	NextSessionNum(ctx context.Context, projectID domain.ProjectID) (int64, error)
 	ReadChangeLogAfter(ctx context.Context, arg ReadChangeLogAfterParams) ([]ChangeLog, error)
-	ReadChangeLogAfterForProject(ctx context.Context, arg ReadChangeLogAfterForProjectParams) ([]ChangeLog, error)
 	UpdateSession(ctx context.Context, arg UpdateSessionParams) error
 	UpsertPR(ctx context.Context, arg UpsertPRParams) error
 	UpsertPRCheck(ctx context.Context, arg UpsertPRCheckParams) error

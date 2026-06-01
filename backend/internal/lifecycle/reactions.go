@@ -93,12 +93,13 @@ func (m *Manager) sendOnce(ctx context.Context, id domain.SessionID, key, sig, m
 		m.react.mu.Unlock()
 		return nil
 	}
-	m.react.seen[key] = sig
-	m.react.attempts[key]++
 	attempts := m.react.attempts[key]
-	m.react.mu.Unlock()
-	if maxAttempts > 0 && attempts > maxAttempts {
+	if maxAttempts > 0 && attempts >= maxAttempts {
+		m.react.mu.Unlock()
 		return nil
 	}
+	m.react.seen[key] = sig
+	m.react.attempts[key] = attempts + 1
+	m.react.mu.Unlock()
 	return m.messenger.Send(ctx, id, msg)
 }

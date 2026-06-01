@@ -136,7 +136,7 @@ func TestPRCRUD(t *testing.T) {
 		URL: "https://gh/pr/1", SessionID: r.ID, Number: 1,
 		Review: domain.ReviewRequired, CI: domain.CIFailing, Mergeability: domain.MergeBlocked, UpdatedAt: now,
 	}
-	if err := s.UpsertPR(ctx, pr); err != nil {
+	if err := s.WritePR(ctx, pr, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	got, ok, err := s.GetPR(ctx, pr.URL)
@@ -146,12 +146,6 @@ func TestPRCRUD(t *testing.T) {
 	if list, _ := s.ListPRsBySession(ctx, string(r.ID)); len(list) != 1 {
 		t.Fatalf("list prs = %d, want 1", len(list))
 	}
-	if err := s.DeletePR(ctx, pr.URL); err != nil {
-		t.Fatal(err)
-	}
-	if _, ok, _ := s.GetPR(ctx, pr.URL); ok {
-		t.Fatal("pr should be gone")
-	}
 }
 
 func TestPRCommentsReplace(t *testing.T) {
@@ -160,9 +154,7 @@ func TestPRCommentsReplace(t *testing.T) {
 	seedProject(t, s, "mer")
 	r, _ := s.CreateSession(ctx, sampleRecord("mer"))
 	now := time.Now().UTC().Truncate(time.Second)
-	_ = s.UpsertPR(ctx, domain.PRRow{URL: "pr1", SessionID: r.ID, UpdatedAt: now})
-
-	_ = s.ReplacePRComments(ctx, "pr1", []domain.PRComment{
+	_ = s.WritePR(ctx, domain.PRRow{URL: "pr1", SessionID: r.ID, UpdatedAt: now}, nil, []domain.PRComment{
 		{ID: "c1", Author: "a", File: "a.go", Line: 1, Body: "nit", CreatedAt: now},
 		{ID: "c2", Author: "b", File: "b.go", Line: 2, Body: "bug", Resolved: true, CreatedAt: now.Add(time.Second)},
 	})
@@ -170,7 +162,7 @@ func TestPRCommentsReplace(t *testing.T) {
 		t.Fatalf("comments = %d, want 2", len(list))
 	}
 	// replace with a smaller set drops the rest.
-	_ = s.ReplacePRComments(ctx, "pr1", []domain.PRComment{{ID: "c1", Body: "x", CreatedAt: now}})
+	_ = s.WritePR(ctx, domain.PRRow{URL: "pr1", SessionID: r.ID, UpdatedAt: now}, nil, []domain.PRComment{{ID: "c1", Body: "x", CreatedAt: now}})
 	if list, _ := s.ListPRComments(ctx, "pr1"); len(list) != 1 {
 		t.Fatalf("after replace, comments = %d, want 1", len(list))
 	}
@@ -188,7 +180,7 @@ func TestCDCTriggersPopulateChangeLog(t *testing.T) {
 	r.Metadata.Prompt = "only metadata changed"
 	_ = s.UpdateSession(ctx, r)
 	// a PR insert logs too.
-	_ = s.UpsertPR(ctx, domain.PRRow{URL: "pr1", SessionID: r.ID, UpdatedAt: r.UpdatedAt})
+	_ = s.WritePR(ctx, domain.PRRow{URL: "pr1", SessionID: r.ID, UpdatedAt: r.UpdatedAt}, nil, nil)
 
 	evs, err := s.ReadChangeLogAfter(ctx, 0, 100)
 	if err != nil {
