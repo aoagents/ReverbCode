@@ -2,11 +2,16 @@ package daemon
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/messenger/inbox"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/zellij"
 	"github.com/aoagents/agent-orchestrator/backend/internal/cdc"
+	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/lifecycle"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -67,5 +72,76 @@ func TestWiring_WriteFlowsToBroadcaster(t *testing.T) {
 	}
 	if !sawSession {
 		t.Fatalf("expected a change_log event for %s to reach the broadcaster, got %d events", rec.ID, len(got))
+	}
+}
+
+// TestWiring_SessionStackSharesSingletons asserts the daemon's wiring shape:
+// startLifecycle and buildSessionStack share the same messenger and LCM, and
+// the messenger reaches the same store the SM reads. Two LCMs would split
+// agent-nudge state; two messengers would route inbox writes inconsistently.
+//
+// The pointer-identity check on ss.messenger proves buildSessionStack does not
+// silently construct a second messenger; the end-to-end Send through a row the
+// store owns proves the storeWorkspaceLookup is the same store SM uses.
+func TestWiring_SessionStackSharesSingletons(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	store, err := sqlite.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	cfg := config.Config{DataDir: t.TempDir()}
+
+	projects := project.NewManager(store)
+	runtime := zellij.New(zellij.Options{})
+	messenger := inbox.New(newStoreWorkspaceLookup(store))
+	lcStack := startLifecycle(ctx, store, runtime, messenger, nil)
+	// Cancel-then-Stop in order: Stop drains the reaper goroutine, which only
+	// exits when ctx is cancelled. A naive `defer cancel(); defer lcStack.Stop()`
+	// reverses this (defer is LIFO) and deadlocks.
+	t.Cleanup(func() {
+		cancel()
+		lcStack.Stop()
+	})
+
+	if lcStack.lcm == nil {
+		t.Fatal("lifecycleStack must expose its LCM so the SM can share it")
+	}
+	ss, err := buildSessionStack(cfg, store, runtime, projects, lcStack.lcm, messenger)
+	if err != nil {
+		t.Fatalf("buildSessionStack: %v", err)
+	}
+	if ss.sm == nil || ss.workspace == nil || ss.messenger == nil {
+		t.Fatal("session stack must be fully populated")
+	}
+	if ss.messenger != messenger {
+		t.Error("buildSessionStack must reuse the messenger it is given, not construct a second one")
+	}
+
+	// End-to-end: a session row in the shared store should be reachable through
+	// the messenger that buildSessionStack wired up. A second store would
+	// surface as "session not found" here.
+	if err := store.Upsert(ctx, project.Row{ID: "p", Path: "/repo/p", RegisteredAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	workspaceDir := t.TempDir()
+	rec, err := store.CreateSession(ctx, domain.SessionRecord{
+		ProjectID: "p", Kind: domain.KindWorker,
+		Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: time.Now()},
+		Metadata: domain.SessionMetadata{WorkspacePath: workspaceDir},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ss.messenger.Send(ctx, rec.ID, "hello"); err != nil {
+		t.Fatalf("messenger.Send through shared store lookup: %v", err)
+	}
+	entries, err := os.ReadDir(filepath.Join(workspaceDir, ".ao", "inbox"))
+	if err != nil {
+		t.Fatalf("inbox dir: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("want 1 inbox file, got %d", len(entries))
 	}
 }

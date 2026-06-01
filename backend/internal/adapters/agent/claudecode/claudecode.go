@@ -41,10 +41,8 @@ const (
 	// Normalized session-metadata keys the Claude Code hooks persist into the
 	// Better-AO session store and SessionInfo reads back. Shared vocabulary
 	// with the Codex adapter so the dashboard treats every agent uniformly.
-	// agentSessionId is also the preferred restore id.
-	claudeAgentSessionIDMetadataKey = "agentSessionId"
-	claudeTitleMetadataKey          = "title"
-	claudeSummaryMetadataKey        = "summary"
+	claudeTitleMetadataKey   = "title"
+	claudeSummaryMetadataKey = "summary"
 )
 
 // claudeSessionNamespace seeds the UUIDv5 derivation that maps a better-ao
@@ -179,7 +177,7 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg agent.RestoreConfig)
 		return nil, false, err
 	}
 
-	sessionID := strings.TrimSpace(cfg.Session.Metadata[claudeAgentSessionIDMetadataKey])
+	sessionID := strings.TrimSpace(cfg.Session.Metadata[agent.MetadataKeyAgentSessionID])
 	if sessionID == "" && cfg.Session.ID != "" {
 		// Explicit fallback for pre-hook sessions: the id better-ao
 		// deterministically pinned via --session-id at launch.
@@ -210,7 +208,7 @@ func (p *Plugin) SessionInfo(ctx context.Context, session agent.SessionRef) (age
 		return agent.SessionInfo{}, false, err
 	}
 	info := agent.SessionInfo{
-		AgentSessionID: session.Metadata[claudeAgentSessionIDMetadataKey],
+		AgentSessionID: session.Metadata[agent.MetadataKeyAgentSessionID],
 		Title:          session.Metadata[claudeTitleMetadataKey],
 		Summary:        session.Metadata[claudeSummaryMetadataKey],
 	}

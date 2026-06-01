@@ -228,7 +228,7 @@ func TestSessionInfoReadsHookMetadata(t *testing.T) {
 	info, ok, err := (&Plugin{resolvedBinary: "claude"}).SessionInfo(context.Background(), agent.SessionRef{
 		WorkspacePath: "/some/path",
 		Metadata: map[string]string{
-			claudeAgentSessionIDMetadataKey: "claude-native-1",
+			agent.MetadataKeyAgentSessionID: "claude-native-1",
 			claudeTitleMetadataKey:          "Fix login redirect",
 			claudeSummaryMetadataKey:        "Updated the auth callback and tests.",
 			"ignored":                       "not returned",
@@ -299,7 +299,7 @@ func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 		Permissions: agent.PermissionModeBypassPermissions,
 		Session: agent.SessionRef{
 			ID:       "sess-r",
-			Metadata: map[string]string{claudeAgentSessionIDMetadataKey: "claude-native-1"},
+			Metadata: map[string]string{agent.MetadataKeyAgentSessionID: "claude-native-1"},
 		},
 	})
 	if err != nil || !ok {
@@ -334,7 +334,7 @@ func TestGetRestoreCommandFalseWithoutSessionID(t *testing.T) {
 		ref  agent.SessionRef
 	}{
 		{"empty ref", agent.SessionRef{}},
-		{"blank agent session, no id", agent.SessionRef{Metadata: map[string]string{claudeAgentSessionIDMetadataKey: "   "}}},
+		{"blank agent session, no id", agent.SessionRef{Metadata: map[string]string{agent.MetadataKeyAgentSessionID: "   "}}},
 		{"workspace path only", agent.SessionRef{WorkspacePath: "/some/path"}},
 	}
 	for _, tc := range cases {
