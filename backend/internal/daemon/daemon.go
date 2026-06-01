@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/messenger/inbox"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/zellij"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd"
@@ -58,15 +59,21 @@ func Run() error {
 		return err
 	}
 
+	// Singletons shared across the daemon. Constructing each exactly once and
+	// passing the same instance everywhere prevents the multi-zellij-socket /
+	// dual-LCM / dual-project-store hazards that fragmented adapters create.
+	runtimeAdapter := zellij.New(zellij.Options{})
+	projects := project.NewManager(store)
+	messenger := inbox.New(newStoreWorkspaceLookup(store))
+
 	// Terminal streaming: the Zellij runtime supplies the PTY-attach command and
 	// liveness; the CDC broadcaster feeds the session-state channel. The manager
 	// is handed to httpd, which mounts it at /mux. Raw PTY bytes never flow
 	// through the CDC change_log — only session-state events do.
-	runtimeAdapter := zellij.New(zellij.Options{})
 	termMgr := terminal.NewManager(runtimeAdapter, cdcPipe.Broadcaster, log)
 	defer termMgr.Close()
 
-	srv, err := httpd.NewWithDeps(cfg, log, termMgr, httpd.APIDeps{Projects: project.NewManager(store)})
+	srv, err := httpd.NewWithDeps(cfg, log, termMgr, httpd.APIDeps{Projects: projects})
 	if err != nil {
 		stop()
 		if cdcErr := cdcPipe.Stop(); cdcErr != nil {
@@ -75,10 +82,21 @@ func Run() error {
 		return err
 	}
 
-	// Bring up the Lifecycle Manager and the reaper. This makes the session
-	// lifecycle write path live end-to-end: reducer write -> store -> DB trigger
-	// -> change_log -> poller -> broadcaster.
-	lcStack := startLifecycle(ctx, store, runtimeAdapter, log)
+	// Bring up the Lifecycle Manager + reaper, then the Session Manager stack
+	// over the same lcm/runtime/projects/messenger singletons. SM has no HTTP
+	// routes yet — they land in a follow-up PR; constructing it here lets the
+	// next PR hang controllers off ss.sm without further wiring changes.
+	lcStack := startLifecycle(ctx, store, runtimeAdapter, messenger, log)
+	ss, err := buildSessionStack(cfg, store, runtimeAdapter, projects, lcStack.lcm, messenger)
+	if err != nil {
+		stop()
+		lcStack.Stop()
+		if cdcErr := cdcPipe.Stop(); cdcErr != nil {
+			log.Error("cdc pipeline shutdown", "err", cdcErr)
+		}
+		return err
+	}
+	_ = ss // sm: HTTP routes land in a follow-up PR (γ)
 
 	runErr := srv.Run(ctx)
 

@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	codexAgentSessionIDMetadataKey = "agentSessionId"
+	codexAgentSessionIDMetadataKey = agent.MetadataKeyAgentSessionID
 	codexTitleMetadataKey          = "title"
 	codexSummaryMetadataKey        = "summary"
 )

@@ -30,6 +30,12 @@ type Agent interface {
 	SessionInfo(ctx context.Context, session SessionRef) (info SessionInfo, ok bool, err error)
 }
 
+// MetadataKeyAgentSessionID is the SessionRef.Metadata key under which every
+// adapter persists the native agent session id captured at launch and reads it
+// back during restore. The Better-AO portshim sets it so the underlying
+// adapter's GetRestoreCommand sees a unified location regardless of harness.
+const MetadataKeyAgentSessionID = "agentSessionId"
+
 // Config contains values loaded from the selected agent's config section.
 // Agent adapters own validation for their custom keys.
 type Config map[string]any
