@@ -355,7 +355,7 @@ These are the main gaps before the full initial command set is real.
 | Project API daemon wiring. | `ao project list/add/show/remove`. |
 | SSE route for live CDC events plus durable catch-up reads. | `ao events tail`, frontend live updates. |
 | Agent adapters for supported harnesses (`codex`, `claude-code`, etc.). | `ao spawn`, `ao session restore`. |
-| AgentMessenger implementation over Zellij. | `ao send`. |
+| AgentMessenger implementation over Zellij. | `ao send` and lifecycle PR nudges. |
 | Zellij runtime wired into the daemon. | Reaper liveness, `session attach`, spawn/kill/restore runtime work. |
 | Activity hooks or agent self-report protocol. | Accurate working/idle/needs-input status beyond runtime/PR facts. |
 | Project/tracker config model. | `project add/show`, tracker-backed `spawn`, `doctor` config checks. |

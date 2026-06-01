@@ -29,7 +29,7 @@ type lifecycleStack struct {
 // startLifecycle constructs the LCM over the store and starts the reaper.
 // The goroutine stops when ctx is cancelled; Stop waits for it to drain.
 func startLifecycle(ctx context.Context, store *sqlite.Store, runtime ports.Runtime, logger *slog.Logger) *lifecycleStack {
-	lcm := lifecycle.New(store)
+	lcm := lifecycle.New(store, noopMessenger{})
 	rp := reaper.New(lcm, store, runtime, reaper.Config{Logger: logger})
 	return &lifecycleStack{LCM: lcm, Store: store, reaperDone: rp.Start(ctx)}
 }

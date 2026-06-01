@@ -15,11 +15,12 @@ type sessionReader interface {
 }
 
 type lifecycle interface {
+	ApplyPRObservation(ctx context.Context, id domain.SessionID, o ports.PRObservation) error
 	MarkTerminated(ctx context.Context, id domain.SessionID) error
 }
 
-// Manager persists PR observations and applies the few session lifecycle effects
-// that directly follow from PR state, such as terminating a session whose PR merged.
+// Manager persists PR observations and forwards them to lifecycle for agent
+// nudges and direct lifecycle effects such as terminating a merged session.
 type Manager struct {
 	sessions  sessionReader
 	writer    ports.PRWriter
@@ -59,12 +60,16 @@ func (m *Manager) ApplyObservation(ctx context.Context, id domain.SessionID, o p
 	if err := m.write(ctx, id, o); err != nil {
 		return err
 	}
-	if o.Merged && m.lifecycle != nil {
+	if m.lifecycle == nil {
+		return nil
+	}
+	if o.Merged {
 		if err := m.lifecycle.MarkTerminated(ctx, id); err != nil {
 			return fmt.Errorf("terminate merged session %s: %w", id, err)
 		}
+		return nil
 	}
-	return nil
+	return m.lifecycle.ApplyPRObservation(ctx, id, o)
 }
 
 func (m *Manager) write(ctx context.Context, id domain.SessionID, o ports.PRObservation) error {

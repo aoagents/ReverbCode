@@ -86,6 +86,9 @@ func (l *fakeLCM) ApplyRuntimeObservation(context.Context, domain.SessionID, por
 func (l *fakeLCM) ApplyActivitySignal(context.Context, domain.SessionID, ports.ActivitySignal) error {
 	return nil
 }
+func (l *fakeLCM) ApplyPRObservation(context.Context, domain.SessionID, ports.PRObservation) error {
+	return nil
+}
 
 type fakeRuntime struct {
 	createErr          error

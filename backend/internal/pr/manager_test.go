@@ -31,7 +31,15 @@ func (f *fakeWriter) WritePR(_ context.Context, pr domain.PRRow, checks []domain
 	return nil
 }
 
-type fakeLifecycle struct{ terminated []domain.SessionID }
+type fakeLifecycle struct {
+	terminated []domain.SessionID
+	observed   []ports.PRObservation
+}
+
+func (f *fakeLifecycle) ApplyPRObservation(_ context.Context, _ domain.SessionID, o ports.PRObservation) error {
+	f.observed = append(f.observed, o)
+	return nil
+}
 
 func (f *fakeLifecycle) MarkTerminated(_ context.Context, id domain.SessionID) error {
 	f.terminated = append(f.terminated, id)
@@ -71,6 +79,9 @@ func TestApplyObservation_WritesPRChecksAndComments(t *testing.T) {
 	}
 	if len(fl.terminated) != 0 {
 		t.Fatalf("non-merged PR should not terminate: %v", fl.terminated)
+	}
+	if len(fl.observed) != 1 || fl.observed[0].URL != o.URL {
+		t.Fatalf("non-merged PR should be forwarded to lifecycle, got %v", fl.observed)
 	}
 }
 

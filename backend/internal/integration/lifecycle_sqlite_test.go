@@ -89,7 +89,7 @@ func newStack(t *testing.T) *stack {
 		t.Fatal(err)
 	}
 	msg := &captureMessenger{}
-	lcm := lifecycle.New(store)
+	lcm := lifecycle.New(store, msg)
 	prm := prsvc.New(prsvc.Deps{Sessions: store, Writer: store, Lifecycle: lcm})
 	rt := &stubRuntime{}
 	ws := &stubWorkspace{}

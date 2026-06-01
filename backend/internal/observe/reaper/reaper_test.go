@@ -27,6 +27,9 @@ func (l *fakeLCM) ApplyRuntimeObservation(_ context.Context, id domain.SessionID
 func (l *fakeLCM) ApplyActivitySignal(context.Context, domain.SessionID, ports.ActivitySignal) error {
 	return nil
 }
+func (l *fakeLCM) ApplyPRObservation(context.Context, domain.SessionID, ports.PRObservation) error {
+	return nil
+}
 func (l *fakeLCM) MarkSpawned(context.Context, domain.SessionID, ports.SpawnOutcome) error {
 	return nil
 }

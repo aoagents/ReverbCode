@@ -3,6 +3,7 @@ package lifecycle
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -59,9 +60,17 @@ func (f *fakeStore) ListPRFactsForSession(_ context.Context, id domain.SessionID
 	return nil, nil
 }
 
-func newManager() (*Manager, *fakeStore) {
+type fakeMessenger struct{ msgs []string }
+
+func (f *fakeMessenger) Send(_ context.Context, _ domain.SessionID, msg string) error {
+	f.msgs = append(f.msgs, msg)
+	return nil
+}
+
+func newManager() (*Manager, *fakeStore, *fakeMessenger) {
 	st := newFakeStore()
-	return New(st), st
+	msg := &fakeMessenger{}
+	return New(st, msg), st, msg
 }
 
 func working(id domain.SessionID) domain.SessionRecord {
@@ -69,7 +78,7 @@ func working(id domain.SessionID) domain.SessionRecord {
 }
 
 func TestRuntimeObservation_InferredDeathSetsTerminated(t *testing.T) {
-	m, st := newManager()
+	m, st, _ := newManager()
 	rec := working("mer-1")
 	rec.Activity.LastActivityAt = time.Now().Add(-2 * time.Minute)
 	st.sessions["mer-1"] = rec
@@ -83,7 +92,7 @@ func TestRuntimeObservation_InferredDeathSetsTerminated(t *testing.T) {
 }
 
 func TestRuntimeObservation_FailedProbeDoesNotMutate(t *testing.T) {
-	m, st := newManager()
+	m, st, _ := newManager()
 	st.sessions["mer-1"] = working("mer-1")
 	before := st.sessions["mer-1"]
 	if err := m.ApplyRuntimeObservation(ctx, "mer-1", ports.RuntimeFacts{Runtime: ports.ProbeFailed, Process: ports.ProbeFailed}); err != nil {
@@ -95,7 +104,7 @@ func TestRuntimeObservation_FailedProbeDoesNotMutate(t *testing.T) {
 }
 
 func TestActivity_InvalidIsIgnored(t *testing.T) {
-	m, st := newManager()
+	m, st, _ := newManager()
 	st.sessions["mer-1"] = working("mer-1")
 	before := st.sessions["mer-1"]
 	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: false, State: domain.ActivityIdle}); err != nil {
@@ -107,7 +116,7 @@ func TestActivity_InvalidIsIgnored(t *testing.T) {
 }
 
 func TestMarkTerminated(t *testing.T) {
-	m, st := newManager()
+	m, st, _ := newManager()
 	st.sessions["mer-1"] = working("mer-1")
 	if err := m.MarkTerminated(ctx, "mer-1"); err != nil {
 		t.Fatal(err)
@@ -119,7 +128,7 @@ func TestMarkTerminated(t *testing.T) {
 }
 
 func TestMarkSpawnedStoresRuntimeMetadata(t *testing.T) {
-	m, st := newManager()
+	m, st, _ := newManager()
 	st.sessions["mer-1"] = working("mer-1")
 	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", IsTerminated: true}
 	out := ports.SpawnOutcome{Branch: "b", WorkspacePath: "/ws", RuntimeHandle: ports.RuntimeHandle{ID: "h1"}, AgentSessionID: "agent", Prompt: "prompt"}
@@ -129,5 +138,41 @@ func TestMarkSpawnedStoresRuntimeMetadata(t *testing.T) {
 	got := st.sessions["mer-1"]
 	if got.IsTerminated || got.Activity.State != domain.ActivityReady || got.Metadata.RuntimeHandleID != "h1" {
 		t.Fatalf("spawn metadata wrong: %+v", got)
+	}
+}
+
+func TestPRObservation_CIFailingNudgesAgentWithLogs(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	o := ports.PRObservation{Fetched: true, URL: "pr1", CI: domain.CIFailing, Checks: []domain.PRCheckRow{{Name: "build", CommitHash: "c1", Status: domain.PRCheckFailed, LogTail: "boom"}}}
+	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 1 || !strings.Contains(msg.msgs[0], "boom") {
+		t.Fatalf("want one CI nudge with log tail, got %v", msg.msgs)
+	}
+}
+
+func TestPRObservation_ReviewCommentsNudgeAgent(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	o := ports.PRObservation{Fetched: true, URL: "pr1", Review: domain.ReviewChangesRequest, Comments: []domain.PRComment{{ID: "1", Body: "fix this"}}}
+	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 1 || !strings.Contains(msg.msgs[0], "fix this") {
+		t.Fatalf("want review nudge, got %v", msg.msgs)
+	}
+}
+
+func TestPRObservation_MergeConflictNudgesAgent(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	o := ports.PRObservation{Fetched: true, URL: "pr1", Mergeability: domain.MergeConflicting}
+	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 1 || !strings.Contains(msg.msgs[0], "merge conflicts") {
+		t.Fatalf("want merge-conflict nudge, got %v", msg.msgs)
 	}
 }

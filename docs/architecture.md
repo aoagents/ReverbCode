@@ -51,19 +51,23 @@ backend/internal/adapters     Zellij/git-worktree/GitHub adapters
 
 ## Lifecycle manager
 
-`lifecycle.Manager` is the write path for session lifecycle facts:
+`lifecycle.Manager` is the write path for session lifecycle facts and lifecycle-owned agent nudges:
 
 - runtime observations can mark a session terminated only when runtime and
   process are both clearly dead and recent activity does not contradict that;
   failed/unknown probes do not persist a special state.
 - activity signals update `activity_state`; `exited` also marks the session
   terminated.
+- PR observations do not write PR rows here, but after the PR service persists
+  them lifecycle sends actionable agent nudges for CI failures, review feedback,
+  and merge conflicts.
 
 ## PR manager
 
-`pr.Manager` records SCM observations into the PR/check/comment tables. A merged
-PR marks the owning session terminated through the lifecycle manager; other PR
-facts are consumed at read time for display status.
+`pr.Manager` records SCM observations into the PR/check/comment tables, then
+forwards the observation to lifecycle for agent nudges. A merged PR marks the
+owning session terminated through the lifecycle manager; other PR facts are
+consumed at read time for display status.
 
 ## Session manager
 

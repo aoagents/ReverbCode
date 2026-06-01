@@ -15,19 +15,22 @@ import (
 )
 
 // Manager reduces runtime, activity, spawn, and termination observations into durable session facts.
+// It also owns agent nudges caused by PR observations.
 type Manager struct {
-	store ports.SessionStore
+	store     ports.SessionStore
+	messenger ports.AgentMessenger
 
 	mu     sync.Mutex
 	window time.Duration
 	clock  func() time.Time
+	react  reactionState
 }
 
 var _ ports.LifecycleManager = (*Manager)(nil)
 
-// New builds a Lifecycle Manager over the session store it writes.
-func New(store ports.SessionStore) *Manager {
-	return &Manager{store: store, window: defaultRecentActivityWindow, clock: time.Now}
+// New builds a Lifecycle Manager over the session store it writes and the messenger it uses for agent nudges.
+func New(store ports.SessionStore, messenger ports.AgentMessenger) *Manager {
+	return &Manager{store: store, messenger: messenger, window: defaultRecentActivityWindow, clock: time.Now, react: newReactionState()}
 }
 
 func (m *Manager) mutate(ctx context.Context, id domain.SessionID, fn func(domain.SessionRecord) (domain.SessionRecord, bool)) error {
