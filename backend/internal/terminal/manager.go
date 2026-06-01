@@ -63,8 +63,11 @@ func WithSpawn(fn spawnFunc) Option { return func(m *Manager) { m.spawn = fn } }
 func WithHeartbeat(d time.Duration) Option { return func(m *Manager) { m.heartbeat = d } }
 
 // NewManager builds a Manager. src attaches PTYs; events feeds the session
-// channel (may be nil to disable it); log is required.
+// channel (may be nil to disable it). A nil logger falls back to slog.Default.
 func NewManager(src PTYSource, events EventSource, log *slog.Logger, opts ...Option) *Manager {
+	if log == nil {
+		log = slog.Default()
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	m := &Manager{
 		src:       src,

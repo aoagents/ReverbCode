@@ -73,6 +73,9 @@ type session struct {
 }
 
 func newSession(id string, handle ports.RuntimeHandle, src PTYSource, spawn spawnFunc, log *slog.Logger) *session {
+	if log == nil {
+		log = slog.Default()
+	}
 	return &session{
 		id:          id,
 		handle:      handle,

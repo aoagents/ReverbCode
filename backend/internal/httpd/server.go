@@ -39,6 +39,7 @@ func New(cfg config.Config, log *slog.Logger, termMgr *terminal.Manager) (*Serve
 
 // NewWithDeps constructs a Server with API dependencies supplied by the daemon.
 func NewWithDeps(cfg config.Config, log *slog.Logger, termMgr *terminal.Manager, deps APIDeps) (*Server, error) {
+	log = loggerOrDefault(log)
 	ln, err := net.Listen("tcp", cfg.Addr())
 	if err != nil {
 		return nil, fmt.Errorf("bind %s (is a daemon already running?): %w", cfg.Addr(), err)

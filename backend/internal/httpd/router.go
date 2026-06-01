@@ -48,6 +48,7 @@ func NewRouterWithAPI(cfg config.Config, log *slog.Logger, termMgr *terminal.Man
 // NewRouterWithControl is NewRouterWithAPI plus daemon-control hooks: it mounts
 // the same API surface and additionally wires the ControlDeps callbacks.
 func NewRouterWithControl(cfg config.Config, log *slog.Logger, termMgr *terminal.Manager, deps APIDeps, control ControlDeps) chi.Router {
+	log = loggerOrDefault(log)
 	r := chi.NewRouter()
 
 	r.Use(middleware.Recoverer)
