@@ -2,12 +2,9 @@
 // the HTTP layer calls and the request/response DTOs that cross it (dto.go).
 //
 // This is the pilot for the feature-package layout the backend is migrating
-// toward: a resource's interface and DTOs live with the resource, not in a
-// central catch-all. Controllers depend on project.Manager and nothing
-// beneath it — whether the implementation reaches into the config registry,
-// the lifecycle manager (to stop sessions on remove), or a workspace adapter
-// (to destroy worktrees) is a private concern of the impl, which lands in a
-// later handler-impl PR. This PR defines only the contract.
+// toward: a resource's interface, implementation, and DTOs live with the
+// resource, not in a central catch-all. Controllers depend on project.Manager
+// and nothing beneath it.
 package project
 
 import (
@@ -17,7 +14,7 @@ import (
 )
 
 // Manager is the inbound contract for the /api/v1/projects surface. One
-// implementation (this package, later); the HTTP controller is the consumer.
+// implementation lives in this package; the HTTP controller is the consumer.
 type Manager interface {
 	// List returns every registered project, including degraded entries
 	// (those whose config failed to load but whose registry entry survives).

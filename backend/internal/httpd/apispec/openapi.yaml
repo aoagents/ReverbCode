@@ -1,13 +1,12 @@
 openapi: 3.1.0
 info:
   title: Agent Orchestrator HTTP daemon
-  version: 0.1.0-route-shell
+  version: 0.1.0
   description: |
-    Loopback-only HTTP surface served by the Go daemon. This spec is the
-    source of truth for every route's contract — the 501 stubs in the
-    route-shell phase return the matching Operation slice as a `spec`
-    field, so consumers discover the contract by calling the endpoint
-    they care about. Real handlers in later PRs satisfy this same spec.
+    Loopback-only HTTP surface served by the Go daemon. This document describes
+    the registered /api/v1 project routes and the shared error envelope used by
+    OpenAPI-backed 501 responses. Daemon control endpoints such as /healthz,
+    /readyz, /shutdown, and /mux are intentionally outside this REST spec.
 
 servers:
   - url: http://127.0.0.1:3001
@@ -135,12 +134,6 @@ paths:
               schema: { $ref: "#/components/schemas/APIError" }
               example: { error: internal, code: PROJECT_LOAD_FAILED, message: "Failed to load project" }
         "501": { $ref: "#/components/responses/NotImplemented" }
-      x-rest-audit-notes: |
-        R5: degraded projects return 200 with a `status` discriminator
-        instead of 200 with an `error` field (as the legacy TS surface did).
-        Archived projects are hidden from list responses but still resolve by
-        id so historical sessions can keep their project_id reference.
-
     patch:
       operationId: updateProjectConfig
       tags: [projects]
@@ -180,13 +173,6 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/APIError" }
               example: { error: not_implemented, code: PROJECT_CONFIG_NOT_IMPLEMENTED, message: "Project config patching is not available until config persistence is wired" }
-      x-rest-audit-notes: |
-        R3: legacy `PUT /projects/{id}` (a TS alias of PATCH) is NOT
-        registered. PUT returns 405 Method Not Allowed.
-        R6: when config persistence lands this route returns { project }, not
-        { ok: true }. Until then, config patches return 501 instead of
-        pretending to persist fields the current project store cannot store.
-
     delete:
       operationId: removeProject
       tags: [projects]
@@ -221,10 +207,6 @@ paths:
       summary: Repair a degraded project where automatic recovery is available
       x-replaces:
         - "POST /api/v1/projects/{id}"
-      x-rest-audit-notes: |
-        R4: this canonical path replaces the overloaded
-        `POST /api/v1/projects/{id}` from the legacy TS surface.
-        The legacy path is NOT registered; consumers must use /repair.
       responses:
         "200":
           description: Project repaired
@@ -323,12 +305,8 @@ components:
           description: "\"owner/name\" or empty string when unset"
         defaultBranch: { type: string, default: main }
         agent: { type: string }
-        runtime: { type: string }
         tracker: { $ref: "#/components/schemas/TrackerConfig" }
         scm: { $ref: "#/components/schemas/SCMConfig" }
-        reactions:
-          type: object
-          additionalProperties: { $ref: "#/components/schemas/ReactionConfig" }
 
     DegradedProject:
       type: object
@@ -373,12 +351,8 @@ components:
         persistence exists.
       properties:
         agent: { type: string }
-        runtime: { type: string }
         tracker: { $ref: "#/components/schemas/TrackerConfig" }
         scm: { $ref: "#/components/schemas/SCMConfig" }
-        reactions:
-          type: object
-          additionalProperties: { $ref: "#/components/schemas/ReactionConfig" }
 
     RemoveProjectResult:
       type: object
@@ -395,9 +369,7 @@ components:
         projectCount: { type: integer }
         degradedCount: { type: integer }
 
-    # ---- Behaviour config blobs (ported from the TS Zod schemas) ----
-    # These are the known config shapes only. The current Go handler does not
-    # preserve unknown passthrough keys until config persistence is implemented.
+    # ---- Behaviour config blobs ----
 
     TrackerConfig:
       type: object
@@ -424,23 +396,3 @@ components:
             eventHeader: { type: string }
             deliveryHeader: { type: string }
             maxBodyBytes: { type: integer }
-
-    ReactionConfig:
-      type: object
-      properties:
-        auto: { type: boolean }
-        action:
-          type: string
-          enum: [send-to-agent, notify, auto-merge]
-        message: { type: string }
-        priority:
-          type: string
-          enum: [urgent, action, warning, info]
-        retries: { type: integer }
-        escalateAfter:
-          oneOf:
-            - { type: number }
-            - { type: string }
-          description: Either ms (number) or duration string ("30m").
-        threshold: { type: string }
-        includeSummary: { type: boolean }

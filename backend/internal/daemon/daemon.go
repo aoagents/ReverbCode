@@ -14,6 +14,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/zellij"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd"
+	"github.com/aoagents/agent-orchestrator/backend/internal/project"
 	"github.com/aoagents/agent-orchestrator/backend/internal/runfile"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 	"github.com/aoagents/agent-orchestrator/backend/internal/terminal"
@@ -38,13 +39,9 @@ func Run() error {
 		return fmt.Errorf("daemon already running (pid %d, port %d); refusing to start", live.PID, live.Port)
 	}
 
-	// Open the durable store and bring up the CDC substrate: the DB triggers
-	// capture changes into change_log, the poller tails it, and the broadcaster
-	// fans events out to the SSE transport. The LCM/Session Manager and the HTTP
-	// API routes that drive and read this store are owned by the daemon lane and
-	// are wired there once their collaborators (AgentMessenger and the runtime/agent/workspace
-	// plugins) have production implementations; here we
-	// stand up the persistence + change-delivery foundation they build on.
+	// Open the durable store and bring up the CDC substrate: DB triggers capture
+	// changes into change_log, the poller tails it, and the broadcaster fans
+	// events out to live transports.
 	store, err := sqlite.Open(cfg.DataDir)
 	if err != nil {
 		return fmt.Errorf("open store: %w", err)
@@ -69,7 +66,7 @@ func Run() error {
 	termMgr := terminal.NewManager(runtimeAdapter, cdcPipe.Broadcaster, log)
 	defer termMgr.Close()
 
-	srv, err := httpd.New(cfg, log, termMgr)
+	srv, err := httpd.NewWithDeps(cfg, log, termMgr, httpd.APIDeps{Projects: project.NewManager(store)})
 	if err != nil {
 		stop()
 		if cdcErr := cdcPipe.Stop(); cdcErr != nil {
@@ -85,11 +82,8 @@ func Run() error {
 	lcStack := startLifecycle(ctx, store, runtimeAdapter, log)
 
 	// Bring up the Session Manager. Runtime (Zellij) and Workspace (gitworktree)
-	// are real on main; ports.Agent has no production adapter yet, so a loud
-	// stub returns a sentinel command that makes any Spawn fail at the runtime
-	// layer rather than start a broken session quietly. AgentMessenger remains
-	// stubbed until its multiplexer lands. No HTTP routes wire to this yet — the daemon lane (#10) owns API
-	// surfacing — so we hold the SM in a local until it does.
+	// are real; ports.Agent and AgentMessenger remain loud stubs until production
+	// agent adapters land. No HTTP routes expose the Session Manager yet.
 	sStack, err := startSession(ctx, cfg, runtimeAdapter, lcStack, log)
 	if err != nil {
 		// startSession is the first start* call after this point that can

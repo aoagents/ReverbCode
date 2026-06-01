@@ -15,5 +15,9 @@ FROM projects WHERE id = ?;
 SELECT id, path, repo_origin_url, display_name, registered_at, archived_at
 FROM projects WHERE archived_at IS NULL ORDER BY id;
 
--- name: ArchiveProject :exec
+-- name: FindProjectByPath :one
+SELECT id, path, repo_origin_url, display_name, registered_at, archived_at
+FROM projects WHERE path = ?;
+
+-- name: ArchiveProject :execrows
 UPDATE projects SET archived_at = ? WHERE id = ?;

@@ -18,11 +18,23 @@ UPDATE sessions SET
 WHERE id = ?;
 
 -- name: GetSession :one
-SELECT * FROM sessions WHERE id = ?;
+SELECT id, project_id, num, issue_id, kind, harness,
+    activity_state, activity_last_at, activity_source, branch, workspace_path,
+    runtime_handle_id, agent_session_id, prompt, created_at, updated_at,
+    is_terminated
+FROM sessions WHERE id = ?;
 
 -- name: ListSessionsByProject :many
-SELECT * FROM sessions WHERE project_id = ? ORDER BY num;
+SELECT id, project_id, num, issue_id, kind, harness,
+    activity_state, activity_last_at, activity_source, branch, workspace_path,
+    runtime_handle_id, agent_session_id, prompt, created_at, updated_at,
+    is_terminated
+FROM sessions WHERE project_id = ? ORDER BY num;
 
 -- name: ListAllSessions :many
-SELECT * FROM sessions ORDER BY project_id, num;
+SELECT id, project_id, num, issue_id, kind, harness,
+    activity_state, activity_last_at, activity_source, branch, workspace_path,
+    runtime_handle_id, agent_session_id, prompt, created_at, updated_at,
+    is_terminated
+FROM sessions ORDER BY project_id, num;
 

@@ -6,19 +6,6 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
-// SessionStore persists session records and serves the PR snapshots used by the
-// session read model. The Session Manager creates rows; lifecycle/PR services
-// apply observer-driven updates thereafter.
-type SessionStore interface {
-	CreateSession(ctx context.Context, rec domain.SessionRecord) (domain.SessionRecord, error)
-	UpdateSession(ctx context.Context, rec domain.SessionRecord) error
-	GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error)
-	ListSessions(ctx context.Context, project domain.ProjectID) ([]domain.SessionRecord, error)
-	ListAllSessions(ctx context.Context) ([]domain.SessionRecord, error)
-	// ListPRFactsForSession returns all PR snapshots for a session, newest first.
-	ListPRFactsForSession(ctx context.Context, id domain.SessionID) ([]domain.PRFacts, error)
-}
-
 // PRWriter records the PR facts a PR observation carries. The pr table's own DB
 // triggers emit the CDC; this just writes the rows.
 type PRWriter interface {

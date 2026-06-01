@@ -18,8 +18,8 @@ type Row struct {
 	ArchivedAt    time.Time
 }
 
-// Store is the project persistence the manager depends on; both the sqlite
-// store and MemoryStore satisfy it.
+// Store is the project persistence the manager depends on. MemoryStore is the
+// current in-process implementation; the sqlite adapter uses the same row shape.
 type Store interface {
 	List(ctx context.Context) ([]Row, error)
 	Get(ctx context.Context, id string) (Row, bool, error)

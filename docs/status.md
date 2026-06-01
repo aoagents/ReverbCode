@@ -7,11 +7,7 @@ controller/manager work, runtime/workspace/tracker adapters, and CDC-backed even
 ## Build & test
 
 ```bash
-cd backend
-gofmt -l .
-go build ./...
-go vet ./...
-go test ./...
+npm run lint
 ```
 
 ## Current shape

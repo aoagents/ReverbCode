@@ -152,16 +152,13 @@ func (r *Reaper) probeOne(ctx context.Context, sess domain.SessionRecord, now ti
 		// transient Zellij outage hide a really-dead session, and a
 		// transient adapter bug terminate a really-alive one. Report failed
 		// and let the LCM arbitrate.
-		facts.Runtime = ports.ProbeFailed
-		facts.Process = ports.ProbeFailed
+		facts.Probe = ports.ProbeFailed
 		r.logger.Debug("reaper: probe error reported as failed fact",
 			"session", sess.ID, "err", probeErr)
 	case alive:
-		facts.Runtime = ports.ProbeAlive
-		facts.Process = ports.ProbeAlive
+		facts.Probe = ports.ProbeAlive
 	default:
-		facts.Runtime = ports.ProbeDead
-		facts.Process = ports.ProbeDead
+		facts.Probe = ports.ProbeDead
 	}
 
 	if err := r.lcm.ApplyRuntimeObservation(ctx, sess.ID, facts); err != nil {

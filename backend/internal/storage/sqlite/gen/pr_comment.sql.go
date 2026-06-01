@@ -19,8 +19,39 @@ func (q *Queries) DeletePRComments(ctx context.Context, prUrl string) error {
 	return err
 }
 
+const insertPRComment = `-- name: InsertPRComment :exec
+INSERT INTO pr_comment (pr_url, comment_id, author, file, line, body, resolved, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+`
+
+type InsertPRCommentParams struct {
+	PrUrl     string
+	CommentID string
+	Author    string
+	File      string
+	Line      int64
+	Body      string
+	Resolved  bool
+	CreatedAt time.Time
+}
+
+func (q *Queries) InsertPRComment(ctx context.Context, arg InsertPRCommentParams) error {
+	_, err := q.db.ExecContext(ctx, insertPRComment,
+		arg.PrUrl,
+		arg.CommentID,
+		arg.Author,
+		arg.File,
+		arg.Line,
+		arg.Body,
+		arg.Resolved,
+		arg.CreatedAt,
+	)
+	return err
+}
+
 const listPRComments = `-- name: ListPRComments :many
-SELECT pr_url, comment_id, author, file, line, body, resolved, created_at FROM pr_comment WHERE pr_url = ? ORDER BY created_at, comment_id
+SELECT pr_url, comment_id, author, file, line, body, resolved, created_at
+FROM pr_comment WHERE pr_url = ? ORDER BY created_at, comment_id
 `
 
 func (q *Queries) ListPRComments(ctx context.Context, prUrl string) ([]PrComment, error) {
@@ -53,37 +84,4 @@ func (q *Queries) ListPRComments(ctx context.Context, prUrl string) ([]PrComment
 		return nil, err
 	}
 	return items, nil
-}
-
-const upsertPRComment = `-- name: UpsertPRComment :exec
-INSERT INTO pr_comment (pr_url, comment_id, author, file, line, body, resolved, created_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT (pr_url, comment_id) DO UPDATE SET
-    author = excluded.author, file = excluded.file, line = excluded.line,
-    body = excluded.body, resolved = excluded.resolved
-`
-
-type UpsertPRCommentParams struct {
-	PrUrl     string
-	CommentID string
-	Author    string
-	File      string
-	Line      int64
-	Body      string
-	Resolved  bool
-	CreatedAt time.Time
-}
-
-func (q *Queries) UpsertPRComment(ctx context.Context, arg UpsertPRCommentParams) error {
-	_, err := q.db.ExecContext(ctx, upsertPRComment,
-		arg.PrUrl,
-		arg.CommentID,
-		arg.Author,
-		arg.File,
-		arg.Line,
-		arg.Body,
-		arg.Resolved,
-		arg.CreatedAt,
-	)
-	return err
 }

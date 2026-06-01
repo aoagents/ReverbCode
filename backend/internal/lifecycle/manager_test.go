@@ -82,7 +82,7 @@ func TestRuntimeObservation_InferredDeathSetsTerminated(t *testing.T) {
 	rec := working("mer-1")
 	rec.Activity.LastActivityAt = time.Now().Add(-2 * time.Minute)
 	st.sessions["mer-1"] = rec
-	if err := m.ApplyRuntimeObservation(ctx, "mer-1", ports.RuntimeFacts{Runtime: ports.ProbeDead, Process: ports.ProbeDead}); err != nil {
+	if err := m.ApplyRuntimeObservation(ctx, "mer-1", ports.RuntimeFacts{Probe: ports.ProbeDead}); err != nil {
 		t.Fatal(err)
 	}
 	got := st.sessions["mer-1"]
@@ -95,7 +95,7 @@ func TestRuntimeObservation_FailedProbeDoesNotMutate(t *testing.T) {
 	m, st, _ := newManager()
 	st.sessions["mer-1"] = working("mer-1")
 	before := st.sessions["mer-1"]
-	if err := m.ApplyRuntimeObservation(ctx, "mer-1", ports.RuntimeFacts{Runtime: ports.ProbeFailed, Process: ports.ProbeFailed}); err != nil {
+	if err := m.ApplyRuntimeObservation(ctx, "mer-1", ports.RuntimeFacts{Probe: ports.ProbeFailed}); err != nil {
 		t.Fatal(err)
 	}
 	if st.sessions["mer-1"] != before {
@@ -112,6 +112,30 @@ func TestActivity_InvalidIsIgnored(t *testing.T) {
 	}
 	if st.sessions["mer-1"] != before {
 		t.Fatal("invalid signal must not mutate")
+	}
+}
+
+func TestActivity_WeakerSourceDoesNotOverrideStronger(t *testing.T) {
+	m, st, _ := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	before := st.sessions["mer-1"]
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityIdle, Source: domain.SourceRuntime}); err != nil {
+		t.Fatal(err)
+	}
+	if st.sessions["mer-1"] != before {
+		t.Fatalf("weaker runtime signal should not override native activity, got %+v", st.sessions["mer-1"])
+	}
+}
+
+func TestActivity_StrongerSourceOverridesWeaker(t *testing.T) {
+	m, st, _ := newManager()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Activity: domain.ActivitySubstate{State: domain.ActivityIdle, LastActivityAt: time.Now(), Source: domain.SourceRuntime}}
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityActive, Source: domain.SourceNative}); err != nil {
+		t.Fatal(err)
+	}
+	got := st.sessions["mer-1"].Activity
+	if got.State != domain.ActivityActive || got.Source != domain.SourceNative {
+		t.Fatalf("stronger native signal should override runtime, got %+v", got)
 	}
 }
 

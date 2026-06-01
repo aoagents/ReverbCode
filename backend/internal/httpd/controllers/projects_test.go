@@ -136,7 +136,7 @@ func TestProjectsAPI_UpdateDeleteRepair(t *testing.T) {
 		t.Fatalf("seed create = %d, want 201; body=%s", status, body)
 	}
 
-	body, status, _ = doRequest(t, srv, "PATCH", "/api/v1/projects/proj", `{"agent":"claude","runtime":"zellij"}`)
+	body, status, _ = doRequest(t, srv, "PATCH", "/api/v1/projects/proj", `{"agent":"claude"}`)
 	assertErrorCode(t, body, status, http.StatusNotImplemented, "PROJECT_CONFIG_NOT_IMPLEMENTED")
 
 	body, status, _ = doRequest(t, srv, "PATCH", "/api/v1/projects/proj", `{"path":"elsewhere"}`)
@@ -229,7 +229,6 @@ type projectBody struct {
 	Repo          string `json:"repo"`
 	DefaultBranch string `json:"defaultBranch"`
 	Agent         string `json:"agent"`
-	Runtime       string `json:"runtime"`
 }
 
 type errorBody struct {

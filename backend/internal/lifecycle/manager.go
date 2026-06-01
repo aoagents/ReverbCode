@@ -14,10 +14,15 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
+type sessionStore interface {
+	GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error)
+	UpdateSession(ctx context.Context, rec domain.SessionRecord) error
+}
+
 // Manager reduces runtime, activity, spawn, and termination observations into durable session facts.
 // It also owns agent nudges caused by PR observations.
 type Manager struct {
-	store     ports.SessionStore
+	store     sessionStore
 	messenger ports.AgentMessenger
 
 	mu     sync.Mutex
@@ -27,7 +32,7 @@ type Manager struct {
 }
 
 // New builds a Lifecycle Manager over the session store it writes and the messenger it uses for agent nudges.
-func New(store ports.SessionStore, messenger ports.AgentMessenger) *Manager {
+func New(store sessionStore, messenger ports.AgentMessenger) *Manager {
 	return &Manager{store: store, messenger: messenger, window: defaultRecentActivityWindow, clock: time.Now, react: newReactionState()}
 }
 
@@ -72,6 +77,9 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	}
 	return m.mutate(ctx, id, func(cur domain.SessionRecord, now time.Time) (domain.SessionRecord, bool) {
 		if cur.IsTerminated {
+			return cur, false
+		}
+		if !s.Source.CanOverride(cur.Activity.Source) {
 			return cur, false
 		}
 		next := cur

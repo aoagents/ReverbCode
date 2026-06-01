@@ -1,25 +1,6 @@
-// Package domain holds shared vocabulary for sessions, activity, and PR facts.
-// Session state is deliberately small: durable session rows carry activity_state
-// plus an is_terminated bit; user-facing status is derived from those fields and
-// PR facts at read time.
 package domain
 
 import "time"
-
-// ---- agent harness ----
-
-// AgentHarness identifies which agent CLI/runtime a session drives.
-type AgentHarness string
-
-// Supported agent harnesses.
-const (
-	HarnessClaudeCode AgentHarness = "claude-code"
-	HarnessCodex      AgentHarness = "codex"
-	HarnessAider      AgentHarness = "aider"
-	HarnessOpenCode   AgentHarness = "opencode"
-)
-
-// ---- activity state (the only persisted status-like session fact) ----
 
 // ActivityState is how busy the agent is, derived from its output/JSONL.
 type ActivityState string
@@ -52,6 +33,27 @@ const (
 	SourceRuntime  ActivitySource = "runtime"
 	SourceNone     ActivitySource = "none"
 )
+
+// CanOverride reports whether a reading from source a may replace a current
+// reading from source current. Unknown sources are treated as weakest.
+func (a ActivitySource) CanOverride(current ActivitySource) bool {
+	return activitySourceRank(a) <= activitySourceRank(current)
+}
+
+func activitySourceRank(s ActivitySource) int {
+	switch s {
+	case SourceNative:
+		return 0
+	case SourceTerminal:
+		return 1
+	case SourceHook:
+		return 2
+	case SourceRuntime:
+		return 3
+	default:
+		return 4
+	}
+}
 
 // ActivitySubstate is the persisted activity reading: the state, when it was
 // last observed, and which source reported it.

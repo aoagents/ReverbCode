@@ -13,7 +13,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
-const archiveProject = `-- name: ArchiveProject :exec
+const archiveProject = `-- name: ArchiveProject :execrows
 UPDATE projects SET archived_at = ? WHERE id = ?
 `
 
@@ -22,9 +22,31 @@ type ArchiveProjectParams struct {
 	ID         domain.ProjectID
 }
 
-func (q *Queries) ArchiveProject(ctx context.Context, arg ArchiveProjectParams) error {
-	_, err := q.db.ExecContext(ctx, archiveProject, arg.ArchivedAt, arg.ID)
-	return err
+func (q *Queries) ArchiveProject(ctx context.Context, arg ArchiveProjectParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, archiveProject, arg.ArchivedAt, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const findProjectByPath = `-- name: FindProjectByPath :one
+SELECT id, path, repo_origin_url, display_name, registered_at, archived_at
+FROM projects WHERE path = ?
+`
+
+func (q *Queries) FindProjectByPath(ctx context.Context, path string) (Project, error) {
+	row := q.db.QueryRowContext(ctx, findProjectByPath, path)
+	var i Project
+	err := row.Scan(
+		&i.ID,
+		&i.Path,
+		&i.RepoOriginUrl,
+		&i.DisplayName,
+		&i.RegisteredAt,
+		&i.ArchivedAt,
+	)
+	return i, err
 }
 
 const getProject = `-- name: GetProject :one

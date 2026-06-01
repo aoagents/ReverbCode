@@ -30,11 +30,9 @@ type AddInput struct {
 // behaviour fields are mutable; identity fields (projectId, path, repo,
 // defaultBranch) are rejected by the handler with a 400 IDENTITY_FROZEN.
 type UpdateConfigInput struct {
-	Agent     *string                     `json:"agent,omitempty"`
-	Runtime   *string                     `json:"runtime,omitempty"`
-	Tracker   *TrackerConfig              `json:"tracker,omitempty"`
-	SCM       *SCMConfig                  `json:"scm,omitempty"`
-	Reactions *map[string]*ReactionConfig `json:"reactions,omitempty"`
+	Agent   *string        `json:"agent,omitempty"`
+	Tracker *TrackerConfig `json:"tracker,omitempty"`
+	SCM     *SCMConfig     `json:"scm,omitempty"`
 }
 
 // RemoveResult reports what DELETE /api/v1/projects/{id} actually did.

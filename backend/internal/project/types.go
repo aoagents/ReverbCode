@@ -26,16 +26,14 @@ type Summary struct {
 // project resolves cleanly. It joins the registry identity fields with the
 // project's behaviour config.
 type Project struct {
-	ID            domain.ProjectID           `json:"id"`
-	Name          string                     `json:"name"`
-	Path          string                     `json:"path"`
-	Repo          string                     `json:"repo"` // "owner/name" or ""
-	DefaultBranch string                     `json:"defaultBranch"`
-	Agent         string                     `json:"agent,omitempty"`
-	Runtime       string                     `json:"runtime,omitempty"`
-	Tracker       *TrackerConfig             `json:"tracker,omitempty"`
-	SCM           *SCMConfig                 `json:"scm,omitempty"`
-	Reactions     map[string]*ReactionConfig `json:"reactions,omitempty"`
+	ID            domain.ProjectID `json:"id"`
+	Name          string           `json:"name"`
+	Path          string           `json:"path"`
+	Repo          string           `json:"repo"` // "owner/name" or ""
+	DefaultBranch string           `json:"defaultBranch"`
+	Agent         string           `json:"agent,omitempty"`
+	Tracker       *TrackerConfig   `json:"tracker,omitempty"`
+	SCM           *SCMConfig       `json:"scm,omitempty"`
 }
 
 // Degraded is returned in place of Project when the project's config failed to
@@ -49,11 +47,9 @@ type Degraded struct {
 	ResolveError string           `json:"resolveError"`
 }
 
-// Behaviour-config shapes ported from the TS Zod schemas (packages/core/src/
-// config.ts). Only the fields the projects API actually exposes are modelled;
-// the passthrough/unknown-key round-trip the legacy schemas allowed lands with
-// the handler implementation (and the SQLite persistence work), not in this
-// interface-only PR.
+// Behaviour-config shapes exposed by the projects API. Runtime selection and
+// reaction rules are intentionally absent: the daemon has one runtime adapter and
+// lifecycle owns agent nudges.
 
 // TrackerConfig mirrors TrackerConfigSchema.
 type TrackerConfig struct {
@@ -79,18 +75,4 @@ type SCMWebhookConfig struct {
 	EventHeader     string `json:"eventHeader,omitempty"`
 	DeliveryHeader  string `json:"deliveryHeader,omitempty"`
 	MaxBodyBytes    int    `json:"maxBodyBytes,omitempty"`
-}
-
-// ReactionConfig mirrors ReactionConfigSchema. EscalateAfter is either ms
-// (number) or a duration string ("30m") in the TS schema, so it stays open as
-// `any` until handler validation lands.
-type ReactionConfig struct {
-	Auto           *bool  `json:"auto,omitempty"`
-	Action         string `json:"action,omitempty"` // send-to-agent | notify | auto-merge
-	Message        string `json:"message,omitempty"`
-	Priority       string `json:"priority,omitempty"` // urgent | action | warning | info
-	Retries        *int   `json:"retries,omitempty"`
-	EscalateAfter  any    `json:"escalateAfter,omitempty"`
-	Threshold      string `json:"threshold,omitempty"`
-	IncludeSummary *bool  `json:"includeSummary,omitempty"`
 }

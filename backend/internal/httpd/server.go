@@ -34,6 +34,11 @@ type Server struct {
 // the returned Server's lifecycle via Run. termMgr may be nil, in which case
 // the /mux terminal surface is not mounted.
 func New(cfg config.Config, log *slog.Logger, termMgr *terminal.Manager) (*Server, error) {
+	return NewWithDeps(cfg, log, termMgr, APIDeps{})
+}
+
+// NewWithDeps constructs a Server with API dependencies supplied by the daemon.
+func NewWithDeps(cfg config.Config, log *slog.Logger, termMgr *terminal.Manager, deps APIDeps) (*Server, error) {
 	ln, err := net.Listen("tcp", cfg.Addr())
 	if err != nil {
 		return nil, fmt.Errorf("bind %s (is a daemon already running?): %w", cfg.Addr(), err)
@@ -46,7 +51,7 @@ func New(cfg config.Config, log *slog.Logger, termMgr *terminal.Manager) (*Serve
 		shutdownRequested: make(chan struct{}),
 	}
 	srv.http = &http.Server{
-		Handler: NewRouterWithControl(cfg, log, termMgr, APIDeps{}, ControlDeps{
+		Handler: NewRouterWithControl(cfg, log, termMgr, deps, ControlDeps{
 			RequestShutdown: srv.requestShutdown,
 		}),
 		// ReadHeaderTimeout guards against slow-loris even on loopback;

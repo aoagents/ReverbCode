@@ -14,8 +14,8 @@ import (
 // report failed/unknown, never a death conclusion.
 type ProbeResult string
 
-// Probe readings. Alive/Dead are conclusions; Failed/Unknown route to the
-// detecting quarantine instead of a death decision.
+// Probe readings. Alive/Dead are conclusions; Failed/Unknown are ignored by
+// lifecycle because they are not reliable death decisions.
 const (
 	ProbeAlive   ProbeResult = "alive"
 	ProbeDead    ProbeResult = "dead"
@@ -23,12 +23,10 @@ const (
 	ProbeUnknown ProbeResult = "unknown"
 )
 
-// RuntimeFacts is what the reaper reports each probe: is the runtime container
-// up, and is the agent process inside it up.
+// RuntimeFacts is what the reaper reports each probe of a session runtime.
 type RuntimeFacts struct {
 	ObservedAt time.Time
-	Runtime    ProbeResult
-	Process    ProbeResult
+	Probe      ProbeResult
 }
 
 // ActivitySignal is pushed by the agent hooks. Only a Valid signal is

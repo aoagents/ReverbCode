@@ -32,6 +32,66 @@ func (q *Queries) GetPR(ctx context.Context, url string) (Pr, error) {
 	return i, err
 }
 
+const listPRFactsBySession = `-- name: ListPRFactsBySession :many
+SELECT
+    pr.url,
+    pr.number,
+    pr.pr_state,
+    pr.review_decision,
+    pr.ci_state,
+    pr.mergeability,
+    EXISTS (
+        SELECT 1
+        FROM pr_comment
+        WHERE pr_comment.pr_url = pr.url
+          AND pr_comment.resolved = 0
+    ) AS review_comments
+FROM pr
+WHERE pr.session_id = ?
+ORDER BY pr.updated_at DESC
+`
+
+type ListPRFactsBySessionRow struct {
+	Url            string
+	Number         int64
+	PrState        domain.PRState
+	ReviewDecision domain.ReviewDecision
+	CiState        domain.CIState
+	Mergeability   domain.Mergeability
+	ReviewComments bool
+}
+
+func (q *Queries) ListPRFactsBySession(ctx context.Context, sessionID domain.SessionID) ([]ListPRFactsBySessionRow, error) {
+	rows, err := q.db.QueryContext(ctx, listPRFactsBySession, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListPRFactsBySessionRow{}
+	for rows.Next() {
+		var i ListPRFactsBySessionRow
+		if err := rows.Scan(
+			&i.Url,
+			&i.Number,
+			&i.PrState,
+			&i.ReviewDecision,
+			&i.CiState,
+			&i.Mergeability,
+			&i.ReviewComments,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPRsBySession = `-- name: ListPRsBySession :many
 SELECT url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at FROM pr WHERE session_id = ? ORDER BY updated_at DESC
 `

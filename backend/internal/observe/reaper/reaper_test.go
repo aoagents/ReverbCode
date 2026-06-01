@@ -74,8 +74,8 @@ func TestTick_ReportsAliveProbe(t *testing.T) {
 	if err := newReaper(lcm, sessions, fakeRuntime{alive: true}).Tick(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if lcm.observed["mer-1"].Runtime != ports.ProbeAlive {
-		t.Fatalf("want alive probe, got %q", lcm.observed["mer-1"].Runtime)
+	if lcm.observed["mer-1"].Probe != ports.ProbeAlive {
+		t.Fatalf("want alive probe, got %q", lcm.observed["mer-1"].Probe)
 	}
 }
 
@@ -85,8 +85,8 @@ func TestTick_ReportsProbeErrorAsFailed(t *testing.T) {
 	if err := newReaper(lcm, sessions, fakeRuntime{err: errors.New("Zellij gone")}).Tick(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if lcm.observed["mer-1"].Runtime != ports.ProbeFailed {
-		t.Fatalf("probe error must be reported as failed, got %q", lcm.observed["mer-1"].Runtime)
+	if lcm.observed["mer-1"].Probe != ports.ProbeFailed {
+		t.Fatalf("probe error must be reported as failed, got %q", lcm.observed["mer-1"].Probe)
 	}
 }
 

@@ -32,12 +32,20 @@ type lifecycleRecorder interface {
 	MarkTerminated(ctx context.Context, id domain.SessionID) error
 }
 
+type sessionStore interface {
+	CreateSession(ctx context.Context, rec domain.SessionRecord) (domain.SessionRecord, error)
+	GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error)
+	UpdateSession(ctx context.Context, rec domain.SessionRecord) error
+	ListSessions(ctx context.Context, project domain.ProjectID) ([]domain.SessionRecord, error)
+	ListPRFactsForSession(ctx context.Context, id domain.SessionID) ([]domain.PRFacts, error)
+}
+
 // Manager implements ports.SessionManager over the outbound ports.
 type Manager struct {
 	runtime   ports.Runtime
 	agent     ports.Agent
 	workspace ports.Workspace
-	store     ports.SessionStore
+	store     sessionStore
 	messenger ports.AgentMessenger
 	lcm       lifecycleRecorder
 	clock     func() time.Time
@@ -50,7 +58,7 @@ type Deps struct {
 	Runtime   ports.Runtime
 	Agent     ports.Agent
 	Workspace ports.Workspace
-	Store     ports.SessionStore
+	Store     sessionStore
 	Messenger ports.AgentMessenger
 	Lifecycle lifecycleRecorder
 	Clock     func() time.Time

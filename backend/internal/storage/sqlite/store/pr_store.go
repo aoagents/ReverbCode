@@ -22,8 +22,7 @@ import (
 // drift between either interface and this implementation fails here at the point
 // of definition rather than later at the call sites in lifecycle_wiring / tests.
 var (
-	_ ports.SessionStore = (*Store)(nil)
-	_ ports.PRWriter     = (*Store)(nil)
+	_ ports.PRWriter = (*Store)(nil)
 )
 
 // WritePR persists a full PR observation — scalar facts, check runs, and the
@@ -47,7 +46,7 @@ func (s *Store) WritePR(ctx context.Context, pr domain.PRRow, checks []domain.PR
 			return err
 		}
 		for _, c := range comments {
-			if err := q.UpsertPRComment(ctx, genCommentParams(pr.URL, c)); err != nil {
+			if err := q.InsertPRComment(ctx, genCommentParams(pr.URL, c)); err != nil {
 				return fmt.Errorf("comment %q: %w", c.ID, err)
 			}
 		}
@@ -175,8 +174,8 @@ func checkRowFromGen(c gen.PrCheck) domain.PRCheckRow {
 	}
 }
 
-func genCommentParams(prURL string, c domain.PRComment) gen.UpsertPRCommentParams {
-	return gen.UpsertPRCommentParams{
+func genCommentParams(prURL string, c domain.PRComment) gen.InsertPRCommentParams {
+	return gen.InsertPRCommentParams{
 		PrUrl: prURL, CommentID: c.ID, Author: c.Author, File: c.File,
 		Line: int64(c.Line), Body: c.Body, Resolved: c.Resolved, CreatedAt: c.CreatedAt,
 	}

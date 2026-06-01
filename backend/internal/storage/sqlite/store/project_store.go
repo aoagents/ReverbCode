@@ -8,26 +8,18 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/project"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/gen"
 )
 
-// ProjectRow is one registered repo (the projects table). id is a short slug
-// (mer, ao). ArchivedAt zero means active.
-type ProjectRow struct {
-	ID            domain.ProjectID
-	Path          string
-	RepoOriginURL string
-	DisplayName   string
-	RegisteredAt  time.Time
-	ArchivedAt    time.Time
-}
+var _ project.Store = (*Store)(nil)
 
-// UpsertProject inserts or updates a registered project.
-func (s *Store) UpsertProject(ctx context.Context, r ProjectRow) error {
+// Upsert inserts or replaces a registered project row.
+func (s *Store) Upsert(ctx context.Context, r project.Row) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	return s.qw.UpsertProject(ctx, gen.UpsertProjectParams{
-		ID:            r.ID,
+		ID:            domain.ProjectID(r.ID),
 		Path:          r.Path,
 		RepoOriginUrl: r.RepoOriginURL,
 		DisplayName:   r.DisplayName,
@@ -36,45 +28,60 @@ func (s *Store) UpsertProject(ctx context.Context, r ProjectRow) error {
 	})
 }
 
-// GetProject returns a project by id (active or archived), or ok=false.
-func (s *Store) GetProject(ctx context.Context, id string) (ProjectRow, bool, error) {
+// Get returns a project by id, active or archived.
+func (s *Store) Get(ctx context.Context, id string) (project.Row, bool, error) {
 	p, err := s.qr.GetProject(ctx, domain.ProjectID(id))
 	if errors.Is(err, sql.ErrNoRows) {
-		return ProjectRow{}, false, nil
+		return project.Row{}, false, nil
 	}
 	if err != nil {
-		return ProjectRow{}, false, fmt.Errorf("get project %s: %w", id, err)
+		return project.Row{}, false, fmt.Errorf("get project %s: %w", id, err)
 	}
 	return projectRowFromGen(p), true, nil
 }
 
-// ListProjects returns active (non-archived) projects, ordered by id.
-func (s *Store) ListProjects(ctx context.Context) ([]ProjectRow, error) {
+// FindByPath returns a project registered at path, active or archived.
+func (s *Store) FindByPath(ctx context.Context, path string) (project.Row, bool, error) {
+	p, err := s.qr.FindProjectByPath(ctx, path)
+	if errors.Is(err, sql.ErrNoRows) {
+		return project.Row{}, false, nil
+	}
+	if err != nil {
+		return project.Row{}, false, fmt.Errorf("find project by path %s: %w", path, err)
+	}
+	return projectRowFromGen(p), true, nil
+}
+
+// List returns active projects ordered by id.
+func (s *Store) List(ctx context.Context) ([]project.Row, error) {
 	rows, err := s.qr.ListProjects(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list projects: %w", err)
 	}
-	out := make([]ProjectRow, 0, len(rows))
+	out := make([]project.Row, 0, len(rows))
 	for _, p := range rows {
 		out = append(out, projectRowFromGen(p))
 	}
 	return out, nil
 }
 
-// ArchiveProject soft-deletes a project (the row stays so session.project_id
-// still resolves).
-func (s *Store) ArchiveProject(ctx context.Context, id string, at time.Time) error {
+// Archive soft-deletes a project and reports whether a row was affected.
+func (s *Store) Archive(ctx context.Context, id string, at time.Time) (bool, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	return s.qw.ArchiveProject(ctx, gen.ArchiveProjectParams{
+	n, err := s.qw.ArchiveProject(ctx, gen.ArchiveProjectParams{
 		ArchivedAt: nullTime(at),
 		ID:         domain.ProjectID(id),
 	})
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
-func projectRowFromGen(p gen.Project) ProjectRow {
-	r := ProjectRow{
-		ID:            p.ID,
+func projectRowFromGen(p gen.Project) project.Row {
+	r := project.Row{
+		ID:            string(p.ID),
 		Path:          p.Path,
 		RepoOriginURL: p.RepoOriginUrl,
 		DisplayName:   p.DisplayName,

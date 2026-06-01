@@ -1,7 +1,7 @@
 # agent-orchestrator
 
 Rewrite of the agent-orchestrator: a long-running Go backend daemon (`backend/`)
-paired with an Electron + TypeScript frontend (`frontend/`).
+paired with a placeholder Electron + TypeScript frontend shell (`frontend/`).
 
 See [`docs/`](docs/README.md) for architecture and status — start with the
 Lifecycle Manager + Session Manager lane in [`docs/architecture.md`](docs/architecture.md).
@@ -51,6 +51,7 @@ is intentionally not env-configurable.
 ### Test
 
 ```bash
-cd backend
-gofmt -l . && go build ./... && go vet ./... && go test -race ./...
+npm run lint
+# optional deeper backend pass:
+cd backend && go test -race ./...
 ```

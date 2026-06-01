@@ -15,6 +15,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/lifecycle"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	"github.com/aoagents/agent-orchestrator/backend/internal/project"
 	"github.com/aoagents/agent-orchestrator/backend/internal/session"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 )
@@ -50,7 +51,7 @@ func TestWiring_WriteFlowsToBroadcaster(t *testing.T) {
 	var got []cdc.Event
 	bcast.Subscribe(func(e cdc.Event) { mu.Lock(); got = append(got, e); mu.Unlock() })
 
-	if err := store.UpsertProject(ctx, sqlite.ProjectRow{ID: "mer", Path: "/repo/mer"}); err != nil {
+	if err := store.Upsert(ctx, project.Row{ID: "mer", Path: "/repo/mer"}); err != nil {
 		t.Fatal(err)
 	}
 	rec, err := store.CreateSession(ctx, domain.SessionRecord{
@@ -62,7 +63,7 @@ func TestWiring_WriteFlowsToBroadcaster(t *testing.T) {
 	}
 	// A real transition through the engine, which writes the row and fires the
 	// activity_state/is_terminated CDC trigger.
-	if err := lcm.ApplyActivitySignal(ctx, rec.ID, ports.ActivitySignal{Valid: true, State: domain.ActivityActive, Timestamp: time.Now()}); err != nil {
+	if err := lcm.ApplyActivitySignal(ctx, rec.ID, ports.ActivitySignal{Valid: true, State: domain.ActivityActive, Timestamp: time.Now(), Source: domain.SourceNative}); err != nil {
 		t.Fatal(err)
 	}
 

@@ -16,3 +16,21 @@ SELECT * FROM pr WHERE url = ?;
 -- name: ListPRsBySession :many
 SELECT * FROM pr WHERE session_id = ? ORDER BY updated_at DESC;
 
+
+-- name: ListPRFactsBySession :many
+SELECT
+    pr.url,
+    pr.number,
+    pr.pr_state,
+    pr.review_decision,
+    pr.ci_state,
+    pr.mergeability,
+    EXISTS (
+        SELECT 1
+        FROM pr_comment
+        WHERE pr_comment.pr_url = pr.url
+          AND pr_comment.resolved = 0
+    ) AS review_comments
+FROM pr
+WHERE pr.session_id = ?
+ORDER BY pr.updated_at DESC;
