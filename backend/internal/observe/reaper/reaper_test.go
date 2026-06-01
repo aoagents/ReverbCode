@@ -14,13 +14,9 @@ import (
 var ctx = context.Background()
 
 type fakeLCM struct {
-	running  []domain.SessionRecord
 	observed map[domain.SessionID]ports.RuntimeFacts
 }
 
-func (l *fakeLCM) RunningSessions(context.Context) ([]domain.SessionRecord, error) {
-	return l.running, nil
-}
 func (l *fakeLCM) ApplyRuntimeObservation(_ context.Context, id domain.SessionID, f ports.RuntimeFacts) error {
 	if l.observed == nil {
 		l.observed = map[domain.SessionID]ports.RuntimeFacts{}
@@ -31,14 +27,15 @@ func (l *fakeLCM) ApplyRuntimeObservation(_ context.Context, id domain.SessionID
 func (l *fakeLCM) ApplyActivitySignal(context.Context, domain.SessionID, ports.ActivitySignal) error {
 	return nil
 }
-func (l *fakeLCM) ApplyPRObservation(context.Context, domain.SessionID, ports.PRObservation) error {
+func (l *fakeLCM) MarkSpawned(context.Context, domain.SessionID, ports.SpawnOutcome) error {
 	return nil
 }
-func (l *fakeLCM) OnSpawnCompleted(context.Context, domain.SessionID, ports.SpawnOutcome) error {
-	return nil
-}
-func (l *fakeLCM) OnKillRequested(context.Context, domain.SessionID) error {
-	return nil
+func (l *fakeLCM) MarkTerminated(context.Context, domain.SessionID) error { return nil }
+
+type fakeSessions struct{ rows []domain.SessionRecord }
+
+func (s fakeSessions) ListAllSessions(context.Context) ([]domain.SessionRecord, error) {
+	return s.rows, nil
 }
 
 type fakeRuntime struct {
@@ -64,13 +61,14 @@ func probableSession(id domain.SessionID) domain.SessionRecord {
 
 func quietLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
-func newReaper(lcm *fakeLCM, rt fakeRuntime) *Reaper {
-	return New(lcm, rt, Config{Logger: quietLogger()})
+func newReaper(lcm *fakeLCM, sessions fakeSessions, rt fakeRuntime) *Reaper {
+	return New(lcm, sessions, rt, Config{Logger: quietLogger()})
 }
 
 func TestTick_ReportsAliveProbe(t *testing.T) {
-	lcm := &fakeLCM{running: []domain.SessionRecord{probableSession("mer-1")}}
-	if err := newReaper(lcm, fakeRuntime{alive: true}).Tick(ctx); err != nil {
+	lcm := &fakeLCM{}
+	sessions := fakeSessions{rows: []domain.SessionRecord{probableSession("mer-1")}}
+	if err := newReaper(lcm, sessions, fakeRuntime{alive: true}).Tick(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if lcm.observed["mer-1"].Runtime != ports.ProbeAlive {
@@ -79,8 +77,9 @@ func TestTick_ReportsAliveProbe(t *testing.T) {
 }
 
 func TestTick_ReportsProbeErrorAsFailed(t *testing.T) {
-	lcm := &fakeLCM{running: []domain.SessionRecord{probableSession("mer-1")}}
-	if err := newReaper(lcm, fakeRuntime{err: errors.New("Zellij gone")}).Tick(ctx); err != nil {
+	lcm := &fakeLCM{}
+	sessions := fakeSessions{rows: []domain.SessionRecord{probableSession("mer-1")}}
+	if err := newReaper(lcm, sessions, fakeRuntime{err: errors.New("Zellij gone")}).Tick(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if lcm.observed["mer-1"].Runtime != ports.ProbeFailed {
@@ -88,10 +87,24 @@ func TestTick_ReportsProbeErrorAsFailed(t *testing.T) {
 	}
 }
 
+func TestTick_SkipsTerminatedSession(t *testing.T) {
+	lcm := &fakeLCM{}
+	dead := probableSession("mer-1")
+	dead.IsTerminated = true
+	sessions := fakeSessions{rows: []domain.SessionRecord{dead}}
+	if err := newReaper(lcm, sessions, fakeRuntime{alive: true}).Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, probed := lcm.observed["mer-1"]; probed {
+		t.Fatal("terminated sessions must not be probed")
+	}
+}
+
 func TestTick_SkipsSessionWithoutHandle(t *testing.T) {
+	lcm := &fakeLCM{}
 	noHandle := domain.SessionRecord{ID: "mer-1"} // no runtime metadata
-	lcm := &fakeLCM{running: []domain.SessionRecord{noHandle}}
-	if err := newReaper(lcm, fakeRuntime{alive: true}).Tick(ctx); err != nil {
+	sessions := fakeSessions{rows: []domain.SessionRecord{noHandle}}
+	if err := newReaper(lcm, sessions, fakeRuntime{alive: true}).Tick(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if _, probed := lcm.observed["mer-1"]; probed {

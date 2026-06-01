@@ -27,7 +27,8 @@ record plus PR facts.
 backend/internal/domain       shared vocabulary and display-status derivation
 backend/internal/ports        inbound/outbound interfaces
 backend/internal/session      explicit mutations: spawn, kill, restore, send, cleanup
-backend/internal/lifecycle    observer-driven updates, PR writes, reactions
+backend/internal/lifecycle    runtime/activity/spawn/termination session fact reducer
+backend/internal/pr           PR observation ingestion
 backend/internal/storage      SQLite persistence and DB-triggered CDC
 backend/internal/cdc          change-log poller and broadcaster
 backend/internal/httpd        daemon HTTP surface
@@ -37,6 +38,7 @@ backend/internal/adapters     Zellij/git-worktree/GitHub adapters
 
 ## Status derivation
 
+`session.Manager` selects the display PR from all PR snapshots for a session, then
 `domain.DeriveStatus(session, prFacts)` applies this rough precedence:
 
 1. `is_terminated` → `terminated`, except merged PRs display `merged`.
@@ -49,15 +51,19 @@ backend/internal/adapters     Zellij/git-worktree/GitHub adapters
 
 ## Lifecycle manager
 
-`lifecycle.Manager` is the write path for observer facts:
+`lifecycle.Manager` is the write path for session lifecycle facts:
 
 - runtime observations can mark a session terminated only when runtime and
   process are both clearly dead and recent activity does not contradict that;
   failed/unknown probes do not persist a special state.
 - activity signals update `activity_state`; `exited` also marks the session
   terminated.
-- PR observations write the PR tables and fire reactions; merged PRs mark the
-  session terminated.
+
+## PR manager
+
+`pr.Manager` records SCM observations into the PR/check/comment tables. A merged
+PR marks the owning session terminated through the lifecycle manager; other PR
+facts are consumed at read time for display status.
 
 ## Session manager
 

@@ -52,8 +52,11 @@ func (f *fakeStore) ListAllSessions(context.Context) ([]domain.SessionRecord, er
 	}
 	return out, nil
 }
-func (f *fakeStore) PRFactsForSession(_ context.Context, id domain.SessionID) (domain.PRFacts, error) {
-	return f.pr[id], nil
+func (f *fakeStore) ListPRFactsForSession(_ context.Context, id domain.SessionID) ([]domain.PRFacts, error) {
+	if pr := f.pr[id]; pr.Exists {
+		return []domain.PRFacts{pr}, nil
+	}
+	return nil, nil
 }
 
 type fakeLCM struct {
@@ -61,7 +64,7 @@ type fakeLCM struct {
 	completed int
 }
 
-func (l *fakeLCM) OnSpawnCompleted(_ context.Context, id domain.SessionID, o ports.SpawnOutcome) error {
+func (l *fakeLCM) MarkSpawned(_ context.Context, id domain.SessionID, o ports.SpawnOutcome) error {
 	l.completed++
 	rec := l.store.sessions[id]
 	rec.IsTerminated = false
@@ -70,7 +73,7 @@ func (l *fakeLCM) OnSpawnCompleted(_ context.Context, id domain.SessionID, o por
 	l.store.sessions[id] = rec
 	return nil
 }
-func (l *fakeLCM) OnKillRequested(_ context.Context, id domain.SessionID) error {
+func (l *fakeLCM) MarkTerminated(_ context.Context, id domain.SessionID) error {
 	rec := l.store.sessions[id]
 	rec.IsTerminated = true
 	rec.Activity = domain.ActivitySubstate{State: domain.ActivityExited, LastActivityAt: time.Now(), Source: domain.SourceRuntime}
@@ -83,10 +86,6 @@ func (l *fakeLCM) ApplyRuntimeObservation(context.Context, domain.SessionID, por
 func (l *fakeLCM) ApplyActivitySignal(context.Context, domain.SessionID, ports.ActivitySignal) error {
 	return nil
 }
-func (l *fakeLCM) ApplyPRObservation(context.Context, domain.SessionID, ports.PRObservation) error {
-	return nil
-}
-func (l *fakeLCM) RunningSessions(context.Context) ([]domain.SessionRecord, error) { return nil, nil }
 
 type fakeRuntime struct {
 	createErr          error
@@ -244,5 +243,15 @@ func TestCleanup_ReclaimsTerminalWorkspaces(t *testing.T) {
 	}
 	if ws.destroyed != 1 {
 		t.Fatal("live workspace must not be destroyed")
+	}
+}
+
+func TestDisplayPRPrefersNonClosedPRInSessionLayer(t *testing.T) {
+	prs := []domain.PRFacts{
+		{Exists: true, URL: "closed", Closed: true, CI: domain.CIPassing},
+		{Exists: true, URL: "open", CI: domain.CIFailing},
+	}
+	if got := displayPR(prs); got.URL != "open" {
+		t.Fatalf("displayPR should select open PR, got %+v", got)
 	}
 }

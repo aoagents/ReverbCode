@@ -1,11 +1,9 @@
 // Package reaper implements the OBSERVE-layer polling timer that supplies the
-// LCM with the two facts the LCM cannot wake itself to discover: a periodic
-// duration-based escalation heartbeat, and per-session runtime liveness probes.
+// LCM with per-session runtime liveness probes.
 //
-// The reaper sits OUTSIDE the LCM's per-session serial loop. It only REPORTS
-// facts — it never writes session rows directly. The LCM consumes these facts
-// through ApplyRuntimeObservation. A probe error is reported as a probe-failure
-// fact, never collapsed to "alive" or "dead".
+// The reaper only reports facts — it never writes session rows directly. The LCM
+// consumes these facts through ApplyRuntimeObservation. A probe error is
+// reported as a probe-failure fact, never collapsed to "alive" or "dead".
 package reaper
 
 import (
@@ -37,25 +35,32 @@ type Config struct {
 	Logger *slog.Logger
 }
 
+type sessionLister interface {
+	ListAllSessions(ctx context.Context) ([]domain.SessionRecord, error)
+}
+
 // Reaper is the polling timer. Construct it with New; start the background
 // goroutine with Start, or drive a single cycle synchronously with Tick.
 type Reaper struct {
-	lcm     ports.LifecycleManager
-	runtime ports.Runtime
-	tick    time.Duration
-	clock   func() time.Time
-	logger  *slog.Logger
+	lcm      ports.LifecycleManager
+	sessions sessionLister
+	runtime  ports.Runtime
+	tick     time.Duration
+	clock    func() time.Time
+	logger   *slog.Logger
 }
 
-// New constructs a Reaper. The LCM is the sole writer destination; the runtime
-// is the single configured backend used for every session.
-func New(lcm ports.LifecycleManager, runtime ports.Runtime, cfg Config) *Reaper {
+// New constructs a Reaper. The LCM is the writer destination; sessions supplies
+// the rows to probe; runtime is the single configured backend used for every
+// session.
+func New(lcm ports.LifecycleManager, sessions sessionLister, runtime ports.Runtime, cfg Config) *Reaper {
 	r := &Reaper{
-		lcm:     lcm,
-		runtime: runtime,
-		tick:    cfg.Tick,
-		clock:   cfg.Clock,
-		logger:  cfg.Logger,
+		lcm:      lcm,
+		sessions: sessions,
+		runtime:  runtime,
+		tick:     cfg.Tick,
+		clock:    cfg.Clock,
+		logger:   cfg.Logger,
 	}
 	if r.tick <= 0 {
 		r.tick = DefaultTickInterval
@@ -95,24 +100,27 @@ func (r *Reaper) loop(ctx context.Context, done chan<- struct{}) {
 	}
 }
 
-// Tick runs one observation cycle: it enumerates the LCM's running sessions,
-// probes each one's runtime, and reports any non-alive result back as a fact.
+// Tick runs one observation cycle: it enumerates non-terminated sessions,
+// probes each one's runtime, and reports each result back as a fact.
 //
 // Tick is exported so the daemon (and tests) can drive cycles synchronously,
 // and so the Start goroutine has a single chokepoint to log against.
 //
-// Errors: only the RunningSessions failure is propagated, since it short-
+// Errors: only the session-listing failure is propagated, since it short-
 // circuits the rest of the cycle. Per-session ApplyRuntimeObservation failures
 // are logged but never propagated — one failed call must not bring down the loop.
 func (r *Reaper) Tick(ctx context.Context) error {
 	now := r.clock()
 
-	sessions, err := r.lcm.RunningSessions(ctx)
+	sessions, err := r.sessions.ListAllSessions(ctx)
 	if err != nil {
 		return err
 	}
 
 	for _, sess := range sessions {
+		if sess.IsTerminated {
+			continue
+		}
 		r.probeOne(ctx, sess, now)
 	}
 	return nil
@@ -126,7 +134,7 @@ func (r *Reaper) probeOne(ctx context.Context, sess domain.SessionRecord, now ti
 	handle, ok := handleFromRecord(sess)
 	if !ok {
 		// A session in the running-set without a handle is an anomaly worth
-		// surfacing (OnSpawnCompleted should have set both keys). Warn rather
+		// surfacing (MarkSpawned should have set both keys). Warn rather
 		// than Debug so it doesn't hide behind a noisy log level.
 		r.logger.Warn("reaper: session has no runtime handle metadata, skipping",
 			"session", sess.ID)
@@ -159,7 +167,7 @@ func (r *Reaper) probeOne(ctx context.Context, sess domain.SessionRecord, now ti
 }
 
 // handleFromRecord reconstructs the RuntimeHandle stored on the session by
-// OnSpawnCompleted. An empty handle id means the session cannot be probed.
+// MarkSpawned. An empty handle id means the session cannot be probed.
 func handleFromRecord(rec domain.SessionRecord) (ports.RuntimeHandle, bool) {
 	id := rec.Metadata.RuntimeHandleID
 	if id == "" {

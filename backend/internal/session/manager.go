@@ -1,5 +1,5 @@
 // Package session implements ports.SessionManager. It drives the runtime/agent/
-// workspace plugins to create and tear down sessions, routes durable fact writes
+// workspace plugins to create and tear down sessions, routes durable lifecycle fact writes
 // through the LCM, and attaches derived display status on read.
 package session
 
@@ -99,7 +99,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	}
 
 	outcome := ports.SpawnOutcome{Branch: ws.Branch, WorkspacePath: ws.Path, RuntimeHandle: handle, Prompt: agentCfg.Prompt}
-	if err := m.lcm.OnSpawnCompleted(ctx, id, outcome); err != nil {
+	if err := m.lcm.MarkSpawned(ctx, id, outcome); err != nil {
 		_ = m.runtime.Destroy(ctx, handle)
 		_ = m.workspace.Destroy(ctx, ws)
 		m.markErrored(ctx, id)
@@ -111,7 +111,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 // markErrored best-effort parks an orphaned spawn in a terminal errored state
 // (the store has no delete; a phantom "spawning" row is worse than a terminal one).
 func (m *Manager) markErrored(ctx context.Context, id domain.SessionID) {
-	_ = m.lcm.OnKillRequested(ctx, id)
+	_ = m.lcm.MarkTerminated(ctx, id)
 }
 
 // Kill records terminal intent with the LCM, then tears down the runtime and
@@ -130,7 +130,7 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 	if handle.ID == "" || ws.Path == "" {
 		return false, fmt.Errorf("kill %s: %w", id, ErrIncompleteHandle)
 	}
-	if err := m.lcm.OnKillRequested(ctx, id); err != nil {
+	if err := m.lcm.MarkTerminated(ctx, id); err != nil {
 		return false, fmt.Errorf("kill %s: %w", id, err)
 	}
 	if err := m.runtime.Destroy(ctx, handle); err != nil {
@@ -180,7 +180,7 @@ func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.Sess
 		return domain.Session{}, fmt.Errorf("restore %s: runtime: %w", id, err)
 	}
 	outcome := ports.SpawnOutcome{Branch: ws.Branch, WorkspacePath: ws.Path, RuntimeHandle: handle, AgentSessionID: meta.AgentSessionID, Prompt: meta.Prompt}
-	if err := m.lcm.OnSpawnCompleted(ctx, id, outcome); err != nil {
+	if err := m.lcm.MarkSpawned(ctx, id, outcome); err != nil {
 		_ = m.runtime.Destroy(ctx, handle)
 		return domain.Session{}, fmt.Errorf("restore %s: completed: %w", id, err)
 	}
@@ -254,11 +254,11 @@ func (m *Manager) Cleanup(ctx context.Context, project domain.ProjectID) ([]doma
 // ---- helpers ----
 
 func (m *Manager) toSession(ctx context.Context, rec domain.SessionRecord) (domain.Session, error) {
-	pr, err := m.store.PRFactsForSession(ctx, rec.ID)
+	prs, err := m.store.ListPRFactsForSession(ctx, rec.ID)
 	if err != nil {
 		return domain.Session{}, fmt.Errorf("pr facts %s: %w", rec.ID, err)
 	}
-	return domain.Session{SessionRecord: rec, Status: domain.DeriveStatus(rec, pr)}, nil
+	return domain.Session{SessionRecord: rec, Status: domain.DeriveStatus(rec, displayPR(prs))}, nil
 }
 
 func seedRecord(cfg ports.SpawnConfig, now time.Time) domain.SessionRecord {
@@ -308,4 +308,17 @@ func workspaceInfo(rec domain.SessionRecord) ports.WorkspaceInfo {
 		SessionID: rec.ID,
 		ProjectID: rec.ProjectID,
 	}
+}
+
+func displayPR(prs []domain.PRFacts) domain.PRFacts {
+	if len(prs) == 0 {
+		return domain.PRFacts{}
+	}
+	pick := prs[0]
+	for _, pr := range prs {
+		if !pr.Merged && !pr.Closed {
+			return pr
+		}
+	}
+	return pick
 }

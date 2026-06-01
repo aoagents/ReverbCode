@@ -102,22 +102,6 @@ func (s *Store) RecordCheck(ctx context.Context, r domain.PRCheckRow) error {
 	return s.qw.UpsertPRCheck(ctx, genCheckParams(r))
 }
 
-// RecentCheckStatuses returns the statuses of the last `limit` runs of a check,
-// most-recent first. The CI-fix-loop brake reads this: "last 3 all failed?".
-func (s *Store) RecentCheckStatuses(ctx context.Context, prURL, name string, limit int) ([]domain.PRCheckStatus, error) {
-	rows, err := s.qr.ListRecentChecks(ctx, gen.ListRecentChecksParams{
-		PrUrl: prURL, Name: name, Limit: int64(limit),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("recent checks %s/%s: %w", prURL, name, err)
-	}
-	out := make([]domain.PRCheckStatus, 0, len(rows))
-	for _, r := range rows {
-		out = append(out, r.Status)
-	}
-	return out, nil
-}
-
 // ListChecks returns every recorded check run for a PR.
 func (s *Store) ListChecks(ctx context.Context, prURL string) ([]domain.PRCheckRow, error) {
 	rows, err := s.qr.ListChecksByPR(ctx, prURL)

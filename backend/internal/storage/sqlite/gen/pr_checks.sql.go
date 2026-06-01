@@ -47,47 +47,6 @@ func (q *Queries) ListChecksByPR(ctx context.Context, prUrl string) ([]PrCheck, 
 	return items, nil
 }
 
-const listRecentChecks = `-- name: ListRecentChecks :many
-SELECT status, commit_hash, created_at FROM pr_checks
-WHERE pr_url = ? AND name = ?
-ORDER BY created_at DESC LIMIT ?
-`
-
-type ListRecentChecksParams struct {
-	PrUrl string
-	Name  string
-	Limit int64
-}
-
-type ListRecentChecksRow struct {
-	Status     domain.PRCheckStatus
-	CommitHash string
-	CreatedAt  time.Time
-}
-
-func (q *Queries) ListRecentChecks(ctx context.Context, arg ListRecentChecksParams) ([]ListRecentChecksRow, error) {
-	rows, err := q.db.QueryContext(ctx, listRecentChecks, arg.PrUrl, arg.Name, arg.Limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []ListRecentChecksRow{}
-	for rows.Next() {
-		var i ListRecentChecksRow
-		if err := rows.Scan(&i.Status, &i.CommitHash, &i.CreatedAt); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const upsertPRCheck = `-- name: UpsertPRCheck :exec
 INSERT INTO pr_checks (pr_url, name, commit_hash, status, url, log_tail, created_at)
 VALUES (?, ?, ?, ?, ?, ?, ?)

@@ -6,38 +6,31 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
-// PRFactsForSession picks the PR that drives display/reaction status — the
-// newest non-closed PR, else the newest PR — and folds in whether it has
-// unresolved review comments.
-func (s *Store) PRFactsForSession(ctx context.Context, id domain.SessionID) (domain.PRFacts, error) {
+// ListPRFactsForSession returns every PR snapshot owned by a session, newest
+// first, with unresolved-review-comment presence folded in per PR.
+func (s *Store) ListPRFactsForSession(ctx context.Context, id domain.SessionID) ([]domain.PRFacts, error) {
 	rows, err := s.ListPRsBySession(ctx, string(id))
 	if err != nil {
-		return domain.PRFacts{}, err
+		return nil, err
 	}
-	if len(rows) == 0 {
-		return domain.PRFacts{}, nil
-	}
-	pick := rows[0]
+	facts := make([]domain.PRFacts, 0, len(rows))
 	for _, r := range rows {
-		if !r.Merged && !r.Closed { // newest non-closed (draft or open)
-			pick = r
-			break
+		f := domain.PRFacts{
+			URL: r.URL, Number: r.Number, Exists: true,
+			Draft: r.Draft, Merged: r.Merged, Closed: r.Closed,
+			CI: r.CI, Review: r.Review, Mergeability: r.Mergeability,
 		}
-	}
-	facts := domain.PRFacts{
-		URL: pick.URL, Number: pick.Number, Exists: true,
-		Draft: pick.Draft, Merged: pick.Merged, Closed: pick.Closed,
-		CI: pick.CI, Review: pick.Review, Mergeability: pick.Mergeability,
-	}
-	comments, err := s.ListPRComments(ctx, pick.URL)
-	if err != nil {
-		return domain.PRFacts{}, err
-	}
-	for _, c := range comments {
-		if !c.Resolved {
-			facts.ReviewComments = true
-			break
+		comments, err := s.ListPRComments(ctx, r.URL)
+		if err != nil {
+			return nil, err
 		}
+		for _, c := range comments {
+			if !c.Resolved {
+				f.ReviewComments = true
+				break
+			}
+		}
+		facts = append(facts, f)
 	}
 	return facts, nil
 }

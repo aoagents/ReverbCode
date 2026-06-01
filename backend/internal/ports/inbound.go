@@ -6,21 +6,17 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
-// LifecycleManager is the inbound contract the engine implements. Observers
-// (reaper, SCM poller, activity hooks) and the Session Manager call in; the LCM
-// is the central writer for observer-driven session facts and reactions.
+// LifecycleManager is the inbound contract for durable session lifecycle facts.
+// Observers and the Session Manager call in; PR observation/write policy lives in
+// the PR service, and read-model status is derived by the Session Manager.
 type LifecycleManager interface {
 	ApplyRuntimeObservation(ctx context.Context, id domain.SessionID, f RuntimeFacts) error
 	ApplyActivitySignal(ctx context.Context, id domain.SessionID, s ActivitySignal) error
-	ApplyPRObservation(ctx context.Context, id domain.SessionID, o PRObservation) error
 
-	// OnSpawnCompleted marks a session live and records its handles. It works for
-	// a fresh spawn and a restore.
-	OnSpawnCompleted(ctx context.Context, id domain.SessionID, o SpawnOutcome) error
-	OnKillRequested(ctx context.Context, id domain.SessionID) error
-
-	// RunningSessions snapshots every non-terminal session for the reaper to probe.
-	RunningSessions(ctx context.Context) ([]domain.SessionRecord, error)
+	// MarkSpawned marks a session live and records its handles. It works for a
+	// fresh spawn and a restore.
+	MarkSpawned(ctx context.Context, id domain.SessionID, o SpawnOutcome) error
+	MarkTerminated(ctx context.Context, id domain.SessionID) error
 }
 
 // SessionManager is the inbound contract the API/CLI call for explicit

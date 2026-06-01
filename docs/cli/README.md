@@ -340,7 +340,7 @@ they are wired into the daemon and exposed through HTTP.
 | Runtime adapters | Zellij adapter implements `ports.Runtime` and also have attach/send/output helpers. | Daemon wiring, attach/send abstractions in ports/API, and runtime preflight checks. |
 | Workspace adapter | git worktree adapter implements create/destroy/restore/list with safety checks. | Repo resolver backed by registered projects and daemon wiring into Session Manager. |
 | GitHub issue tracker | `backend/internal/adapters/tracker/github` implements read-only issue `Get`, `List`, and `Preflight`. | Tracker registry/config, spawn prompt hydration, and project tracker metadata. |
-| PR facts storage | SQLite PR/check/comment writes and CDC triggers exist. | SCM/PR observer that fetches GitHub PR/CI/review facts and calls `LCM.ApplyPRObservation`. |
+| PR facts storage | SQLite PR/check/comment writes and CDC triggers exist. | SCM/PR observer that fetches GitHub PR/CI/review facts and calls the PR service. |
 | Session read model | `SessionManager.List/Get` derive display status from `activity_state`, `is_terminated`, and PR facts. | HTTP response DTOs and API routes for CLI/frontend reads. |
 
 ### Still Missing
@@ -355,7 +355,7 @@ These are the main gaps before the full initial command set is real.
 | Project API daemon wiring. | `ao project list/add/show/remove`. |
 | SSE route for live CDC events plus durable catch-up reads. | `ao events tail`, frontend live updates. |
 | Agent adapters for supported harnesses (`codex`, `claude-code`, etc.). | `ao spawn`, `ao session restore`. |
-| AgentMessenger implementation over Zellij. | `ao send`, LCM auto-nudge reactions. |
+| AgentMessenger implementation over Zellij. | `ao send`. |
 | Zellij runtime wired into the daemon. | Reaper liveness, `session attach`, spawn/kill/restore runtime work. |
 | Activity hooks or agent self-report protocol. | Accurate working/idle/needs-input status beyond runtime/PR facts. |
 | Project/tracker config model. | `project add/show`, tracker-backed `spawn`, `doctor` config checks. |

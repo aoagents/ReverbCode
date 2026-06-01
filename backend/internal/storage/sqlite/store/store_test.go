@@ -2,7 +2,6 @@ package store_test
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -152,38 +151,6 @@ func TestPRCRUD(t *testing.T) {
 	}
 	if _, ok, _ := s.GetPR(ctx, pr.URL); ok {
 		t.Fatal("pr should be gone")
-	}
-}
-
-func TestPRChecksLoopBrakeQuery(t *testing.T) {
-	s := newTestStore(t)
-	ctx := context.Background()
-	seedProject(t, s, "mer")
-	r, _ := s.CreateSession(ctx, sampleRecord("mer"))
-	now := time.Now().UTC().Truncate(time.Second)
-	_ = s.UpsertPR(ctx, domain.PRRow{URL: "pr1", SessionID: r.ID, UpdatedAt: now})
-
-	// three consecutive failing runs of "build" (one per commit).
-	for i := 1; i <= 3; i++ {
-		if err := s.RecordCheck(ctx, domain.PRCheckRow{
-			PRURL: "pr1", Name: "build", CommitHash: fmt.Sprintf("c%d", i),
-			Status: "failed", CreatedAt: now.Add(time.Duration(i) * time.Second),
-		}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	last3, err := s.RecentCheckStatuses(ctx, "pr1", "build", 3)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(last3) != 3 || last3[0] != "failed" || last3[1] != "failed" || last3[2] != "failed" {
-		t.Fatalf("recent statuses = %v, want 3x failed (loop brake would trip)", last3)
-	}
-	// a pass on a newer commit breaks the streak.
-	_ = s.RecordCheck(ctx, domain.PRCheckRow{PRURL: "pr1", Name: "build", CommitHash: "c4", Status: "passed", CreatedAt: now.Add(4 * time.Second)})
-	last3, _ = s.RecentCheckStatuses(ctx, "pr1", "build", 3)
-	if last3[0] != "passed" {
-		t.Fatalf("most recent should be passed, got %v", last3)
 	}
 }
 

@@ -24,7 +24,6 @@ type Querier interface {
 	ListPRComments(ctx context.Context, prUrl string) ([]PrComment, error)
 	ListPRsBySession(ctx context.Context, sessionID domain.SessionID) ([]Pr, error)
 	ListProjects(ctx context.Context) ([]Project, error)
-	ListRecentChecks(ctx context.Context, arg ListRecentChecksParams) ([]ListRecentChecksRow, error)
 	ListSessionsByProject(ctx context.Context, projectID domain.ProjectID) ([]Session, error)
 	MaxChangeLogSeq(ctx context.Context) (interface{}, error)
 	NextSessionNum(ctx context.Context, projectID domain.ProjectID) (int64, error)

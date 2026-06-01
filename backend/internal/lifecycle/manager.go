@@ -1,7 +1,7 @@
 // Package lifecycle implements ports.LifecycleManager: the synchronous reducer
-// that writes durable session facts. It deliberately keeps the session model
-// small: activity_state plus is_terminated are the status-like facts persisted on
-// the session row; display status is derived on read with PR facts.
+// that writes durable session lifecycle facts. It deliberately keeps the session
+// model small: activity_state plus an is_terminated bit are the only persisted
+// status-like facts on the session row.
 package lifecycle
 
 import (
@@ -14,78 +14,61 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-// Manager reduces runtime, activity, PR, spawn, and kill observations into durable session facts and agent nudges.
+// Manager reduces runtime, activity, spawn, and termination observations into durable session facts.
 type Manager struct {
-	store     ports.SessionStore
-	pr        ports.PRWriter
-	messenger ports.AgentMessenger
+	store ports.SessionStore
 
 	mu     sync.Mutex
 	window time.Duration
 	clock  func() time.Time
-
-	react reactionState
 }
 
 var _ ports.LifecycleManager = (*Manager)(nil)
 
-// New builds a Lifecycle Manager over its collaborators: the session store it
-// is the sole writer of, the PR-facts writer, and the messenger used to nudge
-// running agents.
-func New(store ports.SessionStore, pr ports.PRWriter, messenger ports.AgentMessenger) *Manager {
-	return &Manager{store: store, pr: pr, messenger: messenger, window: defaultRecentActivityWindow, clock: time.Now, react: newReactionState()}
+// New builds a Lifecycle Manager over the session store it writes.
+func New(store ports.SessionStore) *Manager {
+	return &Manager{store: store, window: defaultRecentActivityWindow, clock: time.Now}
 }
 
-func (m *Manager) mutate(ctx context.Context, id domain.SessionID, fn func(domain.SessionRecord) (domain.SessionRecord, bool)) (bool, error) {
+func (m *Manager) mutate(ctx context.Context, id domain.SessionID, fn func(domain.SessionRecord) (domain.SessionRecord, bool)) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	rec, ok, err := m.store.GetSession(ctx, id)
 	if err != nil || !ok {
-		return false, err
+		return err
 	}
 	next, changed := fn(rec)
 	if !changed {
-		return false, nil
+		return nil
 	}
 	next.UpdatedAt = m.clock()
 	if err := m.store.UpdateSession(ctx, next); err != nil {
-		return false, err
+		return err
 	}
-	return true, nil
+	return nil
 }
 
 // ApplyRuntimeObservation only writes when runtime liveness is unambiguous. A
 // failed/unknown probe or disagreement is ignored; no transient lifecycle state is stored.
 func (m *Manager) ApplyRuntimeObservation(ctx context.Context, id domain.SessionID, f ports.RuntimeFacts) error {
-	changed, err := m.mutate(ctx, id, func(cur domain.SessionRecord) (domain.SessionRecord, bool) {
-		if cur.IsTerminated {
+	return m.mutate(ctx, id, func(cur domain.SessionRecord) (domain.SessionRecord, bool) {
+		if cur.IsTerminated || !runtimeClearlyDead(f, cur.Activity, m.window) {
 			return cur, false
 		}
 		next := cur
-		if runtimeClearlyDead(f, cur.Activity, m.window) {
-			next.IsTerminated = true
-			next.Activity = domain.ActivitySubstate{State: domain.ActivityExited, LastActivityAt: nowOr(f.ObservedAt), Source: domain.SourceRuntime}
-			return next, true
-		}
-		if runtimeClearlyAlive(f) && cur.Activity.State == domain.ActivityExited {
-			next.Activity = domain.ActivitySubstate{State: domain.ActivityReady, LastActivityAt: nowOr(f.ObservedAt), Source: domain.SourceRuntime}
-			return next, true
-		}
-		return cur, false
+		next.IsTerminated = true
+		next.Activity = domain.ActivitySubstate{State: domain.ActivityExited, LastActivityAt: nowOr(f.ObservedAt), Source: domain.SourceRuntime}
+		return next, true
 	})
-	if err != nil || !changed {
-		return err
-	}
-	return m.runReactions(ctx, id, reactionContent{})
 }
 
-// ApplyActivitySignal records an authoritative agent activity signal and runs reactions.
+// ApplyActivitySignal records an authoritative agent activity signal.
 func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, s ports.ActivitySignal) error {
 	if !s.Valid {
 		return nil
 	}
-	changed, err := m.mutate(ctx, id, func(cur domain.SessionRecord) (domain.SessionRecord, bool) {
+	return m.mutate(ctx, id, func(cur domain.SessionRecord) (domain.SessionRecord, bool) {
 		if cur.IsTerminated {
 			return cur, false
 		}
@@ -100,67 +83,10 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 		}
 		return next, true
 	})
-	if err != nil || !changed {
-		return err
-	}
-	return m.runReactions(ctx, id, reactionContent{})
 }
 
-// ApplyPRObservation records fetched PR facts and runs PR-driven reactions.
-func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o ports.PRObservation) error {
-	if !o.Fetched {
-		return nil
-	}
-	_, ok, err := m.store.GetSession(ctx, id)
-	if err != nil || !ok {
-		return err
-	}
-	if err := m.writePR(ctx, id, o); err != nil {
-		return err
-	}
-	if o.Merged {
-		changed, err := m.mutate(ctx, id, func(cur domain.SessionRecord) (domain.SessionRecord, bool) {
-			if cur.IsTerminated {
-				return cur, false
-			}
-			cur.IsTerminated = true
-			cur.Activity = domain.ActivitySubstate{State: domain.ActivityExited, LastActivityAt: m.clock(), Source: domain.SourceRuntime}
-			return cur, true
-		})
-		if err != nil {
-			return err
-		}
-		if changed {
-			m.clearReactions(id)
-		}
-		return nil
-	}
-	return m.runReactions(ctx, id, prContent(o))
-}
-
-func (m *Manager) writePR(ctx context.Context, id domain.SessionID, o ports.PRObservation) error {
-	now := m.clock()
-	row := domain.PRRow{URL: o.URL, SessionID: id, Number: o.Number, Draft: o.Draft, Merged: o.Merged, Closed: o.Closed, CI: o.CI, Review: o.Review, Mergeability: o.Mergeability, UpdatedAt: now}
-	checks := make([]domain.PRCheckRow, len(o.Checks))
-	for i, c := range o.Checks {
-		c.PRURL = o.URL
-		if c.CreatedAt.IsZero() {
-			c.CreatedAt = now
-		}
-		checks[i] = c
-	}
-	comments := make([]domain.PRComment, len(o.Comments))
-	for i, c := range o.Comments {
-		if c.CreatedAt.IsZero() {
-			c.CreatedAt = now
-		}
-		comments[i] = c
-	}
-	return m.pr.WritePR(ctx, row, checks, comments)
-}
-
-// OnSpawnCompleted marks a newly spawned or restored session live and stores runtime/workspace handles.
-func (m *Manager) OnSpawnCompleted(ctx context.Context, id domain.SessionID, o ports.SpawnOutcome) error {
+// MarkSpawned marks a newly spawned or restored session live and stores runtime/workspace handles.
+func (m *Manager) MarkSpawned(ctx context.Context, id domain.SessionID, o ports.SpawnOutcome) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	rec, ok, err := m.store.GetSession(ctx, id)
@@ -168,7 +94,7 @@ func (m *Manager) OnSpawnCompleted(ctx context.Context, id domain.SessionID, o p
 		return err
 	}
 	if !ok {
-		return fmt.Errorf("lifecycle: OnSpawnCompleted for unknown session %q", id)
+		return fmt.Errorf("lifecycle: MarkSpawned for unknown session %q", id)
 	}
 	rec.IsTerminated = false
 	rec.Activity = domain.ActivitySubstate{State: domain.ActivityReady, LastActivityAt: m.clock(), Source: domain.SourceRuntime}
@@ -177,9 +103,9 @@ func (m *Manager) OnSpawnCompleted(ctx context.Context, id domain.SessionID, o p
 	return m.store.UpdateSession(ctx, rec)
 }
 
-// OnKillRequested marks a session terminated after an explicit kill request.
-func (m *Manager) OnKillRequested(ctx context.Context, id domain.SessionID) error {
-	_, err := m.mutate(ctx, id, func(cur domain.SessionRecord) (domain.SessionRecord, bool) {
+// MarkTerminated marks a session terminated without tearing down external resources.
+func (m *Manager) MarkTerminated(ctx context.Context, id domain.SessionID) error {
+	return m.mutate(ctx, id, func(cur domain.SessionRecord) (domain.SessionRecord, bool) {
 		if cur.IsTerminated {
 			return cur, false
 		}
@@ -187,23 +113,6 @@ func (m *Manager) OnKillRequested(ctx context.Context, id domain.SessionID) erro
 		cur.Activity = domain.ActivitySubstate{State: domain.ActivityExited, LastActivityAt: m.clock(), Source: domain.SourceRuntime}
 		return cur, true
 	})
-	m.clearReactions(id)
-	return err
-}
-
-// RunningSessions returns every session that still needs runtime liveness probes.
-func (m *Manager) RunningSessions(ctx context.Context) ([]domain.SessionRecord, error) {
-	all, err := m.store.ListAllSessions(ctx)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]domain.SessionRecord, 0, len(all))
-	for _, rec := range all {
-		if !rec.IsTerminated {
-			out = append(out, rec)
-		}
-	}
-	return out, nil
 }
 
 func sameActivity(a, b domain.ActivitySubstate) bool {

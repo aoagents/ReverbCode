@@ -38,7 +38,7 @@ func TestWiring_WriteFlowsToBroadcaster(t *testing.T) {
 	}
 	defer store.Close()
 
-	lcm := lifecycle.New(store, store, noopMessenger{})
+	lcm := lifecycle.New(store)
 
 	bcast := cdc.NewBroadcaster()
 	poller := cdc.NewPoller(cdcSource{store}, bcast, cdc.PollerConfig{})

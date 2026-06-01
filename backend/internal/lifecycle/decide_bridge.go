@@ -27,10 +27,6 @@ func runtimeClearlyDead(f ports.RuntimeFacts, activity domain.ActivitySubstate, 
 	return f.Runtime == ports.ProbeDead && f.Process == ports.ProbeDead && !hasRecentActivity(activity, now, window)
 }
 
-func runtimeClearlyAlive(f ports.RuntimeFacts) bool {
-	return f.Runtime == ports.ProbeAlive && f.Process == ports.ProbeAlive
-}
-
 func nowOr(t time.Time) time.Time {
 	if t.IsZero() {
 		return time.Now()

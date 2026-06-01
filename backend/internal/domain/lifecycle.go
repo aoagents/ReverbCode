@@ -19,57 +19,6 @@ const (
 	HarnessOpenCode   AgentHarness = "opencode"
 )
 
-// ---- PR facts (sourced from the pr table) ----
-
-// PRFacts is the per-session PR snapshot the status/reaction derivation reads
-// from the pr table. The zero value (Exists=false) means "no PR".
-type PRFacts struct {
-	URL            string
-	Number         int
-	Exists         bool
-	Draft          bool
-	Merged         bool
-	Closed         bool
-	CI             CIState
-	Review         ReviewDecision
-	Mergeability   Mergeability
-	ReviewComments bool // has unresolved review comments (any author) to address
-}
-
-// CIState is the aggregate CI status of a PR.
-type CIState string
-
-// CI states.
-const (
-	CIUnknown CIState = "unknown"
-	CIPending CIState = "pending"
-	CIPassing CIState = "passing"
-	CIFailing CIState = "failing"
-)
-
-// ReviewDecision is the aggregate human-review verdict on a PR.
-type ReviewDecision string
-
-// Review decisions.
-const (
-	ReviewNone           ReviewDecision = "none"
-	ReviewApproved       ReviewDecision = "approved"
-	ReviewChangesRequest ReviewDecision = "changes_requested"
-	ReviewRequired       ReviewDecision = "review_required"
-)
-
-// Mergeability is whether a PR can currently be merged.
-type Mergeability string
-
-// Mergeability states.
-const (
-	MergeUnknown     Mergeability = "unknown"
-	MergeMergeable   Mergeability = "mergeable"
-	MergeConflicting Mergeability = "conflicting"
-	MergeBlocked     Mergeability = "blocked"
-	MergeUnstable    Mergeability = "unstable"
-)
-
 // ---- activity state (the only persisted status-like session fact) ----
 
 // ActivityState is how busy the agent is, derived from its output/JSONL.

@@ -3,7 +3,6 @@ package integration
 import (
 	"context"
 	"encoding/json"
-	"strings"
 	"testing"
 	"time"
 
@@ -11,6 +10,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/lifecycle"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	prsvc "github.com/aoagents/agent-orchestrator/backend/internal/pr"
 	"github.com/aoagents/agent-orchestrator/backend/internal/session"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 )
@@ -71,6 +71,7 @@ type stack struct {
 	store *sqlite.Store
 	sm    *session.Manager
 	lcm   *lifecycle.Manager
+	prm   *prsvc.Manager
 	rt    *stubRuntime
 	ws    *stubWorkspace
 	msg   *captureMessenger
@@ -88,11 +89,12 @@ func newStack(t *testing.T) *stack {
 		t.Fatal(err)
 	}
 	msg := &captureMessenger{}
-	lcm := lifecycle.New(store, store, msg)
+	lcm := lifecycle.New(store)
+	prm := prsvc.New(prsvc.Deps{Sessions: store, Writer: store, Lifecycle: lcm})
 	rt := &stubRuntime{}
 	ws := &stubWorkspace{}
 	sm := session.New(session.Deps{Runtime: rt, Agent: stubAgent{}, Workspace: ws, Store: store, Messenger: msg, Lifecycle: lcm})
-	return &stack{store: store, sm: sm, lcm: lcm, rt: rt, ws: ws, msg: msg}
+	return &stack{store: store, sm: sm, lcm: lcm, prm: prm, rt: rt, ws: ws, msg: msg}
 }
 
 func TestSpawnPRKillRoundTrip(t *testing.T) {
@@ -109,7 +111,7 @@ func TestSpawnPRKillRoundTrip(t *testing.T) {
 	if !ok || rec.Metadata.RuntimeHandleID != "h1" || rec.IsTerminated {
 		t.Fatalf("post-spawn row wrong: %+v", rec)
 	}
-	if err := st.lcm.ApplyPRObservation(ctx, sess.ID, ports.PRObservation{Fetched: true, URL: "pr1", Number: 1, CI: domain.CIFailing, Checks: []domain.PRCheckRow{{Name: "build", CommitHash: "c1", Status: "failed", LogTail: "boom"}}}); err != nil {
+	if err := st.prm.ApplyObservation(ctx, sess.ID, ports.PRObservation{Fetched: true, URL: "pr1", Number: 1, CI: domain.CIFailing, Checks: []domain.PRCheckRow{{Name: "build", CommitHash: "c1", Status: domain.PRCheckFailed, LogTail: "boom"}}}); err != nil {
 		t.Fatal(err)
 	}
 	got, err := st.sm.Get(ctx, sess.ID)
@@ -118,9 +120,6 @@ func TestSpawnPRKillRoundTrip(t *testing.T) {
 	}
 	if got.Status != domain.StatusCIFailed {
 		t.Fatalf("want ci_failed, got %q", got.Status)
-	}
-	if len(st.msg.msgs) != 1 || !strings.Contains(st.msg.msgs[0], "boom") {
-		t.Fatalf("want CI nudge, got %v", st.msg.msgs)
 	}
 	freed, err := st.sm.Kill(ctx, sess.ID)
 	if err != nil || !freed {
@@ -167,7 +166,7 @@ func TestCDCPollerReceivesSessionAndPREvents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.lcm.ApplyPRObservation(ctx, sess.ID, ports.PRObservation{Fetched: true, URL: "pr1", Number: 1, Review: domain.ReviewApproved}); err != nil {
+	if err := st.prm.ApplyObservation(ctx, sess.ID, ports.PRObservation{Fetched: true, URL: "pr1", Number: 1, Review: domain.ReviewApproved}); err != nil {
 		t.Fatal(err)
 	}
 	if err := poller.Poll(ctx); err != nil {

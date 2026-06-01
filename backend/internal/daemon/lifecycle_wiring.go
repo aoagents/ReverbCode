@@ -16,11 +16,10 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 )
 
-// lifecycleStack owns the running LCM + reaper. The LCM is the sole writer of
-// session fact updates; the reaper is the OBSERVE-layer timer that probes live
-// runtimes and reports facts back through it. Store is exposed so the Session
-// Manager construction in startSession can plug the same SessionStore + PRWriter
-// instance the LCM already holds (*sqlite.Store satisfies both ports directly).
+// lifecycleStack owns the running LCM + reaper. The LCM writes session lifecycle
+// facts; the reaper is the OBSERVE-layer timer that probes live runtimes and
+// reports facts back through it. Store is exposed so Session Manager and other
+// services share the same persistence handle.
 type lifecycleStack struct {
 	LCM        *lifecycle.Manager
 	Store      *sqlite.Store
@@ -29,12 +28,9 @@ type lifecycleStack struct {
 
 // startLifecycle constructs the LCM over the store and starts the reaper.
 // The goroutine stops when ctx is cancelled; Stop waits for it to drain.
-//
-// TEMPORARY STUBS (replace as the daemon lane lands the collaborators):
-//   - noopMessenger — swap for the runtime/agent-plugin-backed AgentMessenger.
 func startLifecycle(ctx context.Context, store *sqlite.Store, runtime ports.Runtime, logger *slog.Logger) *lifecycleStack {
-	lcm := lifecycle.New(store, store, noopMessenger{})
-	rp := reaper.New(lcm, runtime, reaper.Config{Logger: logger})
+	lcm := lifecycle.New(store)
+	rp := reaper.New(lcm, store, runtime, reaper.Config{Logger: logger})
 	return &lifecycleStack{LCM: lcm, Store: store, reaperDone: rp.Start(ctx)}
 }
 
@@ -86,9 +82,8 @@ func startSession(ctx context.Context, cfg config.Config, runtime ports.Runtime,
 	return &sessionStack{SM: sm}, nil
 }
 
-// noopMessenger is a TEMPORARY stub (see startLifecycle): durable writes work
-// without it; only live agent nudges are absent until the real runtime/agent
-// plugin is wired.
+// noopMessenger is a TEMPORARY stub: direct send requests are absent until the
+// real runtime/agent plugin is wired.
 type noopMessenger struct{}
 
 func (noopMessenger) Send(context.Context, domain.SessionID, string) error { return nil }

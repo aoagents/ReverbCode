@@ -6,19 +6,17 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
-// SessionStore persists session records and serves the derived read-model's PR
-// facts. The Session Manager creates rows; the Lifecycle Manager owns
-// observer-driven updates thereafter.
+// SessionStore persists session records and serves the PR snapshots used by the
+// session read model. The Session Manager creates rows; lifecycle/PR services
+// apply observer-driven updates thereafter.
 type SessionStore interface {
 	CreateSession(ctx context.Context, rec domain.SessionRecord) (domain.SessionRecord, error)
 	UpdateSession(ctx context.Context, rec domain.SessionRecord) error
 	GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error)
 	ListSessions(ctx context.Context, project domain.ProjectID) ([]domain.SessionRecord, error)
 	ListAllSessions(ctx context.Context) ([]domain.SessionRecord, error)
-	// PRFactsForSession returns the PR facts that drive a session's display
-	// status: the most-recently-updated non-closed PR, else the most recent.
-	// Zero value (Exists=false) means the session has no PR.
-	PRFactsForSession(ctx context.Context, id domain.SessionID) (domain.PRFacts, error)
+	// ListPRFactsForSession returns all PR snapshots for a session, newest first.
+	ListPRFactsForSession(ctx context.Context, id domain.SessionID) ([]domain.PRFacts, error)
 }
 
 // PRWriter records the PR facts a PR observation carries. The pr table's own DB
@@ -28,11 +26,9 @@ type PRWriter interface {
 	// replacement comment set — in one transaction, so the rows and the CDC
 	// events they emit are all-or-nothing.
 	WritePR(ctx context.Context, pr domain.PRRow, checks []domain.PRCheckRow, comments []domain.PRComment) error
-	// RecentCheckStatuses reads the last `limit` runs of a check (the CI brake).
-	RecentCheckStatuses(ctx context.Context, prURL, name string, limit int) ([]domain.PRCheckStatus, error)
 }
 
-// AgentMessenger injects a message into a running agent. Used by auto-nudge reactions.
+// AgentMessenger injects a message into a running agent.
 type AgentMessenger interface {
 	Send(ctx context.Context, id domain.SessionID, message string) error
 }

@@ -78,8 +78,8 @@ func Run() error {
 		return err
 	}
 
-	// Bring up the Lifecycle Manager (sole store writer) and the reaper (OBSERVE
-	// timer). This makes the write path live end-to-end: LCM write -> store -> DB
+	// Bring up the Lifecycle Manager and the reaper (OBSERVE timer). This makes
+	// the session lifecycle write path live end-to-end: LCM write -> store -> DB
 	// trigger -> change_log -> poller -> broadcaster.
 
 	lcStack := startLifecycle(ctx, store, runtimeAdapter, log)
@@ -88,7 +88,7 @@ func Run() error {
 	// are real on main; ports.Agent has no production adapter yet, so a loud
 	// stub returns a sentinel command that makes any Spawn fail at the runtime
 	// layer rather than start a broken session quietly. AgentMessenger remains
-	// stubbed alongside the LCM until its multiplexer lands. No HTTP routes wire to this yet — the daemon lane (#10) owns API
+	// stubbed until its multiplexer lands. No HTTP routes wire to this yet — the daemon lane (#10) owns API
 	// surfacing — so we hold the SM in a local until it does.
 	sStack, err := startSession(ctx, cfg, runtimeAdapter, lcStack, log)
 	if err != nil {
