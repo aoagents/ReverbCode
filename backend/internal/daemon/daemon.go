@@ -73,19 +73,10 @@ func Run() error {
 	termMgr := terminal.NewManager(runtimeAdapter, cdcPipe.Broadcaster, log)
 	defer termMgr.Close()
 
-	srv, err := httpd.NewWithDeps(cfg, log, termMgr, httpd.APIDeps{Projects: projects})
-	if err != nil {
-		stop()
-		if cdcErr := cdcPipe.Stop(); cdcErr != nil {
-			log.Error("cdc pipeline shutdown", "err", cdcErr)
-		}
-		return err
-	}
-
 	// Bring up the Lifecycle Manager + reaper, then the Session Manager stack
-	// over the same lcm/runtime/projects/messenger singletons. SM has no HTTP
-	// routes yet — they land in a follow-up PR; constructing it here lets the
-	// next PR hang controllers off ss.sm without further wiring changes.
+	// over the same lcm/runtime/projects/messenger singletons. SM is constructed
+	// before the HTTP server so its Spawner can be plumbed into APIDeps and the
+	// /api/v1/sessions controller can drive it.
 	lcStack := startLifecycle(ctx, store, runtimeAdapter, messenger, log)
 	ss, err := buildSessionStack(cfg, store, runtimeAdapter, projects, lcStack.lcm, messenger)
 	if err != nil {
@@ -96,7 +87,16 @@ func Run() error {
 		}
 		return err
 	}
-	_ = ss // sm: HTTP routes land in a follow-up PR (γ)
+
+	srv, err := httpd.NewWithDeps(cfg, log, termMgr, httpd.APIDeps{Projects: projects, Sessions: ss.sm})
+	if err != nil {
+		stop()
+		lcStack.Stop()
+		if cdcErr := cdcPipe.Stop(); cdcErr != nil {
+			log.Error("cdc pipeline shutdown", "err", cdcErr)
+		}
+		return err
+	}
 
 	runErr := srv.Run(ctx)
 
