@@ -42,6 +42,10 @@ func sendEnterArgs(id, paneID string) []string {
 	return []string{"--session", id, "action", "send-keys", "--pane-id", paneID, "Enter"}
 }
 
+func writeCharsArgs(id, paneID, s string) []string {
+	return []string{"--session", id, "action", "write-chars", "--pane-id", paneID, s}
+}
+
 func dumpScreenArgs(id, paneID string) []string {
 	return []string{"--session", id, "action", "dump-screen", "--pane-id", paneID, "--full"}
 }

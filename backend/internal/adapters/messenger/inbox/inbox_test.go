@@ -2,16 +2,53 @@ package inbox_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/messenger/inbox"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
+
+// FilenameFor is the shared helper used by both the inbox messenger (writes the
+// file) and the panep messenger (points at the file). Both must agree on the
+// exact name for the same (timestamp, message) input.
+func TestFilenameFor_IsDeterministicForSameInput(t *testing.T) {
+	ts := time.Unix(1717171717, 42).UTC()
+	body := "ε ao test"
+	if got, want := inbox.FilenameFor(ts, body), inbox.FilenameFor(ts, body); got != want {
+		t.Fatalf("FilenameFor not deterministic: %q vs %q", got, want)
+	}
+}
+
+func TestFilenameFor_MatchesTimestampNanoAndHashPrefix(t *testing.T) {
+	ts := time.Unix(1717171717, 42).UTC()
+	body := "hello agent"
+
+	got := inbox.FilenameFor(ts, body)
+
+	sum := sha256.Sum256([]byte(body))
+	wantPrefix := strconv.FormatInt(ts.UnixNano(), 10) + "_" + hex.EncodeToString(sum[:])[:8] + ".md"
+	if got != wantPrefix {
+		t.Fatalf("FilenameFor(%v, %q) = %q, want %q", ts, body, got, wantPrefix)
+	}
+}
+
+func TestFilenameFor_DiffersByMessage(t *testing.T) {
+	ts := time.Unix(1717171717, 42).UTC()
+	a := inbox.FilenameFor(ts, "alpha")
+	b := inbox.FilenameFor(ts, "beta")
+	if a == b {
+		t.Fatalf("different messages produced same filename: %q", a)
+	}
+}
 
 func TestSatisfiesAgentMessenger(t *testing.T) {
 	var _ ports.AgentMessenger = (*inbox.Messenger)(nil)

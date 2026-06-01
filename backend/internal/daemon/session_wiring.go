@@ -3,11 +3,14 @@ package daemon
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"path/filepath"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/claudecode"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/portshim"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/messenger/composite"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/messenger/inbox"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/messenger/panep"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/workspace/gitworktree"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/workspace/gitworktree/projectresolver"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
@@ -74,4 +77,34 @@ func (s storeWorkspaceLookup) WorkspacePath(ctx context.Context, id domain.Sessi
 		return "", fmt.Errorf("session %s not found", id)
 	}
 	return rec.Metadata.WorkspacePath, nil
+}
+
+// storeSessionHandleLookup adapts the sqlite store to panep.SessionLookup.
+// panep needs the runtime handle id (to address the right zellij pane) and the
+// workspace path (proof the inbox messenger had a real directory to write to).
+type storeSessionHandleLookup struct{ store *sqlite.Store }
+
+func newStoreSessionHandleLookup(store *sqlite.Store) panep.SessionLookup {
+	return storeSessionHandleLookup{store: store}
+}
+
+func (s storeSessionHandleLookup) SessionHandle(ctx context.Context, id domain.SessionID) (string, string, error) {
+	rec, ok, err := s.store.GetSession(ctx, id)
+	if err != nil {
+		return "", "", err
+	}
+	if !ok {
+		return "", "", fmt.Errorf("session %s not found", id)
+	}
+	return rec.Metadata.RuntimeHandleID, rec.Metadata.WorkspacePath, nil
+}
+
+// newSessionMessenger assembles the per-daemon agent messenger: inbox (durable
+// file write, primary) wrapped in a composite with panep (live pane ping,
+// best-effort secondary). Ordering matters — see composite.Messenger for the
+// "primary must succeed, secondaries are nudges" contract.
+func newSessionMessenger(store *sqlite.Store, runtime panep.RuntimePaneWriter, logger *slog.Logger) ports.AgentMessenger {
+	inboxMsg := inbox.New(newStoreWorkspaceLookup(store))
+	panepMsg := panep.New(runtime, newStoreSessionHandleLookup(store))
+	return composite.New([]ports.AgentMessenger{inboxMsg, panepMsg}, logger)
 }

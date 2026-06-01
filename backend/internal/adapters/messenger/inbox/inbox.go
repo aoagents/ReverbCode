@@ -66,7 +66,7 @@ func (m *Messenger) Send(ctx context.Context, id domain.SessionID, message strin
 		return fmt.Errorf("inbox: prepare inbox for %s: %w", id, err)
 	}
 
-	name := filenameFor(m.clock(), message)
+	name := FilenameFor(m.clock(), message)
 	if err := os.WriteFile(filepath.Join(inboxDir, name), []byte(message), 0o600); err != nil {
 		return fmt.Errorf("inbox: write %s for %s: %w", name, id, err)
 	}
@@ -100,10 +100,12 @@ func ensureRealDir(path string) error {
 	}
 }
 
-// filenameFor builds a sortable, collision-resistant name from the timestamp
+// FilenameFor builds a sortable, collision-resistant name from the timestamp
 // and message body. Underscore separator keeps the timestamp's own dashes
-// distinguishable from the hash prefix.
-func filenameFor(t time.Time, message string) string {
+// distinguishable from the hash prefix. Exported so adapters that point at the
+// file (e.g. the pane-ping messenger) can derive the same name the inbox
+// messenger would write for the same (t, message).
+func FilenameFor(t time.Time, message string) string {
 	sum := sha256.Sum256([]byte(message))
 	hash := hex.EncodeToString(sum[:])[:8]
 	return strconv.FormatInt(t.UnixNano(), 10) + "_" + hash + ".md"
