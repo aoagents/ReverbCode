@@ -103,7 +103,15 @@ func TestManager_ReaddAfterRemove(t *testing.T) {
 		t.Fatalf("Remove: %v", err)
 	}
 	if _, err := m.Add(ctx, project.AddInput{Path: repo, ProjectID: ptr("ao2")}); err != nil {
-		t.Fatalf("re-add after remove: %v", err)
+		t.Fatalf("re-add same path after remove: %v", err)
+	}
+
+	otherRepo := gitRepo(t)
+	if _, err := m.Remove(ctx, "ao2"); err != nil {
+		t.Fatalf("Remove ao2: %v", err)
+	}
+	if _, err := m.Add(ctx, project.AddInput{Path: otherRepo, ProjectID: ptr("ao2")}); err != nil {
+		t.Fatalf("re-add same id at different path after remove: %v", err)
 	}
 }
 

@@ -111,7 +111,7 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 	}
 	if existing, ok, err := m.store.GetProject(ctx, string(id)); err != nil {
 		return Project{}, internal("PROJECT_LOAD_FAILED", "Failed to load project")
-	} else if ok && existing.Path != path {
+	} else if ok && existing.ArchivedAt.IsZero() && existing.Path != path {
 		return Project{}, conflict("ID_ALREADY_REGISTERED", "A project with this id is already registered for a different path", map[string]any{
 			"existingProjectId":  existing.ID,
 			"suggestedProjectId": string(m.suggestID(ctx, id)),
