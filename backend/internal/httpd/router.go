@@ -1,7 +1,7 @@
-// Package httpd builds and runs the daemon's HTTP surface. Phase 1a is the
-// skeleton: the middleware stack, liveness/readiness probes, and a graceful
-// run loop. Route registration (/api/v1, /events, /mux, /) lands in later
-// phases on top of the router this package builds.
+// Package httpd builds and runs the daemon's HTTP surface: the middleware
+// stack, the liveness/readiness probes, JSON error envelopes for unmatched
+// routes, the terminal WebSocket mux (mux.go), the /api/v1 REST surface
+// (api.go), and a graceful run loop.
 package httpd
 
 import (
@@ -12,6 +12,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
+	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/httpx"
 	"github.com/aoagents/agent-orchestrator/backend/internal/terminal"
 )
 
@@ -25,18 +26,17 @@ import (
 //	requestLogger  → slog-backed access log, stderr, carries the request id
 //	RealIP         → normalise client IP (loopback proxy from the dev server)
 //
-// The per-request Timeout from the decision table is deliberately NOT applied
-// globally: it must wrap only the /api/v1 REST surface, never the long-lived
-// SSE (/events) or WebSocket (/mux) surfaces, nor the always-must-answer health
-// probes. It is therefore applied per-surface when those subrouters are mounted
-// in Phase 1b; cfg.RequestTimeout carries the value through to that point.
+// The per-request Timeout from the decision table is deliberately NOT applied on
+// this global stack — that would also time out the health probes and the
+// long-lived terminal WebSocket. NewAPI applies it to the bounded /api/v1 REST
+// group instead (see api.go); cfg.RequestTimeout carries the value through.
 func NewRouter(cfg config.Config, log *slog.Logger, termMgr *terminal.Manager) chi.Router {
 	return NewRouterWithAPI(cfg, log, termMgr, APIDeps{})
 }
 
-// NewRouterWithAPI is the dependency-injected variant. main.go calls it with
-// real Managers when they exist; tests/dev wiring inject mocks explicitly.
-// Missing Managers intentionally keep the route-shell 501 behavior.
+// NewRouterWithAPI is the dependency-injected variant. main.go calls it with the
+// real Managers; tests and the zero-dep NewRouter call it with empty APIDeps, so
+// route-shell handlers answer 500 SERVICE_UNAVAILABLE without wiring every port.
 func NewRouterWithAPI(cfg config.Config, log *slog.Logger, termMgr *terminal.Manager, deps APIDeps) chi.Router {
 	r := chi.NewRouter()
 
@@ -68,12 +68,12 @@ func mountHealth(r chi.Router) {
 // handleHealthz is the liveness probe: it answers 200 as long as the process is
 // up and serving. It does no dependency checks by design.
 func handleHealthz(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 // handleReadyz is the readiness probe. In the 1a skeleton the daemon is ready
 // as soon as it is listening; later phases will gate this on dependency
 // initialisation (e.g. store/event-bus warm-up).
 func handleReadyz(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
+	httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ready"})
 }

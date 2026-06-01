@@ -49,3 +49,28 @@ cd backend
 gofmt -l . && go build ./... && go vet ./... && go test -race ./...
 ```
 
+## API contract (code-first OpenAPI)
+
+The `/api/v1` contract is **code-first**: the Go request/response types are the
+source of truth, and `backend/internal/httpd/apispec/openapi.yaml` plus the
+frontend types (`frontend/src/api/schema.d.ts`) are **generated** from them.
+Never hand-edit those files.
+
+**To change or add a route:**
+
+1. Edit the Go types (request/response structs + their `description`/`enum`/
+   `default` tags); for a new route also add the handler in
+   `controllers/projects.go` and its entry in `projectOperations()` in
+   `apispec/build.go`.
+2. Regenerate:
+   ```bash
+   cd backend && go generate ./...        # Go → openapi.yaml
+   npm --prefix frontend run gen:api      # openapi.yaml → schema.d.ts
+   ```
+3. `go test ./...` — the drift and route↔spec parity tests fail if anything is
+   out of sync.
+4. Commit the Go change together with the regenerated `openapi.yaml` and
+   `schema.d.ts`. CI's `gen-verify` job blocks merges on stale artifacts.
+
+Full details and rationale: [`docs/api-contract.md`](docs/api-contract.md).
+

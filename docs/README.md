@@ -15,6 +15,7 @@ fakes) on the `feat/lcm-sm-contracts` integration branch.
 |-----|----------------|
 | [architecture.md](architecture.md) | How the lane works: the OBSERVE→DECIDE→ACT loop, the canonical state model, the package layout, every component, and the load-bearing invariants. Read this first. |
 | [status.md](status.md) | What's done (PR by PR), what's left, the integration to-dos, the open cross-lane contract questions, and how to build/test. |
+| [api-contract.md](api-contract.md) | The code-first `/api/v1` OpenAPI contract: how the spec + frontend types are generated from Go, and the process to follow when changing an API route. |
 
 ## The one-paragraph mental model
 

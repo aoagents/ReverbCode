@@ -6,6 +6,7 @@ on:
   pull_request:
     paths:
       - "backend/**"
+      - "frontend/**"
       - ".github/workflows/go.yml"
 
 permissions:
@@ -22,7 +23,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.22"
+          go-version: "1.25.x"
           cache: false
 
       - name: Check formatting
@@ -42,3 +43,40 @@ jobs:
 
       - name: Test
         run: go test -race ./...
+
+  # gen-verify regenerates the code-first artifacts (openapi.yaml from Go, then
+  # the frontend TS types from that spec) and fails if the committed copies are
+  # stale — i.e. someone changed a Go contract type without running
+  # `go generate ./...` + `npm run gen:api`.
+  gen-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.x"
+          cache: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Generate OpenAPI from Go
+        working-directory: backend
+        run: go generate ./...
+
+      - name: Generate TypeScript from OpenAPI
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run gen:api
+
+      - name: Fail on stale generated files
+        run: |
+          if ! git diff --exit-code; then
+            echo "::error::Generated files are stale. Run 'go generate ./...' in backend and 'npm run gen:api' in frontend, then commit."
+            exit 1
+          fi

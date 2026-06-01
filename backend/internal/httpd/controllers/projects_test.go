@@ -1,181 +1,336 @@
 package controllers_test
 
+// Route-shell tests for /api/v1/projects. Builds the full router (so the
+// /api/v1 mount, middleware, NotFound, and MethodNotAllowed handlers are
+// exercised together). With a Manager wired the handlers run their full
+// decode→call→encode path; with no Manager (the route-shell state) every
+// canonical route returns 500 SERVICE_UNAVAILABLE (the route is implemented,
+// the service isn't). Legacy paths the REST audit dropped return 405 (sibling
+// method exists) or 404 (no sibling); reload/repair are never registered.
+
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd"
 	"github.com/aoagents/agent-orchestrator/backend/internal/project"
 )
 
 func newTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
+	// Discard logger keeps test output clean — the access-log middleware
+	// added in base #10·1a wants a non-nil *slog.Logger.
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := httptest.NewServer(httpd.NewRouterWithAPI(config.Config{}, log, nil, httpd.APIDeps{
-		Projects: project.NewMemoryManager(),
-	}))
+	srv := httptest.NewServer(httpd.NewRouter(config.Config{}, log, nil))
 	t.Cleanup(srv.Close)
 	return srv
 }
 
-func TestProjectsRoutes_DefaultToStubsWithoutManager(t *testing.T) {
+// newTestServerWithManager builds the router with a real project.Manager wired
+// in, so the handlers run their full decode→call→encode path instead of the
+// nil-Mgr 500 SERVICE_UNAVAILABLE short-circuit.
+func newTestServerWithManager(t *testing.T, mgr project.Manager) *httptest.Server {
+	t.Helper()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := httptest.NewServer(httpd.NewRouter(config.Config{}, log, nil))
+	srv := httptest.NewServer(httpd.NewRouterWithAPI(config.Config{}, log, nil, httpd.APIDeps{Projects: mgr}))
 	t.Cleanup(srv.Close)
-
-	body, status, headers := doRequest(t, srv, "GET", "/api/v1/projects", "")
-	assertJSON(t, headers)
-	assertErrorCode(t, body, status, http.StatusNotImplemented, "NOT_IMPLEMENTED")
+	return srv
 }
 
-func TestProjectsAPI_ListAddGetReload(t *testing.T) {
-	srv := newTestServer(t)
-	repo := gitRepo(t, "agent-orchestrator")
+// fakeManager is a project.Manager that returns canned values and records what
+// the handlers passed it, so the transport tests can assert both directions.
+type fakeManager struct {
+	summaries []project.Summary
+	getResult project.GetResult
+	project   project.Project
+	removeRes project.RemoveResult
+	err       error // when non-nil, every method returns it
 
-	body, status, headers := doRequest(t, srv, "GET", "/api/v1/projects", "")
+	called   bool // set by every method, so tests can assert the handler did/didn't reach the Manager
+	gotID    domain.ProjectID
+	gotAdd   project.AddInput
+	gotPatch project.UpdateConfigInput
+}
+
+func (f *fakeManager) List(context.Context) ([]project.Summary, error) {
+	f.called = true
+	return f.summaries, f.err
+}
+
+func (f *fakeManager) Get(_ context.Context, id domain.ProjectID) (project.GetResult, error) {
+	f.called, f.gotID = true, id
+	return f.getResult, f.err
+}
+
+func (f *fakeManager) Add(_ context.Context, in project.AddInput) (project.Project, error) {
+	f.called, f.gotAdd = true, in
+	return f.project, f.err
+}
+
+func (f *fakeManager) UpdateConfig(_ context.Context, id domain.ProjectID, patch project.UpdateConfigInput) (project.Project, error) {
+	f.called, f.gotID, f.gotPatch = true, id, patch
+	return f.project, f.err
+}
+
+func (f *fakeManager) Remove(_ context.Context, id domain.ProjectID) (project.RemoveResult, error) {
+	f.called, f.gotID = true, id
+	return f.removeRes, f.err
+}
+
+// TestProjects_List_OK exercises the response side: a Manager result is encoded
+// into the { projects } envelope.
+func TestProjects_List_OK(t *testing.T) {
+	mgr := &fakeManager{summaries: []project.Summary{
+		{ID: "p1", Name: "One", SessionPrefix: "one"},
+		{ID: "p2", Name: "Two", SessionPrefix: "two", ResolveError: "boom"},
+	}}
+	srv := newTestServerWithManager(t, mgr)
+
+	body, status, _ := doRequest(t, srv, "GET", "/api/v1/projects", "")
 	if status != http.StatusOK {
-		t.Fatalf("GET projects = %d, want 200; body=%s", status, body)
+		t.Fatalf("status = %d, want 200\nbody=%s", status, body)
 	}
-	assertJSON(t, headers)
-	var list struct {
-		Projects []projectSummary `json:"projects"`
+	var got struct {
+		Projects []map[string]any `json:"projects"`
 	}
-	mustJSON(t, body, &list)
-	if len(list.Projects) != 0 {
-		t.Fatalf("initial project count = %d, want 0", len(list.Projects))
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("unmarshal: %v\nbody=%s", err, body)
 	}
+	if len(got.Projects) != 2 {
+		t.Fatalf("projects len = %d, want 2", len(got.Projects))
+	}
+	if got.Projects[0]["sessionPrefix"] != "one" {
+		t.Errorf("projects[0].sessionPrefix = %v, want one", got.Projects[0]["sessionPrefix"])
+	}
+}
 
-	body, status, _ = doRequest(t, srv, "POST", "/api/v1/projects", `{"path":`+quote(repo)+`,"projectId":"ao","name":"Agent Orchestrator"}`)
+// TestProjects_Add_Created exercises the request side (body decoded into
+// AddInput) and the response side (201 + { project }).
+func TestProjects_Add_Created(t *testing.T) {
+	mgr := &fakeManager{project: project.Project{ID: "p1", Name: "One", Path: "/repo"}}
+	srv := newTestServerWithManager(t, mgr)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/projects", `{"path":"/repo","projectId":"p1"}`)
 	if status != http.StatusCreated {
-		t.Fatalf("POST project = %d, want 201; body=%s", status, body)
+		t.Fatalf("status = %d, want 201\nbody=%s", status, body)
 	}
-	var add struct {
-		Project projectBody `json:"project"`
+	if mgr.gotAdd.Path != "/repo" {
+		t.Errorf("Manager got path %q, want /repo", mgr.gotAdd.Path)
 	}
-	mustJSON(t, body, &add)
-	if add.Project.ID != "ao" || add.Project.Name != "Agent Orchestrator" || add.Project.DefaultBranch != "main" {
-		t.Fatalf("created project = %#v", add.Project)
+	if mgr.gotAdd.ProjectID == nil || *mgr.gotAdd.ProjectID != "p1" {
+		t.Errorf("Manager got projectId %v, want p1", mgr.gotAdd.ProjectID)
 	}
-
-	body, status, _ = doRequest(t, srv, "GET", "/api/v1/projects/ao", "")
-	if status != http.StatusOK {
-		t.Fatalf("GET project = %d, want 200; body=%s", status, body)
+	var got struct {
+		Project map[string]any `json:"project"`
 	}
-	var get struct {
-		Status  string      `json:"status"`
-		Project projectBody `json:"project"`
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("unmarshal: %v\nbody=%s", err, body)
 	}
-	mustJSON(t, body, &get)
-	if get.Status != "ok" || get.Project.ID != "ao" {
-		t.Fatalf("get response = %#v", get)
-	}
-
-	body, status, _ = doRequest(t, srv, "POST", "/api/v1/projects/reload", "")
-	if status != http.StatusOK {
-		t.Fatalf("reload = %d, want 200; body=%s", status, body)
-	}
-	var reload struct {
-		Reloaded      bool `json:"reloaded"`
-		ProjectCount  int  `json:"projectCount"`
-		DegradedCount int  `json:"degradedCount"`
-	}
-	mustJSON(t, body, &reload)
-	if !reload.Reloaded || reload.ProjectCount != 1 || reload.DegradedCount != 0 {
-		t.Fatalf("reload response = %#v", reload)
+	if got.Project["id"] != "p1" {
+		t.Errorf("project.id = %v, want p1", got.Project["id"])
 	}
 }
 
-func TestProjectsAPI_AddValidationAndConflicts(t *testing.T) {
-	srv := newTestServer(t)
-	repoA := gitRepo(t, "repo-a")
-	repoB := gitRepo(t, "repo-b")
-	notRepo := t.TempDir()
-
+// TestProjects_BodyValidation covers the request validation the transport does
+// before any Manager logic: the JSON body must decode. Malformed and empty
+// bodies both fail closed with 400 INVALID_JSON on every route that reads a
+// body (POST add, PATCH updateConfig), the locked envelope is returned, and the
+// Manager is never reached.
+func TestProjects_BodyValidation(t *testing.T) {
 	cases := []struct {
-		name, body, wantCode string
-		wantStatus           int
+		name, method, path, body string
 	}{
-		{name: "invalid json", body: `{`, wantStatus: 400, wantCode: "INVALID_JSON"},
-		{name: "missing path", body: `{}`, wantStatus: 400, wantCode: "PATH_REQUIRED"},
-		{name: "not git", body: `{"path":` + quote(notRepo) + `}`, wantStatus: 400, wantCode: "NOT_A_GIT_REPO"},
+		{name: "add/malformed", method: "POST", path: "/api/v1/projects", body: `{not json`},
+		{name: "add/empty", method: "POST", path: "/api/v1/projects", body: ``},
+		{name: "patch/malformed", method: "PATCH", path: "/api/v1/projects/p1", body: `{not json`},
+		{name: "patch/empty", method: "PATCH", path: "/api/v1/projects/p1", body: ``},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			body, status, _ := doRequest(t, srv, "POST", "/api/v1/projects", tc.body)
-			assertErrorCode(t, body, status, tc.wantStatus, tc.wantCode)
+			mgr := &fakeManager{}
+			srv := newTestServerWithManager(t, mgr)
+			body, status, _ := doRequest(t, srv, tc.method, tc.path, tc.body)
+			if status != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400\nbody=%s", status, body)
+			}
+			assertEnvelope(t, body, "INVALID_JSON")
+			if mgr.called {
+				t.Error("Manager was called despite a body that failed to decode")
+			}
 		})
 	}
-
-	body, status, _ := doRequest(t, srv, "POST", "/api/v1/projects", `{"path":`+quote(repoA)+`,"projectId":"shared"}`)
-	if status != http.StatusCreated {
-		t.Fatalf("seed create = %d, want 201; body=%s", status, body)
-	}
-
-	body, status, _ = doRequest(t, srv, "POST", "/api/v1/projects", `{"path":`+quote(repoA)+`,"projectId":"other"}`)
-	assertErrorCode(t, body, status, http.StatusConflict, "PATH_ALREADY_REGISTERED")
-
-	body, status, _ = doRequest(t, srv, "POST", "/api/v1/projects", `{"path":`+quote(repoB)+`,"projectId":"shared"}`)
-	assertErrorCode(t, body, status, http.StatusConflict, "ID_ALREADY_REGISTERED")
 }
 
-func TestProjectsAPI_UpdateDeleteRepair(t *testing.T) {
-	srv := newTestServer(t)
-	repo := gitRepo(t, "repo")
+// TestProjects_Get_Discriminator confirms GetResult maps onto the { status,
+// project } envelope for both ok and degraded.
+func TestProjects_Get_Discriminator(t *testing.T) {
+	t.Run("ok", func(t *testing.T) {
+		mgr := &fakeManager{getResult: project.GetResult{
+			Status:  "ok",
+			Project: &project.Project{ID: "p1", Name: "One"},
+		}}
+		srv := newTestServerWithManager(t, mgr)
+		body, status, _ := doRequest(t, srv, "GET", "/api/v1/projects/p1", "")
+		if status != http.StatusOK {
+			t.Fatalf("status = %d, want 200\nbody=%s", status, body)
+		}
+		if mgr.gotID != "p1" {
+			t.Errorf("Manager got id %q, want p1", mgr.gotID)
+		}
+		var got struct {
+			Status  string         `json:"status"`
+			Project map[string]any `json:"project"`
+		}
+		_ = json.Unmarshal(body, &got)
+		if got.Status != "ok" || got.Project["id"] != "p1" {
+			t.Errorf("got status=%q project=%v, want ok/p1", got.Status, got.Project)
+		}
+	})
+	t.Run("degraded", func(t *testing.T) {
+		mgr := &fakeManager{getResult: project.GetResult{
+			Status:   "degraded",
+			Degraded: &project.Degraded{ID: "p1", ResolveError: "bad config"},
+		}}
+		srv := newTestServerWithManager(t, mgr)
+		body, status, _ := doRequest(t, srv, "GET", "/api/v1/projects/p1", "")
+		if status != http.StatusOK {
+			t.Fatalf("status = %d, want 200\nbody=%s", status, body)
+		}
+		var got struct {
+			Status  string         `json:"status"`
+			Project map[string]any `json:"project"`
+		}
+		_ = json.Unmarshal(body, &got)
+		if got.Status != "degraded" || got.Project["resolveError"] != "bad config" {
+			t.Errorf("got status=%q project=%v, want degraded/bad config", got.Status, got.Project)
+		}
+	})
+}
 
-	body, status, _ := doRequest(t, srv, "POST", "/api/v1/projects", `{"path":`+quote(repo)+`,"projectId":"proj"}`)
-	if status != http.StatusCreated {
-		t.Fatalf("seed create = %d, want 201; body=%s", status, body)
-	}
-
-	body, status, _ = doRequest(t, srv, "PATCH", "/api/v1/projects/proj", `{"agent":"claude","runtime":"tmux"}`)
-	assertErrorCode(t, body, status, http.StatusNotImplemented, "PROJECT_CONFIG_NOT_IMPLEMENTED")
-
-	body, status, _ = doRequest(t, srv, "PATCH", "/api/v1/projects/proj", `{"path":"elsewhere"}`)
-	assertErrorCode(t, body, status, http.StatusBadRequest, "IDENTITY_FROZEN")
-
-	body, status, _ = doRequest(t, srv, "POST", "/api/v1/projects/proj/repair", "")
-	assertErrorCode(t, body, status, http.StatusBadRequest, "REPAIR_NOT_AVAILABLE")
-
-	body, status, _ = doRequest(t, srv, "DELETE", "/api/v1/projects/proj", "")
+// TestProjects_Remove_OK checks the { projectId, removedStorageDir } body.
+func TestProjects_Remove_OK(t *testing.T) {
+	mgr := &fakeManager{removeRes: project.RemoveResult{ProjectID: "p1", RemovedStorageDir: true}}
+	srv := newTestServerWithManager(t, mgr)
+	body, status, _ := doRequest(t, srv, "DELETE", "/api/v1/projects/p1", "")
 	if status != http.StatusOK {
-		t.Fatalf("DELETE = %d, want 200; body=%s", status, body)
+		t.Fatalf("status = %d, want 200\nbody=%s", status, body)
 	}
-	var removed struct {
+	var got struct {
 		ProjectID         string `json:"projectId"`
 		RemovedStorageDir bool   `json:"removedStorageDir"`
 	}
-	mustJSON(t, body, &removed)
-	if removed.ProjectID != "proj" || removed.RemovedStorageDir {
-		t.Fatalf("delete response = %#v", removed)
-	}
-
-	body, status, _ = doRequest(t, srv, "GET", "/api/v1/projects/proj", "")
-	if status != http.StatusOK {
-		t.Fatalf("GET archived project = %d, want 200; body=%s", status, body)
-	}
-
-	body, status, _ = doRequest(t, srv, "GET", "/api/v1/projects", "")
-	if status != http.StatusOK {
-		t.Fatalf("GET projects after archive = %d, want 200; body=%s", status, body)
-	}
-	var list struct {
-		Projects []projectSummary `json:"projects"`
-	}
-	mustJSON(t, body, &list)
-	if len(list.Projects) != 0 {
-		t.Fatalf("active projects after archive = %d, want 0", len(list.Projects))
+	_ = json.Unmarshal(body, &got)
+	if got.ProjectID != "p1" || !got.RemovedStorageDir {
+		t.Errorf("got %+v, want {p1 true}", got)
 	}
 }
 
+// TestProjects_UpdateConfig_OK exercises PATCH: the body is decoded into
+// UpdateConfigInput, the Manager is called, and { project } returns 200.
+func TestProjects_UpdateConfig_OK(t *testing.T) {
+	mgr := &fakeManager{project: project.Project{ID: "p1", Name: "One", Agent: project.AgentConfig{"default": "claude"}}}
+	srv := newTestServerWithManager(t, mgr)
+
+	body, status, _ := doRequest(t, srv, "PATCH", "/api/v1/projects/p1", `{"agent":{"default":"claude"}}`)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200\nbody=%s", status, body)
+	}
+	if mgr.gotID != "p1" {
+		t.Errorf("Manager got id %q, want p1", mgr.gotID)
+	}
+	if mgr.gotPatch.Agent["default"] != "claude" {
+		t.Errorf("Manager got patch agent %v, want claude", mgr.gotPatch.Agent)
+	}
+	var got struct {
+		Project map[string]any `json:"project"`
+	}
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("unmarshal: %v\nbody=%s", err, body)
+	}
+	if got.Project["id"] != "p1" {
+		t.Errorf("project.id = %v, want p1", got.Project["id"])
+	}
+}
+
+// TestProjects_ManagerError walks every handler and confirms that until the
+// typed-error taxonomy lands, any Manager error surfaces as the route's
+// documented 500 code in the locked envelope. This pins the 5 codes the
+// openapi.yaml 500 examples declare.
+func TestProjects_ManagerError(t *testing.T) {
+	cases := []struct {
+		method, path, body, wantCode string
+	}{
+		{method: "GET", path: "/api/v1/projects", wantCode: "PROJECTS_LIST_FAILED"},
+		{method: "POST", path: "/api/v1/projects", body: `{"path":"/r"}`, wantCode: "PROJECT_ADD_FAILED"},
+		{method: "GET", path: "/api/v1/projects/p1", wantCode: "PROJECT_LOAD_FAILED"},
+		{method: "PATCH", path: "/api/v1/projects/p1", body: `{}`, wantCode: "PROJECT_UPDATE_FAILED"},
+		{method: "DELETE", path: "/api/v1/projects/p1", wantCode: "PROJECT_REMOVE_FAILED"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			srv := newTestServerWithManager(t, &fakeManager{err: errors.New("kaboom")})
+			body, status, _ := doRequest(t, srv, tc.method, tc.path, tc.body)
+			if status != http.StatusInternalServerError {
+				t.Fatalf("status = %d, want 500\nbody=%s", status, body)
+			}
+			assertEnvelope(t, body, tc.wantCode)
+		})
+	}
+}
+
+// TestProjectsRoutes_NilManager walks every canonical /projects route with no
+// Manager wired (the route-shell state) and asserts a 500 SERVICE_UNAVAILABLE —
+// NOT a 501: the route and its transport are implemented, only the backing
+// service is absent, so it must not claim "not implemented".
+func TestProjectsRoutes_NilManager(t *testing.T) {
+	srv := newTestServer(t)
+
+	cases := []struct{ method, path, body string }{
+		{method: "GET", path: "/api/v1/projects"},
+		{method: "POST", path: "/api/v1/projects", body: `{}`},
+		{method: "GET", path: "/api/v1/projects/p1"},
+		{method: "PATCH", path: "/api/v1/projects/p1", body: `{}`},
+		{method: "DELETE", path: "/api/v1/projects/p1"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			body, status, headers := doRequest(t, srv, tc.method, tc.path, tc.body)
+
+			if status != http.StatusInternalServerError {
+				t.Fatalf("status = %d, want 500\nbody=%s", status, body)
+			}
+			if ct := headers.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+				t.Errorf("Content-Type = %q, want JSON", ct)
+			}
+			assertEnvelope(t, body, "SERVICE_UNAVAILABLE")
+
+			var got envelope
+			_ = json.Unmarshal(body, &got)
+			if got.Code == "NOT_IMPLEMENTED" || got.Error == "not_implemented" {
+				t.Errorf("must not signal not-implemented; got error/code = %q/%q", got.Error, got.Code)
+			}
+		})
+	}
+}
+
+// TestProjectsRoutes_LegacyUnregistered confirms the dropped/deferred paths
+// are deliberately unregistered and fall through to the right handler:
+//   - PUT/POST on /projects/{id} match the {id} path with no such method → 405.
+//     (POST is the dropped legacy repair overload.)
+//   - POST /projects/reload also matches {id}="reload" with no POST → 405,
+//     since reload was dropped rather than registered.
+//   - POST /projects/{id}/repair is a two-segment path with no route at all,
+//     so it 404s; repair is deferred.
 func TestProjectsRoutes_LegacyUnregistered(t *testing.T) {
 	srv := newTestServer(t)
 
@@ -184,24 +339,51 @@ func TestProjectsRoutes_LegacyUnregistered(t *testing.T) {
 		wantStatus                  int
 	}{
 		{method: "PUT", path: "/api/v1/projects/p1", wantStatus: 405, wantCode: "METHOD_NOT_ALLOWED", why: "R3 PUT not registered"},
-		{method: "POST", path: "/api/v1/projects/p1", wantStatus: 405, wantCode: "METHOD_NOT_ALLOWED", why: "R4 repair moved to /repair"},
+		{method: "POST", path: "/api/v1/projects/p1", wantStatus: 405, wantCode: "METHOD_NOT_ALLOWED", why: "R4 repair overload unregistered"},
+		{method: "POST", path: "/api/v1/projects/reload", wantStatus: 405, wantCode: "METHOD_NOT_ALLOWED", why: "reload dropped; matches {id} with no POST"},
+		{method: "POST", path: "/api/v1/projects/p1/repair", wantStatus: 404, wantCode: "ROUTE_NOT_FOUND", why: "repair deferred; no route registered"},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.why, func(t *testing.T) {
 			body, status, _ := doRequest(t, srv, tc.method, tc.path, "")
-			assertErrorCode(t, body, status, tc.wantStatus, tc.wantCode)
+			if status != tc.wantStatus {
+				t.Fatalf("%s %s = %d, want %d", tc.method, tc.path, status, tc.wantStatus)
+			}
+			var e envelope
+			if err := json.Unmarshal(body, &e); err != nil {
+				t.Fatalf("unmarshal: %v\nbody=%s", err, body)
+			}
+			if e.Code != tc.wantCode {
+				t.Errorf("code = %q, want %q", e.Code, tc.wantCode)
+			}
 		})
 	}
 }
 
+// TestProjectsRoutes_MissingRoute confirms the JSON 404 envelope (not chi's
+// default text/plain) for routes that don't exist at all.
 func TestProjectsRoutes_MissingRoute(t *testing.T) {
 	srv := newTestServer(t)
 	body, status, headers := doRequest(t, srv, "GET", "/api/v1/projects/p1/does-not-exist", "")
-	assertJSON(t, headers)
-	assertErrorCode(t, body, status, http.StatusNotFound, "ROUTE_NOT_FOUND")
+
+	if status != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", status)
+	}
+	if ct := headers.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		t.Errorf("Content-Type = %q, want JSON (router must override chi's text/plain default)", ct)
+	}
+	var e envelope
+	if err := json.Unmarshal(body, &e); err != nil {
+		t.Fatalf("unmarshal: %v\nbody=%s", err, body)
+	}
+	if e.Code != "ROUTE_NOT_FOUND" {
+		t.Errorf("code = %q, want ROUTE_NOT_FOUND", e.Code)
+	}
 }
 
+// TestOpenAPIYAMLServed confirms the embedded spec is reachable at the
+// documented path so external tooling can fetch it.
 func TestOpenAPIYAMLServed(t *testing.T) {
 	srv := newTestServer(t)
 	body, status, headers := doRequest(t, srv, "GET", "/api/v1/openapi.yaml", "")
@@ -212,31 +394,42 @@ func TestOpenAPIYAMLServed(t *testing.T) {
 		t.Errorf("Content-Type = %q, want application/yaml*", ct)
 	}
 	if !strings.Contains(string(body), "openapi: 3.1.0") {
-		t.Errorf("served body did not start with an OpenAPI 3.1 doc")
+		t.Errorf("served body did not start with an OpenAPI 3.1 doc — first bytes:\n%s", firstLine(body))
 	}
 }
 
-type projectSummary struct {
-	ID            string `json:"id"`
-	Name          string `json:"name"`
-	SessionPrefix string `json:"sessionPrefix"`
+// envelope mirrors the locked APIError on the wire. We declare it in the test
+// rather than importing httpx's type so the test pins the JSON contract
+// independently of internal renames.
+type envelope struct {
+	Error     string `json:"error"`
+	Code      string `json:"code"`
+	Message   string `json:"message"`
+	RequestID string `json:"requestId"`
 }
 
-type projectBody struct {
-	ID            string `json:"id"`
-	Name          string `json:"name"`
-	Path          string `json:"path"`
-	Repo          string `json:"repo"`
-	DefaultBranch string `json:"defaultBranch"`
-	Agent         string `json:"agent"`
-	Runtime       string `json:"runtime"`
-}
-
-type errorBody struct {
-	Error   string         `json:"error"`
-	Code    string         `json:"code"`
-	Message string         `json:"message"`
-	Details map[string]any `json:"details"`
+// assertEnvelope decodes body as the locked APIError and checks the machine
+// code plus that the envelope is fully populated. This pins R9: every non-2xx
+// response carries error, code, message, and a correlation requestId (the
+// router's RequestID middleware always tags it).
+func assertEnvelope(t *testing.T, body []byte, wantCode string) {
+	t.Helper()
+	var e envelope
+	if err := json.Unmarshal(body, &e); err != nil {
+		t.Fatalf("unmarshal envelope: %v\nbody=%s", err, body)
+	}
+	if e.Code != wantCode {
+		t.Errorf("code = %q, want %q", e.Code, wantCode)
+	}
+	if e.Error == "" {
+		t.Error("envelope.error empty")
+	}
+	if e.Message == "" {
+		t.Error("envelope.message empty")
+	}
+	if e.RequestID == "" {
+		t.Error("envelope.requestId empty — RequestID middleware not applied?")
+	}
 }
 
 func doRequest(t *testing.T, srv *httptest.Server, method, path, body string) ([]byte, int, http.Header) {
@@ -260,52 +453,23 @@ func doRequest(t *testing.T, srv *httptest.Server, method, path, body string) ([
 		t.Fatalf("do request: %v", err)
 	}
 	defer resp.Body.Close()
-	buf, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatalf("read body: %v", err)
+	buf := make([]byte, 0, 1024)
+	tmp := make([]byte, 512)
+	for {
+		n, rerr := resp.Body.Read(tmp)
+		if n > 0 {
+			buf = append(buf, tmp[:n]...)
+		}
+		if rerr != nil {
+			break
+		}
 	}
 	return buf, resp.StatusCode, resp.Header
 }
 
-func gitRepo(t *testing.T, name string) string {
-	t.Helper()
-	dir := filepath.Join(t.TempDir(), name)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatalf("create git repo fixture: %v", err)
+func firstLine(b []byte) string {
+	if i := strings.IndexByte(string(b), '\n'); i >= 0 {
+		return string(b[:i])
 	}
-	if out, err := exec.Command("git", "init", dir).CombinedOutput(); err != nil {
-		t.Fatalf("git init fixture: %v\n%s", err, out)
-	}
-	return dir
-}
-
-func quote(s string) string {
-	b, _ := json.Marshal(s)
 	return string(b)
-}
-
-func mustJSON(t *testing.T, body []byte, out any) {
-	t.Helper()
-	if err := json.Unmarshal(body, out); err != nil {
-		t.Fatalf("unmarshal: %v\nbody=%s", err, body)
-	}
-}
-
-func assertJSON(t *testing.T, headers http.Header) {
-	t.Helper()
-	if ct := headers.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
-		t.Fatalf("Content-Type = %q, want JSON", ct)
-	}
-}
-
-func assertErrorCode(t *testing.T, body []byte, status, wantStatus int, wantCode string) {
-	t.Helper()
-	if status != wantStatus {
-		t.Fatalf("status = %d, want %d\nbody=%s", status, wantStatus, body)
-	}
-	var got errorBody
-	mustJSON(t, body, &got)
-	if got.Code != wantCode {
-		t.Fatalf("code = %q, want %q\nbody=%s", got.Code, wantCode, body)
-	}
 }

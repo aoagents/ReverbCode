@@ -1,13 +1,16 @@
-// Package project owns the projects service contract: the Manager interface
-// the HTTP layer calls and the request/response DTOs that cross it (dto.go).
+// Package project owns the projects service contract: the Manager interface and
+// the DTOs that cross it (dto.go), plus the project entities (types.go).
 //
-// This is the pilot for the feature-package layout the backend is migrating
-// toward: a resource's interface and DTOs live with the resource, not in a
-// central catch-all. Controllers depend on project.Manager and nothing
-// beneath it — whether the implementation reaches into the config registry,
-// the lifecycle manager (to stop sessions on remove), or a workspace adapter
-// (to destroy worktrees) is a private concern of the impl, which lands in a
-// later handler-impl PR. This PR defines only the contract.
+// Manager is an application-service contract reused across protocols (HTTP
+// today, CLI next), so it lives in the feature package rather than beside one
+// consumer — mirroring ports.SessionManager. This is the pilot for the
+// feature-package layout: a resource's interface, entities, and DTOs live with
+// the resource. Consumers depend on Manager and nothing beneath it; what the
+// impl reaches into (config registry, LCM, workspace adapter) is its own
+// concern and lands in the handler-impl PR. This PR defines only the contract.
+//
+// Reload and Repair are absent by design: the route analysis dropped reload
+// and deferred repair.
 package project
 
 import (
@@ -16,8 +19,8 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
-// Manager is the inbound contract for the /api/v1/projects surface. One
-// implementation (this package, later); the HTTP controller is the consumer.
+// Manager is the inbound contract for project operations, called by the HTTP
+// controller today and the CLI later.
 type Manager interface {
 	// List returns every registered project, including degraded entries
 	// (those whose config failed to load but whose registry entry survives).
@@ -35,10 +38,4 @@ type Manager interface {
 	// Remove unregisters a project, stopping its sessions and reclaiming
 	// managed workspaces.
 	Remove(ctx context.Context, id domain.ProjectID) (RemoveResult, error)
-
-	// Repair recovers a degraded project where automatic repair is available.
-	Repair(ctx context.Context, id domain.ProjectID) (Project, error)
-
-	// Reload invalidates cached config and re-scans the global registry.
-	Reload(ctx context.Context) (ReloadResult, error)
 }
