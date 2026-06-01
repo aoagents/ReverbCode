@@ -49,6 +49,10 @@ type ProjectOrDegraded struct {
 	Degraded *project.Degraded
 }
 
+// MarshalJSON emits whichever variant is set so the handler sends the right
+// object. It errors when neither is set rather than emitting a contract-breaking
+// `null` — though the handler validates that upstream and returns a 500 before
+// writing, so this branch is an unreachable backstop (see newGetProjectResponse).
 func (p ProjectOrDegraded) MarshalJSON() ([]byte, error) {
 	switch {
 	case p.Degraded != nil:

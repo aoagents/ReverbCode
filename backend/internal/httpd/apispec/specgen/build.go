@@ -39,13 +39,14 @@ func Build() ([]byte, error) {
 	// structs stay clean (only description/enum tags) and this hook adds the
 	// required array. nonNullableSlices drops the spurious "null" type swaggest
 	// stamps on every Go slice.
+	//
+	// schemaName cleans the component names (the generated TS type names);
+	// swaggest defaults to PackageType, e.g. "ProjectProject", "EnvelopeAPIError".
 	r.DefaultOptions = append(r.DefaultOptions,
 		jsonschema.InterceptProp(requiredFromJSONTag),
 		jsonschema.InterceptNullability(nonNullableSlices),
+		jsonschema.InterceptDefName(schemaName),
 	)
-	// Clean component schema names (which become the generated TS type names):
-	// swaggest defaults to PackageType, e.g. "ProjectProject", "EnvelopeAPIError".
-	r.InterceptDefName(schemaName)
 
 	r.Spec.SetTitle("Agent Orchestrator HTTP daemon")
 	r.Spec.SetVersion("0.1.0-route-shell")
