@@ -1,5 +1,5 @@
 // Package httpd builds and runs the daemon's HTTP surface: middleware, health
-// probes, daemon control, REST APIs, and terminal mux routing.
+// probes, daemon control, REST APIs, and terminal WebSocket routing.
 package httpd
 
 import (
@@ -62,7 +62,7 @@ func NewRouterWithControl(cfg config.Config, log *slog.Logger, termMgr *terminal
 	r.MethodNotAllowed(methodNotAllowedJSON)
 
 	mountHealth(r)
-	mountMux(r, termMgr, log)
+	mountTerminalMux(r, termMgr, log)
 	mountControl(r, control)
 	NewAPI(cfg, deps).Register(r)
 

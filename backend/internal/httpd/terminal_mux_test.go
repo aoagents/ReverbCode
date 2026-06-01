@@ -28,7 +28,7 @@ func (stubSource) IsAlive(context.Context, ports.RuntimeHandle) (bool, error) {
 	return false, nil
 }
 
-type muxFrame struct {
+type terminalMuxFrame struct {
 	Ch   string `json:"ch"`
 	ID   string `json:"id"`
 	Type string `json:"type"`
@@ -52,12 +52,12 @@ func dialMux(t *testing.T, mgr *terminal.Manager) (*websocket.Conn, func()) {
 	}
 }
 
-func readFrame(t *testing.T, c *websocket.Conn, ch, typ string, d time.Duration) muxFrame {
+func readFrame(t *testing.T, c *websocket.Conn, ch, typ string, d time.Duration) terminalMuxFrame {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), d)
 	defer cancel()
 	for {
-		var f muxFrame
+		var f terminalMuxFrame
 		if err := wsjson.Read(ctx, c, &f); err != nil {
 			t.Fatalf("waiting for %s/%s: %v", ch, typ, err)
 		}
@@ -81,7 +81,7 @@ func TestMuxUpgradeStreamsTerminal(t *testing.T) {
 	defer done()
 
 	ctx := context.Background()
-	if err := wsjson.Write(ctx, c, muxFrame{Ch: "terminal", ID: "t1", Type: "open"}); err != nil {
+	if err := wsjson.Write(ctx, c, terminalMuxFrame{Ch: "terminal", ID: "t1", Type: "open"}); err != nil {
 		t.Fatalf("write open: %v", err)
 	}
 
