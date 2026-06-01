@@ -84,7 +84,7 @@ case "$HTTP_CODE" in
     echo "[ao] registered project: $PROJECT_ID  ->  $PROJECT_PATH"
     ;;
   409)
-    PROJECT_ID="$(echo "$BODY_OUT" | jq -r '.error.details.existingProjectId // empty')"
+    PROJECT_ID="$(echo "$BODY_OUT" | jq -r '.details.existingProjectId // empty')"
     if [[ -z "$PROJECT_ID" ]]; then
       echo "error: conflict response missing existingProjectId; raw:" >&2
       echo "$BODY_OUT" | jq . >&2 2>/dev/null || echo "$BODY_OUT" >&2
