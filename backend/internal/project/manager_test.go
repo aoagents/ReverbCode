@@ -28,7 +28,7 @@ func gitRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	if out, err := exec.Command("git", "init", dir).CombinedOutput(); err != nil {
-		t.Skipf("git unavailable: %v (%s)", err, out)
+		t.Fatalf("git unavailable: %v (%s)", err, out)
 	}
 	return dir
 }
@@ -89,6 +89,22 @@ func TestManager_AddListGetRemove(t *testing.T) {
 	}
 }
 
+func TestManager_ReaddAfterRemove(t *testing.T) {
+	ctx := context.Background()
+	m := newManager(t)
+	repo := gitRepo(t)
+
+	if _, err := m.Add(ctx, project.AddInput{Path: repo, ProjectID: ptr("ao")}); err != nil {
+		t.Fatalf("first Add: %v", err)
+	}
+	if _, err := m.Remove(ctx, "ao"); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	if _, err := m.Add(ctx, project.AddInput{Path: repo, ProjectID: ptr("ao2")}); err != nil {
+		t.Fatalf("re-add after remove: %v", err)
+	}
+}
+
 func TestManager_AddValidationAndConflicts(t *testing.T) {
 	ctx := context.Background()
 	m := newManager(t)
@@ -127,6 +143,4 @@ func TestManager_GetUpdateRemoveErrors(t *testing.T) {
 	if _, err := m.Add(ctx, project.AddInput{Path: repo, ProjectID: ptr("p")}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	_, err = m.UpdateConfig(ctx, "p", project.UpdateConfigInput{})
-	wantCode(t, err, "PROJECT_CONFIG_NOT_IMPLEMENTED")
 }

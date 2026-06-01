@@ -32,7 +32,7 @@ func (q *Queries) ArchiveProject(ctx context.Context, arg ArchiveProjectParams) 
 
 const findProjectByPath = `-- name: FindProjectByPath :one
 SELECT id, path, repo_origin_url, display_name, registered_at, archived_at
-FROM projects WHERE path = ?
+FROM projects WHERE path = ? AND archived_at IS NULL
 `
 
 func (q *Queries) FindProjectByPath(ctx context.Context, path string) (Project, error) {
