@@ -133,9 +133,8 @@ type restPull struct {
 	Head     struct {
 		SHA string `json:"sha"`
 	} `json:"head"`
-	Mergeable        *bool  `json:"mergeable"`
-	MergeableState   string `json:"mergeable_state"`
-	MergeStateStatus string `json:"merge_state_status"`
+	Mergeable      *bool  `json:"mergeable"`
+	MergeableState string `json:"mergeable_state"`
 }
 
 func (p *Provider) fetchRESTPull(ctx context.Context, owner, repo string, number int) (restPull, error) {
@@ -157,7 +156,15 @@ func (p *Provider) fetchRESTPull(ctx context.Context, owner, repo string, number
 // GraphQL: the heavy lift
 // ---------------------------------------------------------------------------
 
-const graphQLCheckContextLimit = 50
+// graphQLCheckContextLimit caps how many statusCheckRollup contexts we
+// request in one GraphQL hop. 100 is GitHub's documented per-page max
+// for the contexts connection. When the rollup has MORE than this many
+// contexts the response surfaces pageInfo.hasNextPage=true and
+// ciSummaryFromGraphQL is conservative (see the "CIUnknown on
+// hasNextPage when not already CIFailing" branch — a partial visible
+// set could hide a failure, so we degrade the verdict rather than
+// risk reporting a broken PR as passing).
+const graphQLCheckContextLimit = 100
 
 // prObservationQuery is the GraphQL query (derived from PR #28, credited
 // to @whoisasx) that pulls everything we need in one round trip:
@@ -202,7 +209,7 @@ const prObservationQuery = `query($owner:String!,$repo:String!,$number:Int!){
           path
           line
           url
-          author{ login __typename ... on User { } }
+          author{ login __typename }
         } }
       } }
     }
@@ -241,8 +248,13 @@ func (p *Provider) fetchJobLogTail(ctx context.Context, owner, repo string, jobI
 // ---------------------------------------------------------------------------
 
 // ciSummaryFromGraphQL maps the per-PR status rollup onto domain.CIState.
-// If ANY context concluded failure-class we return CIFailing. Otherwise
-// any pending context wins over passing. An empty rollup is CIUnknown.
+// If ANY visible context concluded failure-class we return CIFailing.
+// Otherwise any pending context wins over passing. An empty rollup is
+// CIUnknown. When the rollup is paginated (pageInfo.hasNextPage=true)
+// the verdict is conservative: a known failure is still safe — failures
+// don't get un-failed by more pages — but passing/pending/unknown
+// verdicts could hide a failing context on the next page, so we degrade
+// them all to CIUnknown rather than risk reporting a broken PR as ready.
 func ciSummaryFromGraphQL(pr map[string]any) domain.CIState {
 	roll := statusRollup(pr)
 	if roll == nil {
@@ -268,6 +280,9 @@ func ciSummaryFromGraphQL(pr map[string]any) domain.CIState {
 			passing = true
 		}
 	}
+	if pageInfoHasMore(contexts) {
+		return domain.CIUnknown
+	}
 	switch {
 	case pending:
 		return domain.CIPending
@@ -276,6 +291,18 @@ func ciSummaryFromGraphQL(pr map[string]any) domain.CIState {
 	default:
 		return domain.CIUnknown
 	}
+}
+
+// pageInfoHasMore reports whether the rollup contexts have a next page
+// the current request didn't fetch. We treat a missing pageInfo block
+// as "no more" (older API shapes that don't expose pagination simply
+// return everything in one page).
+func pageInfoHasMore(contexts map[string]any) bool {
+	pi, ok := contexts["pageInfo"].(map[string]any)
+	if !ok {
+		return false
+	}
+	return boolv(pi["hasNextPage"])
 }
 
 func mapRollupState(s string) domain.CIState {
@@ -312,7 +339,15 @@ func reviewDecisionFromGraphQL(pr map[string]any) domain.ReviewDecision {
 // and the already-derived CIState + ReviewDecision. The rules follow the
 // spec table in doc.go.
 func mergeabilityFromGraphQL(pr map[string]any, rest restPull, ci domain.CIState, review domain.ReviewDecision) domain.Mergeability {
-	state := strings.ToUpper(strings.TrimSpace(firstNonEmpty(str(pr["mergeStateStatus"]), rest.MergeStateStatus)))
+	// REST's mergeable_state is the tiebreaker: GraphQL's
+	// mergeStateStatus enum (DIRTY / BLOCKED / UNSTABLE / CLEAN /
+	// UNKNOWN) is the primary; if it is empty we fall back to the
+	// REST string (lowercase: "dirty" / "blocked" / "unstable" /
+	// "clean" / "behind" / "unknown") uppercased so the same switch
+	// covers both shapes. The REST API does NOT expose a
+	// `merge_state_status` field — earlier revs of this code chased
+	// that ghost; we use mergeable_state instead.
+	state := strings.ToUpper(strings.TrimSpace(firstNonEmpty(str(pr["mergeStateStatus"]), rest.MergeableState)))
 	rawMergeable := strings.ToUpper(strings.TrimSpace(str(pr["mergeable"])))
 
 	switch state {

@@ -295,7 +295,12 @@ func (c *Client) fetchPlainText(ctx context.Context, path string) ([]byte, error
 	if err != nil {
 		return nil, fmt.Errorf("github scm: build %s request: %w", path, err)
 	}
-	req.Header.Set("Accept", "text/plain")
+	// The /actions/jobs/{id}/logs endpoint validates the Accept header
+	// before issuing its 302 to the log blob; sending text/plain here
+	// gets a 406. The canonical Accept for the GitHub REST API is the
+	// vnd.github+json media type — the redirected blob serves the
+	// actual text/plain regardless of what we asked for.
+	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("User-Agent", c.userAgent)
 	if err := c.authorize(ctx, req); err != nil {
 		return nil, err
