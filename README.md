@@ -4,7 +4,7 @@ Rewrite of the agent-orchestrator: a long-running Go backend daemon (`backend/`)
 paired with a placeholder Electron + TypeScript frontend shell (`frontend/`).
 
 See [`docs/`](docs/README.md) for architecture and status — start with the
-Lifecycle Manager + Session Manager lane in [`docs/architecture.md`](docs/architecture.md).
+Lifecycle Manager + Session Service lane in [`docs/architecture.md`](docs/architecture.md).
 
 ## Backend daemon
 

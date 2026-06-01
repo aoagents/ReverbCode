@@ -15,6 +15,8 @@ servers:
 tags:
   - name: projects
     description: Project registry, configuration, and lifecycle administration
+  - name: sessions
+    description: Agent session lifecycle and messaging
 
 paths:
   /api/v1/projects:
@@ -228,6 +230,219 @@ paths:
         "404": { $ref: "#/components/responses/ProjectNotFound" }
         "501": { $ref: "#/components/responses/NotImplemented" }
 
+  /api/v1/sessions:
+    get:
+      operationId: listSessions
+      tags: [sessions]
+      summary: List sessions
+      parameters:
+        - name: project
+          in: query
+          schema: { type: string }
+        - name: active
+          in: query
+          schema: { type: boolean }
+        - name: orchestratorOnly
+          in: query
+          schema: { type: boolean }
+        - name: fresh
+          in: query
+          schema: { type: boolean }
+      responses:
+        "200":
+          description: Sessions listed
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sessions]
+                properties:
+                  sessions:
+                    type: array
+                    items: { $ref: "#/components/schemas/Session" }
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/APIError" }
+        "501": { $ref: "#/components/responses/NotImplemented" }
+    post:
+      operationId: spawnSession
+      tags: [sessions]
+      summary: Spawn a new agent session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SpawnSessionRequest" }
+      responses:
+        "201":
+          description: Session spawned
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [session]
+                properties:
+                  session: { $ref: "#/components/schemas/Session" }
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/APIError" }
+              examples:
+                invalidJson: { value: { error: bad_request, code: INVALID_JSON, message: "Invalid JSON body" } }
+                projectRequired: { value: { error: bad_request, code: PROJECT_ID_REQUIRED, message: "projectId is required" } }
+                promptTooLong: { value: { error: bad_request, code: PROMPT_TOO_LONG, message: "prompt is too long" } }
+        "404": { $ref: "#/components/responses/ProjectNotFound" }
+        "500": { $ref: "#/components/responses/SessionOperationFailed" }
+        "501": { $ref: "#/components/responses/NotImplemented" }
+
+  /api/v1/sessions/{sessionId}:
+    parameters:
+      - $ref: "#/components/parameters/SessionIDPath"
+    get:
+      operationId: getSession
+      tags: [sessions]
+      summary: Fetch one session
+      responses:
+        "200":
+          description: Session fetched
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [session]
+                properties:
+                  session: { $ref: "#/components/schemas/Session" }
+        "404": { $ref: "#/components/responses/SessionNotFound" }
+        "501": { $ref: "#/components/responses/NotImplemented" }
+    patch:
+      operationId: renameSession
+      tags: [sessions]
+      summary: Rename a session display name
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [displayName]
+              properties:
+                displayName: { type: string, minLength: 1 }
+      responses:
+        "200":
+          description: Session renamed
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [session]
+                properties:
+                  session: { $ref: "#/components/schemas/Session" }
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/APIError" }
+        "404": { $ref: "#/components/responses/SessionNotFound" }
+        "501": { $ref: "#/components/responses/NotImplemented" }
+
+  /api/v1/sessions/{sessionId}/restore:
+    parameters:
+      - $ref: "#/components/parameters/SessionIDPath"
+    post:
+      operationId: restoreSession
+      tags: [sessions]
+      summary: Restore a terminated session
+      responses:
+        "200":
+          description: Session restored
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, sessionId, session]
+                properties:
+                  ok: { type: boolean }
+                  sessionId: { type: string }
+                  session: { $ref: "#/components/schemas/Session" }
+        "404": { $ref: "#/components/responses/SessionNotFound" }
+        "409": { $ref: "#/components/responses/SessionConflict" }
+        "501": { $ref: "#/components/responses/NotImplemented" }
+
+  /api/v1/sessions/{sessionId}/kill:
+    parameters:
+      - $ref: "#/components/parameters/SessionIDPath"
+    post:
+      operationId: killSession
+      tags: [sessions]
+      summary: Mark a session terminated and tear down runtime/workspace resources
+      responses:
+        "200":
+          description: Kill attempted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/KillSessionResponse" }
+        "404": { $ref: "#/components/responses/SessionNotFound" }
+        "409": { $ref: "#/components/responses/SessionConflict" }
+        "501": { $ref: "#/components/responses/NotImplemented" }
+
+  /api/v1/sessions/{sessionId}/send:
+    parameters:
+      - $ref: "#/components/parameters/SessionIDPath"
+    post:
+      operationId: sendSessionMessage
+      tags: [sessions]
+      summary: Send a message to a running session's agent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SendSessionMessageRequest" }
+      responses:
+        "200":
+          description: Message accepted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SendSessionMessageResponse" }
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/APIError" }
+              examples:
+                invalidJson: { value: { error: bad_request, code: INVALID_JSON, message: "Invalid JSON body" } }
+                messageRequired: { value: { error: bad_request, code: MESSAGE_REQUIRED, message: "Message is required" } }
+        "404": { $ref: "#/components/responses/SessionNotFound" }
+        "500": { $ref: "#/components/responses/SessionOperationFailed" }
+        "501": { $ref: "#/components/responses/NotImplemented" }
+
+  /api/v1/orchestrators:
+    post:
+      operationId: spawnOrchestrator
+      tags: [sessions]
+      summary: Spawn an orchestrator session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SpawnOrchestratorRequest" }
+      responses:
+        "201":
+          description: Orchestrator spawned
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SpawnOrchestratorResponse" }
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/APIError" }
+        "404": { $ref: "#/components/responses/ProjectNotFound" }
+        "500": { $ref: "#/components/responses/SessionOperationFailed" }
+        "501": { $ref: "#/components/responses/NotImplemented" }
+
 components:
   parameters:
     ProjectIDPath:
@@ -236,6 +451,13 @@ components:
       required: true
       schema: { type: string, minLength: 1 }
       description: Project identifier (registry key).
+
+    SessionIDPath:
+      name: sessionId
+      in: path
+      required: true
+      schema: { type: string, minLength: 1 }
+      description: Session identifier, e.g. project-1.
 
   responses:
     NotImplemented:
@@ -254,6 +476,29 @@ components:
         application/json:
           schema: { $ref: "#/components/schemas/APIError" }
           example: { error: not_found, code: PROJECT_NOT_FOUND, message: "Unknown project" }
+
+    SessionNotFound:
+      description: Session not found
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/APIError" }
+          example: { error: not_found, code: SESSION_NOT_FOUND, message: "Unknown session" }
+
+    SessionConflict:
+      description: Session is not in a valid state for the requested operation
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/APIError" }
+          examples:
+            notRestorable: { value: { error: conflict, code: SESSION_NOT_RESTORABLE, message: "Session is not restorable" } }
+            incompleteHandle: { value: { error: conflict, code: SESSION_INCOMPLETE_HANDLE, message: "Session is missing runtime or workspace handles" } }
+
+    SessionOperationFailed:
+      description: Session operation failed
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/APIError" }
+          example: { error: internal, code: SESSION_OPERATION_FAILED, message: "Session operation failed" }
 
   schemas:
     APIError:
@@ -368,6 +613,84 @@ components:
         reloaded: { type: boolean }
         projectCount: { type: integer }
         degradedCount: { type: integer }
+
+
+    Session:
+      type: object
+      required: [id, projectId, kind, activity, isTerminated, createdAt, updatedAt, status]
+      properties:
+        id: { type: string }
+        projectId: { type: string }
+        issueId: { type: string }
+        kind: { type: string, enum: [worker, orchestrator] }
+        harness: { type: string, enum: ["", claude-code, codex, aider, opencode] }
+        activity: { $ref: "#/components/schemas/SessionActivity" }
+        isTerminated: { type: boolean }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        status:
+          type: string
+          enum: [working, pr_open, draft, ci_failed, review_pending, changes_requested, approved, mergeable, merged, needs_input, idle, terminated]
+
+    SessionActivity:
+      type: object
+      required: [state, lastActivityAt]
+      properties:
+        state: { type: string, enum: [active, idle, waiting_input, exited] }
+        lastActivityAt: { type: string, format: date-time }
+
+    SpawnSessionRequest:
+      type: object
+      required: [projectId]
+      properties:
+        projectId: { type: string }
+        issueId: { type: string }
+        kind: { type: string, enum: [worker, orchestrator], default: worker }
+        harness: { type: string, enum: ["", claude-code, codex, aider, opencode] }
+        branch: { type: string }
+        prompt: { type: string, maxLength: 4096 }
+        agentRules: { type: string }
+
+    SendSessionMessageRequest:
+      type: object
+      required: [message]
+      properties:
+        message: { type: string, minLength: 1, maxLength: 4096 }
+
+    SendSessionMessageResponse:
+      type: object
+      required: [ok, sessionId, message]
+      properties:
+        ok: { type: boolean }
+        sessionId: { type: string }
+        message: { type: string }
+
+    KillSessionResponse:
+      type: object
+      required: [ok, sessionId]
+      properties:
+        ok: { type: boolean }
+        sessionId: { type: string }
+        freed: { type: boolean }
+
+    SpawnOrchestratorRequest:
+      type: object
+      required: [projectId]
+      properties:
+        projectId: { type: string }
+        clean: { type: boolean, default: false }
+
+    SpawnOrchestratorResponse:
+      type: object
+      required: [orchestrator]
+      properties:
+        orchestrator:
+          type: object
+          required: [id, projectId]
+          properties:
+            id: { type: string }
+            projectId: { type: string }
+            projectName: { type: string }
 
     # ---- Behaviour config blobs ----
 

@@ -9,7 +9,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/portshim"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
-	"github.com/aoagents/agent-orchestrator/backend/internal/session"
+	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
 )
 
 type fakeAgent struct {
@@ -101,7 +101,7 @@ func TestGetEnvironment_ReturnsAgentEnvKeysOnly(t *testing.T) {
 	if len(got) != 0 {
 		t.Fatalf("expected empty env from shim, got %v", got)
 	}
-	for _, k := range []string{session.EnvSessionID, session.EnvProjectID, session.EnvIssueID} {
+	for _, k := range []string{sessionmanager.EnvSessionID, sessionmanager.EnvProjectID, sessionmanager.EnvIssueID} {
 		if _, ok := got[k]; ok {
 			t.Errorf("shim must not pre-populate AO env key %s; SM owns it", k)
 		}

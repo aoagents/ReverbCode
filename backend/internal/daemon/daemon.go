@@ -75,8 +75,8 @@ func Run() error {
 
 	// Bring up the Lifecycle Manager + reaper, then the Session Manager stack
 	// over the same lcm/runtime/projects/messenger singletons. SM is constructed
-	// before the HTTP server so its Spawner can be plumbed into APIDeps and the
-	// /api/v1/sessions controller can drive it.
+	// before the HTTP server so the service.Session wrapper can be plumbed into
+	// APIDeps and the /api/v1/sessions controller can drive it.
 	lcStack := startLifecycle(ctx, store, runtimeAdapter, messenger, log)
 	ss, err := buildSessionStack(cfg, store, runtimeAdapter, projects, lcStack.lcm, messenger)
 	if err != nil {
@@ -88,7 +88,7 @@ func Run() error {
 		return err
 	}
 
-	srv, err := httpd.NewWithDeps(cfg, log, termMgr, httpd.APIDeps{Projects: projects, Sessions: ss.sm})
+	srv, err := httpd.NewWithDeps(cfg, log, termMgr, httpd.APIDeps{Projects: projects, Sessions: ss.svc})
 	if err != nil {
 		stop()
 		lcStack.Stop()

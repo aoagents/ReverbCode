@@ -1,7 +1,6 @@
-// Package session drives the runtime/agent/workspace plugins to create and tear
-// down sessions, routes durable lifecycle fact writes through lifecycle, and
-// attaches derived display status on read.
-package session
+// Package sessionmanager drives internal session command operations over runtime,
+// agent, workspace, storage, messenger, and lifecycle dependencies.
+package sessionmanager
 
 import (
 	"context"
@@ -37,20 +36,20 @@ type runtimeController interface {
 	Destroy(ctx context.Context, handle ports.RuntimeHandle) error
 }
 
-type sessionStore interface {
+// Store is the persistence surface needed by the internal session Manager.
+type Store interface {
 	CreateSession(ctx context.Context, rec domain.SessionRecord) (domain.SessionRecord, error)
 	GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error)
 	ListSessions(ctx context.Context, project domain.ProjectID) ([]domain.SessionRecord, error)
-	GetDisplayPRFactsForSession(ctx context.Context, id domain.SessionID) (domain.PRFacts, bool, error)
 }
 
-// Manager coordinates session spawn, restore, kill, listing, and cleanup over
-// the outbound ports.
+// Manager coordinates internal session spawn, restore, kill, and cleanup over
+// the outbound ports. User-facing read-model assembly lives in the service package.
 type Manager struct {
 	runtime   runtimeController
 	agent     ports.Agent
 	workspace ports.Workspace
-	store     sessionStore
+	store     Store
 	messenger ports.AgentMessenger
 	lcm       lifecycleRecorder
 	clock     func() time.Time
@@ -61,7 +60,7 @@ type Deps struct {
 	Runtime   runtimeController
 	Agent     ports.Agent
 	Workspace ports.Workspace
-	Store     sessionStore
+	Store     Store
 	Messenger ports.AgentMessenger
 	Lifecycle lifecycleRecorder
 	Clock     func() time.Time
@@ -88,10 +87,10 @@ func New(d Deps) *Manager {
 // Spawn creates the session row (which assigns the "{project}-{n}" id), then the
 // workspace and runtime, then reports completion to the LCM. A failure after the
 // row exists parks it as terminated and rolls back what was built.
-func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Session, error) {
+func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.SessionRecord, error) {
 	rec, err := m.store.CreateSession(ctx, seedRecord(cfg, m.clock()))
 	if err != nil {
-		return domain.Session{}, fmt.Errorf("spawn: create: %w", err)
+		return domain.SessionRecord{}, fmt.Errorf("spawn: create: %w", err)
 	}
 	id := rec.ID
 
@@ -107,7 +106,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	ws, err := m.workspace.Create(ctx, ports.WorkspaceConfig{ProjectID: cfg.ProjectID, SessionID: id, Branch: branch})
 	if err != nil {
 		m.markSpawnFailedTerminated(ctx, id)
-		return domain.Session{}, fmt.Errorf("spawn %s: workspace: %w", id, err)
+		return domain.SessionRecord{}, fmt.Errorf("spawn %s: workspace: %w", id, err)
 	}
 
 	agentCfg := ports.AgentConfig{SessionID: id, WorkspacePath: ws.Path, Prompt: buildPrompt(cfg)}
@@ -120,7 +119,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	if err != nil {
 		_ = m.workspace.Destroy(ctx, ws)
 		m.markSpawnFailedTerminated(ctx, id)
-		return domain.Session{}, fmt.Errorf("spawn %s: runtime: %w", id, err)
+		return domain.SessionRecord{}, fmt.Errorf("spawn %s: runtime: %w", id, err)
 	}
 
 	metadata := domain.SessionMetadata{Branch: ws.Branch, WorkspacePath: ws.Path, RuntimeHandleID: handle.ID, Prompt: agentCfg.Prompt}
@@ -128,9 +127,9 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		_ = m.runtime.Destroy(ctx, handle)
 		_ = m.workspace.Destroy(ctx, ws)
 		m.markSpawnFailedTerminated(ctx, id)
-		return domain.Session{}, fmt.Errorf("spawn %s: completed: %w", id, err)
+		return domain.SessionRecord{}, fmt.Errorf("spawn %s: completed: %w", id, err)
 	}
-	return m.Get(ctx, id)
+	return m.getRecord(ctx, id)
 }
 
 // markSpawnFailedTerminated best-effort parks an orphaned spawn as terminated.
@@ -170,25 +169,25 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 // Restore relaunches a torn-down session in its workspace. The fallible I/O runs
 // before any durable session write, so a failure never resurrects the row or destroys
 // the worktree (it may hold the agent's prior work).
-func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.Session, error) {
+func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.SessionRecord, error) {
 	rec, ok, err := m.store.GetSession(ctx, id)
 	if err != nil {
-		return domain.Session{}, fmt.Errorf("restore %s: %w", id, err)
+		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", id, err)
 	}
 	if !ok {
-		return domain.Session{}, fmt.Errorf("restore %s: %w", id, ErrNotFound)
+		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", id, ErrNotFound)
 	}
 	if !rec.IsTerminated {
-		return domain.Session{}, fmt.Errorf("restore %s: %w", id, ErrNotRestorable)
+		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", id, ErrNotRestorable)
 	}
 	meta := rec.Metadata
 	if meta.AgentSessionID == "" && meta.Prompt == "" {
-		return domain.Session{}, fmt.Errorf("restore %s: nothing to resume from", id)
+		return domain.SessionRecord{}, fmt.Errorf("restore %s: nothing to resume from", id)
 	}
 
 	ws, err := m.workspace.Restore(ctx, ports.WorkspaceConfig{ProjectID: rec.ProjectID, SessionID: id, Branch: meta.Branch})
 	if err != nil {
-		return domain.Session{}, fmt.Errorf("restore %s: workspace: %w", id, err)
+		return domain.SessionRecord{}, fmt.Errorf("restore %s: workspace: %w", id, err)
 	}
 	agentCfg := ports.AgentConfig{SessionID: id, WorkspacePath: ws.Path, Prompt: meta.Prompt}
 	launch := m.agent.GetRestoreCommand(meta.AgentSessionID)
@@ -202,43 +201,25 @@ func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.Sess
 		Env:           spawnEnv(m.agent.GetEnvironment(agentCfg), id, rec.ProjectID, rec.IssueID),
 	})
 	if err != nil {
-		return domain.Session{}, fmt.Errorf("restore %s: runtime: %w", id, err)
+		return domain.SessionRecord{}, fmt.Errorf("restore %s: runtime: %w", id, err)
 	}
 	metadata := domain.SessionMetadata{Branch: ws.Branch, WorkspacePath: ws.Path, RuntimeHandleID: handle.ID, AgentSessionID: meta.AgentSessionID, Prompt: meta.Prompt}
 	if err := m.lcm.MarkSpawned(ctx, id, metadata); err != nil {
 		_ = m.runtime.Destroy(ctx, handle)
-		return domain.Session{}, fmt.Errorf("restore %s: completed: %w", id, err)
+		return domain.SessionRecord{}, fmt.Errorf("restore %s: completed: %w", id, err)
 	}
-	return m.Get(ctx, id)
+	return m.getRecord(ctx, id)
 }
 
-// List returns the project's sessions as enriched display models.
-func (m *Manager) List(ctx context.Context, project domain.ProjectID) ([]domain.Session, error) {
-	recs, err := m.store.ListSessions(ctx, project)
-	if err != nil {
-		return nil, fmt.Errorf("list %s: %w", project, err)
-	}
-	out := make([]domain.Session, 0, len(recs))
-	for _, rec := range recs {
-		s, err := m.toSession(ctx, rec)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, s)
-	}
-	return out, nil
-}
-
-// Get returns one session as a display model, or ErrNotFound if it is absent.
-func (m *Manager) Get(ctx context.Context, id domain.SessionID) (domain.Session, error) {
+func (m *Manager) getRecord(ctx context.Context, id domain.SessionID) (domain.SessionRecord, error) {
 	rec, ok, err := m.store.GetSession(ctx, id)
 	if err != nil {
-		return domain.Session{}, fmt.Errorf("get %s: %w", id, err)
+		return domain.SessionRecord{}, fmt.Errorf("get %s: %w", id, err)
 	}
 	if !ok {
-		return domain.Session{}, fmt.Errorf("get %s: %w", id, ErrNotFound)
+		return domain.SessionRecord{}, fmt.Errorf("get %s: %w", id, ErrNotFound)
 	}
-	return m.toSession(ctx, rec)
+	return rec, nil
 }
 
 // Send delivers a message to a running session's agent via the messenger.
@@ -277,17 +258,6 @@ func (m *Manager) Cleanup(ctx context.Context, project domain.ProjectID) ([]doma
 }
 
 // ---- helpers ----
-
-func (m *Manager) toSession(ctx context.Context, rec domain.SessionRecord) (domain.Session, error) {
-	pr, ok, err := m.store.GetDisplayPRFactsForSession(ctx, rec.ID)
-	if err != nil {
-		return domain.Session{}, fmt.Errorf("pr facts %s: %w", rec.ID, err)
-	}
-	if !ok {
-		return domain.Session{SessionRecord: rec, Status: domain.DeriveStatus(rec, nil)}, nil
-	}
-	return domain.Session{SessionRecord: rec, Status: domain.DeriveStatus(rec, &pr)}, nil
-}
 
 func seedRecord(cfg ports.SpawnConfig, now time.Time) domain.SessionRecord {
 	return domain.SessionRecord{

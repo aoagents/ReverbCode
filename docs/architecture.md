@@ -17,15 +17,16 @@ The durable session facts are:
 - `is_terminated` — whether the session should be treated as over.
 - PR facts in the `pr`, `pr_checks`, and `pr_comment` tables.
 
-The UI status is not stored. `domain.DeriveStatus` computes it from the session
-record plus PR facts.
+The UI status is not stored. `service.Session` computes it from the session
+record plus PR facts while assembling controller-facing read models.
 
 ## Package layout
 
 ```
-backend/internal/domain       shared vocabulary and display-status derivation
+backend/internal/domain       shared vocabulary and API status value types
 backend/internal/ports        inbound/outbound interfaces
-backend/internal/session      explicit mutations: spawn, kill, restore, send, cleanup
+backend/internal/service       controller-facing services and read-model assembly
+backend/internal/session_manager internal session command manager
 backend/internal/lifecycle    runtime/activity/spawn/termination session fact reducer
 backend/internal/pr           PR observation ingestion
 backend/internal/storage      SQLite persistence and DB-triggered CDC
@@ -37,8 +38,8 @@ backend/internal/adapters     Zellij/git-worktree/GitHub adapters
 
 ## Status derivation
 
-`session.Manager` selects the display PR from all PR snapshots for a session, then
-`domain.DeriveStatus(session, prFacts)` applies this rough precedence:
+`service.Session` selects the display PR from all PR snapshots for a session, then
+applies this rough precedence:
 
 1. `is_terminated` → `terminated`, except merged PRs display `merged`.
 2. `activity_state=waiting_input` → `needs_input`.
@@ -69,14 +70,16 @@ consumed at read time for display status.
 
 ## Session manager
 
-`session.Manager` performs explicit user mutations:
+`session_manager.Manager` performs internal session mutations:
 
 - `Spawn` creates a row, creates workspace/runtime resources, and reports the
   handles to the lifecycle manager.
 - `Kill` marks the row terminated, then tears down runtime/workspace resources.
 - `Restore` relaunches a terminated session and clears `is_terminated` via the
   spawn-completed path.
-- `List`/`Get` attach the derived display status.
+
+`service.Session` is the controller-facing boundary. It delegates commands to
+`session_manager.Manager` and attaches derived display status on read paths.
 
 ## Persistence and CDC
 

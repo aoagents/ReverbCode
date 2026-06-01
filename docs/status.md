@@ -1,7 +1,7 @@
 # agent-orchestrator status
 
 Current main contains the Go backend daemon, Cobra CLI foundation, SQLite store,
-CDC poller/broadcaster, lifecycle/session managers, terminal mux, project API
+CDC poller/broadcaster, lifecycle/session services, terminal mux, project API
 controller/manager work, runtime/workspace/tracker adapters, and CDC-backed event rows.
 
 ## Build & test
@@ -18,9 +18,11 @@ npm run lint
   from those plus PR facts.
 - SQLite: migrations create projects, sessions, PR/check/comment, and `change_log` tables.
 - CDC: DB triggers append to `change_log`; the poller broadcasts live events.
-- Session Manager: spawn/kill/restore/list/get/send/cleanup over runtime,
-  workspace, agent, store, messenger, and lifecycle ports. It is package-level
-  code today; daemon HTTP routes for session commands are not wired yet.
+- Session Manager: internal spawn/kill/restore/send/cleanup over runtime,
+  workspace, agent, store, messenger, and lifecycle ports.
+- Service package: controller-facing session boundary that delegates commands to
+  the manager and assembles list/get/spawn/restore read models with display status.
+  Daemon HTTP routes for session commands are not wired yet.
 
 ## Next integration work
 

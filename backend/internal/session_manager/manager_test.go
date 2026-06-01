@@ -1,4 +1,4 @@
-package session
+package sessionmanager
 
 import (
 	"context"
@@ -149,8 +149,8 @@ func TestSpawn_AssignsIDAndGoesIdle(t *testing.T) {
 	if s.ID != "mer-1" {
 		t.Fatalf("got %q", s.ID)
 	}
-	if s.Status != domain.StatusIdle {
-		t.Fatalf("fresh session displays idle, got %q", s.Status)
+	if s.Activity.State != domain.ActivityIdle {
+		t.Fatalf("fresh session records idle, got %q", s.Activity.State)
 	}
 	if rt.created != 1 {
 		t.Fatal("runtime not created")
@@ -224,8 +224,8 @@ func TestRestore_ReopensTerminal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.Status != domain.StatusIdle {
-		t.Fatalf("restored displays idle, got %q", s.Status)
+	if s.Activity.State != domain.ActivityIdle {
+		t.Fatalf("restored records idle, got %q", s.Activity.State)
 	}
 	if rt.created != 1 {
 		t.Fatal("restore should relaunch")
@@ -236,18 +236,6 @@ func TestRestore_RefusesLiveSession(t *testing.T) {
 	st.sessions["mer-1"] = mkLive("mer-1")
 	if _, err := m.Restore(ctx, "mer-1"); !errors.Is(err, ErrNotRestorable) {
 		t.Fatalf("want ErrNotRestorable, got %v", err)
-	}
-}
-func TestList_DerivesStatusFromPRFacts(t *testing.T) {
-	m, st, _, _ := newManager()
-	st.sessions["mer-1"] = mkLive("mer-1")
-	st.pr["mer-1"] = domain.PRFacts{URL: "pr1", CI: domain.CIFailing}
-	list, err := m.List(ctx, "mer")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(list) != 1 || list[0].Status != domain.StatusCIFailed {
-		t.Fatalf("got %+v", list)
 	}
 }
 func TestCleanup_ReclaimsTerminalWorkspaces(t *testing.T) {

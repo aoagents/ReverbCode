@@ -1007,6 +1007,65 @@ func TestGHTokenSourceUsesInjectedHook(t *testing.T) {
 	}
 }
 
+// TestObserve_CIPaginationDegradesPassingToUnknown pins the safety
+// guard for the GraphQL contexts pagination: when GitHub reports
+// hasNextPage=true, a visible "all passing" set could be hiding a
+// failure on the next page. The provider must degrade Passing /
+// Pending / Unknown to CIUnknown so downstream code doesn't treat a
+// possibly-broken PR as ready. A FAILING verdict from the visible
+// page is still safe (and must NOT degrade).
+func TestObserve_CIPaginationDegradesPassingToUnknown(t *testing.T) {
+	f := newFakeGH(t)
+	fx := basePRFixture()
+	fx.prData(func(pr map[string]any) {
+		commits := pr["commits"].(map[string]any)["nodes"].([]any)[0].(map[string]any)
+		commit := commits["commit"].(map[string]any)
+		roll := commit["statusCheckRollup"].(map[string]any)
+		ctxs := roll["contexts"].(map[string]any)
+		// One visible passing context, but hasNextPage=true so a
+		// failure could be hiding in the unseen tail.
+		ctxs["nodes"] = []any{
+			map[string]any{"__typename": "CheckRun", "name": "build", "status": "COMPLETED", "conclusion": "SUCCESS"},
+		}
+		ctxs["pageInfo"] = map[string]any{"hasNextPage": true}
+	})
+	fx.install(t, f)
+	p := newProviderForTest(t, f)
+
+	obs, err := p.Observe(ctx(), fx.prURL())
+	if err != nil {
+		t.Fatalf("Observe: %v", err)
+	}
+	if obs.CI != domain.CIUnknown {
+		t.Fatalf("CI = %q, want CIUnknown (hasNextPage must degrade passing)", obs.CI)
+	}
+}
+
+func TestObserve_CIPaginationDoesNotMaskKnownFailure(t *testing.T) {
+	f := newFakeGH(t)
+	fx := basePRFixture()
+	fx.prData(func(pr map[string]any) {
+		commits := pr["commits"].(map[string]any)["nodes"].([]any)[0].(map[string]any)
+		commit := commits["commit"].(map[string]any)
+		roll := commit["statusCheckRollup"].(map[string]any)
+		ctxs := roll["contexts"].(map[string]any)
+		ctxs["nodes"] = []any{
+			map[string]any{"__typename": "CheckRun", "name": "lint", "status": "COMPLETED", "conclusion": "FAILURE", "databaseId": float64(0)},
+		}
+		ctxs["pageInfo"] = map[string]any{"hasNextPage": true}
+	})
+	fx.install(t, f)
+	p := newProviderForTest(t, f)
+
+	obs, err := p.Observe(ctx(), fx.prURL())
+	if err != nil {
+		t.Fatalf("Observe: %v", err)
+	}
+	if obs.CI != domain.CIFailing {
+		t.Fatalf("CI = %q, want CIFailing (a known failure on page 1 must NOT degrade)", obs.CI)
+	}
+}
+
 // TestObserve_StatusContextLegacyHasNoLogTail pins that we do NOT try to
 // fetch a job log for a legacy commit-status row (those have no Actions
 // job ID, so /actions/jobs/0/logs would 404 if we let the path leak).

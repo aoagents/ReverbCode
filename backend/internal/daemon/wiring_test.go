@@ -112,7 +112,7 @@ func TestWiring_SessionStackSharesSingletons(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildSessionStack: %v", err)
 	}
-	if ss.sm == nil || ss.workspace == nil || ss.messenger == nil {
+	if ss.svc == nil || ss.workspace == nil || ss.messenger == nil {
 		t.Fatal("session stack must be fully populated")
 	}
 	if ss.messenger != messenger {

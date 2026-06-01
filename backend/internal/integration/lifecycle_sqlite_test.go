@@ -11,7 +11,8 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	prsvc "github.com/aoagents/agent-orchestrator/backend/internal/pr"
 	"github.com/aoagents/agent-orchestrator/backend/internal/project"
-	"github.com/aoagents/agent-orchestrator/backend/internal/session"
+	"github.com/aoagents/agent-orchestrator/backend/internal/service"
+	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 )
 
@@ -54,7 +55,7 @@ func (c *captureMessenger) Send(_ context.Context, _ domain.SessionID, msg strin
 
 type stack struct {
 	store *sqlite.Store
-	sm    *session.Manager
+	sm    *service.Session
 	lcm   *lifecycle.Manager
 	prm   *prsvc.Manager
 	rt    *stubRuntime
@@ -78,7 +79,8 @@ func newStack(t *testing.T) *stack {
 	prm := prsvc.New(prsvc.Deps{Writer: store, Lifecycle: lcm})
 	rt := &stubRuntime{}
 	ws := &stubWorkspace{}
-	sm := session.New(session.Deps{Runtime: rt, Agent: stubAgent{}, Workspace: ws, Store: store, Messenger: msg, Lifecycle: lcm})
+	mgr := sessionmanager.New(sessionmanager.Deps{Runtime: rt, Agent: stubAgent{}, Workspace: ws, Store: store, Messenger: msg, Lifecycle: lcm})
+	sm := service.NewSession(mgr, store)
 	return &stack{store: store, sm: sm, lcm: lcm, prm: prm, rt: rt, ws: ws, msg: msg}
 }
 

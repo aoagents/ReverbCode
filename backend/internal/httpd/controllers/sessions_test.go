@@ -2,221 +2,173 @@ package controllers_test
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"sync"
 	"testing"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
-	"github.com/aoagents/agent-orchestrator/backend/internal/project"
+	"github.com/aoagents/agent-orchestrator/backend/internal/service"
 )
 
-// fakeSpawner records the SpawnConfig it was called with and returns the
-// canned Session/error. It satisfies session.Spawner.
-type fakeSpawner struct {
-	mu      sync.Mutex
-	calls   []ports.SpawnConfig
-	session domain.Session
-	err     error
+type fakeSessionService struct {
+	sessions map[domain.SessionID]domain.Session
+	sent     string
 }
 
-func (f *fakeSpawner) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.Session, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.calls = append(f.calls, cfg)
-	if f.err != nil {
-		return domain.Session{}, f.err
+func newFakeSessionService() *fakeSessionService {
+	now := time.Now().UTC()
+	s := domain.Session{SessionRecord: domain.SessionRecord{ID: "ao-1", ProjectID: "ao", Kind: domain.KindWorker, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, CreatedAt: now, UpdatedAt: now}, Status: domain.StatusIdle}
+	return &fakeSessionService{sessions: map[domain.SessionID]domain.Session{s.ID: s}}
+}
+
+func (f *fakeSessionService) List(_ context.Context, filter service.SessionListFilter) ([]domain.Session, error) {
+	var out []domain.Session
+	for _, s := range f.sessions {
+		if filter.ProjectID != "" && s.ProjectID != filter.ProjectID {
+			continue
+		}
+		if filter.Active != nil && s.IsTerminated == *filter.Active {
+			continue
+		}
+		if filter.OrchestratorOnly && s.Kind != domain.KindOrchestrator {
+			continue
+		}
+		out = append(out, s)
 	}
-	return f.session, nil
+	return out, nil
 }
 
-func (f *fakeSpawner) recorded() []ports.SpawnConfig {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	out := make([]ports.SpawnConfig, len(f.calls))
-	copy(out, f.calls)
-	return out
+func (f *fakeSessionService) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.Session, error) {
+	now := time.Now().UTC()
+	s := domain.Session{SessionRecord: domain.SessionRecord{ID: domain.SessionID(string(cfg.ProjectID) + "-2"), ProjectID: cfg.ProjectID, IssueID: cfg.IssueID, Kind: cfg.Kind, Harness: cfg.Harness, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, CreatedAt: now, UpdatedAt: now}, Status: domain.StatusIdle}
+	f.sessions[s.ID] = s
+	return s, nil
 }
 
-func sessionsServer(t *testing.T, spawner *fakeSpawner) *httptest.Server {
+func (f *fakeSessionService) Get(_ context.Context, id domain.SessionID) (domain.Session, error) {
+	return f.sessions[id], nil
+}
+
+func (f *fakeSessionService) Restore(_ context.Context, id domain.SessionID) (domain.Session, error) {
+	s := f.sessions[id]
+	s.IsTerminated = false
+	s.Status = domain.StatusIdle
+	f.sessions[id] = s
+	return s, nil
+}
+
+func (f *fakeSessionService) Kill(_ context.Context, id domain.SessionID) (bool, error) {
+	s := f.sessions[id]
+	s.IsTerminated = true
+	s.Status = domain.StatusTerminated
+	f.sessions[id] = s
+	return true, nil
+}
+
+func (f *fakeSessionService) Send(_ context.Context, _ domain.SessionID, message string) error {
+	f.sent = message
+	return nil
+}
+
+func newSessionTestServer(t *testing.T, svc *fakeSessionService) *httptest.Server {
 	t.Helper()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	deps := httpd.APIDeps{}
-	if spawner != nil {
-		deps.Sessions = spawner
-	}
-	srv := httptest.NewServer(httpd.NewRouterWithAPI(config.Config{}, log, nil, deps))
+	srv := httptest.NewServer(httpd.NewRouterWithAPI(config.Config{}, log, nil, httpd.APIDeps{Sessions: svc}))
 	t.Cleanup(srv.Close)
 	return srv
 }
 
-func TestSessionsAPI_Spawn_Success(t *testing.T) {
-	spawner := &fakeSpawner{
-		session: domain.Session{
-			SessionRecord: domain.SessionRecord{
-				ID:        "demo-1",
-				ProjectID: "demo",
-				Kind:      domain.KindWorker,
-				Harness:   domain.HarnessClaudeCode,
-				Metadata: domain.SessionMetadata{
-					WorkspacePath:   "/tmp/demo-1",
-					RuntimeHandleID: "zellij-demo-1",
-				},
-			},
-		},
-	}
-	srv := sessionsServer(t, spawner)
+func TestSessionsRoutes_DefaultToStubsWithoutService(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := httptest.NewServer(httpd.NewRouter(config.Config{}, log, nil))
+	t.Cleanup(srv.Close)
 
-	body, status, headers := doRequest(t, srv, "POST", "/api/v1/sessions",
-		`{"projectId":"demo","prompt":"do the thing","agent":"claude-code"}`)
-	if status != http.StatusCreated {
-		t.Fatalf("status = %d, want 201; body=%s", status, body)
-	}
+	body, status, headers := doRequest(t, srv, "GET", "/api/v1/sessions", "")
 	assertJSON(t, headers)
-
-	var out struct {
-		SessionID     string `json:"sessionId"`
-		WorkspacePath string `json:"workspacePath"`
-		RuntimeHandle string `json:"runtimeHandle"`
-	}
-	mustJSON(t, body, &out)
-	if out.SessionID != "demo-1" || out.WorkspacePath != "/tmp/demo-1" || out.RuntimeHandle != "zellij-demo-1" {
-		t.Fatalf("response = %#v", out)
-	}
-
-	got := spawner.recorded()
-	if len(got) != 1 {
-		t.Fatalf("spawn calls = %d, want 1", len(got))
-	}
-	if got[0].ProjectID != "demo" || got[0].Prompt != "do the thing" || got[0].Harness != domain.HarnessClaudeCode || got[0].Kind != domain.KindWorker {
-		t.Fatalf("recorded spawn = %#v", got[0])
-	}
+	assertErrorCode(t, body, status, http.StatusNotImplemented, "NOT_IMPLEMENTED")
 }
 
-func TestSessionsAPI_Spawn_DefaultsAgentToClaudeCode(t *testing.T) {
-	spawner := &fakeSpawner{
-		session: domain.Session{
-			SessionRecord: domain.SessionRecord{ID: "demo-2", ProjectID: "demo"},
-		},
-	}
-	srv := sessionsServer(t, spawner)
+func TestSessionsAPI_ListSpawnGetAndActions(t *testing.T) {
+	svc := newFakeSessionService()
+	srv := newSessionTestServer(t, svc)
 
-	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions",
-		`{"projectId":"demo","prompt":"do the thing"}`)
+	body, status, _ := doRequest(t, srv, "GET", "/api/v1/sessions?project=ao", "")
+	if status != http.StatusOK {
+		t.Fatalf("GET sessions = %d, want 200; body=%s", status, body)
+	}
+	var list struct {
+		Sessions []sessionBody `json:"sessions"`
+	}
+	mustJSON(t, body, &list)
+	if len(list.Sessions) != 1 || list.Sessions[0].ID != "ao-1" || list.Sessions[0].Status != string(domain.StatusIdle) {
+		t.Fatalf("list = %#v", list)
+	}
+
+	body, status, _ = doRequest(t, srv, "POST", "/api/v1/sessions", `{"projectId":"ao","issueId":"ISS-1","kind":"worker","harness":"codex","prompt":"fix"}`)
 	if status != http.StatusCreated {
-		t.Fatalf("status = %d, want 201; body=%s", status, body)
+		t.Fatalf("POST session = %d, want 201; body=%s", status, body)
 	}
-	got := spawner.recorded()
-	if len(got) != 1 || got[0].Harness != domain.HarnessClaudeCode {
-		t.Fatalf("default agent not applied: %#v", got)
+	var spawned struct {
+		Session sessionBody `json:"session"`
+	}
+	mustJSON(t, body, &spawned)
+	if spawned.Session.ID != "ao-2" || spawned.Session.IssueID != "ISS-1" || spawned.Session.Harness != "codex" {
+		t.Fatalf("spawned = %#v", spawned)
+	}
+
+	body, status, _ = doRequest(t, srv, "GET", "/api/v1/sessions/ao-2", "")
+	if status != http.StatusOK {
+		t.Fatalf("GET session = %d, want 200; body=%s", status, body)
+	}
+
+	body, status, _ = doRequest(t, srv, "POST", "/api/v1/sessions/ao-2/send", "{\"message\":\"con\\u0000tinue\"}")
+	if status != http.StatusOK || svc.sent != "continue" {
+		t.Fatalf("send status=%d sent=%q body=%s", status, svc.sent, body)
+	}
+
+	body, status, _ = doRequest(t, srv, "POST", "/api/v1/sessions/ao-2/kill", "")
+	if status != http.StatusOK {
+		t.Fatalf("kill = %d, want 200; body=%s", status, body)
+	}
+	var killed struct {
+		SessionID string `json:"sessionId"`
+		Freed     bool   `json:"freed"`
+	}
+	mustJSON(t, body, &killed)
+	if killed.SessionID != "ao-2" || !killed.Freed {
+		t.Fatalf("kill response = %#v", killed)
+	}
+
+	body, status, _ = doRequest(t, srv, "POST", "/api/v1/sessions/ao-2/restore", "")
+	if status != http.StatusOK {
+		t.Fatalf("restore = %d, want 200; body=%s", status, body)
+	}
+
+	body, status, _ = doRequest(t, srv, "PATCH", "/api/v1/sessions/ao-2", `{"displayName":"Renamed"}`)
+	assertErrorCode(t, body, status, http.StatusNotImplemented, "NOT_IMPLEMENTED")
+
+	body, status, _ = doRequest(t, srv, "POST", "/api/v1/orchestrators", `{"projectId":"ao"}`)
+	if status != http.StatusCreated {
+		t.Fatalf("orchestrator = %d, want 201; body=%s", status, body)
 	}
 }
 
-func TestSessionsAPI_Spawn_BadRequest(t *testing.T) {
-	cases := []struct {
-		name, body, wantCode string
-	}{
-		{name: "invalid json", body: `{`, wantCode: "INVALID_JSON"},
-		{name: "missing projectId", body: `{"prompt":"x"}`, wantCode: "PROJECT_ID_REQUIRED"},
-		{name: "blank projectId", body: `{"projectId":"   ","prompt":"x"}`, wantCode: "PROJECT_ID_REQUIRED"},
-		{name: "missing prompt", body: `{"projectId":"demo"}`, wantCode: "PROMPT_REQUIRED"},
-		{name: "blank prompt", body: `{"projectId":"demo","prompt":"   "}`, wantCode: "PROMPT_REQUIRED"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			spawner := &fakeSpawner{}
-			srv := sessionsServer(t, spawner)
-			body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions", tc.body)
-			assertErrorCode(t, body, status, http.StatusBadRequest, tc.wantCode)
-			if len(spawner.recorded()) != 0 {
-				t.Fatalf("spawn was called for invalid request")
-			}
-		})
-	}
+func TestSessionsAPI_SendValidation(t *testing.T) {
+	srv := newSessionTestServer(t, newFakeSessionService())
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/send", `{"message":""}`)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "MESSAGE_REQUIRED")
 }
 
-func TestSessionsAPI_Spawn_UnknownProject(t *testing.T) {
-	spawner := &fakeSpawner{
-		err: &project.Error{Kind: "not_found", Code: "PROJECT_NOT_FOUND", Message: "Unknown project"},
-	}
-	srv := sessionsServer(t, spawner)
-
-	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions",
-		`{"projectId":"missing","prompt":"x"}`)
-	assertErrorCode(t, body, status, http.StatusNotFound, "PROJECT_NOT_FOUND")
-}
-
-func TestSessionsAPI_Spawn_UnknownProjectWrapped(t *testing.T) {
-	// Mirror the real production wrap: session.Manager.Spawn returns
-	// `fmt.Errorf("spawn %s: workspace: %w", id, err)` over the projectresolver
-	// chain. The controller must unwrap *project.Error rather than match by
-	// string, so errors.As walks the linear %w chain.
-	inner := &project.Error{Kind: "not_found", Code: "PROJECT_NOT_FOUND", Message: "Unknown project"}
-	spawner := &fakeSpawner{
-		err: fmt.Errorf("spawn demo-1: workspace: %w", fmt.Errorf("projectresolver: lookup %q: %w", "missing", inner)),
-	}
-	srv := sessionsServer(t, spawner)
-
-	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions",
-		`{"projectId":"missing","prompt":"x"}`)
-	assertErrorCode(t, body, status, http.StatusNotFound, "PROJECT_NOT_FOUND")
-}
-
-func TestSessionsAPI_Spawn_SessionsDisabled(t *testing.T) {
-	srv := sessionsServer(t, nil)
-	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions",
-		`{"projectId":"demo","prompt":"x"}`)
-	if status != http.StatusServiceUnavailable {
-		t.Fatalf("status = %d, want 503; body=%s", status, body)
-	}
-	var got errorBody
-	mustJSON(t, body, &got)
-	if got.Error != "sessions_disabled" {
-		t.Fatalf("error = %q, want sessions_disabled\nbody=%s", got.Error, body)
-	}
-}
-
-func TestSessionsAPI_Spawn_InternalFailure(t *testing.T) {
-	spawner := &fakeSpawner{err: errors.New("runtime boom")}
-	srv := sessionsServer(t, spawner)
-
-	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions",
-		`{"projectId":"demo","prompt":"x"}`)
-	assertErrorCode(t, body, status, http.StatusInternalServerError, "SPAWN_FAILED")
-}
-
-// TestSessionsAPI_Spawn_InternalKindIsOpaque verifies that a *project.Error
-// with a non-client Kind (e.g. "internal" or "not_implemented") does not leak
-// its Code/Message verbatim — those flavoured project errors should fall
-// through to the generic SPAWN_FAILED envelope, same as any other 500.
-func TestSessionsAPI_Spawn_InternalKindIsOpaque(t *testing.T) {
-	cases := []struct {
-		name string
-		err  error
-	}{
-		{name: "internal kind", err: &project.Error{Kind: "internal", Code: "PROJECT_STORE_CORRUPT", Message: "store file checksum mismatch"}},
-		{name: "not_implemented kind", err: &project.Error{Kind: "not_implemented", Code: "PROJECT_CONFIG_NOT_IMPLEMENTED", Message: "Project config patching is not available"}},
-		{name: "unknown kind", err: &project.Error{Kind: "weird", Code: "WEIRD_INTERNAL_THING", Message: "internal-only message"}},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			srv := sessionsServer(t, &fakeSpawner{err: tc.err})
-			body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions",
-				`{"projectId":"demo","prompt":"x"}`)
-			assertErrorCode(t, body, status, http.StatusInternalServerError, "SPAWN_FAILED")
-			// And confirm the project.Error's internal Message/Code didn't slip into the body.
-			var got errorBody
-			mustJSON(t, body, &got)
-			if got.Message != "Failed to spawn session" {
-				t.Fatalf("internal message leaked into response: %q", got.Message)
-			}
-		})
-	}
+type sessionBody struct {
+	ID      string `json:"id"`
+	IssueID string `json:"issueId"`
+	Harness string `json:"harness"`
+	Status  string `json:"status"`
 }
