@@ -19,19 +19,11 @@ type manager struct {
 
 var _ Manager = (*manager)(nil)
 
-// NewManager returns a project Manager backed by the given Store, defaulting to
-// an in-memory store when store is nil.
+// NewManager returns a project Manager backed by the given Store — the durable
+// sqlite store in the daemon, a real temp-dir sqlite store in tests. store must
+// be non-nil; there is no in-memory fallback.
 func NewManager(store Store) Manager {
-	if store == nil {
-		store = NewMemoryStore()
-	}
 	return &manager{store: store}
-}
-
-// NewMemoryManager returns a project Manager backed by a fresh in-memory store,
-// for tests and ephemeral use.
-func NewMemoryManager() Manager {
-	return NewManager(NewMemoryStore())
 }
 
 func (m *manager) List(ctx context.Context) ([]Summary, error) {
