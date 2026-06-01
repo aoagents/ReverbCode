@@ -462,10 +462,7 @@ func TestStartTicksRepeatedly(t *testing.T) {
 	done := p.Start(ctx)
 	deadline := time.After(500 * time.Millisecond)
 loop:
-	for {
-		if ticks.Load() >= 3 {
-			break
-		}
+	for ticks.Load() < 3 {
 		select {
 		case <-deadline:
 			break loop
