@@ -22,6 +22,7 @@
         devShells.default = pkgs.mkShell {
           buildInputs = [
             go
+            pkgs.gotools
             pkgs.nodejs_22
             pkgs.pnpm_10
             pkgs.just

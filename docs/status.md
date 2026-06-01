@@ -20,7 +20,7 @@ the eventual lane→main merge is a single cumulative review.
 | LCM — reactions | reaction table + escalation engine + real `TickEscalations` | #6 |
 | Session Manager | spawn / kill / restore / cleanup / list, eager rollback, worktree-remove safety | #7 |
 
-`gofmt` / `go build` / `go vet` / `go test -race` all green across `domain`,
+`goimports` / `go build` / `go vet` / `go test -race` all green across `domain`,
 `domain/decide`, `lifecycle`, and `session`. The `decide` core is at 100%
 statement coverage; the impl packages cover the load-bearing logic including the
 error/rollback paths.
@@ -29,7 +29,7 @@ error/rollback paths.
 
 ```
 cd backend
-gofmt -l .          # must print nothing
+goimports -local github.com/aoagents/agent-orchestrator -l .  # must print nothing
 go build ./...
 go vet ./...
 go test -race ./...

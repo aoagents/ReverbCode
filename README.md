@@ -52,5 +52,5 @@ is intentionally not env-configurable.
 
 ```bash
 cd backend
-gofmt -l . && go build ./... && go vet ./... && go test -race ./...
+goimports -local github.com/aoagents/agent-orchestrator -l . && go build ./... && go vet ./... && go test -race ./...
 ```
