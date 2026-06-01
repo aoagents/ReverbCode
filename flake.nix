@@ -17,32 +17,10 @@
       let
         pkgs = import nixpkgs { inherit system; };
         go = pkgs.go_1_25;
-        agentOrchestratorDev = pkgs.writeShellApplication {
-          name = "agent-orchestrator";
-          runtimeInputs = [
-            pkgs.coreutils
-            pkgs.nodejs_22
-          ];
-          text = ''
-            root="$PWD"
-            while [ "$root" != "/" ] && { [ ! -f "$root/backend/go.mod" ] || [ ! -f "$root/frontend/package.json" ]; }; do
-              root="$(dirname "$root")"
-            done
-
-            if [ ! -f "$root/backend/go.mod" ] || [ ! -f "$root/frontend/package.json" ]; then
-              echo "Unable to find the agent-orchestrator workspace root."
-              exit 1
-            fi
-
-            cd "$root/frontend"
-            exec npm start "$@"
-          '';
-        };
       in
       {
         devShells.default = pkgs.mkShell {
           buildInputs = [
-            agentOrchestratorDev
             go
             pkgs.nodejs_22
             pkgs.pnpm_10
