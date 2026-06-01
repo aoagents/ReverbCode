@@ -159,6 +159,33 @@ func TestSpawn_AssignsIDAndGoesIdle(t *testing.T) {
 		t.Fatal("handle not folded")
 	}
 }
+
+// SpawnConfig.Branch is optional from the API surface (the CLI does not expose
+// it). The SM is the only layer with the session id (assigned by the store
+// inside Spawn), so it defaults the branch to a per-session ref. The
+// gitworktree workspace requires a non-empty branch and cannot have two
+// worktrees on the same branch — so the default must be unique per session.
+func TestSpawn_DefaultsBranchPerSession_WhenUnset(t *testing.T) {
+	m, st, _, _ := newManager()
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Prompt: "do it"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions["mer-1"].Metadata.Branch; got != "ao/mer-1" {
+		t.Fatalf("default branch: got %q, want %q", got, "ao/mer-1")
+	}
+}
+
+// An explicit branch in SpawnConfig must win over the default — the API/CLI
+// layer can still pin a branch when it wants to.
+func TestSpawn_HonorsExplicitBranch(t *testing.T) {
+	m, st, _, _ := newManager()
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Prompt: "do it", Branch: "feature/x"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions["mer-1"].Metadata.Branch; got != "feature/x" {
+		t.Fatalf("explicit branch: got %q, want %q", got, "feature/x")
+	}
+}
 func TestSpawn_RollsBackOnRuntimeFailure(t *testing.T) {
 	m, st, _, ws := newManager()
 	m.runtime = &fakeRuntime{createErr: errors.New("boom")}

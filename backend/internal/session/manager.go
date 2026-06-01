@@ -95,7 +95,16 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	}
 	id := rec.ID
 
-	ws, err := m.workspace.Create(ctx, ports.WorkspaceConfig{ProjectID: cfg.ProjectID, SessionID: id, Branch: cfg.Branch})
+	// The CLI/API does not expose a branch flag, but the gitworktree adapter
+	// requires a non-empty branch (and cannot have two worktrees on the same
+	// branch). The session id is assigned by the store above, so this is the
+	// only layer where a per-session default ref can be computed.
+	branch := cfg.Branch
+	if branch == "" {
+		branch = "ao/" + string(id)
+	}
+
+	ws, err := m.workspace.Create(ctx, ports.WorkspaceConfig{ProjectID: cfg.ProjectID, SessionID: id, Branch: branch})
 	if err != nil {
 		m.markSpawnFailedTerminated(ctx, id)
 		return domain.Session{}, fmt.Errorf("spawn %s: workspace: %w", id, err)

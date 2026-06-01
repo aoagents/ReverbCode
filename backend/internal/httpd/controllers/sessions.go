@@ -3,6 +3,7 @@ package controllers
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -111,5 +112,6 @@ func writeSpawnError(w http.ResponseWriter, r *http.Request, err error) {
 			return
 		}
 	}
+	slog.Default().Error("spawn: internal error returned to client", "err", err.Error())
 	envelope.WriteAPIError(w, r, http.StatusInternalServerError, "internal", "SPAWN_FAILED", "Failed to spawn session", nil)
 }
