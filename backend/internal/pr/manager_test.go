@@ -9,15 +9,6 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-type fakeSessions struct {
-	sessions map[domain.SessionID]domain.SessionRecord
-}
-
-func (f fakeSessions) GetSession(_ context.Context, id domain.SessionID) (domain.SessionRecord, bool, error) {
-	r, ok := f.sessions[id]
-	return r, ok, nil
-}
-
 type fakeWriter struct {
 	pr       map[domain.SessionID]domain.PRRow
 	comments map[string][]domain.PRComment
@@ -50,7 +41,6 @@ func newPRManager() (*Manager, *fakeWriter, *fakeLifecycle) {
 	fw := &fakeWriter{pr: map[domain.SessionID]domain.PRRow{}, comments: map[string][]domain.PRComment{}}
 	fl := &fakeLifecycle{}
 	m := New(Deps{
-		Sessions:  fakeSessions{sessions: map[domain.SessionID]domain.SessionRecord{"mer-1": {ID: "mer-1", ProjectID: "mer"}}},
 		Writer:    fw,
 		Lifecycle: fl,
 		Clock:     func() time.Time { return time.Unix(1, 0).UTC() },

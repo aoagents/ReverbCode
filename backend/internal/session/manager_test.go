@@ -52,11 +52,11 @@ func (f *fakeStore) ListAllSessions(context.Context) ([]domain.SessionRecord, er
 	}
 	return out, nil
 }
-func (f *fakeStore) ListPRFactsForSession(_ context.Context, id domain.SessionID) ([]domain.PRFacts, error) {
-	if pr := f.pr[id]; pr.Exists {
-		return []domain.PRFacts{pr}, nil
+func (f *fakeStore) GetDisplayPRFactsForSession(_ context.Context, id domain.SessionID) (domain.PRFacts, bool, error) {
+	if pr := f.pr[id]; pr.URL != "" {
+		return pr, true, nil
 	}
-	return nil, nil
+	return domain.PRFacts{}, false, nil
 }
 
 type fakeLCM struct {
@@ -215,7 +215,7 @@ func TestRestore_RefusesLiveSession(t *testing.T) {
 func TestList_DerivesStatusFromPRFacts(t *testing.T) {
 	m, st, _, _ := newManager()
 	st.sessions["mer-1"] = mkLive("mer-1")
-	st.pr["mer-1"] = domain.PRFacts{Exists: true, CI: domain.CIFailing}
+	st.pr["mer-1"] = domain.PRFacts{URL: "pr1", CI: domain.CIFailing}
 	list, err := m.List(ctx, "mer")
 	if err != nil {
 		t.Fatal(err)

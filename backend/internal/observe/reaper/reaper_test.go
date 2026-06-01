@@ -24,16 +24,6 @@ func (l *fakeLCM) ApplyRuntimeObservation(_ context.Context, id domain.SessionID
 	l.observed[id] = f
 	return nil
 }
-func (l *fakeLCM) ApplyActivitySignal(context.Context, domain.SessionID, ports.ActivitySignal) error {
-	return nil
-}
-func (l *fakeLCM) ApplyPRObservation(context.Context, domain.SessionID, ports.PRObservation) error {
-	return nil
-}
-func (l *fakeLCM) MarkSpawned(context.Context, domain.SessionID, ports.SpawnOutcome) error {
-	return nil
-}
-func (l *fakeLCM) MarkTerminated(context.Context, domain.SessionID) error { return nil }
 
 type fakeSessions struct{ rows []domain.SessionRecord }
 
@@ -46,10 +36,6 @@ type fakeRuntime struct {
 	err   error
 }
 
-func (r fakeRuntime) Create(context.Context, ports.RuntimeConfig) (ports.RuntimeHandle, error) {
-	return ports.RuntimeHandle{}, nil
-}
-func (r fakeRuntime) Destroy(context.Context, ports.RuntimeHandle) error { return nil }
 func (r fakeRuntime) IsAlive(context.Context, ports.RuntimeHandle) (bool, error) {
 	return r.alive, r.err
 }

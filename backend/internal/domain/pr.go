@@ -5,11 +5,10 @@ import "time"
 // ---- PR read model ----
 
 // PRFacts is the per-session PR snapshot the status derivation reads from the
-// pr table. The zero value (Exists=false) means "no PR".
+// pr table.
 type PRFacts struct {
 	URL            string
 	Number         int
-	Exists         bool
 	Draft          bool
 	Merged         bool
 	Closed         bool

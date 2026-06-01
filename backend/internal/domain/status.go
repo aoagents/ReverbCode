@@ -24,9 +24,9 @@ const (
 // DeriveStatus is the ONLY producer of display status. It is a pure function of
 // persisted session facts and PR facts: is_terminated, activity_state, and the PR
 // table are the durable facts that tell the UI what it needs to know.
-func DeriveStatus(rec SessionRecord, pr PRFacts) SessionStatus {
+func DeriveStatus(rec SessionRecord, pr *PRFacts) SessionStatus {
 	if rec.IsTerminated {
-		if pr.Exists && pr.Merged {
+		if pr != nil && pr.Merged {
 			return StatusMerged
 		}
 		return StatusTerminated
@@ -39,12 +39,12 @@ func DeriveStatus(rec SessionRecord, pr PRFacts) SessionStatus {
 		return StatusStuck
 	}
 
-	if pr.Exists {
+	if pr != nil {
 		if pr.Merged {
 			return StatusMerged
 		}
 		if !pr.Closed {
-			return prPipelineStatus(pr)
+			return prPipelineStatus(*pr)
 		}
 	}
 
@@ -52,22 +52,6 @@ func DeriveStatus(rec SessionRecord, pr PRFacts) SessionStatus {
 		return StatusWorking
 	}
 	return StatusIdle
-}
-
-// DisplayPR chooses the PR facts that represent a session in the dashboard.
-// Prefer the active PR when present; otherwise fall back to the first historical
-// PR so closed/merged sessions still get a sensible display status.
-func DisplayPR(prs []PRFacts) PRFacts {
-	if len(prs) == 0 {
-		return PRFacts{}
-	}
-	pick := prs[0]
-	for _, pr := range prs {
-		if !pr.Merged && !pr.Closed {
-			return pr
-		}
-	}
-	return pick
 }
 
 func prPipelineStatus(pr PRFacts) SessionStatus {

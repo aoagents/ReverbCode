@@ -175,6 +175,28 @@ func TestWritePRRejectsSessionReassignment(t *testing.T) {
 	}
 }
 
+func TestDisplayPRFactsPrefersActivePR(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	r, _ := s.CreateSession(ctx, sampleRecord("mer"))
+	now := time.Now().UTC().Truncate(time.Second)
+
+	if err := s.WritePR(ctx, domain.PRRow{URL: "closed", SessionID: r.ID, Number: 1, Closed: true, UpdatedAt: now.Add(time.Minute)}, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WritePR(ctx, domain.PRRow{URL: "open", SessionID: r.ID, Number: 2, CI: domain.CIFailing, UpdatedAt: now}, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	got, ok, err := s.GetDisplayPRFactsForSession(ctx, r.ID)
+	if err != nil || !ok {
+		t.Fatalf("display pr: ok=%v err=%v", ok, err)
+	}
+	if got.URL != "open" || got.CI != domain.CIFailing {
+		t.Fatalf("display pr = %+v", got)
+	}
+}
+
 func TestPRCommentsReplace(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

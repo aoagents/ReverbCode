@@ -2,33 +2,39 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/gen"
 )
 
-// ListPRFactsForSession returns every PR snapshot owned by a session, newest
-// first, with unresolved-review-comment presence folded in per PR.
-func (s *Store) ListPRFactsForSession(ctx context.Context, id domain.SessionID) ([]domain.PRFacts, error) {
-	rows, err := s.qr.ListPRFactsBySession(ctx, id)
+// GetDisplayPRFactsForSession returns the PR snapshot that should represent a
+// session in derived display status: active PRs first, otherwise the newest
+// historical PR. ok=false means the session has no associated PRs.
+func (s *Store) GetDisplayPRFactsForSession(ctx context.Context, id domain.SessionID) (domain.PRFacts, bool, error) {
+	r, err := s.qr.GetDisplayPRFactsBySession(ctx, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.PRFacts{}, false, nil
+	}
 	if err != nil {
-		return nil, fmt.Errorf("list pr facts for %s: %w", id, err)
+		return domain.PRFacts{}, false, fmt.Errorf("display pr facts for %s: %w", id, err)
 	}
-	facts := make([]domain.PRFacts, 0, len(rows))
-	for _, r := range rows {
-		state := r.PrState
-		facts = append(facts, domain.PRFacts{
-			URL:            r.Url,
-			Number:         int(r.Number),
-			Exists:         true,
-			Draft:          state == domain.PRStateDraft,
-			Merged:         state == domain.PRStateMerged,
-			Closed:         state == domain.PRStateClosed,
-			CI:             r.CiState,
-			Review:         r.ReviewDecision,
-			Mergeability:   r.Mergeability,
-			ReviewComments: r.ReviewComments,
-		})
+	return prFactsFromGen(r), true, nil
+}
+
+func prFactsFromGen(r gen.GetDisplayPRFactsBySessionRow) domain.PRFacts {
+	state := r.PrState
+	return domain.PRFacts{
+		URL:            r.Url,
+		Number:         int(r.Number),
+		Draft:          state == domain.PRStateDraft,
+		Merged:         state == domain.PRStateMerged,
+		Closed:         state == domain.PRStateClosed,
+		CI:             r.CiState,
+		Review:         r.ReviewDecision,
+		Mergeability:   r.Mergeability,
+		ReviewComments: r.ReviewComments,
 	}
-	return facts, nil
 }

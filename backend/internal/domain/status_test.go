@@ -6,26 +6,28 @@ func rec(activity ActivityState, terminated bool) SessionRecord {
 	return SessionRecord{Activity: ActivitySubstate{State: activity}, IsTerminated: terminated}
 }
 
+func pr(facts PRFacts) *PRFacts { return &facts }
+
 func TestDeriveStatusFromSessionFactsAndPR(t *testing.T) {
 	tests := []struct {
 		name string
 		rec  SessionRecord
-		pr   PRFacts
+		pr   *PRFacts
 		want SessionStatus
 	}{
-		{"terminated", rec(ActivityExited, true), PRFacts{}, StatusTerminated},
-		{"merged-pr", rec(ActivityIdle, true), PRFacts{Exists: true, Merged: true}, StatusMerged},
-		{"needs-input", rec(ActivityWaitingInput, false), PRFacts{Exists: true, CI: CIFailing}, StatusNeedsInput},
-		{"blocked", rec(ActivityBlocked, false), PRFacts{Exists: true, CI: CIFailing}, StatusStuck},
-		{"ci-failed", rec(ActivityIdle, false), PRFacts{Exists: true, CI: CIFailing}, StatusCIFailed},
-		{"draft", rec(ActivityIdle, false), PRFacts{Exists: true, Draft: true}, StatusDraft},
-		{"changes-requested", rec(ActivityIdle, false), PRFacts{Exists: true, Review: ReviewChangesRequest}, StatusChangesRequested},
-		{"mergeable", rec(ActivityIdle, false), PRFacts{Exists: true, Mergeability: MergeMergeable}, StatusMergeable},
-		{"approved", rec(ActivityIdle, false), PRFacts{Exists: true, Review: ReviewApproved}, StatusApproved},
-		{"review-pending", rec(ActivityIdle, false), PRFacts{Exists: true, Review: ReviewRequired}, StatusReviewPending},
-		{"pr-open", rec(ActivityIdle, false), PRFacts{Exists: true}, StatusPROpen},
-		{"working", rec(ActivityActive, false), PRFacts{}, StatusWorking},
-		{"idle", rec(ActivityIdle, false), PRFacts{}, StatusIdle},
+		{"terminated", rec(ActivityExited, true), nil, StatusTerminated},
+		{"merged-pr", rec(ActivityIdle, true), pr(PRFacts{Merged: true}), StatusMerged},
+		{"needs-input", rec(ActivityWaitingInput, false), pr(PRFacts{CI: CIFailing}), StatusNeedsInput},
+		{"blocked", rec(ActivityBlocked, false), pr(PRFacts{CI: CIFailing}), StatusStuck},
+		{"ci-failed", rec(ActivityIdle, false), pr(PRFacts{CI: CIFailing}), StatusCIFailed},
+		{"draft", rec(ActivityIdle, false), pr(PRFacts{Draft: true}), StatusDraft},
+		{"changes-requested", rec(ActivityIdle, false), pr(PRFacts{Review: ReviewChangesRequest}), StatusChangesRequested},
+		{"mergeable", rec(ActivityIdle, false), pr(PRFacts{Mergeability: MergeMergeable}), StatusMergeable},
+		{"approved", rec(ActivityIdle, false), pr(PRFacts{Review: ReviewApproved}), StatusApproved},
+		{"review-pending", rec(ActivityIdle, false), pr(PRFacts{Review: ReviewRequired}), StatusReviewPending},
+		{"pr-open", rec(ActivityIdle, false), pr(PRFacts{}), StatusPROpen},
+		{"working", rec(ActivityActive, false), nil, StatusWorking},
+		{"idle", rec(ActivityIdle, false), nil, StatusIdle},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -33,25 +35,5 @@ func TestDeriveStatusFromSessionFactsAndPR(t *testing.T) {
 				t.Fatalf("got %q, want %q", got, tt.want)
 			}
 		})
-	}
-}
-
-func TestDisplayPRPrefersActivePR(t *testing.T) {
-	prs := []PRFacts{
-		{Exists: true, URL: "closed", Closed: true, CI: CIPassing},
-		{Exists: true, URL: "open", CI: CIFailing},
-	}
-	if got := DisplayPR(prs); got.URL != "open" {
-		t.Fatalf("got %+v", got)
-	}
-}
-
-func TestDisplayPRFallsBackToHistoricalPR(t *testing.T) {
-	prs := []PRFacts{
-		{Exists: true, URL: "closed", Closed: true},
-		{Exists: true, URL: "merged", Merged: true},
-	}
-	if got := DisplayPR(prs); got.URL != "closed" {
-		t.Fatalf("got %+v", got)
 	}
 }

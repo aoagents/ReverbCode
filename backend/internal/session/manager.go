@@ -36,7 +36,7 @@ type sessionStore interface {
 	CreateSession(ctx context.Context, rec domain.SessionRecord) (domain.SessionRecord, error)
 	GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error)
 	ListSessions(ctx context.Context, project domain.ProjectID) ([]domain.SessionRecord, error)
-	ListPRFactsForSession(ctx context.Context, id domain.SessionID) ([]domain.PRFacts, error)
+	GetDisplayPRFactsForSession(ctx context.Context, id domain.SessionID) (domain.PRFacts, bool, error)
 }
 
 // Manager implements ports.SessionManager over the outbound ports.
@@ -266,11 +266,14 @@ func (m *Manager) Cleanup(ctx context.Context, project domain.ProjectID) ([]doma
 // ---- helpers ----
 
 func (m *Manager) toSession(ctx context.Context, rec domain.SessionRecord) (domain.Session, error) {
-	prs, err := m.store.ListPRFactsForSession(ctx, rec.ID)
+	pr, ok, err := m.store.GetDisplayPRFactsForSession(ctx, rec.ID)
 	if err != nil {
 		return domain.Session{}, fmt.Errorf("pr facts %s: %w", rec.ID, err)
 	}
-	return domain.Session{SessionRecord: rec, Status: domain.DeriveStatus(rec, domain.DisplayPR(prs))}, nil
+	if !ok {
+		return domain.Session{SessionRecord: rec, Status: domain.DeriveStatus(rec, nil)}, nil
+	}
+	return domain.Session{SessionRecord: rec, Status: domain.DeriveStatus(rec, &pr)}, nil
 }
 
 func seedRecord(cfg ports.SpawnConfig, now time.Time) domain.SessionRecord {

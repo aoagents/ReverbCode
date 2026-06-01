@@ -10,10 +10,6 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-type sessionReader interface {
-	GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error)
-}
-
 type lifecycle interface {
 	ApplyPRObservation(ctx context.Context, id domain.SessionID, o ports.PRObservation) error
 	MarkTerminated(ctx context.Context, id domain.SessionID) error
@@ -22,7 +18,6 @@ type lifecycle interface {
 // Manager persists PR observations and forwards them to lifecycle for agent
 // nudges and direct lifecycle effects such as terminating a merged session.
 type Manager struct {
-	sessions  sessionReader
 	writer    ports.PRWriter
 	lifecycle lifecycle
 	clock     func() time.Time
@@ -30,7 +25,6 @@ type Manager struct {
 
 // Deps are the collaborators a PR Manager needs.
 type Deps struct {
-	Sessions  sessionReader
 	Writer    ports.PRWriter
 	Lifecycle lifecycle
 	Clock     func() time.Time
@@ -38,7 +32,7 @@ type Deps struct {
 
 // New builds a PR Manager from its dependencies, defaulting the clock to time.Now.
 func New(d Deps) *Manager {
-	m := &Manager{sessions: d.Sessions, writer: d.Writer, lifecycle: d.Lifecycle, clock: d.Clock}
+	m := &Manager{writer: d.Writer, lifecycle: d.Lifecycle, clock: d.Clock}
 	if m.clock == nil {
 		m.clock = time.Now
 	}
@@ -50,12 +44,6 @@ func New(d Deps) *Manager {
 func (m *Manager) ApplyObservation(ctx context.Context, id domain.SessionID, o ports.PRObservation) error {
 	if !o.Fetched {
 		return nil
-	}
-	if m.sessions != nil {
-		_, ok, err := m.sessions.GetSession(ctx, id)
-		if err != nil || !ok {
-			return err
-		}
 	}
 	if err := m.write(ctx, id, o); err != nil {
 		return err

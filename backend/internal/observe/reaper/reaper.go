@@ -35,31 +35,34 @@ type Config struct {
 	Logger *slog.Logger
 }
 
-type sessionLister interface {
+type sessionSource interface {
 	ListAllSessions(ctx context.Context) ([]domain.SessionRecord, error)
 }
 
-type runtimeObserver interface {
+type runtimeObservationSink interface {
 	ApplyRuntimeObservation(ctx context.Context, id domain.SessionID, f ports.RuntimeFacts) error
+}
+
+type runtimeProber interface {
+	IsAlive(context.Context, ports.RuntimeHandle) (bool, error)
 }
 
 // Reaper is the polling timer. Construct it with New; start the background
 // goroutine with Start, or drive a single cycle synchronously with Tick.
 type Reaper struct {
-	lcm      runtimeObserver
-	sessions sessionLister
-	runtime  ports.Runtime
+	sink     runtimeObservationSink
+	sessions sessionSource
+	runtime  runtimeProber
 	tick     time.Duration
 	clock    func() time.Time
 	logger   *slog.Logger
 }
 
-// New constructs a Reaper. The LCM is the writer destination; sessions supplies
-// the rows to probe; runtime is the single configured backend used for every
-// session.
-func New(lcm runtimeObserver, sessions sessionLister, runtime ports.Runtime, cfg Config) *Reaper {
+// New constructs a Reaper. sink is the lifecycle fact destination; sessions
+// supplies the rows to probe; runtime checks whether a stored handle is alive.
+func New(sink runtimeObservationSink, sessions sessionSource, runtime runtimeProber, cfg Config) *Reaper {
 	r := &Reaper{
-		lcm:      lcm,
+		sink:     sink,
 		sessions: sessions,
 		runtime:  runtime,
 		tick:     cfg.Tick,
@@ -161,7 +164,7 @@ func (r *Reaper) probeOne(ctx context.Context, sess domain.SessionRecord, now ti
 		facts.Probe = ports.ProbeDead
 	}
 
-	if err := r.lcm.ApplyRuntimeObservation(ctx, sess.ID, facts); err != nil {
+	if err := r.sink.ApplyRuntimeObservation(ctx, sess.ID, facts); err != nil {
 		r.logger.Error("reaper: ApplyRuntimeObservation failed",
 			"session", sess.ID, "err", err)
 	}

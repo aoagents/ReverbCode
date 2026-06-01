@@ -21,7 +21,7 @@ WHERE session_id = ?
 ORDER BY updated_at DESC;
 
 
--- name: ListPRFactsBySession :many
+-- name: GetDisplayPRFactsBySession :one
 SELECT
     pr.url,
     pr.number,
@@ -37,4 +37,7 @@ SELECT
     ) AS review_comments
 FROM pr
 WHERE pr.session_id = ?
-ORDER BY pr.updated_at DESC;
+ORDER BY
+    CASE WHEN pr.pr_state NOT IN ('merged', 'closed') THEN 0 ELSE 1 END,
+    pr.updated_at DESC
+LIMIT 1;
