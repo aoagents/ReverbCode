@@ -4,12 +4,10 @@
 // on a store, the LCM, or an adapter.
 //
 // Each handler maps the request→response transport: decode the body into the
-// project command, call the Manager, and encode the typed wire envelope (or an
-// httpx error envelope). The Manager itself is unimplemented in this PR — while
-// Mgr is nil the handlers return 500 SERVICE_UNAVAILABLE (the route IS
-// implemented; only the backing service is absent). The handler-impl PR injects
-// a real Manager and the same request→response code runs end to end; no
-// transport rewiring needed.
+// project command, call the Manager, and encode the typed wire envelope (or
+// translate the Manager's typed httpx.APIErr into the locked error envelope via
+// writeErr). When Mgr is nil (no Manager wired) the handlers return 500
+// SERVICE_UNAVAILABLE — the route IS implemented, only the backing service is absent.
 package controllers
 
 import (
@@ -50,7 +48,7 @@ func (c *ProjectsController) list(w http.ResponseWriter, r *http.Request) {
 	}
 	items, err := c.Mgr.List(r.Context())
 	if err != nil {
-		c.serverError(w, r, "PROJECTS_LIST_FAILED", "Failed to load projects")
+		c.writeErr(w, r, err)
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, ListProjectsResponse{Projects: items})
@@ -68,10 +66,7 @@ func (c *ProjectsController) add(w http.ResponseWriter, r *http.Request) {
 	}
 	proj, err := c.Mgr.Add(r.Context(), in)
 	if err != nil {
-		// TODO(handler-impl): map the Manager's typed errors onto the
-		// documented 400 (PATH_REQUIRED, NOT_A_GIT_REPO) and 409
-		// (PATH_ALREADY_REGISTERED, ID_ALREADY_REGISTERED) envelopes.
-		c.serverError(w, r, "PROJECT_ADD_FAILED", "Failed to add project")
+		c.writeErr(w, r, err)
 		return
 	}
 	httpx.WriteJSON(w, http.StatusCreated, ProjectResponse{Project: proj})
@@ -84,8 +79,7 @@ func (c *ProjectsController) get(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := c.Mgr.Get(r.Context(), c.projectID(r))
 	if err != nil {
-		// TODO(handler-impl): map a not-found error to 404 PROJECT_NOT_FOUND.
-		c.serverError(w, r, "PROJECT_LOAD_FAILED", "Failed to load project")
+		c.writeErr(w, r, err)
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, newGetProjectResponse(res))
@@ -103,9 +97,7 @@ func (c *ProjectsController) updateConfig(w http.ResponseWriter, r *http.Request
 	}
 	proj, err := c.Mgr.UpdateConfig(r.Context(), c.projectID(r), patch)
 	if err != nil {
-		// TODO(handler-impl): map typed errors onto 400 (IDENTITY_FROZEN,
-		// INVALID_LOCAL_CONFIG), 404, and 409 (PROJECT_DEGRADED, MISSING_PATH).
-		c.serverError(w, r, "PROJECT_UPDATE_FAILED", "Failed to update project")
+		c.writeErr(w, r, err)
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, ProjectResponse{Project: proj})
@@ -118,9 +110,7 @@ func (c *ProjectsController) remove(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := c.Mgr.Remove(r.Context(), c.projectID(r))
 	if err != nil {
-		// TODO(handler-impl): map typed errors onto 400 INVALID_PROJECT_ID
-		// and 404 PROJECT_NOT_FOUND.
-		c.serverError(w, r, "PROJECT_REMOVE_FAILED", "Failed to remove project")
+		c.writeErr(w, r, err)
 		return
 	}
 	// RemoveResult is already wire-shaped ({projectId, removedStorageDir}).
@@ -132,11 +122,15 @@ func (c *ProjectsController) projectID(r *http.Request) domain.ProjectID {
 	return domain.ProjectID(chi.URLParam(r, "id"))
 }
 
-// serverError writes a 500 with the route's documented failure code. The
-// finer-grained 4xx mapping depends on the Manager's error taxonomy and lands
-// with the handler-impl PR; until then any Manager error surfaces as a 500.
-func (c *ProjectsController) serverError(w http.ResponseWriter, r *http.Request, code, message string) {
-	httpx.WriteError(w, r, http.StatusInternalServerError, "internal", code, message, nil)
+// writeErr renders a Manager error. Typed httpx.APIErr values (the Manager's
+// taxonomy: 400/404/409 with machine codes + details) map straight to the
+// locked envelope; anything else is an opaque 500 so internals don't leak.
+func (c *ProjectsController) writeErr(w http.ResponseWriter, r *http.Request, err error) {
+	if e, ok := httpx.AsAPIErr(err); ok {
+		httpx.WriteAPIErr(w, r, e)
+		return
+	}
+	httpx.WriteError(w, r, http.StatusInternalServerError, "internal", "INTERNAL", "Internal error", nil)
 }
 
 // serviceUnavailable is the route-shell response while project.Manager is nil.

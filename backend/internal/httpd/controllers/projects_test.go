@@ -22,6 +22,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd"
+	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/httpx"
 	"github.com/aoagents/agent-orchestrator/backend/internal/project"
 )
 
@@ -261,30 +262,40 @@ func TestProjects_UpdateConfig_OK(t *testing.T) {
 	}
 }
 
-// TestProjects_ManagerError walks every handler and confirms that until the
-// typed-error taxonomy lands, any Manager error surfaces as the route's
-// documented 500 code in the locked envelope. This pins the 5 codes the
-// openapi.yaml 500 examples declare.
-func TestProjects_ManagerError(t *testing.T) {
-	cases := []struct {
-		method, path, body, wantCode string
+// TestProjects_ManagerErrorTranslation confirms the controller translates the
+// Manager's typed httpx.APIErr into the locked envelope (status + machine code),
+// and falls back to an opaque 500 INTERNAL for an untyped error so internals
+// never leak.
+func TestProjects_ManagerErrorTranslation(t *testing.T) {
+	typed := []struct {
+		name       string
+		err        error
+		wantStatus int
+		wantCode   string
 	}{
-		{method: "GET", path: "/api/v1/projects", wantCode: "PROJECTS_LIST_FAILED"},
-		{method: "POST", path: "/api/v1/projects", body: `{"path":"/r"}`, wantCode: "PROJECT_ADD_FAILED"},
-		{method: "GET", path: "/api/v1/projects/p1", wantCode: "PROJECT_LOAD_FAILED"},
-		{method: "PATCH", path: "/api/v1/projects/p1", body: `{}`, wantCode: "PROJECT_UPDATE_FAILED"},
-		{method: "DELETE", path: "/api/v1/projects/p1", wantCode: "PROJECT_REMOVE_FAILED"},
+		{"not found → 404", httpx.NotFound("PROJECT_NOT_FOUND", "Unknown project"), http.StatusNotFound, "PROJECT_NOT_FOUND"},
+		{"bad request → 400", httpx.BadRequest("NOT_A_GIT_REPO", "not a repo", nil), http.StatusBadRequest, "NOT_A_GIT_REPO"},
+		{"conflict → 409", httpx.Conflict("PATH_ALREADY_REGISTERED", "dup", map[string]any{"existingProjectId": "ao"}), http.StatusConflict, "PATH_ALREADY_REGISTERED"},
 	}
-	for _, tc := range cases {
-		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
-			srv := newTestServerWithManager(t, &fakeManager{err: errors.New("kaboom")})
-			body, status, _ := doRequest(t, srv, tc.method, tc.path, tc.body)
-			if status != http.StatusInternalServerError {
-				t.Fatalf("status = %d, want 500\nbody=%s", status, body)
+	for _, tc := range typed {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := newTestServerWithManager(t, &fakeManager{err: tc.err})
+			body, status, _ := doRequest(t, srv, "GET", "/api/v1/projects", "")
+			if status != tc.wantStatus {
+				t.Fatalf("status = %d, want %d\nbody=%s", status, tc.wantStatus, body)
 			}
 			assertEnvelope(t, body, tc.wantCode)
 		})
 	}
+
+	t.Run("untyped error → 500 INTERNAL", func(t *testing.T) {
+		srv := newTestServerWithManager(t, &fakeManager{err: errors.New("kaboom")})
+		body, status, _ := doRequest(t, srv, "GET", "/api/v1/projects", "")
+		if status != http.StatusInternalServerError {
+			t.Fatalf("status = %d, want 500\nbody=%s", status, body)
+		}
+		assertEnvelope(t, body, "INTERNAL")
+	})
 }
 
 // TestProjectsRoutes_NilManager walks every canonical /projects route with no

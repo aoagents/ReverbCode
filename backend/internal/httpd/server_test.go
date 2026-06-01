@@ -51,7 +51,7 @@ func TestServerLifecycle(t *testing.T) {
 		RunFilePath:     runPath,
 	}
 
-	srv, err := New(cfg, discardLogger(), nil)
+	srv, err := New(cfg, discardLogger(), nil, APIDeps{})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -116,7 +116,7 @@ func waitForHealth(t *testing.T, base string) {
 func TestNewFailsOnPortConflict(t *testing.T) {
 	cfg := config.Config{Host: "127.0.0.1", Port: 0, RunFilePath: filepath.Join(t.TempDir(), "r.json")}
 
-	first, err := New(cfg, discardLogger(), nil)
+	first, err := New(cfg, discardLogger(), nil, APIDeps{})
 	if err != nil {
 		t.Fatalf("first New: %v", err)
 	}
@@ -124,7 +124,7 @@ func TestNewFailsOnPortConflict(t *testing.T) {
 
 	// Re-bind the exact port the first server took.
 	conflict := config.Config{Host: "127.0.0.1", Port: first.boundPort(), RunFilePath: cfg.RunFilePath}
-	if _, err := New(conflict, discardLogger(), nil); err == nil {
+	if _, err := New(conflict, discardLogger(), nil, APIDeps{}); err == nil {
 		t.Fatal("New on an already-bound port = nil error, want bind failure")
 	}
 }

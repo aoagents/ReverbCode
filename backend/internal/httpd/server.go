@@ -28,8 +28,9 @@ type Server struct {
 // New constructs a Server and binds the listener immediately so a port
 // conflict fails fast — before any running.json is written. The caller owns
 // the returned Server's lifecycle via Run. termMgr may be nil, in which case
-// the /mux terminal surface is not mounted.
-func New(cfg config.Config, log *slog.Logger, termMgr *terminal.Manager) (*Server, error) {
+// the /mux terminal surface is not mounted. deps carries the resource Managers
+// for the /api/v1 surface (a nil Manager leaves its routes answering 500).
+func New(cfg config.Config, log *slog.Logger, termMgr *terminal.Manager, deps APIDeps) (*Server, error) {
 	ln, err := net.Listen("tcp", cfg.Addr())
 	if err != nil {
 		return nil, fmt.Errorf("bind %s (is a daemon already running?): %w", cfg.Addr(), err)
@@ -40,7 +41,7 @@ func New(cfg config.Config, log *slog.Logger, termMgr *terminal.Manager) (*Serve
 		log:    log,
 		listen: ln,
 		http: &http.Server{
-			Handler: NewRouter(cfg, log, termMgr),
+			Handler: NewRouterWithAPI(cfg, log, termMgr, deps),
 			// ReadHeaderTimeout guards against slow-loris even on loopback;
 			// per-request body/handler timeouts are applied per-surface.
 			ReadHeaderTimeout: 10 * time.Second,

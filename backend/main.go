@@ -15,6 +15,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/tmux"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd"
+	"github.com/aoagents/agent-orchestrator/backend/internal/project"
 	"github.com/aoagents/agent-orchestrator/backend/internal/runfile"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 	"github.com/aoagents/agent-orchestrator/backend/internal/terminal"
@@ -75,7 +76,10 @@ func run() error {
 	termMgr := terminal.NewManager(runtimeAdapter, cdcPipe.Broadcaster, log)
 	defer termMgr.Close()
 
-	srv, err := httpd.New(cfg, log, termMgr)
+	// The project registry API is backed directly by the durable sqlite store.
+	srv, err := httpd.New(cfg, log, termMgr, httpd.APIDeps{
+		Projects: project.NewManager(store),
+	})
 	if err != nil {
 		return err
 	}
