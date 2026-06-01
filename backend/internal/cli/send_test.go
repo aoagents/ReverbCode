@@ -10,7 +10,7 @@ import (
 )
 
 // sendServer wires an httptest server expecting POST /api/v1/sessions/{id}/send
-// and capturetures the request body and path the CLI hit.
+// and captures the request body and path the CLI hit.
 type sendCapture struct {
 	body string
 	path string
@@ -64,13 +64,13 @@ func TestSend_Success(t *testing.T) {
 		t.Fatalf("decode body: %v\nbody=%s", err, capture.body)
 	}
 	if req.Message != "hello agent" {
-		t.Errorf("capturetured message = %q, want %q", req.Message, "hello agent")
+		t.Errorf("captured message = %q, want %q", req.Message, "hello agent")
 	}
 }
 
 func TestSend_TrimsLeadingAndTrailingWhitespace(t *testing.T) {
 	cfg := setConfigEnv(t)
-	srv, captureture := sendServer(t, http.StatusOK, `{"ok":true,"sessionId":"demo-1","message":"hi"}`)
+	srv, capture := sendServer(t, http.StatusOK, `{"ok":true,"sessionId":"demo-1","message":"hi"}`)
 	writeRunFileFor(t, cfg, srv)
 
 	_, _, err := executeCLI(t, Deps{
@@ -82,8 +82,8 @@ func TestSend_TrimsLeadingAndTrailingWhitespace(t *testing.T) {
 	var req struct {
 		Message string `json:"message"`
 	}
-	if err := json.Unmarshal([]byte(captureture.body), &req); err != nil {
-		t.Fatalf("decode body: %v\nbody=%s", err, captureture.body)
+	if err := json.Unmarshal([]byte(capture.body), &req); err != nil {
+		t.Fatalf("decode body: %v\nbody=%s", err, capture.body)
 	}
 	if req.Message != "hi" {
 		t.Errorf("server received %q, want trimmed %q", req.Message, "hi")
