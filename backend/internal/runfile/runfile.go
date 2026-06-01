@@ -12,6 +12,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/processalive"
 )
 
 // Info is the on-disk handshake payload.
@@ -104,7 +106,7 @@ func CheckStale(path string) (*Info, error) {
 	if info == nil || info.PID <= 0 {
 		return nil, nil
 	}
-	if processAlive(info.PID) {
+	if processalive.Alive(info.PID) {
 		return info, nil
 	}
 	return nil, nil

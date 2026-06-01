@@ -34,7 +34,7 @@ func newStartCommand(ctx *commandContext) *cobra.Command {
 			if opts.json {
 				return writeJSON(cmd.OutOrStdout(), st)
 			}
-			if st.State == "ready" {
+			if st.State == stateReady {
 				_, err = fmt.Fprintf(cmd.OutOrStdout(), "AO daemon ready (pid %d, port %d)\n", st.PID, st.Port)
 				return err
 			}
@@ -57,17 +57,17 @@ func (c *commandContext) startDaemon(ctx context.Context, opts startOptions) (da
 	if err != nil {
 		return daemonStatus{}, err
 	}
-	if st.State == "ready" {
+	if st.State == stateReady {
 		return st, nil
 	}
-	if st.State != "stopped" && st.State != "stale" {
+	if st.State != stateStopped && st.State != stateStale {
 		ready, waitErr := c.waitForReady(ctx, opts.timeout)
 		if waitErr == nil {
 			return ready, nil
 		}
 		return daemonStatus{}, fmt.Errorf("daemon process exists but did not become ready: %w", waitErr)
 	}
-	if st.State == "stale" {
+	if st.State == stateStale {
 		if err := runfile.Remove(cfg.RunFilePath); err != nil {
 			return daemonStatus{}, err
 		}
@@ -128,7 +128,7 @@ func (c *commandContext) waitForReady(ctx context.Context, timeout time.Duration
 			lastErr = err
 		} else {
 			last = st
-			if st.State == "ready" {
+			if st.State == stateReady {
 				return st, nil
 			}
 		}

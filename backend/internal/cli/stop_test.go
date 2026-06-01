@@ -33,7 +33,7 @@ func TestWaitForStoppedKeepsRunFileFromConcurrentStart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.State != "stopped" {
+	if st.State != stateStopped {
 		t.Fatalf("state = %q, want stopped", st.State)
 	}
 
@@ -70,7 +70,7 @@ func TestWaitForStoppedRemovesOwnRunFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.State != "stopped" {
+	if st.State != stateStopped {
 		t.Fatalf("state = %q, want stopped", st.State)
 	}
 	info, err := runfile.Read(runFile)

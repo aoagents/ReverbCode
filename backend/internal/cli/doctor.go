@@ -97,12 +97,12 @@ func (c *commandContext) runDoctor(ctx context.Context) []doctorCheck {
 	} else {
 		level := doctorPass
 		switch st.State {
-		case "stale", "not_ready":
+		case stateStale, stateNotReady:
 			level = doctorWarn
-		case "unhealthy":
+		case stateUnhealthy:
 			level = doctorFail
 		}
-		msg := st.State
+		msg := string(st.State)
 		if st.PID != 0 {
 			msg = fmt.Sprintf("%s pid=%d port=%d", msg, st.PID, st.Port)
 		}
