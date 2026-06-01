@@ -2,11 +2,9 @@ package agent
 
 import (
 	"context"
-
-	"github.com/yyovil/better-ao/internal/config"
 )
 
-// Agent defines the behavior every CLI coding agent plugin must provide.
+// Agent defines the behavior every CLI coding agent adapter must provide.
 type Agent interface {
 	// GetConfigSpec describes the agent-specific config keys Better-AO can
 	// expose to users in ~/.better-ao/config.yaml.
@@ -32,12 +30,11 @@ type Agent interface {
 	SessionInfo(ctx context.Context, session SessionRef) (info SessionInfo, ok bool, err error)
 }
 
-// Config contains values loaded from the selected agent's section in
-// ~/.better-ao/config.yaml. Agent plugins own validation for their custom keys.
-type Config = config.AgentConfig
+// Config contains values loaded from the selected agent's config section.
+// Agent adapters own validation for their custom keys.
+type Config map[string]any
 
-// ConfigSpec describes the agent-specific config keys Better-AO can expose to
-// users in ~/.better-ao/config.yaml.
+// ConfigSpec describes the agent-specific config keys AO can expose to users.
 type ConfigSpec struct {
 	Fields []ConfigField
 }
@@ -109,7 +106,7 @@ type SessionInfo struct {
 type PermissionMode string
 
 const (
-	// "default" is special: plugins emit no flag for it so the agent resolves
+	// "default" is special: adapters emit no flag for it so the agent resolves
 	// its starting mode from the user's own config (e.g. Claude's TUI reading
 	// ~/.claude/settings.json defaultMode).
 	PermissionModeDefault           PermissionMode = "default"

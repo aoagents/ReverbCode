@@ -1,4 +1,4 @@
-package plugin
+package adapters
 
 import (
 	"fmt"
@@ -20,44 +20,44 @@ type Manifest struct {
 	Capabilities []Capability `json:"capabilities"`
 }
 
-type Plugin interface {
+type Adapter interface {
 	Manifest() Manifest
 }
 
 type Registry struct {
-	plugins map[string]Plugin
+	adapters map[string]Adapter
 }
 
 func NewRegistry() *Registry {
 	return &Registry{
-		plugins: make(map[string]Plugin),
+		adapters: make(map[string]Adapter),
 	}
 }
 
-func (r *Registry) Register(plugin Plugin) error {
-	manifest := plugin.Manifest()
+func (r *Registry) Register(adapter Adapter) error {
+	manifest := adapter.Manifest()
 	if manifest.ID == "" {
-		return fmt.Errorf("plugin id is required")
+		return fmt.Errorf("adapter id is required")
 	}
-	if _, exists := r.plugins[manifest.ID]; exists {
-		return fmt.Errorf("plugin %q is already registered", manifest.ID)
+	if _, exists := r.adapters[manifest.ID]; exists {
+		return fmt.Errorf("adapter %q is already registered", manifest.ID)
 	}
 
-	r.plugins[manifest.ID] = plugin
+	r.adapters[manifest.ID] = adapter
 	return nil
 }
 
-// Get returns the registered plugin with the given id, or nil and false
-// when no such plugin exists.
-func (r *Registry) Get(id string) (Plugin, bool) {
-	p, ok := r.plugins[id]
+// Get returns the registered adapter with the given id, or nil and false
+// when no such adapter exists.
+func (r *Registry) Get(id string) (Adapter, bool) {
+	p, ok := r.adapters[id]
 	return p, ok
 }
 
 func (r *Registry) Manifests() []Manifest {
-	manifests := make([]Manifest, 0, len(r.plugins))
-	for _, plugin := range r.plugins {
-		manifests = append(manifests, plugin.Manifest())
+	manifests := make([]Manifest, 0, len(r.adapters))
+	for _, adapter := range r.adapters {
+		manifests = append(manifests, adapter.Manifest())
 	}
 
 	sort.Slice(manifests, func(i, j int) bool {

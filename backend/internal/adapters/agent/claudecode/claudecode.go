@@ -1,4 +1,4 @@
-// Package claudecode implements the Claude Code agent plugin.
+// Package claudecode implements the Claude Code agent adapter.
 //
 // It builds the argv to launch `claude` as an interactive session inside a
 // session's worktree, installs worktree-local hooks that report normalized
@@ -27,20 +27,19 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent"
 	"github.com/google/uuid"
-	"github.com/yyovil/better-ao/internal/plugin"
-	"github.com/yyovil/better-ao/internal/plugin/agent"
-	"github.com/yyovil/better-ao/internal/utils"
 )
 
 const (
-	// pluginID is the registry id and the value users pass to
+	// adapterID is the registry id and the value users pass to
 	// `better-ao spawn --agent`.
-	pluginID = "claude-code"
+	adapterID = "claude-code"
 
 	// Normalized session-metadata keys the Claude Code hooks persist into the
 	// Better-AO session store and SessionInfo reads back. Shared vocabulary
-	// with the Codex plugin so the dashboard treats every agent uniformly.
+	// with the Codex adapter so the dashboard treats every agent uniformly.
 	// agentSessionId is also the preferred restore id.
 	claudeAgentSessionIDMetadataKey = "agentSessionId"
 	claudeTitleMetadataKey          = "title"
@@ -63,17 +62,17 @@ func New() *Plugin {
 	return &Plugin{}
 }
 
-var _ plugin.Plugin = (*Plugin)(nil)
+var _ adapters.Adapter = (*Plugin)(nil)
 var _ agent.Agent = (*Plugin)(nil)
 
-func (p *Plugin) Manifest() plugin.Manifest {
-	return plugin.Manifest{
-		ID:          pluginID,
+func (p *Plugin) Manifest() adapters.Manifest {
+	return adapters.Manifest{
+		ID:          adapterID,
 		Name:        "Claude Code",
 		Description: "Run Claude Code worker sessions.",
 		Version:     "0.0.1",
-		Capabilities: []plugin.Capability{
-			plugin.CapabilityAgent,
+		Capabilities: []adapters.Capability{
+			adapters.CapabilityAgent,
 		},
 	}
 }
@@ -301,7 +300,7 @@ func ResolveClaudeBinary(ctx context.Context) (string, error) {
 			)
 		}
 		for _, candidate := range candidates {
-			if utils.FileExists(candidate) {
+			if fileExists(candidate) {
 				return candidate, nil
 			}
 		}
@@ -324,7 +323,7 @@ func ResolveClaudeBinary(ctx context.Context) (string, error) {
 		)
 	}
 	for _, candidate := range candidates {
-		if utils.FileExists(candidate) {
+		if fileExists(candidate) {
 			return candidate, nil
 		}
 		if err := ctx.Err(); err != nil {
@@ -430,4 +429,9 @@ func ensureWorkspaceTrusted(configPath, workspacePath string) error {
 		return fmt.Errorf("claude-code: replace config: %w", err)
 	}
 	return nil
+}
+
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
 }

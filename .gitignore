@@ -1,5 +1,6 @@
 # Node / Electron
 node_modules/
+.pnpm/
 dist/
 out/
 build/
@@ -9,6 +10,7 @@ yarn-debug.log*
 yarn-error.log*
 
 # Go
+.go/
 bin/
 *.test
 *.out
@@ -27,6 +29,7 @@ session-events.jsonl
 session-events.jsonl.*
 
 # Environment
+.direnv/
 .env
 .env.*
 !.env.example

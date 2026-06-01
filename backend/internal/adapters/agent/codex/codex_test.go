@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yyovil/better-ao/internal/plugin/agent"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent"
 )
 
 func TestGetLaunchCommandBuildsCrossPlatformArgv(t *testing.T) {

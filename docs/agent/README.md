@@ -1,8 +1,8 @@
-# Agent Plugin PRD
+# Agent Adapter PRD
 
 ## Goal
 
-Agent plugins let Better-AO run and observe different CLI coding agents without hardcoding agent-specific behavior into the spawn engine. Every CLI coding agent must implement the contract in `internal/plugin/agent/agent.go`.
+Agent adapters let Better-AO run and observe different CLI coding agents without hardcoding agent-specific behavior into the spawn engine. Every CLI coding agent must implement the contract in `backend/internal/adapters/agent/agent.go`.
 
 The important current slice is hook-derived session info. Better-AO should know a running worker's native agent session id, title, and summary from agent hooks installed in the per-session worktree, not from scanning agent transcript/cache files.
 
@@ -17,13 +17,13 @@ The important current slice is hook-derived session info. Better-AO should know 
 - `Title` and `Summary` are both first-class fields.
 - `Title` is derived from the user prompt hook.
 - `Summary` is derived from the stop/final assistant hook.
-- Agent plugin `Metadata` should stay nil/empty unless a plugin has a real extra field that does not belong in the normalized contract.
+- Agent adapter `Metadata` should stay nil/empty unless an adapter has a real extra field that does not belong in the normalized contract.
 
 ## Agent Contract
 
-The shared contract lives in `internal/plugin/agent/agent.go`.
+The shared contract lives in `backend/internal/adapters/agent/agent.go`.
 
-Required plugin behavior:
+Required adapter behavior:
 
 - `GetConfigSpec` describes user-facing agent config.
 - `GetLaunchCommand` builds the native agent command.
@@ -34,11 +34,11 @@ Required plugin behavior:
   - `AgentSessionID`
   - `Title`
   - `Summary`
-  - optional plugin-specific `Metadata`
+  - optional adapter-specific `Metadata`
 
 Implementation layout:
 
-- Agent-specific hook installation and embedded hook templates should live beside the agent plugin in `internal/plugin/agent/<agent>/hooks.go`.
+- Agent-specific hook installation and embedded hook templates should live beside the agent adapter in `backend/internal/adapters/agent/<agent>/hooks.go`.
 - Launch, restore, and session-info behavior can stay in the main agent implementation unless the file grows enough to justify another split.
 
 ## Metadata Keys
@@ -53,12 +53,12 @@ The original spawn prompt may remain in metadata as `prompt` for launch/debug fa
 
 ## Hook Methodology
 
-Agent plugins install hooks into the worktree-local config owned by the native agent.
+Agent adapters install hooks into the worktree-local config owned by the native agent.
 
 Hook callbacks run through hidden Better-AO CLI commands:
 
 ```text
-better-ao hooks <agent-plugin> <event>
+better-ao hooks <agent-adapter> <event>
 ```
 
 The callback:
@@ -93,13 +93,13 @@ Hook metadata changes publish `session.updated`. The frontend listens to `sessio
 
 ## Acceptance Criteria
 
-Agent plugin behavior:
+Agent adapter behavior:
 
 - Agent hook installation preserves user hooks and deduplicates Better-AO hooks.
 - Hook callbacks persist native session id, title, and summary.
 - `SessionInfo` returns normalized fields from persisted metadata.
 - `SessionInfo` does not read transcripts or caches for title/summary.
-- Plugin-specific metadata stays nil/empty unless a concrete feature requires it.
+- Adapter-specific metadata stays nil/empty unless a concrete feature requires it.
 
 Engine and UI:
 

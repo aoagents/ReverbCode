@@ -28,7 +28,7 @@ type LifecycleManager interface {
 }
 
 // SessionManager is the inbound contract the API/CLI call for explicit
-// mutations. It drives the runtime/agent/workspace plugins and routes canonical
+// mutations. It drives the runtime/agent/workspace adapters and routes canonical
 // writes to the LCM.
 type SessionManager interface {
 	Spawn(ctx context.Context, cfg SpawnConfig) (domain.Session, error)

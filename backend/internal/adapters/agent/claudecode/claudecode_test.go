@@ -8,8 +8,8 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent"
 	"github.com/google/uuid"
-	"github.com/yyovil/better-ao/internal/plugin/agent"
 )
 
 func TestGetLaunchCommandBypassWithPrompt(t *testing.T) {

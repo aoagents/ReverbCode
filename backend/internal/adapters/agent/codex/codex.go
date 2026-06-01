@@ -1,4 +1,4 @@
-// Package codex implements the Codex agent plugin: launching new sessions,
+// Package codex implements the Codex agent adapter: launching new sessions,
 // resuming hook-tracked sessions, installing workspace-local hooks, and reading
 // hook-derived session info.
 //
@@ -15,9 +15,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/yyovil/better-ao/internal/plugin"
-	"github.com/yyovil/better-ao/internal/plugin/agent"
-	"github.com/yyovil/better-ao/internal/utils"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent"
 )
 
 const (
@@ -35,17 +34,17 @@ func New() *Plugin {
 	return &Plugin{}
 }
 
-var _ plugin.Plugin = (*Plugin)(nil)
+var _ adapters.Adapter = (*Plugin)(nil)
 var _ agent.Agent = (*Plugin)(nil)
 
-func (p *Plugin) Manifest() plugin.Manifest {
-	return plugin.Manifest{
+func (p *Plugin) Manifest() adapters.Manifest {
+	return adapters.Manifest{
 		ID:          "codex",
 		Name:        "Codex",
 		Description: "Run Codex worker sessions.",
 		Version:     "0.0.1",
-		Capabilities: []plugin.Capability{
-			plugin.CapabilityAgent,
+		Capabilities: []adapters.Capability{
+			adapters.CapabilityAgent,
 		},
 	}
 }
@@ -160,7 +159,7 @@ func ResolveCodexBinary(ctx context.Context) (string, error) {
 			candidates = append(candidates, filepath.Join(home, ".cargo", "bin", "codex.exe"))
 		}
 		for _, candidate := range candidates {
-			if utils.FileExists(candidate) {
+			if fileExists(candidate) {
 				return candidate, nil
 			}
 			if err := ctx.Err(); err != nil {
@@ -187,7 +186,7 @@ func ResolveCodexBinary(ctx context.Context) (string, error) {
 	}
 
 	for _, candidate := range candidates {
-		if utils.FileExists(candidate) {
+		if fileExists(candidate) {
 			return candidate, nil
 		}
 		if err := ctx.Err(); err != nil {
@@ -241,4 +240,9 @@ func normalizePermissionMode(mode agent.PermissionMode) agent.PermissionMode {
 	default:
 		return agent.PermissionModeDefault
 	}
+}
+
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
 }

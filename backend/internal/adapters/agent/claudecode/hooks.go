@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/yyovil/better-ao/internal/plugin/agent"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent"
 )
 
 const (
