@@ -1,6 +1,6 @@
-// Package session implements ports.SessionManager. It drives the runtime/agent/
-// workspace plugins to create and tear down sessions, routes durable lifecycle fact writes
-// through lifecycle, and attaches derived display status on read.
+// Package session drives the runtime/agent/workspace plugins to create and tear
+// down sessions, routes durable lifecycle fact writes through lifecycle, and
+// attaches derived display status on read.
 package session
 
 import (
@@ -39,7 +39,8 @@ type sessionStore interface {
 	GetDisplayPRFactsForSession(ctx context.Context, id domain.SessionID) (domain.PRFacts, bool, error)
 }
 
-// Manager implements ports.SessionManager over the outbound ports.
+// Manager coordinates session spawn, restore, kill, listing, and cleanup over
+// the outbound ports.
 type Manager struct {
 	runtime   ports.Runtime
 	agent     ports.Agent
@@ -49,8 +50,6 @@ type Manager struct {
 	lcm       lifecycleRecorder
 	clock     func() time.Time
 }
-
-var _ ports.SessionManager = (*Manager)(nil)
 
 // Deps are the collaborators a Session Manager needs; New wires them together.
 type Deps struct {
