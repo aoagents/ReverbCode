@@ -3,7 +3,6 @@ package lifecycle
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -16,49 +15,20 @@ var ctx = context.Background()
 
 type fakeStore struct {
 	sessions map[domain.SessionID]domain.SessionRecord
-	pr       map[domain.SessionID]domain.PRFacts
-	num      int
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{sessions: map[domain.SessionID]domain.SessionRecord{}, pr: map[domain.SessionID]domain.PRFacts{}}
+	return &fakeStore{sessions: map[domain.SessionID]domain.SessionRecord{}}
 }
 
-func (f *fakeStore) CreateSession(_ context.Context, rec domain.SessionRecord) (domain.SessionRecord, error) {
-	f.num++
-	rec.ID = domain.SessionID(fmt.Sprintf("%s-%d", rec.ProjectID, f.num))
-	f.sessions[rec.ID] = rec
-	return rec, nil
-}
-func (f *fakeStore) UpdateSession(_ context.Context, rec domain.SessionRecord) error {
-	f.sessions[rec.ID] = rec
-	return nil
-}
 func (f *fakeStore) GetSession(_ context.Context, id domain.SessionID) (domain.SessionRecord, bool, error) {
 	r, ok := f.sessions[id]
 	return r, ok, nil
 }
-func (f *fakeStore) ListSessions(_ context.Context, p domain.ProjectID) ([]domain.SessionRecord, error) {
-	var out []domain.SessionRecord
-	for _, r := range f.sessions {
-		if r.ProjectID == p {
-			out = append(out, r)
-		}
-	}
-	return out, nil
-}
-func (f *fakeStore) ListAllSessions(_ context.Context) ([]domain.SessionRecord, error) {
-	out := make([]domain.SessionRecord, 0, len(f.sessions))
-	for _, r := range f.sessions {
-		out = append(out, r)
-	}
-	return out, nil
-}
-func (f *fakeStore) ListPRFactsForSession(_ context.Context, id domain.SessionID) ([]domain.PRFacts, error) {
-	if pr := f.pr[id]; pr.Exists {
-		return []domain.PRFacts{pr}, nil
-	}
-	return nil, nil
+
+func (f *fakeStore) UpdateSession(_ context.Context, rec domain.SessionRecord) error {
+	f.sessions[rec.ID] = rec
+	return nil
 }
 
 type fakeMessenger struct {
