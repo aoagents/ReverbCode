@@ -21,6 +21,9 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// Store is the SQLite-backed persistence layer.
+type Store = sqlitestore.Store
+
 //go:embed migrations/*.sql
 var migrationsFS embed.FS
 

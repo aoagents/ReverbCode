@@ -2,7 +2,6 @@ package integration
 
 import (
 	"context"
-	"encoding/json"
 	"testing"
 	"time"
 
@@ -52,21 +51,6 @@ func (c *captureMessenger) Send(_ context.Context, _ domain.SessionID, msg strin
 	c.msgs = append(c.msgs, msg)
 	return nil
 }
-
-type cdcSource struct{ store *sqlite.Store }
-
-func (s cdcSource) EventsAfter(ctx context.Context, after int64, limit int) ([]cdc.Event, error) {
-	rows, err := s.store.ReadChangeLogAfter(ctx, after, limit)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]cdc.Event, len(rows))
-	for i, r := range rows {
-		out[i] = cdc.Event{Seq: r.Seq, ProjectID: r.ProjectID, SessionID: r.SessionID, Type: cdc.EventType(r.EventType), Payload: json.RawMessage(r.Payload), CreatedAt: r.CreatedAt}
-	}
-	return out, nil
-}
-func (s cdcSource) LatestSeq(ctx context.Context) (int64, error) { return s.store.MaxChangeLogSeq(ctx) }
 
 type stack struct {
 	store *sqlite.Store
@@ -162,7 +146,7 @@ func TestCDCPollerReceivesSessionAndPREvents(t *testing.T) {
 	b := cdc.NewBroadcaster()
 	var got []cdc.Event
 	b.Subscribe(func(e cdc.Event) { got = append(got, e) })
-	poller := cdc.NewPoller(cdcSource{st.store}, b, cdc.PollerConfig{})
+	poller := cdc.NewPoller(st.store, b, cdc.PollerConfig{})
 	sess, err := st.sm.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
 	if err != nil {
 		t.Fatal(err)

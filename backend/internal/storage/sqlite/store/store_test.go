@@ -184,7 +184,7 @@ func TestCDCTriggersPopulateChangeLog(t *testing.T) {
 	// a PR insert logs too.
 	_ = s.WritePR(ctx, domain.PRRow{URL: "pr1", SessionID: r.ID, UpdatedAt: r.UpdatedAt}, nil, nil)
 
-	evs, err := s.ReadChangeLogAfter(ctx, 0, 100)
+	evs, err := s.EventsAfter(ctx, 0, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +193,7 @@ func TestCDCTriggersPopulateChangeLog(t *testing.T) {
 		if e.ProjectID != "mer" {
 			t.Fatalf("event project = %s, want mer", e.ProjectID)
 		}
-		types = append(types, e.EventType)
+		types = append(types, string(e.Type))
 	}
 	want := []string{"session_created", "session_updated", "pr_created"}
 	if len(types) != 3 || types[0] != want[0] || types[1] != want[1] || types[2] != want[2] {
@@ -206,7 +206,7 @@ func TestCDCTriggersPopulateChangeLog(t *testing.T) {
 	if _, ok := payload["isTerminated"].(bool); !ok {
 		t.Fatalf("isTerminated payload type = %T, want bool", payload["isTerminated"])
 	}
-	maxSeq, _ := s.MaxChangeLogSeq(ctx)
+	maxSeq, _ := s.LatestSeq(ctx)
 	if maxSeq != int64(len(evs)) {
 		t.Fatalf("max seq = %d, want %d", maxSeq, len(evs))
 	}

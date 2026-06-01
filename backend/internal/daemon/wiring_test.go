@@ -16,7 +16,7 @@ import (
 
 // TestWiring_WriteFlowsToBroadcaster exercises the real boot path end to end:
 // a lifecycle write -> sqlite -> DB trigger -> change_log -> CDC poller ->
-// broadcaster, through the production wiring.Adapter and cdcSource.
+// broadcaster, through the same cdc.Source implementation the daemon uses.
 func TestWiring_WriteFlowsToBroadcaster(t *testing.T) {
 	ctx := context.Background()
 	store, err := sqlite.Open(t.TempDir())
@@ -28,7 +28,7 @@ func TestWiring_WriteFlowsToBroadcaster(t *testing.T) {
 	lcm := lifecycle.New(store, nil)
 
 	bcast := cdc.NewBroadcaster()
-	poller := cdc.NewPoller(cdcSource{store}, bcast, cdc.PollerConfig{})
+	poller := cdc.NewPoller(store, bcast, cdc.PollerConfig{})
 	if err := poller.SeekToHead(ctx); err != nil {
 		t.Fatal(err)
 	}

@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/cdc"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
-	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 )
 
 // A check can change status on the same commit (in_progress -> failed) via
@@ -32,20 +32,20 @@ func TestPRChecksCDC_EmitsOnInsertAndStatusUpdate(t *testing.T) {
 	mustCheck("failed")      // status change on same commit (update) -> event
 	mustCheck("failed")      // no-op re-poll (status unchanged) -> NO event
 
-	rows, err := s.ReadChangeLogAfter(ctx, 0, 100)
+	rows, err := s.EventsAfter(ctx, 0, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var checkEvents []sqlite.ChangeLogRow
+	var checkEvents []cdc.Event
 	for _, r := range rows {
-		if r.EventType == "pr_check_recorded" {
+		if r.Type == "pr_check_recorded" {
 			checkEvents = append(checkEvents, r)
 		}
 	}
 	if len(checkEvents) != 2 {
 		t.Fatalf("want 2 check CDC events (insert + status change, no-op suppressed), got %d", len(checkEvents))
 	}
-	if !strings.Contains(checkEvents[1].Payload, `"status":"failed"`) {
+	if !strings.Contains(string(checkEvents[1].Payload), `"status":"failed"`) {
 		t.Fatalf("the update event should carry the new status, got %q", checkEvents[1].Payload)
 	}
 }

@@ -13,30 +13,6 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 )
 
-// storeSource adapts sqlite.Store to cdc.Source — the same glue the daemon wires.
-type storeSource struct{ s *sqlite.Store }
-
-func (a storeSource) EventsAfter(ctx context.Context, after int64, limit int) ([]cdc.Event, error) {
-	rows, err := a.s.ReadChangeLogAfter(ctx, after, limit)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]cdc.Event, len(rows))
-	for i, r := range rows {
-		out[i] = cdc.Event{
-			Seq:       r.Seq,
-			ProjectID: r.ProjectID,
-			SessionID: r.SessionID,
-			Type:      cdc.EventType(r.EventType),
-			Payload:   json.RawMessage(r.Payload),
-			CreatedAt: r.CreatedAt,
-		}
-	}
-	return out, nil
-}
-
-func (a storeSource) LatestSeq(ctx context.Context) (int64, error) { return a.s.MaxChangeLogSeq(ctx) }
-
 func newStore(t *testing.T) *sqlite.Store {
 	t.Helper()
 	s, err := sqlite.Open(t.TempDir())
@@ -83,7 +59,7 @@ func TestE2E_StoreWriteToBroadcast(t *testing.T) {
 	var got []cdc.Event
 	bc := cdc.NewBroadcaster()
 	bc.Subscribe(func(e cdc.Event) { got = append(got, e) })
-	p := cdc.NewPoller(storeSource{s}, bc, cdc.PollerConfig{}) // StartSeq 0: read from the top
+	p := cdc.NewPoller(s, bc, cdc.PollerConfig{}) // StartSeq 0: read from the top
 	if err := p.Poll(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +109,7 @@ func TestE2E_ConcurrentPollerLiveDelivery(t *testing.T) {
 	bc := cdc.NewBroadcaster()
 	bc.Subscribe(func(e cdc.Event) { mu.Lock(); got = append(got, e); mu.Unlock() })
 
-	p := cdc.NewPoller(storeSource{s}, bc, cdc.PollerConfig{}) // from the top
+	p := cdc.NewPoller(s, bc, cdc.PollerConfig{}) // from the top
 	done := p.Start(ctx)
 
 	const n = 6

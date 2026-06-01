@@ -2,41 +2,28 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
-	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/cdc"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/gen"
 )
 
-// ChangeLogRow is one durable CDC event. These rows are written by the DB
-// triggers (migration 0001), never by application code; the store only reads
-// them, for the CDC poller.
-type ChangeLogRow struct {
-	Seq       int64
-	ProjectID string
-	SessionID string // empty when the event is project-level (NULL in the DB)
-	EventType string
-	Payload   string
-	CreatedAt time.Time
-}
-
-// ReadChangeLogAfter returns up to limit events with seq > after, in seq order
-// — the CDC poller's read. The frontend's offset is `after`.
-func (s *Store) ReadChangeLogAfter(ctx context.Context, after int64, limit int) ([]ChangeLogRow, error) {
+// EventsAfter implements cdc.Source over the SQLite change_log table.
+func (s *Store) EventsAfter(ctx context.Context, after int64, limit int) ([]cdc.Event, error) {
 	rows, err := s.qr.ReadChangeLogAfter(ctx, gen.ReadChangeLogAfterParams{Seq: after, Limit: int64(limit)})
 	if err != nil {
 		return nil, fmt.Errorf("read change_log after %d: %w", after, err)
 	}
-	out := make([]ChangeLogRow, 0, len(rows))
+	events := make([]cdc.Event, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, changeLogRowFromGen(r))
+		events = append(events, changeLogEventFromGen(r))
 	}
-	return out, nil
+	return events, nil
 }
 
-// MaxChangeLogSeq returns the highest seq (0 if empty) — a fresh consumer's
-// starting offset.
-func (s *Store) MaxChangeLogSeq(ctx context.Context) (int64, error) {
+// LatestSeq implements cdc.Source by returning the current change_log head.
+func (s *Store) LatestSeq(ctx context.Context) (int64, error) {
 	seq, err := s.qr.MaxChangeLogSeq(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("max change_log seq: %w", err)
@@ -44,16 +31,16 @@ func (s *Store) MaxChangeLogSeq(ctx context.Context) (int64, error) {
 	return seq, nil
 }
 
-func changeLogRowFromGen(r gen.ChangeLog) ChangeLogRow {
-	row := ChangeLogRow{
+func changeLogEventFromGen(r gen.ChangeLog) cdc.Event {
+	e := cdc.Event{
 		Seq:       r.Seq,
 		ProjectID: string(r.ProjectID),
-		EventType: string(r.EventType),
-		Payload:   r.Payload,
+		Type:      r.EventType,
+		Payload:   json.RawMessage(r.Payload),
 		CreatedAt: r.CreatedAt,
 	}
 	if r.SessionID.Valid {
-		row.SessionID = r.SessionID.String
+		e.SessionID = r.SessionID.String
 	}
-	return row
+	return e
 }
