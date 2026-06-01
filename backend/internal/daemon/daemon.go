@@ -98,6 +98,12 @@ func Run() error {
 		return err
 	}
 
+	// SCM observation: polling Provider -> pr.Manager -> lifecycle nudges.
+	// Constructed after lifecycle so the PR Manager can forward observations
+	// to ApplyPRObservation; runs alongside the reaper as a sibling background
+	// loop. Missing GITHUB_TOKEN degrades gracefully (loop is not started).
+	scmStk := startSCM(ctx, store, projects, lcStack.lcm, log)
+
 	runErr := srv.Run(ctx)
 
 	// Shut the background goroutines down in order: cancel the context FIRST so
@@ -105,6 +111,7 @@ func Run() error {
 	// via defer) avoids the LIFO trap where a Stop() that blocks on ctx-cancel
 	// runs before the cancel — which would hang any non-signal exit path.
 	stop()
+	scmStk.Stop()
 	lcStack.Stop()
 	if err := cdcPipe.Stop(); err != nil {
 		log.Error("cdc pipeline shutdown", "err", err)
