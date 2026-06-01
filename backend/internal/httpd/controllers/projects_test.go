@@ -168,8 +168,8 @@ func TestProjectsAPI_Delete(t *testing.T) {
 	}
 
 	body, status, _ = doRequest(t, srv, "GET", "/api/v1/projects/proj", "")
-	if status != http.StatusOK {
-		t.Fatalf("GET archived project = %d, want 200; body=%s", status, body)
+	if status != http.StatusNotFound {
+		t.Fatalf("GET archived project = %d, want 404; body=%s", status, body)
 	}
 
 	body, status, _ = doRequest(t, srv, "GET", "/api/v1/projects", "")
