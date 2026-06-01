@@ -70,7 +70,7 @@ func (m *manager) Get(ctx context.Context, id domain.ProjectID) (GetResult, erro
 	if err != nil {
 		return GetResult{}, internal("PROJECT_LOAD_FAILED", "Failed to load project")
 	}
-	if !ok {
+	if !ok || !row.ArchivedAt.IsZero() {
 		return GetResult{}, notFound("PROJECT_NOT_FOUND", "Unknown project")
 	}
 	p := projectFromRow(row)

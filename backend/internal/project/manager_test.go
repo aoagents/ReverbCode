@@ -87,6 +87,8 @@ func TestManager_AddListGetRemove(t *testing.T) {
 	if list, _ := m.List(ctx); len(list) != 0 {
 		t.Fatalf("active list after remove = %d, want 0", len(list))
 	}
+	_, err = m.Get(ctx, "ao")
+	wantCode(t, err, "PROJECT_NOT_FOUND")
 }
 
 func TestManager_ReaddAfterRemove(t *testing.T) {
