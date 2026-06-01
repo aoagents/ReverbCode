@@ -87,7 +87,7 @@ type EscalationEvent struct {
 	DurationMs int64
 }
 
-// ---- runtime / agent / workspace adapter ports (used by the Session Manager) ----
+// ---- runtime / agent / workspace plugin ports (used by the Session Manager) ----
 
 // Runtime is where a session's agent process runs — a tmux/zellij session or a
 // bare process. The Session Manager creates one per session and tears it down.

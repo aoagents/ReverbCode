@@ -33,9 +33,9 @@ type lifecycleStack struct {
 // The goroutine stops when ctx is cancelled; Stop waits for it to drain.
 //
 // TEMPORARY STUBS (replace as the daemon lane lands the collaborators):
-//   - noopMessenger — swap for the runtime/agent-adapter-backed AgentMessenger.
+//   - noopMessenger — swap for the runtime/agent-plugin-backed AgentMessenger.
 //   - reaper.MapRegistry{} — empty runtime registry, so the reaper ticks
-//     escalations but probes nothing until the runtime adapters exist.
+//     escalations but probes nothing until the runtime plugins exist.
 func startLifecycle(ctx context.Context, store *sqlite.Store, logger *slog.Logger) *lifecycleStack {
 	renderer := notification.NewRenderer(store)
 	notifier := notification.NewEnqueuer(store, renderer, logger)
@@ -62,7 +62,7 @@ type sessionStack struct {
 // daemon lane (#10). Returning the SM here lets main hold the wired-but-quiet
 // instance so future route wiring is a one-line plumb-through.
 func startSession(ctx context.Context, cfg config.Config, ls *lifecycleStack, log *slog.Logger) (*sessionStack, error) {
-	_ = ctx // reserved for future ctx-aware adapter construction; today's tmux/gitworktree constructors are synchronous.
+	_ = ctx // reserved for future ctx-aware plugin construction; today's tmux/gitworktree constructors are synchronous.
 	runtime := tmux.New(tmux.Options{})
 
 	ws, err := gitworktree.New(gitworktree.Options{
@@ -96,7 +96,7 @@ func startSession(ctx context.Context, cfg config.Config, ls *lifecycleStack, lo
 
 // noopMessenger is a TEMPORARY stub (see startLifecycle): the canonical write
 // path and durable notifications work without it; only live agent nudges are
-// absent until the real runtime/agent adapter is wired.
+// absent until the real runtime/agent plugin is wired.
 type noopMessenger struct{}
 
 func (noopMessenger) Send(context.Context, domain.SessionID, string) error { return nil }

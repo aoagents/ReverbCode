@@ -43,7 +43,7 @@ func Run() error {
 	// fans events out to the SSE transport. The LCM/Session Manager and the HTTP
 	// API routes that drive and read this store are owned by the daemon lane and
 	// are wired there once their collaborators (Notifier, AgentMessenger, and the
-	// runtime/agent/workspace adapters) have production implementations; here we
+	// runtime/agent/workspace plugins) have production implementations; here we
 	// stand up the persistence + change-delivery foundation they build on.
 	store, err := sqlite.Open(cfg.DataDir)
 	if err != nil {

@@ -1,5 +1,5 @@
 // Package session implements ports.SessionManager: the explicit-mutation half of
-// the lane. It drives the runtime/agent/workspace adapters to create and tear
+// the lane. It drives the runtime/agent/workspace plugins to create and tear
 // down sessions, routes canonical writes to the LCM, and is the single producer
 // of the derived display status (attached on read in List/Get).
 package session
