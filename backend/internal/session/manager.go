@@ -28,7 +28,7 @@ const (
 )
 
 type lifecycleRecorder interface {
-	MarkSpawned(ctx context.Context, id domain.SessionID, o ports.SpawnOutcome) error
+	MarkSpawned(ctx context.Context, id domain.SessionID, metadata domain.SessionMetadata) error
 	MarkTerminated(ctx context.Context, id domain.SessionID) error
 }
 
@@ -109,8 +109,8 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.Session{}, fmt.Errorf("spawn %s: runtime: %w", id, err)
 	}
 
-	outcome := ports.SpawnOutcome{Branch: ws.Branch, WorkspacePath: ws.Path, RuntimeHandle: handle, Prompt: agentCfg.Prompt}
-	if err := m.lcm.MarkSpawned(ctx, id, outcome); err != nil {
+	metadata := domain.SessionMetadata{Branch: ws.Branch, WorkspacePath: ws.Path, RuntimeHandleID: handle.ID, Prompt: agentCfg.Prompt}
+	if err := m.lcm.MarkSpawned(ctx, id, metadata); err != nil {
 		_ = m.runtime.Destroy(ctx, handle)
 		_ = m.workspace.Destroy(ctx, ws)
 		m.markSpawnFailedTerminated(ctx, id)
@@ -190,8 +190,8 @@ func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.Sess
 	if err != nil {
 		return domain.Session{}, fmt.Errorf("restore %s: runtime: %w", id, err)
 	}
-	outcome := ports.SpawnOutcome{Branch: ws.Branch, WorkspacePath: ws.Path, RuntimeHandle: handle, AgentSessionID: meta.AgentSessionID, Prompt: meta.Prompt}
-	if err := m.lcm.MarkSpawned(ctx, id, outcome); err != nil {
+	metadata := domain.SessionMetadata{Branch: ws.Branch, WorkspacePath: ws.Path, RuntimeHandleID: handle.ID, AgentSessionID: meta.AgentSessionID, Prompt: meta.Prompt}
+	if err := m.lcm.MarkSpawned(ctx, id, metadata); err != nil {
 		_ = m.runtime.Destroy(ctx, handle)
 		return domain.Session{}, fmt.Errorf("restore %s: completed: %w", id, err)
 	}

@@ -96,7 +96,7 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 }
 
 // MarkSpawned marks a newly spawned or restored session live and stores runtime/workspace handles.
-func (m *Manager) MarkSpawned(ctx context.Context, id domain.SessionID, o ports.SpawnOutcome) error {
+func (m *Manager) MarkSpawned(ctx context.Context, id domain.SessionID, metadata domain.SessionMetadata) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	rec, ok, err := m.store.GetSession(ctx, id)
@@ -109,7 +109,7 @@ func (m *Manager) MarkSpawned(ctx context.Context, id domain.SessionID, o ports.
 	now := m.clock()
 	rec.IsTerminated = false
 	rec.Activity = domain.ActivitySubstate{State: domain.ActivityIdle, LastActivityAt: now, Source: domain.SourceRuntime}
-	rec.Metadata = mergeMetadata(rec.Metadata, spawnMetadata(o))
+	rec.Metadata = mergeMetadata(rec.Metadata, metadata)
 	rec.UpdatedAt = now
 	return m.store.UpdateSession(ctx, rec)
 }
@@ -128,10 +128,6 @@ func (m *Manager) MarkTerminated(ctx context.Context, id domain.SessionID) error
 
 func sameActivity(a, b domain.ActivitySubstate) bool {
 	return a.State == b.State && a.Source == b.Source && a.LastActivityAt.Equal(b.LastActivityAt)
-}
-
-func spawnMetadata(o ports.SpawnOutcome) domain.SessionMetadata {
-	return domain.SessionMetadata{Branch: o.Branch, WorkspacePath: o.WorkspacePath, RuntimeHandleID: o.RuntimeHandle.ID, AgentSessionID: o.AgentSessionID, Prompt: o.Prompt}
 }
 
 func mergeMetadata(base, in domain.SessionMetadata) domain.SessionMetadata {

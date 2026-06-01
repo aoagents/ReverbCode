@@ -13,13 +13,3 @@ type SpawnConfig struct {
 	Prompt     string
 	AgentRules string
 }
-
-// SpawnOutcome is what the Session Manager reports once a spawn is live: the
-// handles needed for later teardown/restore.
-type SpawnOutcome struct {
-	Branch         string
-	WorkspacePath  string
-	RuntimeHandle  RuntimeHandle
-	AgentSessionID string
-	Prompt         string
-}

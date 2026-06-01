@@ -64,12 +64,12 @@ type fakeLCM struct {
 	completed int
 }
 
-func (l *fakeLCM) MarkSpawned(_ context.Context, id domain.SessionID, o ports.SpawnOutcome) error {
+func (l *fakeLCM) MarkSpawned(_ context.Context, id domain.SessionID, metadata domain.SessionMetadata) error {
 	l.completed++
 	rec := l.store.sessions[id]
 	rec.IsTerminated = false
 	rec.Activity = domain.ActivitySubstate{State: domain.ActivityIdle, LastActivityAt: time.Now(), Source: domain.SourceRuntime}
-	rec.Metadata = domain.SessionMetadata{Branch: o.Branch, WorkspacePath: o.WorkspacePath, RuntimeHandleID: o.RuntimeHandle.ID, AgentSessionID: o.AgentSessionID, Prompt: o.Prompt}
+	rec.Metadata = metadata
 	l.store.sessions[id] = rec
 	return nil
 }

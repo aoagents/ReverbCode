@@ -132,8 +132,8 @@ func TestMarkSpawnedStoresRuntimeMetadata(t *testing.T) {
 	m, st, _ := newManager()
 	st.sessions["mer-1"] = working("mer-1")
 	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", IsTerminated: true}
-	out := ports.SpawnOutcome{Branch: "b", WorkspacePath: "/ws", RuntimeHandle: ports.RuntimeHandle{ID: "h1"}, AgentSessionID: "agent", Prompt: "prompt"}
-	if err := m.MarkSpawned(ctx, "mer-1", out); err != nil {
+	metadata := domain.SessionMetadata{Branch: "b", WorkspacePath: "/ws", RuntimeHandleID: "h1", AgentSessionID: "agent", Prompt: "prompt"}
+	if err := m.MarkSpawned(ctx, "mer-1", metadata); err != nil {
 		t.Fatal(err)
 	}
 	got := st.sessions["mer-1"]
