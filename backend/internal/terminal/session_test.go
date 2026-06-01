@@ -45,11 +45,17 @@ func TestSessionReplaysRingBufferOnSubscribe(t *testing.T) {
 	go s.run(ctx)
 
 	pty.push([]byte("scrollback"))
-	eventually(t, time.Second, func() bool { return len(s.ring.snapshot()) == len("scrollback") })
+	eventually(t, time.Second, func() bool { return ringLen(s) == len("scrollback") })
 
 	var late safeBytes
 	s.subscribe(late.add, nil)
 	eventually(t, time.Second, func() bool { return late.string() == "scrollback" })
+}
+
+func ringLen(s *session) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.ring.snapshot())
 }
 
 func TestSessionWriteAndResizeReachPTY(t *testing.T) {
