@@ -91,7 +91,7 @@ func TestSessionSkipsReattachOnCleanExit(t *testing.T) {
 	select {
 	case <-exited:
 	case <-time.After(time.Second):
-		t.Fatal("expected exit notification after clean pane exit")
+		t.Fatal("expected exit callback after clean pane exit")
 	}
 	if got := sp.calls(); got != 1 {
 		t.Fatalf("expected exactly one attach, got %d", got)

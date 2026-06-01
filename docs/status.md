@@ -2,8 +2,7 @@
 
 Current main contains the Go backend daemon, Cobra CLI foundation, SQLite store,
 CDC poller/broadcaster, lifecycle/session managers, terminal mux, project API
-controller/manager work, runtime/workspace/tracker adapters, and durable
-notification rows.
+controller/manager work, runtime/workspace/tracker adapters, and CDC-backed event rows.
 
 ## Build & test
 
@@ -21,8 +20,7 @@ go test ./...
   hidden daemon entrypoint.
 - Session facts: `activity_state` and `is_terminated`; display status is derived
   from those plus PR facts.
-- SQLite: migrations create projects, sessions, PR/check/comment, notifications,
-  and `change_log` tables.
+- SQLite: migrations create projects, sessions, PR/check/comment, and `change_log` tables.
 - CDC: DB triggers append to `change_log`; the poller broadcasts live events.
 - Session Manager: spawn/kill/restore/list/get/send/cleanup over runtime,
   workspace, agent, store, messenger, and lifecycle ports.
@@ -34,4 +32,3 @@ go test ./...
 - Wire production agent adapters.
 - Finish project/session HTTP routes and CLI product commands.
 - Add SSE/event read endpoints over the CDC log.
-- Connect persisted notifications to frontend/external sinks.

@@ -139,7 +139,7 @@ Top-level commands:
 | `update` | Upgrade AO | Defer to packaging/release lane. |
 | `setup` | Configure integrations | Defer. |
 | `plugin` | Plugin marketplace/install flow | Defer. |
-| `notify` | Notification test commands | Defer. |
+| `notify` | Notification test commands | Drop until notification capabilities are redesigned. |
 | `project` | Manage registered projects | Keep after project API exists. |
 | `migrate-storage` | Legacy storage migration | Drop for rewrite unless a real migration appears. |
 | `completion` | Generate shell completions | Keep. |
@@ -357,7 +357,6 @@ These are the main gaps before the full initial command set is real.
 | Agent adapters for supported harnesses (`codex`, `claude-code`, etc.). | `ao spawn`, `ao session restore`. |
 | AgentMessenger implementation over Zellij. | `ao send`, LCM auto-nudge reactions. |
 | Zellij runtime wired into the daemon. | Reaper liveness, `session attach`, spawn/kill/restore runtime work. |
-| Notifier implementation/multiplexer. | Human notifications and LCM escalation side effects. |
 | Activity hooks or agent self-report protocol. | Accurate working/idle/needs-input status beyond runtime/PR facts. |
 | Project/tracker config model. | `project add/show`, tracker-backed `spawn`, `doctor` config checks. |
 | OpenAPI/DTO/error contract. | Stable CLI/frontend API clients and tests. |
