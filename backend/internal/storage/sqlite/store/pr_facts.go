@@ -25,14 +25,14 @@ func (s *Store) GetDisplayPRFactsForSession(ctx context.Context, id domain.Sessi
 }
 
 func prFactsFromGen(r gen.GetDisplayPRFactsBySessionRow) domain.PRFacts {
-	state := r.PrState
+	state := r.PRState
 	return domain.PRFacts{
-		URL:            r.Url,
+		URL:            r.URL,
 		Number:         int(r.Number),
 		Draft:          state == domain.PRStateDraft,
 		Merged:         state == domain.PRStateMerged,
 		Closed:         state == domain.PRStateClosed,
-		CI:             r.CiState,
+		CI:             r.CIState,
 		Review:         r.ReviewDecision,
 		Mergeability:   r.Mergeability,
 		ReviewComments: r.ReviewComments,

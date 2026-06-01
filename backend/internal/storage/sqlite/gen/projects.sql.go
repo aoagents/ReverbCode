@@ -41,7 +41,7 @@ func (q *Queries) FindProjectByPath(ctx context.Context, path string) (Project, 
 	err := row.Scan(
 		&i.ID,
 		&i.Path,
-		&i.RepoOriginUrl,
+		&i.RepoOriginURL,
 		&i.DisplayName,
 		&i.RegisteredAt,
 		&i.ArchivedAt,
@@ -60,7 +60,7 @@ func (q *Queries) GetProject(ctx context.Context, id domain.ProjectID) (Project,
 	err := row.Scan(
 		&i.ID,
 		&i.Path,
-		&i.RepoOriginUrl,
+		&i.RepoOriginURL,
 		&i.DisplayName,
 		&i.RegisteredAt,
 		&i.ArchivedAt,
@@ -85,7 +85,7 @@ func (q *Queries) ListProjects(ctx context.Context) ([]Project, error) {
 		if err := rows.Scan(
 			&i.ID,
 			&i.Path,
-			&i.RepoOriginUrl,
+			&i.RepoOriginURL,
 			&i.DisplayName,
 			&i.RegisteredAt,
 			&i.ArchivedAt,
@@ -116,7 +116,7 @@ ON CONFLICT (id) DO UPDATE SET
 type UpsertProjectParams struct {
 	ID            domain.ProjectID
 	Path          string
-	RepoOriginUrl string
+	RepoOriginURL string
 	DisplayName   string
 	RegisteredAt  time.Time
 	ArchivedAt    sql.NullTime
@@ -126,7 +126,7 @@ func (q *Queries) UpsertProject(ctx context.Context, arg UpsertProjectParams) er
 	_, err := q.db.ExecContext(ctx, upsertProject,
 		arg.ID,
 		arg.Path,
-		arg.RepoOriginUrl,
+		arg.RepoOriginURL,
 		arg.DisplayName,
 		arg.RegisteredAt,
 		arg.ArchivedAt,

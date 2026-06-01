@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
-	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/project"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 )
@@ -135,7 +134,7 @@ func TestPRCRUD(t *testing.T) {
 	r, _ := s.CreateSession(ctx, sampleRecord("mer"))
 	now := time.Now().UTC().Truncate(time.Second)
 
-	pr := ports.PRRow{
+	pr := domain.PullRequest{
 		URL: "https://gh/pr/1", SessionID: r.ID, Number: 1,
 		Review: domain.ReviewRequired, CI: domain.CIFailing, Mergeability: domain.MergeBlocked, UpdatedAt: now,
 	}
@@ -159,7 +158,7 @@ func TestWritePRRejectsSessionReassignment(t *testing.T) {
 	second, _ := s.CreateSession(ctx, sampleRecord("mer"))
 	now := time.Now().UTC().Truncate(time.Second)
 
-	pr := ports.PRRow{URL: "https://gh/pr/1", SessionID: first.ID, Number: 1, UpdatedAt: now}
+	pr := domain.PullRequest{URL: "https://gh/pr/1", SessionID: first.ID, Number: 1, UpdatedAt: now}
 	if err := s.WritePR(ctx, pr, nil, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -183,10 +182,10 @@ func TestDisplayPRFactsPrefersActivePR(t *testing.T) {
 	r, _ := s.CreateSession(ctx, sampleRecord("mer"))
 	now := time.Now().UTC().Truncate(time.Second)
 
-	if err := s.WritePR(ctx, ports.PRRow{URL: "closed", SessionID: r.ID, Number: 1, Closed: true, UpdatedAt: now.Add(time.Minute)}, nil, nil); err != nil {
+	if err := s.WritePR(ctx, domain.PullRequest{URL: "closed", SessionID: r.ID, Number: 1, Closed: true, UpdatedAt: now.Add(time.Minute)}, nil, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.WritePR(ctx, ports.PRRow{URL: "open", SessionID: r.ID, Number: 2, CI: domain.CIFailing, UpdatedAt: now}, nil, nil); err != nil {
+	if err := s.WritePR(ctx, domain.PullRequest{URL: "open", SessionID: r.ID, Number: 2, CI: domain.CIFailing, UpdatedAt: now}, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	got, ok, err := s.GetDisplayPRFactsForSession(ctx, r.ID)
@@ -204,7 +203,7 @@ func TestPRCommentsReplace(t *testing.T) {
 	seedProject(t, s, "mer")
 	r, _ := s.CreateSession(ctx, sampleRecord("mer"))
 	now := time.Now().UTC().Truncate(time.Second)
-	_ = s.WritePR(ctx, ports.PRRow{URL: "pr1", SessionID: r.ID, UpdatedAt: now}, nil, []ports.PRComment{
+	_ = s.WritePR(ctx, domain.PullRequest{URL: "pr1", SessionID: r.ID, UpdatedAt: now}, nil, []domain.PullRequestComment{
 		{ID: "c1", Author: "a", File: "a.go", Line: 1, Body: "nit", CreatedAt: now},
 		{ID: "c2", Author: "b", File: "b.go", Line: 2, Body: "bug", Resolved: true, CreatedAt: now.Add(time.Second)},
 	})
@@ -212,7 +211,7 @@ func TestPRCommentsReplace(t *testing.T) {
 		t.Fatalf("comments = %d, want 2", len(list))
 	}
 	// replace with a smaller set drops the rest.
-	_ = s.WritePR(ctx, ports.PRRow{URL: "pr1", SessionID: r.ID, UpdatedAt: now}, nil, []ports.PRComment{{ID: "c1", Body: "x", CreatedAt: now}})
+	_ = s.WritePR(ctx, domain.PullRequest{URL: "pr1", SessionID: r.ID, UpdatedAt: now}, nil, []domain.PullRequestComment{{ID: "c1", Body: "x", CreatedAt: now}})
 	if list, _ := s.ListPRComments(ctx, "pr1"); len(list) != 1 {
 		t.Fatalf("after replace, comments = %d, want 1", len(list))
 	}
@@ -230,7 +229,7 @@ func TestCDCTriggersPopulateChangeLog(t *testing.T) {
 	r.Metadata.Prompt = "only metadata changed"
 	_ = s.UpdateSession(ctx, r)
 	// a PR insert logs too.
-	_ = s.WritePR(ctx, ports.PRRow{URL: "pr1", SessionID: r.ID, UpdatedAt: r.UpdatedAt}, nil, nil)
+	_ = s.WritePR(ctx, domain.PullRequest{URL: "pr1", SessionID: r.ID, UpdatedAt: r.UpdatedAt}, nil, nil)
 
 	evs, err := s.EventsAfter(ctx, 0, 100)
 	if err != nil {

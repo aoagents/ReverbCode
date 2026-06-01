@@ -21,7 +21,7 @@ func (s *Store) Upsert(ctx context.Context, r project.Row) error {
 	return s.qw.UpsertProject(ctx, gen.UpsertProjectParams{
 		ID:            domain.ProjectID(r.ID),
 		Path:          r.Path,
-		RepoOriginUrl: r.RepoOriginURL,
+		RepoOriginURL: r.RepoOriginURL,
 		DisplayName:   r.DisplayName,
 		RegisteredAt:  r.RegisteredAt,
 		ArchivedAt:    nullTime(r.ArchivedAt),
@@ -83,7 +83,7 @@ func projectRowFromGen(p gen.Project) project.Row {
 	r := project.Row{
 		ID:            string(p.ID),
 		Path:          p.Path,
-		RepoOriginURL: p.RepoOriginUrl,
+		RepoOriginURL: p.RepoOriginURL,
 		DisplayName:   p.DisplayName,
 		RegisteredAt:  p.RegisteredAt,
 	}

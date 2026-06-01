@@ -25,7 +25,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertPRCommentParams struct {
-	PrUrl     string
+	PRURL     string
 	CommentID string
 	Author    string
 	File      string
@@ -37,7 +37,7 @@ type InsertPRCommentParams struct {
 
 func (q *Queries) InsertPRComment(ctx context.Context, arg InsertPRCommentParams) error {
 	_, err := q.db.ExecContext(ctx, insertPRComment,
-		arg.PrUrl,
+		arg.PRURL,
 		arg.CommentID,
 		arg.Author,
 		arg.File,
@@ -54,17 +54,17 @@ SELECT pr_url, comment_id, author, file, line, body, resolved, created_at
 FROM pr_comment WHERE pr_url = ? ORDER BY created_at, comment_id
 `
 
-func (q *Queries) ListPRComments(ctx context.Context, prUrl string) ([]PrComment, error) {
+func (q *Queries) ListPRComments(ctx context.Context, prUrl string) ([]PRComment, error) {
 	rows, err := q.db.QueryContext(ctx, listPRComments, prUrl)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []PrComment{}
+	items := []PRComment{}
 	for rows.Next() {
-		var i PrComment
+		var i PRComment
 		if err := rows.Scan(
-			&i.PrUrl,
+			&i.PRURL,
 			&i.CommentID,
 			&i.Author,
 			&i.File,

@@ -11,8 +11,8 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/gen"
 )
 
-// The pr / pr_checks / pr_comment rows are modelled by ports.PRRow /
-// ports.PRCheckRow / ports.PRComment — flat tables, one shared type per table.
+// The pr / pr_checks / pr_comment rows are modelled by domain.PullRequest /
+// domain.PullRequestCheck / domain.PullRequestComment — flat tables, one shared type per table.
 // This layer only maps those to/from the sqlc gen.* params: the bool PR flags
 // become the single pr.pr_state column, empty enums default to their
 // "nothing known yet" value (matching the CHECK constraints), and ints widen to
@@ -30,7 +30,7 @@ var (
 // change_log events their triggers emit are committed all-or-nothing. The scalar
 // PR upsert runs first so the checks'/comments' CDC triggers can resolve the
 // session id from the pr row within the same transaction.
-func (s *Store) WritePR(ctx context.Context, pr ports.PRRow, checks []ports.PRCheckRow, comments []ports.PRComment) error {
+func (s *Store) WritePR(ctx context.Context, pr domain.PullRequest, checks []domain.PullRequestCheck, comments []domain.PullRequestComment) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	return s.inTx(ctx, "write pr observation", func(q *gen.Queries) error {
@@ -62,24 +62,24 @@ func (s *Store) WritePR(ctx context.Context, pr ports.PRRow, checks []ports.PRCh
 }
 
 // GetPR returns the PR facts for a URL, or ok=false if absent.
-func (s *Store) GetPR(ctx context.Context, url string) (ports.PRRow, bool, error) {
+func (s *Store) GetPR(ctx context.Context, url string) (domain.PullRequest, bool, error) {
 	p, err := s.qr.GetPR(ctx, url)
 	if errors.Is(err, sql.ErrNoRows) {
-		return ports.PRRow{}, false, nil
+		return domain.PullRequest{}, false, nil
 	}
 	if err != nil {
-		return ports.PRRow{}, false, fmt.Errorf("get pr %s: %w", url, err)
+		return domain.PullRequest{}, false, fmt.Errorf("get pr %s: %w", url, err)
 	}
 	return prRowFromGen(p), true, nil
 }
 
 // ListPRsBySession returns every PR owned by a session, newest first.
-func (s *Store) ListPRsBySession(ctx context.Context, sessionID domain.SessionID) ([]ports.PRRow, error) {
+func (s *Store) ListPRsBySession(ctx context.Context, sessionID domain.SessionID) ([]domain.PullRequest, error) {
 	rows, err := s.qr.ListPRsBySession(ctx, sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("list prs for %s: %w", sessionID, err)
 	}
-	out := make([]ports.PRRow, 0, len(rows))
+	out := make([]domain.PullRequest, 0, len(rows))
 	for _, p := range rows {
 		out = append(out, prRowFromGen(p))
 	}
@@ -87,12 +87,12 @@ func (s *Store) ListPRsBySession(ctx context.Context, sessionID domain.SessionID
 }
 
 // ListChecks returns every recorded check run for a PR.
-func (s *Store) ListChecks(ctx context.Context, prURL string) ([]ports.PRCheckRow, error) {
+func (s *Store) ListChecks(ctx context.Context, prURL string) ([]domain.PullRequestCheck, error) {
 	rows, err := s.qr.ListChecksByPR(ctx, prURL)
 	if err != nil {
 		return nil, fmt.Errorf("list checks %s: %w", prURL, err)
 	}
-	out := make([]ports.PRCheckRow, 0, len(rows))
+	out := make([]domain.PullRequestCheck, 0, len(rows))
 	for _, c := range rows {
 		out = append(out, checkRowFromGen(c))
 	}
@@ -100,12 +100,12 @@ func (s *Store) ListChecks(ctx context.Context, prURL string) ([]ports.PRCheckRo
 }
 
 // ListPRComments returns a PR's review comments, oldest first.
-func (s *Store) ListPRComments(ctx context.Context, prURL string) ([]ports.PRComment, error) {
+func (s *Store) ListPRComments(ctx context.Context, prURL string) ([]domain.PullRequestComment, error) {
 	rows, err := s.qr.ListPRComments(ctx, prURL)
 	if err != nil {
 		return nil, fmt.Errorf("list pr comments %s: %w", prURL, err)
 	}
-	out := make([]ports.PRComment, 0, len(rows))
+	out := make([]domain.PullRequestComment, 0, len(rows))
 	for _, c := range rows {
 		out = append(out, commentFromGen(c))
 	}
@@ -115,7 +115,7 @@ func (s *Store) ListPRComments(ctx context.Context, prURL string) ([]ports.PRCom
 // ---- domain <-> gen mapping ----
 
 // prState collapses the PR's bools into the single pr.state column value.
-func prState(r ports.PRRow) domain.PRState {
+func prState(r domain.PullRequest) domain.PRState {
 	switch {
 	case r.Merged:
 		return domain.PRStateMerged
@@ -128,14 +128,14 @@ func prState(r ports.PRRow) domain.PRState {
 	}
 }
 
-func genPRParams(r ports.PRRow) gen.UpsertPRParams {
+func genPRParams(r domain.PullRequest) gen.UpsertPRParams {
 	return gen.UpsertPRParams{
-		Url:            r.URL,
+		URL:            r.URL,
 		SessionID:      r.SessionID,
 		Number:         int64(r.Number),
-		PrState:        prState(r),
+		PRState:        prState(r),
 		ReviewDecision: reviewOrDefault(r.Review),
-		CiState:        ciOrDefault(r.CI),
+		CIState:        ciOrDefault(r.CI),
 		Mergeability:   mergeabilityOrDefault(r.Mergeability),
 		UpdatedAt:      r.UpdatedAt,
 	}
@@ -162,48 +162,48 @@ func mergeabilityOrDefault(v domain.Mergeability) domain.Mergeability {
 	return v
 }
 
-func prRowFromGen(p gen.Pr) ports.PRRow {
-	return ports.PRRow{
-		URL:          p.Url,
+func prRowFromGen(p gen.PR) domain.PullRequest {
+	return domain.PullRequest{
+		URL:          p.URL,
 		SessionID:    p.SessionID,
 		Number:       int(p.Number),
-		Draft:        p.PrState == domain.PRStateDraft,
-		Merged:       p.PrState == domain.PRStateMerged,
-		Closed:       p.PrState == domain.PRStateClosed,
-		CI:           p.CiState,
+		Draft:        p.PRState == domain.PRStateDraft,
+		Merged:       p.PRState == domain.PRStateMerged,
+		Closed:       p.PRState == domain.PRStateClosed,
+		CI:           p.CIState,
 		Review:       p.ReviewDecision,
 		Mergeability: p.Mergeability,
 		UpdatedAt:    p.UpdatedAt,
 	}
 }
 
-func genCheckParams(prURL string, c ports.PRCheckRow) gen.UpsertPRCheckParams {
+func genCheckParams(prURL string, c domain.PullRequestCheck) gen.UpsertPRCheckParams {
 	status := c.Status
 	if status == "" {
 		status = domain.PRCheckUnknown
 	}
 	return gen.UpsertPRCheckParams{
-		PrUrl: prURL, Name: c.Name, CommitHash: c.CommitHash,
-		Status: status, Url: c.URL, LogTail: c.LogTail, CreatedAt: c.CreatedAt,
+		PRURL: prURL, Name: c.Name, CommitHash: c.CommitHash,
+		Status: status, URL: c.URL, LogTail: c.LogTail, CreatedAt: c.CreatedAt,
 	}
 }
 
-func checkRowFromGen(c gen.PrCheck) ports.PRCheckRow {
-	return ports.PRCheckRow{
+func checkRowFromGen(c gen.PRCheck) domain.PullRequestCheck {
+	return domain.PullRequestCheck{
 		Name: c.Name, CommitHash: c.CommitHash, Status: c.Status,
-		URL: c.Url, LogTail: c.LogTail, CreatedAt: c.CreatedAt,
+		URL: c.URL, LogTail: c.LogTail, CreatedAt: c.CreatedAt,
 	}
 }
 
-func genCommentParams(prURL string, c ports.PRComment) gen.InsertPRCommentParams {
+func genCommentParams(prURL string, c domain.PullRequestComment) gen.InsertPRCommentParams {
 	return gen.InsertPRCommentParams{
-		PrUrl: prURL, CommentID: c.ID, Author: c.Author, File: c.File,
+		PRURL: prURL, CommentID: c.ID, Author: c.Author, File: c.File,
 		Line: int64(c.Line), Body: c.Body, Resolved: c.Resolved, CreatedAt: c.CreatedAt,
 	}
 }
 
-func commentFromGen(c gen.PrComment) ports.PRComment {
-	return ports.PRComment{
+func commentFromGen(c gen.PRComment) domain.PullRequestComment {
+	return domain.PullRequestComment{
 		ID: c.CommentID, Author: c.Author, File: c.File, Line: int(c.Line),
 		Body: c.Body, Resolved: c.Resolved, CreatedAt: c.CreatedAt,
 	}

@@ -54,14 +54,14 @@ func (m *Manager) ApplyObservation(ctx context.Context, id domain.SessionID, o p
 
 func (m *Manager) write(ctx context.Context, id domain.SessionID, o ports.PRObservation) error {
 	now := m.clock()
-	row := ports.PRRow{URL: o.URL, SessionID: id, Number: o.Number, Draft: o.Draft, Merged: o.Merged, Closed: o.Closed, CI: o.CI, Review: o.Review, Mergeability: o.Mergeability, UpdatedAt: now}
-	checks := make([]ports.PRCheckRow, len(o.Checks))
+	row := domain.PullRequest{URL: o.URL, SessionID: id, Number: o.Number, Draft: o.Draft, Merged: o.Merged, Closed: o.Closed, CI: o.CI, Review: o.Review, Mergeability: o.Mergeability, UpdatedAt: now}
+	checks := make([]domain.PullRequestCheck, len(o.Checks))
 	for i, c := range o.Checks {
-		checks[i] = ports.PRCheckRow{Name: c.Name, CommitHash: c.CommitHash, Status: c.Status, URL: c.URL, LogTail: c.LogTail, CreatedAt: now}
+		checks[i] = domain.PullRequestCheck{Name: c.Name, CommitHash: c.CommitHash, Status: c.Status, URL: c.URL, LogTail: c.LogTail, CreatedAt: now}
 	}
-	comments := make([]ports.PRComment, len(o.Comments))
+	comments := make([]domain.PullRequestComment, len(o.Comments))
 	for i, c := range o.Comments {
-		comments[i] = ports.PRComment{ID: c.ID, Author: c.Author, File: c.File, Line: c.Line, Body: c.Body, Resolved: c.Resolved, CreatedAt: now}
+		comments[i] = domain.PullRequestComment{ID: c.ID, Author: c.Author, File: c.File, Line: c.Line, Body: c.Body, Resolved: c.Resolved, CreatedAt: now}
 	}
 	return m.writer.WritePR(ctx, row, checks, comments)
 }

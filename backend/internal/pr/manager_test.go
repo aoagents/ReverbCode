@@ -10,12 +10,12 @@ import (
 )
 
 type fakeWriter struct {
-	pr       map[domain.SessionID]ports.PRRow
-	comments map[string][]ports.PRComment
-	checks   []ports.PRCheckRow
+	pr       map[domain.SessionID]domain.PullRequest
+	comments map[string][]domain.PullRequestComment
+	checks   []domain.PullRequestCheck
 }
 
-func (f *fakeWriter) WritePR(_ context.Context, pr ports.PRRow, checks []ports.PRCheckRow, comments []ports.PRComment) error {
+func (f *fakeWriter) WritePR(_ context.Context, pr domain.PullRequest, checks []domain.PullRequestCheck, comments []domain.PullRequestComment) error {
 	f.pr[pr.SessionID] = pr
 	f.checks = append(f.checks, checks...)
 	f.comments[pr.URL] = comments
@@ -32,7 +32,7 @@ func (f *fakeLifecycle) ApplyPRObservation(_ context.Context, _ domain.SessionID
 }
 
 func newPRManager() (*Manager, *fakeWriter, *fakeLifecycle) {
-	fw := &fakeWriter{pr: map[domain.SessionID]ports.PRRow{}, comments: map[string][]ports.PRComment{}}
+	fw := &fakeWriter{pr: map[domain.SessionID]domain.PullRequest{}, comments: map[string][]domain.PullRequestComment{}}
 	fl := &fakeLifecycle{}
 	m := New(Deps{
 		Writer:    fw,

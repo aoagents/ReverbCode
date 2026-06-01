@@ -39,8 +39,8 @@ func changeLogEventFromGen(r gen.ChangeLog) cdc.Event {
 		Payload:   json.RawMessage(r.Payload),
 		CreatedAt: r.CreatedAt,
 	}
-	if r.SessionID.Valid {
-		e.SessionID = r.SessionID.String
+	if r.SessionID != nil {
+		e.SessionID = string(*r.SessionID)
 	}
 	return e
 }

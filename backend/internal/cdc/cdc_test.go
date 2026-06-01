@@ -9,7 +9,6 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/cdc"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
-	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/project"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 )
@@ -53,7 +52,7 @@ func TestE2E_StoreWriteToBroadcast(t *testing.T) {
 	if err := s.UpdateSession(ctx, r); err != nil { // -> session_updated (seq 2)
 		t.Fatal(err)
 	}
-	if err := s.WritePR(ctx, ports.PRRow{URL: "pr1", SessionID: r.ID, UpdatedAt: r.UpdatedAt}, nil, nil); err != nil { // -> pr_created (seq 3)
+	if err := s.WritePR(ctx, domain.PullRequest{URL: "pr1", SessionID: r.ID, UpdatedAt: r.UpdatedAt}, nil, nil); err != nil { // -> pr_created (seq 3)
 		t.Fatal(err)
 	}
 

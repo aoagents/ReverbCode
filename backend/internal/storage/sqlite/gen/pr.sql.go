@@ -12,26 +12,6 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
-const getPR = `-- name: GetPR :one
-SELECT url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at FROM pr WHERE url = ?
-`
-
-func (q *Queries) GetPR(ctx context.Context, url string) (Pr, error) {
-	row := q.db.QueryRowContext(ctx, getPR, url)
-	var i Pr
-	err := row.Scan(
-		&i.Url,
-		&i.SessionID,
-		&i.Number,
-		&i.PrState,
-		&i.ReviewDecision,
-		&i.CiState,
-		&i.Mergeability,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
 const getDisplayPRFactsBySession = `-- name: GetDisplayPRFactsBySession :one
 SELECT
     pr.url,
@@ -55,11 +35,11 @@ LIMIT 1
 `
 
 type GetDisplayPRFactsBySessionRow struct {
-	Url            string
+	URL            string
 	Number         int64
-	PrState        domain.PRState
+	PRState        domain.PRState
 	ReviewDecision domain.ReviewDecision
-	CiState        domain.CIState
+	CIState        domain.CIState
 	Mergeability   domain.Mergeability
 	ReviewComments bool
 }
@@ -68,37 +48,62 @@ func (q *Queries) GetDisplayPRFactsBySession(ctx context.Context, sessionID doma
 	row := q.db.QueryRowContext(ctx, getDisplayPRFactsBySession, sessionID)
 	var i GetDisplayPRFactsBySessionRow
 	err := row.Scan(
-		&i.Url,
+		&i.URL,
 		&i.Number,
-		&i.PrState,
+		&i.PRState,
 		&i.ReviewDecision,
-		&i.CiState,
+		&i.CIState,
 		&i.Mergeability,
 		&i.ReviewComments,
 	)
 	return i, err
 }
 
-const listPRsBySession = `-- name: ListPRsBySession :many
-SELECT url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at FROM pr WHERE session_id = ? ORDER BY updated_at DESC
+const getPR = `-- name: GetPR :one
+SELECT url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at
+FROM pr
+WHERE url = ?
 `
 
-func (q *Queries) ListPRsBySession(ctx context.Context, sessionID domain.SessionID) ([]Pr, error) {
+func (q *Queries) GetPR(ctx context.Context, url string) (PR, error) {
+	row := q.db.QueryRowContext(ctx, getPR, url)
+	var i PR
+	err := row.Scan(
+		&i.URL,
+		&i.SessionID,
+		&i.Number,
+		&i.PRState,
+		&i.ReviewDecision,
+		&i.CIState,
+		&i.Mergeability,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const listPRsBySession = `-- name: ListPRsBySession :many
+SELECT url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at
+FROM pr
+WHERE session_id = ?
+ORDER BY updated_at DESC
+`
+
+func (q *Queries) ListPRsBySession(ctx context.Context, sessionID domain.SessionID) ([]PR, error) {
 	rows, err := q.db.QueryContext(ctx, listPRsBySession, sessionID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []Pr{}
+	items := []PR{}
 	for rows.Next() {
-		var i Pr
+		var i PR
 		if err := rows.Scan(
-			&i.Url,
+			&i.URL,
 			&i.SessionID,
 			&i.Number,
-			&i.PrState,
+			&i.PRState,
 			&i.ReviewDecision,
-			&i.CiState,
+			&i.CIState,
 			&i.Mergeability,
 			&i.UpdatedAt,
 		); err != nil {
@@ -128,24 +133,24 @@ ON CONFLICT (url) DO UPDATE SET
 `
 
 type UpsertPRParams struct {
-	Url            string
+	URL            string
 	SessionID      domain.SessionID
 	Number         int64
-	PrState        domain.PRState
+	PRState        domain.PRState
 	ReviewDecision domain.ReviewDecision
-	CiState        domain.CIState
+	CIState        domain.CIState
 	Mergeability   domain.Mergeability
 	UpdatedAt      time.Time
 }
 
 func (q *Queries) UpsertPR(ctx context.Context, arg UpsertPRParams) error {
 	_, err := q.db.ExecContext(ctx, upsertPR,
-		arg.Url,
+		arg.URL,
 		arg.SessionID,
 		arg.Number,
-		arg.PrState,
+		arg.PRState,
 		arg.ReviewDecision,
-		arg.CiState,
+		arg.CIState,
 		arg.Mergeability,
 		arg.UpdatedAt,
 	)

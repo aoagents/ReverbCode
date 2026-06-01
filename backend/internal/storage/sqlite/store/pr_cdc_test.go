@@ -8,7 +8,6 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/cdc"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
-	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 // A check can change status on the same commit (in_progress -> failed) via
@@ -25,7 +24,7 @@ func TestPRChecksCDC_EmitsOnInsertAndStatusUpdate(t *testing.T) {
 	url := "https://example/pr/1"
 	now := time.Now()
 	mustCheck := func(status domain.PRCheckStatus) {
-		if err := s.WritePR(ctx, ports.PRRow{URL: url, SessionID: rec.ID, Number: 1, UpdatedAt: now}, []ports.PRCheckRow{{Name: "build", CommitHash: "c1", Status: status, CreatedAt: now}}, nil); err != nil {
+		if err := s.WritePR(ctx, domain.PullRequest{URL: url, SessionID: rec.ID, Number: 1, UpdatedAt: now}, []domain.PullRequestCheck{{Name: "build", CommitHash: "c1", Status: status, CreatedAt: now}}, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -65,9 +64,9 @@ func TestWritePR_PersistsScalarsChecksAndComments(t *testing.T) {
 	now := time.Now()
 
 	err = s.WritePR(ctx,
-		ports.PRRow{URL: url, SessionID: rec.ID, Number: 7, CI: domain.CIFailing, UpdatedAt: now},
-		[]ports.PRCheckRow{{Name: "build", CommitHash: "c1", Status: "failed", CreatedAt: now}},
-		[]ports.PRComment{{ID: "1", Author: "reviewer", Body: "use a const", CreatedAt: now}},
+		domain.PullRequest{URL: url, SessionID: rec.ID, Number: 7, CI: domain.CIFailing, UpdatedAt: now},
+		[]domain.PullRequestCheck{{Name: "build", CommitHash: "c1", Status: "failed", CreatedAt: now}},
+		[]domain.PullRequestComment{{ID: "1", Author: "reviewer", Body: "use a const", CreatedAt: now}},
 	)
 	if err != nil {
 		t.Fatal(err)

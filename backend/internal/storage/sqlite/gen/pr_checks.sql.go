@@ -17,21 +17,21 @@ SELECT pr_url, name, commit_hash, status, url, log_tail, created_at
 FROM pr_checks WHERE pr_url = ? ORDER BY name, created_at
 `
 
-func (q *Queries) ListChecksByPR(ctx context.Context, prUrl string) ([]PrCheck, error) {
+func (q *Queries) ListChecksByPR(ctx context.Context, prUrl string) ([]PRCheck, error) {
 	rows, err := q.db.QueryContext(ctx, listChecksByPR, prUrl)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []PrCheck{}
+	items := []PRCheck{}
 	for rows.Next() {
-		var i PrCheck
+		var i PRCheck
 		if err := rows.Scan(
-			&i.PrUrl,
+			&i.PRURL,
 			&i.Name,
 			&i.CommitHash,
 			&i.Status,
-			&i.Url,
+			&i.URL,
 			&i.LogTail,
 			&i.CreatedAt,
 		); err != nil {
@@ -58,22 +58,22 @@ ON CONFLICT (pr_url, name, commit_hash) DO UPDATE SET
 `
 
 type UpsertPRCheckParams struct {
-	PrUrl      string
+	PRURL      string
 	Name       string
 	CommitHash string
 	Status     domain.PRCheckStatus
-	Url        string
+	URL        string
 	LogTail    string
 	CreatedAt  time.Time
 }
 
 func (q *Queries) UpsertPRCheck(ctx context.Context, arg UpsertPRCheckParams) error {
 	_, err := q.db.ExecContext(ctx, upsertPRCheck,
-		arg.PrUrl,
+		arg.PRURL,
 		arg.Name,
 		arg.CommitHash,
 		arg.Status,
-		arg.Url,
+		arg.URL,
 		arg.LogTail,
 		arg.CreatedAt,
 	)

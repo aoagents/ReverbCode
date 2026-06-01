@@ -15,35 +15,35 @@ import (
 type ChangeLog struct {
 	Seq       int64
 	ProjectID domain.ProjectID
-	SessionID sql.NullString
+	SessionID *domain.SessionID
 	EventType cdc.EventType
 	Payload   string
 	CreatedAt time.Time
 }
 
-type Pr struct {
-	Url            string
+type PR struct {
+	URL            string
 	SessionID      domain.SessionID
 	Number         int64
-	PrState        domain.PRState
+	PRState        domain.PRState
 	ReviewDecision domain.ReviewDecision
-	CiState        domain.CIState
+	CIState        domain.CIState
 	Mergeability   domain.Mergeability
 	UpdatedAt      time.Time
 }
 
-type PrCheck struct {
-	PrUrl      string
+type PRCheck struct {
+	PRURL      string
 	Name       string
 	CommitHash string
 	Status     domain.PRCheckStatus
-	Url        string
+	URL        string
 	LogTail    string
 	CreatedAt  time.Time
 }
 
-type PrComment struct {
-	PrUrl     string
+type PRComment struct {
+	PRURL     string
 	CommentID string
 	Author    string
 	File      string
@@ -56,7 +56,7 @@ type PrComment struct {
 type Project struct {
 	ID            domain.ProjectID
 	Path          string
-	RepoOriginUrl string
+	RepoOriginURL string
 	DisplayName   string
 	RegisteredAt  time.Time
 	ArchivedAt    sql.NullTime

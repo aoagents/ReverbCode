@@ -1,5 +1,7 @@
 package domain
 
+import "time"
+
 // ---- PR read model ----
 
 // PRFacts is the per-session PR snapshot the status derivation reads from the
@@ -14,6 +16,43 @@ type PRFacts struct {
 	Review         ReviewDecision
 	Mergeability   Mergeability
 	ReviewComments bool // has unresolved review comments (any author) to address
+}
+
+// PullRequest is the app-level representation of one tracked pull request as
+// persisted by the PR store. It is intentionally separate from the sqlc
+// generated sqlite row type so storage details do not leak outside sqlite.
+type PullRequest struct {
+	URL          string
+	SessionID    SessionID
+	Number       int
+	Draft        bool
+	Merged       bool
+	Closed       bool
+	CI           CIState
+	Review       ReviewDecision
+	Mergeability Mergeability
+	UpdatedAt    time.Time
+}
+
+// PullRequestCheck is one normalized CI check run for a pull request.
+type PullRequestCheck struct {
+	Name       string
+	CommitHash string
+	Status     PRCheckStatus
+	URL        string
+	LogTail    string
+	CreatedAt  time.Time
+}
+
+// PullRequestComment is one normalized review comment for a pull request.
+type PullRequestComment struct {
+	ID        string
+	Author    string
+	File      string
+	Line      int
+	Body      string
+	Resolved  bool
+	CreatedAt time.Time
 }
 
 // CIState is the aggregate CI status of a PR.
