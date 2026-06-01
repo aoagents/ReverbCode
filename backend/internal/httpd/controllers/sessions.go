@@ -66,17 +66,7 @@ func (c *SessionsController) list(w http.ResponseWriter, r *http.Request) {
 		writeSessionError(w, r, err)
 		return
 	}
-	envelope.WriteJSON(w, http.StatusOK, map[string]any{"sessions": sessions})
-}
-
-type spawnSessionRequest struct {
-	ProjectID  domain.ProjectID    `json:"projectId"`
-	IssueID    domain.IssueID      `json:"issueId"`
-	Kind       domain.SessionKind  `json:"kind"`
-	Harness    domain.AgentHarness `json:"harness"`
-	Branch     string              `json:"branch"`
-	Prompt     string              `json:"prompt"`
-	AgentRules string              `json:"agentRules"`
+	envelope.WriteJSON(w, http.StatusOK, ListSessionsResponse{Sessions: sessions})
 }
 
 func (c *SessionsController) spawn(w http.ResponseWriter, r *http.Request) {
@@ -84,7 +74,7 @@ func (c *SessionsController) spawn(w http.ResponseWriter, r *http.Request) {
 		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions")
 		return
 	}
-	var in spawnSessionRequest
+	var in SpawnSessionRequest
 	if err := decodeJSON(r, &in); err != nil {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
 		return
@@ -105,7 +95,7 @@ func (c *SessionsController) spawn(w http.ResponseWriter, r *http.Request) {
 		writeSessionError(w, r, err)
 		return
 	}
-	envelope.WriteJSON(w, http.StatusCreated, map[string]any{"session": sess})
+	envelope.WriteJSON(w, http.StatusCreated, SessionResponse{Session: sess})
 }
 
 func (c *SessionsController) get(w http.ResponseWriter, r *http.Request) {
@@ -118,7 +108,7 @@ func (c *SessionsController) get(w http.ResponseWriter, r *http.Request) {
 		writeSessionError(w, r, err)
 		return
 	}
-	envelope.WriteJSON(w, http.StatusOK, map[string]any{"session": sess})
+	envelope.WriteJSON(w, http.StatusOK, SessionResponse{Session: sess})
 }
 
 func (c *SessionsController) rename(w http.ResponseWriter, r *http.Request) {
@@ -135,7 +125,7 @@ func (c *SessionsController) restore(w http.ResponseWriter, r *http.Request) {
 		writeSessionError(w, r, err)
 		return
 	}
-	envelope.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "sessionId": sessionID(r), "session": sess})
+	envelope.WriteJSON(w, http.StatusOK, RestoreSessionResponse{OK: true, SessionID: sessionID(r), Session: sess})
 }
 
 func (c *SessionsController) kill(w http.ResponseWriter, r *http.Request) {
@@ -148,11 +138,7 @@ func (c *SessionsController) kill(w http.ResponseWriter, r *http.Request) {
 		writeSessionError(w, r, err)
 		return
 	}
-	envelope.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "sessionId": sessionID(r), "freed": freed})
-}
-
-type sendSessionRequest struct {
-	Message string `json:"message"`
+	envelope.WriteJSON(w, http.StatusOK, KillSessionResponse{OK: true, SessionID: sessionID(r), Freed: freed})
 }
 
 func (c *SessionsController) send(w http.ResponseWriter, r *http.Request) {
@@ -160,7 +146,7 @@ func (c *SessionsController) send(w http.ResponseWriter, r *http.Request) {
 		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/{sessionId}/send")
 		return
 	}
-	var in sendSessionRequest
+	var in SendSessionMessageRequest
 	if err := decodeJSON(r, &in); err != nil {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
 		return
@@ -178,12 +164,7 @@ func (c *SessionsController) send(w http.ResponseWriter, r *http.Request) {
 		writeSessionError(w, r, err)
 		return
 	}
-	envelope.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "sessionId": sessionID(r), "message": message})
-}
-
-type spawnOrchestratorRequest struct {
-	ProjectID domain.ProjectID `json:"projectId"`
-	Clean     bool             `json:"clean"`
+	envelope.WriteJSON(w, http.StatusOK, SendSessionMessageResponse{OK: true, SessionID: sessionID(r), Message: message})
 }
 
 func (c *SessionsController) spawnOrchestrator(w http.ResponseWriter, r *http.Request) {
@@ -191,7 +172,7 @@ func (c *SessionsController) spawnOrchestrator(w http.ResponseWriter, r *http.Re
 		apispec.NotImplemented(w, r, "POST", "/api/v1/orchestrators")
 		return
 	}
-	var in spawnOrchestratorRequest
+	var in SpawnOrchestratorRequest
 	if err := decodeJSON(r, &in); err != nil {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
 		return
@@ -219,7 +200,9 @@ func (c *SessionsController) spawnOrchestrator(w http.ResponseWriter, r *http.Re
 		writeSessionError(w, r, err)
 		return
 	}
-	envelope.WriteJSON(w, http.StatusCreated, map[string]any{"orchestrator": map[string]any{"id": sess.ID, "projectId": sess.ProjectID}})
+	envelope.WriteJSON(w, http.StatusCreated, SpawnOrchestratorResponse{
+		Orchestrator: OrchestratorResponse{ID: sess.ID, ProjectID: sess.ProjectID},
+	})
 }
 
 func sessionID(r *http.Request) domain.SessionID {

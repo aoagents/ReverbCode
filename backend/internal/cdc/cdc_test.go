@@ -9,7 +9,6 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/cdc"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
-	"github.com/aoagents/agent-orchestrator/backend/internal/project"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 )
 
@@ -27,7 +26,7 @@ func seedSession(t *testing.T, s *sqlite.Store) domain.SessionRecord {
 	t.Helper()
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
-	if err := s.Upsert(ctx, project.Row{ID: "mer", Path: "/m", RegisteredAt: now}); err != nil {
+	if err := s.UpsertProject(ctx, domain.ProjectRecord{ID: "mer", Path: "/m", RegisteredAt: now}); err != nil {
 		t.Fatal(err)
 	}
 	r, err := s.CreateSession(ctx, domain.SessionRecord{

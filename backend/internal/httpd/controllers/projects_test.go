@@ -29,7 +29,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd"
 
-	"github.com/aoagents/agent-orchestrator/backend/internal/project"
+	"github.com/aoagents/agent-orchestrator/backend/internal/service"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 )
@@ -40,11 +40,11 @@ import (
 
 // clean 500 before writing the 200 status.
 
-type emptyGetManager struct{ project.Manager }
+type emptyGetManager struct{ service.ProjectManager }
 
-func (emptyGetManager) Get(context.Context, domain.ProjectID) (project.GetResult, error) {
+func (emptyGetManager) Get(context.Context, domain.ProjectID) (service.GetProjectResult, error) {
 
-	return project.GetResult{}, nil
+	return service.GetProjectResult{}, nil
 
 }
 
@@ -91,7 +91,7 @@ func newTestServer(t *testing.T) *httptest.Server {
 
 	srv := httptest.NewServer(httpd.NewRouterWithAPI(config.Config{}, log, nil, httpd.APIDeps{
 
-		Projects: project.NewManager(store),
+		Projects: service.NewProject(store),
 	}))
 
 	t.Cleanup(srv.Close)

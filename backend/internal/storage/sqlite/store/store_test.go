@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
-	"github.com/aoagents/agent-orchestrator/backend/internal/project"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 )
 
@@ -24,7 +23,7 @@ func newTestStore(t *testing.T) *sqlite.Store {
 
 func seedProject(t *testing.T, s *sqlite.Store, id string) {
 	t.Helper()
-	if err := s.Upsert(context.Background(), project.Row{
+	if err := s.UpsertProject(context.Background(), domain.ProjectRecord{
 		ID: id, Path: "/tmp/" + id, RegisteredAt: time.Now().UTC().Truncate(time.Second),
 	}); err != nil {
 		t.Fatalf("seed project %s: %v", id, err)
@@ -49,24 +48,24 @@ func TestProjectCRUDAndArchive(t *testing.T) {
 	ctx := context.Background()
 	seedProject(t, s, "mer")
 
-	got, ok, err := s.Get(ctx, "mer")
+	got, ok, err := s.GetProject(ctx, "mer")
 	if err != nil || !ok {
 		t.Fatalf("get: ok=%v err=%v", ok, err)
 	}
 	if got.ID != "mer" || got.Path != "/tmp/mer" {
 		t.Fatalf("project = %+v", got)
 	}
-	if list, _ := s.List(ctx); len(list) != 1 {
+	if list, _ := s.ListProjects(ctx); len(list) != 1 {
 		t.Fatalf("active list = %d, want 1", len(list))
 	}
 	// archive hides from the active list but still resolves by id.
-	if ok, err := s.Archive(ctx, "mer", time.Now().UTC()); err != nil || !ok {
+	if ok, err := s.ArchiveProject(ctx, "mer", time.Now().UTC()); err != nil || !ok {
 		t.Fatalf("archive: ok=%v err=%v", ok, err)
 	}
-	if list, _ := s.List(ctx); len(list) != 0 {
+	if list, _ := s.ListProjects(ctx); len(list) != 0 {
 		t.Fatalf("after archive, active list = %d, want 0", len(list))
 	}
-	if _, ok, _ := s.Get(ctx, "mer"); !ok {
+	if _, ok, _ := s.GetProject(ctx, "mer"); !ok {
 		t.Fatal("archived project must still resolve by id")
 	}
 }

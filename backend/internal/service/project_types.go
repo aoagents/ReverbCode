@@ -1,62 +1,43 @@
-package project
+package service
 
 import "github.com/aoagents/agent-orchestrator/backend/internal/domain"
 
-// Project entities and the behaviour-config shapes they expose. These live in
-// the project package (not domain/) because they are owned solely by the
-// projects surface — only project identity (domain.ProjectID) is shared
-// vocabulary with sessions/lifecycle/workspace, so that one type stays in
-// domain. Keeping the entities, the Manager interface (project.go), and the
-// transport DTOs (dto.go) together is the feature-package layout the backend
-// is migrating toward.
-
-// Summary is the row shape returned by GET /api/v1/projects. ResolveError is
-// set only for degraded projects, so the list can show them with a warning
-// instead of dropping them silently.
-type Summary struct {
+// ProjectSummary is the row shape returned by GET /api/v1/projects.
+type ProjectSummary struct {
 	ID            domain.ProjectID `json:"id"`
 	Name          string           `json:"name"`
 	SessionPrefix string           `json:"sessionPrefix"`
 	ResolveError  string           `json:"resolveError,omitempty"`
 }
 
-// Project is the full read-model returned by GET /api/v1/projects/{id} when the
-// project resolves cleanly. It joins the registry identity fields with the
-// project's behaviour config.
+// Project is the full read-model returned by GET /api/v1/projects/{id}.
 type Project struct {
 	ID            domain.ProjectID `json:"id"`
 	Name          string           `json:"name"`
 	Path          string           `json:"path"`
-	Repo          string           `json:"repo"` // "owner/name" or ""
+	Repo          string           `json:"repo"`
 	DefaultBranch string           `json:"defaultBranch"`
 	Agent         string           `json:"agent,omitempty"`
 	Tracker       *TrackerConfig   `json:"tracker,omitempty"`
 	SCM           *SCMConfig       `json:"scm,omitempty"`
 }
 
-// Degraded is returned in place of Project when the project's config failed to
-// load. The frontend uses ResolveError to render a recovery UI; the
-// /projects/{id}/repair endpoint fixes a recoverable subset (e.g. legacy
-// wrapped-config format).
-type Degraded struct {
+// DegradedProject is returned in place of Project when project config failed to load.
+type DegradedProject struct {
 	ID           domain.ProjectID `json:"id"`
 	Name         string           `json:"name"`
 	Path         string           `json:"path"`
 	ResolveError string           `json:"resolveError"`
 }
 
-// Behaviour-config shapes exposed by the projects API. Runtime selection and
-// reaction rules are intentionally absent: the daemon has one runtime adapter and
-// lifecycle owns agent nudges.
-
-// TrackerConfig mirrors TrackerConfigSchema.
+// TrackerConfig mirrors tracker behaviour config exposed by the projects API.
 type TrackerConfig struct {
 	Plugin  string `json:"plugin,omitempty"`
 	Package string `json:"package,omitempty"`
 	Path    string `json:"path,omitempty"`
 }
 
-// SCMConfig mirrors SCMConfigSchema; Webhook nests its own optional block.
+// SCMConfig mirrors SCM behaviour config exposed by the projects API.
 type SCMConfig struct {
 	Plugin  string            `json:"plugin,omitempty"`
 	Package string            `json:"package,omitempty"`
@@ -64,7 +45,7 @@ type SCMConfig struct {
 	Webhook *SCMWebhookConfig `json:"webhook,omitempty"`
 }
 
-// SCMWebhookConfig — pointer Enabled distinguishes unset from explicit false.
+// SCMWebhookConfig describes SCM webhook settings.
 type SCMWebhookConfig struct {
 	Enabled         *bool  `json:"enabled,omitempty"`
 	Path            string `json:"path,omitempty"`

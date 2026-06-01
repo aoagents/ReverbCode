@@ -10,7 +10,6 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/lifecycle"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
-	"github.com/aoagents/agent-orchestrator/backend/internal/project"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 )
 
@@ -37,7 +36,7 @@ func TestWiring_WriteFlowsToBroadcaster(t *testing.T) {
 	var got []cdc.Event
 	bcast.Subscribe(func(e cdc.Event) { mu.Lock(); got = append(got, e); mu.Unlock() })
 
-	if err := store.Upsert(ctx, project.Row{ID: "mer", Path: "/repo/mer"}); err != nil {
+	if err := store.UpsertProject(ctx, domain.ProjectRecord{ID: "mer", Path: "/repo/mer"}); err != nil {
 		t.Fatal(err)
 	}
 	rec, err := store.CreateSession(ctx, domain.SessionRecord{

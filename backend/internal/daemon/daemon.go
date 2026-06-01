@@ -14,8 +14,8 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/zellij"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd"
-	"github.com/aoagents/agent-orchestrator/backend/internal/project"
 	"github.com/aoagents/agent-orchestrator/backend/internal/runfile"
+	"github.com/aoagents/agent-orchestrator/backend/internal/service"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 	"github.com/aoagents/agent-orchestrator/backend/internal/terminal"
 )
@@ -66,7 +66,7 @@ func Run() error {
 	termMgr := terminal.NewManager(runtimeAdapter, cdcPipe.Broadcaster, log)
 	defer termMgr.Close()
 
-	srv, err := httpd.NewWithDeps(cfg, log, termMgr, httpd.APIDeps{Projects: project.NewManager(store)})
+	srv, err := httpd.NewWithDeps(cfg, log, termMgr, httpd.APIDeps{Projects: service.NewProject(store)})
 	if err != nil {
 		stop()
 		if cdcErr := cdcPipe.Stop(); cdcErr != nil {

@@ -17,7 +17,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/controllers"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
-	"github.com/aoagents/agent-orchestrator/backend/internal/project"
+	"github.com/aoagents/agent-orchestrator/backend/internal/service"
 )
 
 // Build reflects the Go contract types and the operation registry below into
@@ -25,7 +25,7 @@ import (
 // contract: `cmd/genspec` writes its output to apispec/openapi.yaml (the
 // committed, embedded artifact) and TestBuild_MatchesEmbedded asserts the embed
 // equals fresh Build() output so the two can never drift. Schema facets live as
-// struct tags on the project.*/controllers.* types; operation metadata (path,
+// struct tags on the service.*/controllers.* types; operation metadata (path,
 // status codes, summaries) lives here.
 //
 // Every wire shape is reflected straight from where it is used at runtime — the
@@ -57,16 +57,18 @@ func Build() ([]byte, error) {
 	r.Spec.Tags = []openapi31.Tag{
 		*(&openapi31.Tag{Name: "projects"}).WithDescription(
 			"Project registry, configuration, and lifecycle administration"),
+		*(&openapi31.Tag{Name: "sessions"}).WithDescription(
+			"Agent session lifecycle and messaging"),
 	}
 
-	for _, op := range projectOperations() {
+	for _, op := range operations() {
 		oc, err := r.NewOperationContext(op.method, op.path)
 		if err != nil {
 			return nil, fmt.Errorf("new operation %s %s: %w", op.method, op.path, err)
 		}
 		oc.SetID(op.id)
 		oc.SetSummary(op.summary)
-		oc.SetTags("projects")
+		oc.SetTags(op.tag)
 		for _, param := range op.pathParams {
 			oc.AddReqStructure(param)
 		}
@@ -109,20 +111,37 @@ var schemaNames = map[string]string{
 	"EnvelopeAPIError": "APIError",
 	// domain
 	"DomainProjectID": "ProjectID",
+	"DomainSessionID": "SessionID",
+	"DomainIssueID":   "IssueID",
+	"DomainSession":   "Session",
 	// httpd/controllers (wire envelopes)
-	"ControllersListProjectsResponse": "ListProjectsResponse",
-	"ControllersProjectResponse":      "ProjectResponse",
-	"ControllersGetProjectResponse":   "ProjectGetResponse",
-	"ControllersProjectOrDegraded":    "ProjectOrDegraded",
-	// project (entities + DTOs)
-	"ProjectProject":          "Project",
-	"ProjectSummary":          "Summary",
-	"ProjectDegraded":         "Degraded",
-	"ProjectAddInput":         "AddInput",
-	"ProjectRemoveResult":     "RemoveResult",
-	"ProjectTrackerConfig":    "TrackerConfig",
-	"ProjectSCMConfig":        "SCMConfig",
-	"ProjectSCMWebhookConfig": "SCMWebhookConfig",
+	"ControllersListProjectsResponse":       "ListProjectsResponse",
+	"ControllersProjectResponse":            "ProjectResponse",
+	"ControllersGetProjectResponse":         "ProjectGetResponse",
+	"ControllersProjectOrDegraded":          "ProjectOrDegraded",
+	"ControllersProjectIDParam":             "ProjectIDParam",
+	"ControllersSessionIDParam":             "SessionIDParam",
+	"ControllersListSessionsQuery":          "ListSessionsQuery",
+	"ControllersListSessionsResponse":       "ListSessionsResponse",
+	"ControllersSpawnSessionRequest":        "SpawnSessionRequest",
+	"ControllersSessionResponse":            "SessionResponse",
+	"ControllersRenameSessionRequest":       "RenameSessionRequest",
+	"ControllersRestoreSessionResponse":     "RestoreSessionResponse",
+	"ControllersKillSessionResponse":        "KillSessionResponse",
+	"ControllersSendSessionMessageRequest":  "SendSessionMessageRequest",
+	"ControllersSendSessionMessageResponse": "SendSessionMessageResponse",
+	"ControllersSpawnOrchestratorRequest":   "SpawnOrchestratorRequest",
+	"ControllersSpawnOrchestratorResponse":  "SpawnOrchestratorResponse",
+	"ControllersOrchestratorResponse":       "OrchestratorResponse",
+	// service project entities + DTOs
+	"ServiceProject":             "Project",
+	"ServiceProjectSummary":      "ProjectSummary",
+	"ServiceDegradedProject":     "DegradedProject",
+	"ServiceAddProjectInput":     "AddProjectInput",
+	"ServiceRemoveProjectResult": "RemoveProjectResult",
+	"ServiceTrackerConfig":       "TrackerConfig",
+	"ServiceSCMConfig":           "SCMConfig",
+	"ServiceSCMWebhookConfig":    "SCMWebhookConfig",
 }
 
 // markRequestBodyRequired sets requestBody.required: true on the operation's
@@ -188,9 +207,16 @@ type respUnit struct {
 
 type operation struct {
 	method, path, id, summary string
+	tag                       string
 	pathParams                []any // path/query param containers (e.g. ProjectIDParam)
 	reqBody                   any   // JSON request body struct, nil when the op takes none
 	resps                     []respUnit
+}
+
+func operations() []operation {
+	ops := append([]operation{}, projectOperations()...)
+	ops = append(ops, sessionOperations()...)
+	return ops
 }
 
 // projectOperations declares the 4 canonical /projects operations. The set must
@@ -199,7 +225,7 @@ type operation struct {
 func projectOperations() []operation {
 	return []operation{
 		{
-			method: http.MethodGet, path: "/api/v1/projects", id: "listProjects",
+			method: http.MethodGet, path: "/api/v1/projects", id: "listProjects", tag: "projects",
 			summary: "List all registered projects (active + degraded)",
 			resps: []respUnit{
 				{http.StatusOK, controllers.ListProjectsResponse{}},
@@ -207,9 +233,9 @@ func projectOperations() []operation {
 			},
 		},
 		{
-			method: http.MethodPost, path: "/api/v1/projects", id: "addProject",
+			method: http.MethodPost, path: "/api/v1/projects", id: "addProject", tag: "projects",
 			summary: "Register a new project from a git repository path",
-			reqBody: project.AddInput{},
+			reqBody: service.AddProjectInput{},
 			resps: []respUnit{
 				{http.StatusCreated, controllers.ProjectResponse{}},
 				{http.StatusBadRequest, envelope.APIError{}},
@@ -218,7 +244,7 @@ func projectOperations() []operation {
 			},
 		},
 		{
-			method: http.MethodGet, path: "/api/v1/projects/{id}", id: "getProject",
+			method: http.MethodGet, path: "/api/v1/projects/{id}", id: "getProject", tag: "projects",
 			summary:    "Fetch one project; discriminates ok vs degraded",
 			pathParams: []any{controllers.ProjectIDParam{}},
 			resps: []respUnit{
@@ -228,14 +254,108 @@ func projectOperations() []operation {
 			},
 		},
 		{
-			method: http.MethodDelete, path: "/api/v1/projects/{id}", id: "removeProject",
+			method: http.MethodDelete, path: "/api/v1/projects/{id}", id: "removeProject", tag: "projects",
 			summary:    "Remove a project; stops sessions, cleans workspaces, unregisters",
 			pathParams: []any{controllers.ProjectIDParam{}},
 			resps: []respUnit{
-				{http.StatusOK, project.RemoveResult{}},
+				{http.StatusOK, service.RemoveProjectResult{}},
 				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+	}
+}
+
+func sessionOperations() []operation {
+	return []operation{
+		{
+			method: http.MethodGet, path: "/api/v1/sessions", id: "listSessions", tag: "sessions",
+			summary:    "List sessions",
+			pathParams: []any{controllers.ListSessionsQuery{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ListSessionsResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/sessions", id: "spawnSession", tag: "sessions",
+			summary: "Spawn a new agent session",
+			reqBody: controllers.SpawnSessionRequest{},
+			resps: []respUnit{
+				{http.StatusCreated, controllers.SessionResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/sessions/{sessionId}", id: "getSession", tag: "sessions",
+			summary:    "Fetch one session",
+			pathParams: []any{controllers.SessionIDParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.SessionResponse{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPatch, path: "/api/v1/sessions/{sessionId}", id: "renameSession", tag: "sessions",
+			summary:    "Rename a session display name",
+			pathParams: []any{controllers.SessionIDParam{}},
+			reqBody:    controllers.RenameSessionRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.SessionResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/restore", id: "restoreSession", tag: "sessions",
+			summary:    "Restore a terminated session",
+			pathParams: []any{controllers.SessionIDParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.RestoreSessionResponse{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/kill", id: "killSession", tag: "sessions",
+			summary:    "Mark a session terminated and tear down runtime/workspace resources",
+			pathParams: []any{controllers.SessionIDParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.KillSessionResponse{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/send", id: "sendSessionMessage", tag: "sessions",
+			summary:    "Send a message to a running session's agent",
+			pathParams: []any{controllers.SessionIDParam{}},
+			reqBody:    controllers.SendSessionMessageRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.SendSessionMessageResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/orchestrators", id: "spawnOrchestrator", tag: "sessions",
+			summary: "Spawn an orchestrator session",
+			reqBody: controllers.SpawnOrchestratorRequest{},
+			resps: []respUnit{
+				{http.StatusCreated, controllers.SpawnOrchestratorResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
 			},
 		},
 	}

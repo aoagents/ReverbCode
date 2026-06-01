@@ -4,7 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 
-	"github.com/aoagents/agent-orchestrator/backend/internal/project"
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/service"
 )
 
 // HTTP response envelopes for the projects surface — the SINGLE definition of
@@ -12,7 +13,7 @@ import (
 // apispec.Build reflects these same types into openapi.yaml, so the served
 // contract and the generated spec can't disagree. The request side needs no
 // wrappers: handlers decode the body straight into the project commands
-// (project.AddInput), which apispec also reflects.
+// (service.AddProjectInput), which apispec also reflects.
 
 // ProjectIDParam is the {id} path parameter shared by the /projects/{id}
 // routes. Handlers read it via chi.URLParam (see projectID); it is declared here
@@ -24,12 +25,12 @@ type ProjectIDParam struct {
 
 // ListProjectsResponse is the body of GET /api/v1/projects.
 type ListProjectsResponse struct {
-	Projects []project.Summary `json:"projects"`
+	Projects []service.ProjectSummary `json:"projects"`
 }
 
 // ProjectResponse is the { project } body shared by POST /projects (201).
 type ProjectResponse struct {
-	Project project.Project `json:"project"`
+	Project service.Project `json:"project"`
 }
 
 // GetProjectResponse is the { status, project } body of GET /projects/{id},
@@ -44,8 +45,8 @@ type GetProjectResponse struct {
 // emits the right object) and exposes the oneOf variants to the spec reflector
 // (so apispec.Build emits `oneOf: [Project, Degraded]`) — one type, both jobs.
 type ProjectOrDegraded struct {
-	Project  *project.Project
-	Degraded *project.Degraded
+	Project  *service.Project
+	Degraded *service.DegradedProject
 }
 
 // MarshalJSON encodes whichever variant is set (Project or Degraded).
@@ -74,14 +75,14 @@ var errEmptyProjectOrDegraded = errors.New("controllers: GetResult has neither P
 // JSONSchemaOneOf is read by swaggest's reflector (apispec.Build) to emit the
 // oneOf for this field; it is not used at runtime.
 func (ProjectOrDegraded) JSONSchemaOneOf() []interface{} {
-	return []interface{}{project.Project{}, project.Degraded{}}
+	return []interface{}{service.Project{}, service.DegradedProject{}}
 }
 
 // newGetProjectResponse maps the internal GetResult onto the wire envelope —
 // the explicit project→httpd boundary the result type exists for. It errors
 // when the result sets neither variant, so the handler can return a clean 500
 // BEFORE writing the 200 status rather than flushing a truncated body.
-func newGetProjectResponse(res project.GetResult) (GetProjectResponse, error) {
+func newGetProjectResponse(res service.GetProjectResult) (GetProjectResponse, error) {
 	if res.Project == nil && res.Degraded == nil {
 		return GetProjectResponse{}, errEmptyProjectOrDegraded
 	}
@@ -89,4 +90,87 @@ func newGetProjectResponse(res project.GetResult) (GetProjectResponse, error) {
 		Status:  res.Status,
 		Project: ProjectOrDegraded{Project: res.Project, Degraded: res.Degraded},
 	}, nil
+}
+
+// SessionIDParam is the {sessionId} path parameter shared by session routes.
+type SessionIDParam struct {
+	SessionID string `path:"sessionId" description:"Session identifier, e.g. project-1."`
+}
+
+// ListSessionsQuery is the query string accepted by GET /api/v1/sessions.
+type ListSessionsQuery struct {
+	Project          string `query:"project,omitempty" description:"Project id filter."`
+	Active           *bool  `query:"active,omitempty" description:"When true, return non-terminated sessions; when false, return terminated sessions."`
+	OrchestratorOnly *bool  `query:"orchestratorOnly,omitempty" description:"When true, return only orchestrator sessions."`
+	Fresh            *bool  `query:"fresh,omitempty" description:"When true, return only fresh non-terminated sessions."`
+}
+
+// ListSessionsResponse is the body of GET /api/v1/sessions.
+type ListSessionsResponse struct {
+	Sessions []domain.Session `json:"sessions"`
+}
+
+// SpawnSessionRequest is the body of POST /api/v1/sessions.
+type SpawnSessionRequest struct {
+	ProjectID  domain.ProjectID    `json:"projectId"`
+	IssueID    domain.IssueID      `json:"issueId,omitempty"`
+	Kind       domain.SessionKind  `json:"kind,omitempty" enum:"worker,orchestrator"`
+	Harness    domain.AgentHarness `json:"harness,omitempty" enum:"claude-code,codex,aider,opencode"`
+	Branch     string              `json:"branch,omitempty"`
+	Prompt     string              `json:"prompt,omitempty" maxLength:"4096"`
+	AgentRules string              `json:"agentRules,omitempty"`
+}
+
+// SessionResponse is the { session } body shared by session create/get.
+type SessionResponse struct {
+	Session domain.Session `json:"session"`
+}
+
+// RenameSessionRequest is the body of PATCH /api/v1/sessions/{sessionId}.
+type RenameSessionRequest struct {
+	DisplayName string `json:"displayName" minLength:"1"`
+}
+
+// RestoreSessionResponse is the body of POST /api/v1/sessions/{sessionId}/restore.
+type RestoreSessionResponse struct {
+	OK        bool             `json:"ok"`
+	SessionID domain.SessionID `json:"sessionId"`
+	Session   domain.Session   `json:"session"`
+}
+
+// KillSessionResponse is the body of POST /api/v1/sessions/{sessionId}/kill.
+type KillSessionResponse struct {
+	OK        bool             `json:"ok"`
+	SessionID domain.SessionID `json:"sessionId"`
+	Freed     bool             `json:"freed,omitempty"`
+}
+
+// SendSessionMessageRequest is the body of POST /api/v1/sessions/{sessionId}/send.
+type SendSessionMessageRequest struct {
+	Message string `json:"message" minLength:"1" maxLength:"4096"`
+}
+
+// SendSessionMessageResponse is the body of POST /api/v1/sessions/{sessionId}/send.
+type SendSessionMessageResponse struct {
+	OK        bool             `json:"ok"`
+	SessionID domain.SessionID `json:"sessionId"`
+	Message   string           `json:"message"`
+}
+
+// SpawnOrchestratorRequest is the body of POST /api/v1/orchestrators.
+type SpawnOrchestratorRequest struct {
+	ProjectID domain.ProjectID `json:"projectId"`
+	Clean     bool             `json:"clean,omitempty"`
+}
+
+// SpawnOrchestratorResponse is the body of POST /api/v1/orchestrators.
+type SpawnOrchestratorResponse struct {
+	Orchestrator OrchestratorResponse `json:"orchestrator"`
+}
+
+// OrchestratorResponse is the minimal orchestrator read model returned after spawn.
+type OrchestratorResponse struct {
+	ID          domain.SessionID `json:"id"`
+	ProjectID   domain.ProjectID `json:"projectId"`
+	ProjectName string           `json:"projectName,omitempty"`
 }

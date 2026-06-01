@@ -14,13 +14,13 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apispec"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
-	"github.com/aoagents/agent-orchestrator/backend/internal/project"
+	"github.com/aoagents/agent-orchestrator/backend/internal/service"
 )
 
 // ProjectsController owns the /projects routes. The controller depends only on
-// project.Manager; nil keeps routes registered but returns OpenAPI-backed 501s.
+// service.ProjectManager; nil keeps routes registered but returns OpenAPI-backed 501s.
 type ProjectsController struct {
-	Mgr project.Manager
+	Mgr service.ProjectManager
 }
 
 // Register mounts the project routes on the supplied router.
@@ -42,7 +42,7 @@ func (c *ProjectsController) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if projects == nil {
-		projects = []project.Summary{}
+		projects = []service.ProjectSummary{}
 	}
 	envelope.WriteJSON(w, http.StatusOK, ListProjectsResponse{Projects: projects})
 }
@@ -52,7 +52,7 @@ func (c *ProjectsController) add(w http.ResponseWriter, r *http.Request) {
 		apispec.NotImplemented(w, r, "POST", "/api/v1/projects")
 		return
 	}
-	var in project.AddInput
+	var in service.AddProjectInput
 	if err := decodeJSON(r, &in); err != nil {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
 		return
@@ -104,10 +104,10 @@ func decodeJSON(r *http.Request, out any) error {
 	return json.NewDecoder(r.Body).Decode(out)
 }
 
-// writeProjectError maps a project.Error to its HTTP status, falling back to
-// 500 for an unrecognized kind or a non-project.Error.
+// writeProjectError maps a service.ProjectError to its HTTP status, falling back to
+// 500 for an unrecognized kind or a non-service.ProjectError.
 func writeProjectError(w http.ResponseWriter, r *http.Request, err error) {
-	var pe *project.Error
+	var pe *service.ProjectError
 	if errors.As(err, &pe) {
 		status := http.StatusInternalServerError
 		switch pe.Kind {

@@ -10,7 +10,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apispec"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/controllers"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
-	"github.com/aoagents/agent-orchestrator/backend/internal/project"
+	"github.com/aoagents/agent-orchestrator/backend/internal/service"
 )
 
 // APIDeps bundles every Manager the API layer's controllers depend on.
@@ -18,7 +18,7 @@ import (
 // lifecycle reducers, adapters, or storage. A nil dependency keeps its routes
 // registered but returns the OpenAPI-backed 501 response.
 type APIDeps struct {
-	Projects project.Manager
+	Projects service.ProjectManager
 	Sessions controllers.SessionService
 }
 

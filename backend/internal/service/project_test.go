@@ -1,4 +1,4 @@
-package project_test
+package service_test
 
 import (
 	"context"
@@ -7,20 +7,20 @@ import (
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
-	"github.com/aoagents/agent-orchestrator/backend/internal/project"
+	"github.com/aoagents/agent-orchestrator/backend/internal/service"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 )
 
 // newManager builds a Manager over a real, throwaway sqlite store (pure-Go
 // driver, migrations run on Open) — no in-memory store.
-func newManager(t *testing.T) project.Manager {
+func newManager(t *testing.T) service.ProjectManager {
 	t.Helper()
 	store, err := sqlite.Open(t.TempDir())
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	return project.NewManager(store)
+	return service.NewProject(store)
 }
 
 // gitRepo creates a real git repository in a fresh temp dir and returns its path.
@@ -35,12 +35,12 @@ func gitRepo(t *testing.T) string {
 
 func ptr(s string) *string { return &s }
 
-// wantCode asserts err is a *project.Error carrying the given machine code.
+// wantCode asserts err is a *service.ProjectError carrying the given machine code.
 func wantCode(t *testing.T, err error, code string) {
 	t.Helper()
-	var e *project.Error
+	var e *service.ProjectError
 	if !errors.As(err, &e) {
-		t.Fatalf("error = %v, want *project.Error", err)
+		t.Fatalf("error = %v, want *service.ProjectError", err)
 	}
 	if e.Code != code {
 		t.Fatalf("code = %q, want %q", e.Code, code)
@@ -56,7 +56,7 @@ func TestManager_AddListGetRemove(t *testing.T) {
 		t.Fatalf("List() = %v, %v; want empty", got, err)
 	}
 
-	proj, err := m.Add(ctx, project.AddInput{Path: repo, ProjectID: ptr("ao"), Name: ptr("Agent Orchestrator")})
+	proj, err := m.Add(ctx, service.AddProjectInput{Path: repo, ProjectID: ptr("ao"), Name: ptr("Agent Orchestrator")})
 	if err != nil {
 		t.Fatalf("Add: %v", err)
 	}
@@ -96,13 +96,13 @@ func TestManager_ReaddAfterRemove(t *testing.T) {
 	m := newManager(t)
 	repo := gitRepo(t)
 
-	if _, err := m.Add(ctx, project.AddInput{Path: repo, ProjectID: ptr("ao")}); err != nil {
+	if _, err := m.Add(ctx, service.AddProjectInput{Path: repo, ProjectID: ptr("ao")}); err != nil {
 		t.Fatalf("first Add: %v", err)
 	}
 	if _, err := m.Remove(ctx, "ao"); err != nil {
 		t.Fatalf("Remove: %v", err)
 	}
-	if _, err := m.Add(ctx, project.AddInput{Path: repo, ProjectID: ptr("ao2")}); err != nil {
+	if _, err := m.Add(ctx, service.AddProjectInput{Path: repo, ProjectID: ptr("ao2")}); err != nil {
 		t.Fatalf("re-add after remove: %v", err)
 	}
 }
@@ -111,20 +111,20 @@ func TestManager_AddValidationAndConflicts(t *testing.T) {
 	ctx := context.Background()
 	m := newManager(t)
 
-	_, err := m.Add(ctx, project.AddInput{Path: ""})
+	_, err := m.Add(ctx, service.AddProjectInput{Path: ""})
 	wantCode(t, err, "PATH_REQUIRED")
 
-	_, err = m.Add(ctx, project.AddInput{Path: t.TempDir()}) // exists but not a git repo
+	_, err = m.Add(ctx, service.AddProjectInput{Path: t.TempDir()}) // exists but not a git repo
 	wantCode(t, err, "NOT_A_GIT_REPO")
 
 	repoA, repoB := gitRepo(t), gitRepo(t)
-	if _, err := m.Add(ctx, project.AddInput{Path: repoA, ProjectID: ptr("shared")}); err != nil {
+	if _, err := m.Add(ctx, service.AddProjectInput{Path: repoA, ProjectID: ptr("shared")}); err != nil {
 		t.Fatalf("seed add: %v", err)
 	}
-	_, err = m.Add(ctx, project.AddInput{Path: repoA, ProjectID: ptr("other")})
+	_, err = m.Add(ctx, service.AddProjectInput{Path: repoA, ProjectID: ptr("other")})
 	wantCode(t, err, "PATH_ALREADY_REGISTERED")
 
-	_, err = m.Add(ctx, project.AddInput{Path: repoB, ProjectID: ptr("shared")})
+	_, err = m.Add(ctx, service.AddProjectInput{Path: repoB, ProjectID: ptr("shared")})
 	wantCode(t, err, "ID_ALREADY_REGISTERED")
 }
 
@@ -142,7 +142,7 @@ func TestManager_GetUpdateRemoveErrors(t *testing.T) {
 	wantCode(t, err, "PROJECT_NOT_FOUND")
 
 	repo := gitRepo(t)
-	if _, err := m.Add(ctx, project.AddInput{Path: repo, ProjectID: ptr("p")}); err != nil {
+	if _, err := m.Add(ctx, service.AddProjectInput{Path: repo, ProjectID: ptr("p")}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 }
