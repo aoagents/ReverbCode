@@ -114,7 +114,7 @@
 //
 //   - The poller loop and cadence selection (issue #35).
 //   - Webhook ingestion (this package is polling-only).
-//   - Persistence (PR Manager owns the row mapping; see internal/pr).
+//   - Persistence (PR Manager owns the row mapping; see internal/service/pr).
 //   - Linear / GitLab providers (separate PRs).
 //   - Issue tracking (separate lane, see internal/adapters/tracker).
 //   - Comment-injection-into-session-context (Messenger lane, not SCM).
