@@ -63,7 +63,7 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 	return nil
 }
 
-func hasUnresolvedComments(comments []domain.PRComment) bool {
+func hasUnresolvedComments(comments []ports.PRCommentObservation) bool {
 	for _, c := range comments {
 		if !c.Resolved {
 			return true
@@ -72,7 +72,7 @@ func hasUnresolvedComments(comments []domain.PRComment) bool {
 	return false
 }
 
-func reviewContent(comments []domain.PRComment) (string, string) {
+func reviewContent(comments []ports.PRCommentObservation) (string, string) {
 	var bodies []string
 	var ids []string
 	for _, c := range comments {

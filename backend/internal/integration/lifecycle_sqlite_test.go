@@ -96,7 +96,7 @@ func TestSpawnPRKillRoundTrip(t *testing.T) {
 	if !ok || rec.Metadata.RuntimeHandleID != "h1" || rec.IsTerminated {
 		t.Fatalf("post-spawn row wrong: %+v", rec)
 	}
-	if err := st.prm.ApplyObservation(ctx, sess.ID, ports.PRObservation{Fetched: true, URL: "pr1", Number: 1, CI: domain.CIFailing, Checks: []domain.PRCheckRow{{Name: "build", CommitHash: "c1", Status: domain.PRCheckFailed, LogTail: "boom"}}}); err != nil {
+	if err := st.prm.ApplyObservation(ctx, sess.ID, ports.PRObservation{Fetched: true, URL: "pr1", Number: 1, CI: domain.CIFailing, Checks: []ports.PRCheckObservation{{Name: "build", CommitHash: "c1", Status: domain.PRCheckFailed, LogTail: "boom"}}}); err != nil {
 		t.Fatal(err)
 	}
 	got, err := st.sm.Get(ctx, sess.ID)

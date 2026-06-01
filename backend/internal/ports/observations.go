@@ -9,13 +9,12 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
-// ProbeResult is a single liveness reading. "failed" (the probe errored/timed
-// out) and "unknown" (ran but couldn't tell) are kept distinct from dead — both
-// report failed/unknown, never a death conclusion.
+// ProbeResult is a single liveness reading. "failed" means the probe errored
+// or timed out and is never treated as a death conclusion.
 type ProbeResult string
 
-// Probe readings. Alive/Dead are conclusions; Failed/Unknown are ignored by
-// lifecycle because they are not reliable death decisions.
+// Probe readings. Alive/Dead are conclusions; Failed is ignored by lifecycle
+// because it is not a reliable death decision.
 const (
 	ProbeAlive  ProbeResult = "alive"
 	ProbeDead   ProbeResult = "dead"
@@ -39,8 +38,8 @@ type ActivitySignal struct {
 
 // PRObservation is what the SCM poller reports for one PR. Fetched is the
 // failed-fetch guard: when false the rest is meaningless and the engine must not
-// read it as "PR closed". Checks/Comments are the current full sets (the engine
-// records the checks and replaces the comment set).
+// read it as "PR closed". Checks/Comments are observation DTOs, not persistence
+// rows; the PR Manager owns mapping them into stored rows.
 type PRObservation struct {
 	Fetched      bool
 	URL          string
@@ -51,8 +50,27 @@ type PRObservation struct {
 	CI           domain.CIState
 	Review       domain.ReviewDecision
 	Mergeability domain.Mergeability
-	Checks       []domain.PRCheckRow
-	Comments     []domain.PRComment
+	Checks       []PRCheckObservation
+	Comments     []PRCommentObservation
+}
+
+// PRCheckObservation is one SCM check result on the observed PR.
+type PRCheckObservation struct {
+	Name       string
+	CommitHash string
+	Status     domain.PRCheckStatus
+	URL        string
+	LogTail    string
+}
+
+// PRCommentObservation is one review comment observed on the PR.
+type PRCommentObservation struct {
+	ID       string
+	Author   string
+	File     string
+	Line     int
+	Body     string
+	Resolved bool
 }
 
 // SpawnOutcome is what the Session Manager reports once a spawn is live: the

@@ -62,8 +62,8 @@ func TestApplyObservation_WritesPRChecksAndComments(t *testing.T) {
 	m, fw, fl := newPRManager()
 	o := ports.PRObservation{
 		Fetched: true, URL: "https://example/pr/1", Number: 1, CI: domain.CIFailing,
-		Checks:   []domain.PRCheckRow{{Name: "build", CommitHash: "c1", Status: domain.PRCheckFailed, LogTail: "boom"}},
-		Comments: []domain.PRComment{{ID: "1", Author: "greptileai", Body: "use a constant here"}},
+		Checks:   []ports.PRCheckObservation{{Name: "build", CommitHash: "c1", Status: domain.PRCheckFailed, LogTail: "boom"}},
+		Comments: []ports.PRCommentObservation{{ID: "1", Author: "greptileai", Body: "use a constant here"}},
 	}
 	if err := m.ApplyObservation(context.Background(), "mer-1", o); err != nil {
 		t.Fatal(err)

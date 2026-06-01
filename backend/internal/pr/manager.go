@@ -77,18 +77,11 @@ func (m *Manager) write(ctx context.Context, id domain.SessionID, o ports.PRObse
 	row := domain.PRRow{URL: o.URL, SessionID: id, Number: o.Number, Draft: o.Draft, Merged: o.Merged, Closed: o.Closed, CI: o.CI, Review: o.Review, Mergeability: o.Mergeability, UpdatedAt: now}
 	checks := make([]domain.PRCheckRow, len(o.Checks))
 	for i, c := range o.Checks {
-		c.PRURL = o.URL
-		if c.CreatedAt.IsZero() {
-			c.CreatedAt = now
-		}
-		checks[i] = c
+		checks[i] = domain.PRCheckRow{PRURL: o.URL, Name: c.Name, CommitHash: c.CommitHash, Status: c.Status, URL: c.URL, LogTail: c.LogTail, CreatedAt: now}
 	}
 	comments := make([]domain.PRComment, len(o.Comments))
 	for i, c := range o.Comments {
-		if c.CreatedAt.IsZero() {
-			c.CreatedAt = now
-		}
-		comments[i] = c
+		comments[i] = domain.PRComment{ID: c.ID, Author: c.Author, File: c.File, Line: c.Line, Body: c.Body, Resolved: c.Resolved, CreatedAt: now}
 	}
 	return m.writer.WritePR(ctx, row, checks, comments)
 }
