@@ -42,10 +42,10 @@ func Build() ([]byte, error) {
 	r.DefaultOptions = append(r.DefaultOptions,
 		jsonschema.InterceptProp(requiredFromJSONTag),
 		jsonschema.InterceptNullability(nonNullableSlices),
+		// Clean component schema names (which become the generated TS type names):
+		// swaggest defaults to PackageType, e.g. "ProjectProject", "EnvelopeAPIError".
+		jsonschema.InterceptDefName(schemaName),
 	)
-	// Clean component schema names (which become the generated TS type names):
-	// swaggest defaults to PackageType, e.g. "ProjectProject", "EnvelopeAPIError".
-	r.InterceptDefName(schemaName)
 
 	r.Spec.SetTitle("Agent Orchestrator HTTP daemon")
 	r.Spec.SetVersion("0.1.0-route-shell")

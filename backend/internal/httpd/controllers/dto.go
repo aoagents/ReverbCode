@@ -48,6 +48,7 @@ type ProjectOrDegraded struct {
 	Degraded *project.Degraded
 }
 
+// MarshalJSON encodes whichever variant is set (Project or Degraded).
 func (p ProjectOrDegraded) MarshalJSON() ([]byte, error) {
 	switch {
 	case p.Degraded != nil:

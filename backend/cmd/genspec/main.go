@@ -20,7 +20,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("genspec: build openapi: %v", err)
 	}
-	if err := os.WriteFile(*out, doc, 0o644); err != nil {
+	if err := os.WriteFile(*out, doc, 0o600); err != nil {
 		log.Fatalf("genspec: write %s: %v", *out, err)
 	}
 }
