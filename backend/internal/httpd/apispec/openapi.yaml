@@ -314,13 +314,7 @@ components:
           type: string
         path:
           type: string
-        reactions:
-          additionalProperties:
-            $ref: '#/components/schemas/ReactionConfig'
-          type: object
         repo:
-          type: string
-        runtime:
           type: string
         scm:
           $ref: '#/components/schemas/SCMConfig'
@@ -357,30 +351,6 @@ components:
           $ref: '#/components/schemas/Project'
       required:
       - project
-      type: object
-    ReactionConfig:
-      properties:
-        action:
-          type: string
-        auto:
-          type:
-          - "null"
-          - boolean
-        escalateAfter: {}
-        includeSummary:
-          type:
-          - "null"
-          - boolean
-        message:
-          type: string
-        priority:
-          type: string
-        retries:
-          type:
-          - "null"
-          - integer
-        threshold:
-          type: string
       type: object
     ReloadResult:
       properties:
@@ -462,16 +432,6 @@ components:
     UpdateConfigInput:
       properties:
         agent:
-          type:
-          - "null"
-          - string
-        reactions:
-          additionalProperties:
-            $ref: '#/components/schemas/ReactionConfig'
-          type:
-          - "null"
-          - object
-        runtime:
           type:
           - "null"
           - string

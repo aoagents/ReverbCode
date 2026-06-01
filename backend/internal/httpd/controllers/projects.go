@@ -87,8 +87,9 @@ func (c *ProjectsController) get(w http.ResponseWriter, r *http.Request) {
 	resp, err := newGetProjectResponse(got)
 	if err != nil {
 		// GetResult set neither variant — a Manager-contract violation. Map it
-		// to a 500 here, before any status/body is written.
-		writeProjectError(w, r, err, http.StatusInternalServerError)
+		// to a 500 here, before any status/body is written. A plain error (not
+		// *project.Error) falls through writeProjectError to a 500 envelope.
+		writeProjectError(w, r, err)
 		return
 	}
 	envelope.WriteJSON(w, http.StatusOK, resp)

@@ -64,6 +64,11 @@ func New(yamlBytes []byte) (*Spec, error) {
 	return &Spec{doc: doc}, nil
 }
 
+// Embedded returns the raw bytes of the committed, embedded openapi.yaml. The
+// code-first generator's drift and route-parity tests compare against it
+// (specgen.Build() must equal these bytes); ServeYAML writes the same bytes.
+func Embedded() []byte { return openapiYAML }
+
 // Operation returns the spec slice for a single (method, path) pair, ready
 // to be JSON-serialised. The slice is the OpenAPI Operation object (the
 // inner block under e.g. paths./projects.get), with parent path-level

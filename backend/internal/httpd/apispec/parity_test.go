@@ -48,7 +48,7 @@ func TestRouteSpecParity(t *testing.T) {
 	var doc struct {
 		Paths map[string]map[string]yaml.Node `yaml:"paths"`
 	}
-	if err := yaml.Unmarshal(apispec.Default().YAML(), &doc); err != nil {
+	if err := yaml.Unmarshal(apispec.Embedded(), &doc); err != nil {
 		t.Fatalf("parse spec: %v", err)
 	}
 	httpMethods := map[string]bool{"get": true, "post": true, "put": true, "patch": true, "delete": true}

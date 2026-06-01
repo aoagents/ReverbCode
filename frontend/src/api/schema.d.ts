@@ -108,11 +108,7 @@ export interface components {
             id: string;
             name: string;
             path: string;
-            reactions?: {
-                [key: string]: components["schemas"]["ReactionConfig"];
-            };
             repo: string;
-            runtime?: string;
             scm?: components["schemas"]["SCMConfig"];
             tracker?: components["schemas"]["TrackerConfig"];
         };
@@ -124,16 +120,6 @@ export interface components {
         ProjectOrDegraded: components["schemas"]["Project"] | components["schemas"]["Degraded"];
         ProjectResponse: {
             project: components["schemas"]["Project"];
-        };
-        ReactionConfig: {
-            action?: string;
-            auto?: null | boolean;
-            escalateAfter?: unknown;
-            includeSummary?: null | boolean;
-            message?: string;
-            priority?: string;
-            retries?: null | number;
-            threshold?: string;
         };
         ReloadResult: {
             degradedCount: number;
@@ -172,10 +158,6 @@ export interface components {
         };
         UpdateConfigInput: {
             agent?: null | string;
-            reactions?: null | {
-                [key: string]: components["schemas"]["ReactionConfig"];
-            };
-            runtime?: null | string;
             scm?: components["schemas"]["SCMConfig"];
             tracker?: components["schemas"]["TrackerConfig"];
         };

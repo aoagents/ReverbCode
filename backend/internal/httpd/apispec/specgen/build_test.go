@@ -16,7 +16,7 @@ func TestBuild_MatchesEmbedded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
-	embedded := apispec.Default().YAML()
+	embedded := apispec.Embedded()
 	if !bytes.Equal(got, embedded) {
 		t.Fatalf("embedded openapi.yaml is stale — run `go generate ./...` and commit.\n"+
 			"len(fresh)=%d len(embedded)=%d", len(got), len(embedded))

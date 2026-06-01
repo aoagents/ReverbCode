@@ -125,7 +125,6 @@ var schemaNames = map[string]string{
 	"ProjectTrackerConfig":     "TrackerConfig",
 	"ProjectSCMConfig":         "SCMConfig",
 	"ProjectSCMWebhookConfig":  "SCMWebhookConfig",
-	"ProjectReactionConfig":    "ReactionConfig",
 }
 
 // markRequestBodyRequired sets requestBody.required: true on the operation's
