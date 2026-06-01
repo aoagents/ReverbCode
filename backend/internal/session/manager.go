@@ -32,6 +32,11 @@ type lifecycleRecorder interface {
 	MarkTerminated(ctx context.Context, id domain.SessionID) error
 }
 
+type runtimeController interface {
+	Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error)
+	Destroy(ctx context.Context, handle ports.RuntimeHandle) error
+}
+
 type sessionStore interface {
 	CreateSession(ctx context.Context, rec domain.SessionRecord) (domain.SessionRecord, error)
 	GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error)
@@ -42,7 +47,7 @@ type sessionStore interface {
 // Manager coordinates session spawn, restore, kill, listing, and cleanup over
 // the outbound ports.
 type Manager struct {
-	runtime   ports.Runtime
+	runtime   runtimeController
 	agent     ports.Agent
 	workspace ports.Workspace
 	store     sessionStore
@@ -53,7 +58,7 @@ type Manager struct {
 
 // Deps are the collaborators a Session Manager needs; New wires them together.
 type Deps struct {
-	Runtime   ports.Runtime
+	Runtime   runtimeController
 	Agent     ports.Agent
 	Workspace ports.Workspace
 	Store     sessionStore

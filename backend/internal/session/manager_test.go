@@ -93,8 +93,7 @@ func (r *fakeRuntime) Create(context.Context, ports.RuntimeConfig) (ports.Runtim
 	r.created++
 	return ports.RuntimeHandle{ID: "h1"}, nil
 }
-func (r *fakeRuntime) Destroy(context.Context, ports.RuntimeHandle) error         { r.destroyed++; return nil }
-func (r *fakeRuntime) IsAlive(context.Context, ports.RuntimeHandle) (bool, error) { return true, nil }
+func (r *fakeRuntime) Destroy(context.Context, ports.RuntimeHandle) error { r.destroyed++; return nil }
 
 type fakeAgent struct{}
 

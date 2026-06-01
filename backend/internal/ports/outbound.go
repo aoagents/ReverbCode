@@ -20,10 +20,10 @@ type AgentMessenger interface {
 	Send(ctx context.Context, id domain.SessionID, message string) error
 }
 
-// ---- runtime / agent / workspace plugin ports (used by the Session Manager) ----
+// ---- runtime / agent / workspace plugin ports ----
 
-// Runtime is where a session's agent process runs.
-// The Session Manager creates one per session and tears it down.
+// Runtime is the full runtime adapter contract: session creation/teardown plus
+// liveness probing for reapers and terminal attachment.
 type Runtime interface {
 	Create(ctx context.Context, cfg RuntimeConfig) (RuntimeHandle, error)
 	Destroy(ctx context.Context, handle RuntimeHandle) error
