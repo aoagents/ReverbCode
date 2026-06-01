@@ -280,6 +280,15 @@ func TestParseVersion(t *testing.T) {
 	if compareVersion(semver{0, 44, 2}, semver{0, 44, 3}) >= 0 {
 		t.Fatal("compareVersion should order 0.44.2 before 0.44.3")
 	}
+	if got := RequiredVersion(); got != "0.44.3" {
+		t.Fatalf("RequiredVersion = %q, want 0.44.3", got)
+	}
+	if got, err := CheckVersionOutput("zellij 0.44.3"); err != nil || got != "0.44.3" {
+		t.Fatalf("CheckVersionOutput supported = %q, %v", got, err)
+	}
+	if _, err := CheckVersionOutput("zellij 0.44.2"); err == nil {
+		t.Fatal("CheckVersionOutput unsupported: got nil error")
+	}
 }
 
 func TestSendMessageChunksAndSendsEnter(t *testing.T) {

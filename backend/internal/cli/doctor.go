@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/zellij"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 )
 
@@ -115,7 +116,7 @@ func (c *commandContext) runDoctor(ctx context.Context) []doctorCheck {
 
 	checks = append(checks,
 		c.checkTool("git", true),
-		c.checkTool("zellij", false),
+		c.checkZellij(ctx),
 	)
 	return checks
 }
@@ -143,6 +144,24 @@ func checkStore(dataDir string) doctorCheck {
 	default:
 		return doctorCheck{Level: doctorFail, Name: "sqlite", Message: err.Error()}
 	}
+}
+
+func (c *commandContext) checkZellij(ctx context.Context) doctorCheck {
+	path, err := c.deps.LookPath("zellij")
+	if err != nil {
+		return doctorCheck{Level: doctorWarn, Name: "zellij", Message: "not found in PATH"}
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
+	out, err := c.deps.CommandOutput(reqCtx, path, "--version")
+	if err != nil {
+		return doctorCheck{Level: doctorFail, Name: "zellij", Message: fmt.Sprintf("%s: %v", path, err)}
+	}
+	version, err := zellij.CheckVersionOutput(string(out))
+	if err != nil {
+		return doctorCheck{Level: doctorFail, Name: "zellij", Message: fmt.Sprintf("%s: %v", path, err)}
+	}
+	return doctorCheck{Level: doctorPass, Name: "zellij", Message: fmt.Sprintf("%s (%s)", path, version)}
 }
 
 func (c *commandContext) checkTool(name string, required bool) doctorCheck {

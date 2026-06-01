@@ -228,12 +228,8 @@ func (r *Runtime) ensureSupportedVersion(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("zellij runtime: check version: %w", err)
 	}
-	version, err := parseVersion(string(out))
-	if err != nil {
+	if _, err := CheckVersionOutput(string(out)); err != nil {
 		return fmt.Errorf("zellij runtime: check version: %w", err)
-	}
-	if compareVersion(version, semver{minMajor, minMinor, minPatch}) < 0 {
-		return fmt.Errorf("zellij runtime: unsupported zellij version %s; require >= %d.%d.%d", version, minMajor, minMinor, minPatch)
 	}
 	return nil
 }
@@ -470,6 +466,25 @@ func tailLines(s string, n int) string {
 	}
 	return strings.Join(lines[len(lines)-n:], "")
 }
+
+// RequiredVersion returns the minimum Zellij version AO's runtime adapter
+// supports.
+func RequiredVersion() string { return minSupportedVersion().String() }
+
+// CheckVersionOutput parses `zellij --version` output, returning the parsed
+// version when it satisfies AO's minimum runtime requirement.
+func CheckVersionOutput(out string) (string, error) {
+	version, err := parseVersion(out)
+	if err != nil {
+		return "", err
+	}
+	if compareVersion(version, minSupportedVersion()) < 0 {
+		return version.String(), fmt.Errorf("unsupported zellij version %s; require >= %s", version, RequiredVersion())
+	}
+	return version.String(), nil
+}
+
+func minSupportedVersion() semver { return semver{minMajor, minMinor, minPatch} }
 
 type semver struct {
 	major int
