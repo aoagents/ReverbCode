@@ -1,4 +1,4 @@
-package service
+package project
 
 import (
 	"context"
@@ -7,8 +7,8 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
-// ProjectStore is the durable project persistence surface required by ProjectService.
-type ProjectStore interface {
+// Store is the durable project persistence surface required by Service.
+type Store interface {
 	ListProjects(ctx context.Context) ([]domain.ProjectRecord, error)
 	GetProject(ctx context.Context, id string) (domain.ProjectRecord, bool, error)
 	FindProjectByPath(ctx context.Context, path string) (domain.ProjectRecord, bool, error)

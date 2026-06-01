@@ -1,4 +1,4 @@
-package service
+package session
 
 import (
 	"context"
@@ -8,29 +8,29 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
-type fakeSessionStore struct {
+type fakeStore struct {
 	sessions map[domain.SessionID]domain.SessionRecord
 	pr       map[domain.SessionID]domain.PRFacts
 	num      int
 }
 
-func newFakeSessionStore() *fakeSessionStore {
-	return &fakeSessionStore{sessions: map[domain.SessionID]domain.SessionRecord{}, pr: map[domain.SessionID]domain.PRFacts{}}
+func newFakeStore() *fakeStore {
+	return &fakeStore{sessions: map[domain.SessionID]domain.SessionRecord{}, pr: map[domain.SessionID]domain.PRFacts{}}
 }
 
-func (f *fakeSessionStore) CreateSession(_ context.Context, rec domain.SessionRecord) (domain.SessionRecord, error) {
+func (f *fakeStore) CreateSession(_ context.Context, rec domain.SessionRecord) (domain.SessionRecord, error) {
 	f.num++
 	rec.ID = domain.SessionID(fmt.Sprintf("%s-%d", rec.ProjectID, f.num))
 	f.sessions[rec.ID] = rec
 	return rec, nil
 }
 
-func (f *fakeSessionStore) GetSession(_ context.Context, id domain.SessionID) (domain.SessionRecord, bool, error) {
+func (f *fakeStore) GetSession(_ context.Context, id domain.SessionID) (domain.SessionRecord, bool, error) {
 	r, ok := f.sessions[id]
 	return r, ok, nil
 }
 
-func (f *fakeSessionStore) ListSessions(_ context.Context, p domain.ProjectID) ([]domain.SessionRecord, error) {
+func (f *fakeStore) ListSessions(_ context.Context, p domain.ProjectID) ([]domain.SessionRecord, error) {
 	var out []domain.SessionRecord
 	for _, r := range f.sessions {
 		if r.ProjectID == p {
@@ -40,7 +40,7 @@ func (f *fakeSessionStore) ListSessions(_ context.Context, p domain.ProjectID) (
 	return out, nil
 }
 
-func (f *fakeSessionStore) ListAllSessions(_ context.Context) ([]domain.SessionRecord, error) {
+func (f *fakeStore) ListAllSessions(_ context.Context) ([]domain.SessionRecord, error) {
 	out := make([]domain.SessionRecord, 0, len(f.sessions))
 	for _, r := range f.sessions {
 		out = append(out, r)
@@ -48,17 +48,17 @@ func (f *fakeSessionStore) ListAllSessions(_ context.Context) ([]domain.SessionR
 	return out, nil
 }
 
-func (f *fakeSessionStore) GetDisplayPRFactsForSession(_ context.Context, id domain.SessionID) (domain.PRFacts, bool, error) {
+func (f *fakeStore) GetDisplayPRFactsForSession(_ context.Context, id domain.SessionID) (domain.PRFacts, bool, error) {
 	pr, ok := f.pr[id]
 	return pr, ok, nil
 }
 
 func TestSessionListDerivesStatusFromPRFacts(t *testing.T) {
-	st := newFakeSessionStore()
+	st := newFakeStore()
 	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Activity: domain.Activity{State: domain.ActivityActive}}
 	st.pr["mer-1"] = domain.PRFacts{URL: "pr1", CI: domain.CIFailing}
 
-	list, err := (&Session{store: st}).List(context.Background(), SessionListFilter{ProjectID: "mer"})
+	list, err := (&Service{store: st}).List(context.Background(), ListFilter{ProjectID: "mer"})
 	if err != nil {
 		t.Fatal(err)
 	}

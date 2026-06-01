@@ -17,7 +17,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/controllers"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
-	"github.com/aoagents/agent-orchestrator/backend/internal/service"
+	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 )
 
 // Build reflects the Go contract types and the operation registry below into
@@ -133,15 +133,15 @@ var schemaNames = map[string]string{
 	"ControllersSpawnOrchestratorRequest":   "SpawnOrchestratorRequest",
 	"ControllersSpawnOrchestratorResponse":  "SpawnOrchestratorResponse",
 	"ControllersOrchestratorResponse":       "OrchestratorResponse",
-	// service project entities + DTOs
-	"ServiceProject":             "Project",
-	"ServiceProjectSummary":      "ProjectSummary",
-	"ServiceDegradedProject":     "DegradedProject",
-	"ServiceAddProjectInput":     "AddProjectInput",
-	"ServiceRemoveProjectResult": "RemoveProjectResult",
-	"ServiceTrackerConfig":       "TrackerConfig",
-	"ServiceSCMConfig":           "SCMConfig",
-	"ServiceSCMWebhookConfig":    "SCMWebhookConfig",
+	// service/project entities + DTOs
+	"ProjectProject":          "Project",
+	"ProjectSummary":          "ProjectSummary",
+	"ProjectDegraded":         "DegradedProject",
+	"ProjectAddInput":         "AddProjectInput",
+	"ProjectRemoveResult":     "RemoveProjectResult",
+	"ProjectTrackerConfig":    "TrackerConfig",
+	"ProjectSCMConfig":        "SCMConfig",
+	"ProjectSCMWebhookConfig": "SCMWebhookConfig",
 }
 
 // markRequestBodyRequired sets requestBody.required: true on the operation's
@@ -235,7 +235,7 @@ func projectOperations() []operation {
 		{
 			method: http.MethodPost, path: "/api/v1/projects", id: "addProject", tag: "projects",
 			summary: "Register a new project from a git repository path",
-			reqBody: service.AddProjectInput{},
+			reqBody: projectsvc.AddInput{},
 			resps: []respUnit{
 				{http.StatusCreated, controllers.ProjectResponse{}},
 				{http.StatusBadRequest, envelope.APIError{}},
@@ -258,7 +258,7 @@ func projectOperations() []operation {
 			summary:    "Remove a project; stops sessions, cleans workspaces, unregisters",
 			pathParams: []any{controllers.ProjectIDParam{}},
 			resps: []respUnit{
-				{http.StatusOK, service.RemoveProjectResult{}},
+				{http.StatusOK, projectsvc.RemoveResult{}},
 				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},

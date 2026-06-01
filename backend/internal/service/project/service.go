@@ -1,4 +1,4 @@
-package service
+package project
 
 import (
 	"context"
@@ -13,44 +13,44 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
-// ProjectManager is the controller-facing contract for the /api/v1/projects surface.
-type ProjectManager interface {
+// Manager is the controller-facing contract for the /api/v1/projects surface.
+type Manager interface {
 	// List returns every registered project, including degraded entries
 	// (those whose config failed to load but whose registry entry survives).
-	List(ctx context.Context) ([]ProjectSummary, error)
+	List(ctx context.Context) ([]Summary, error)
 
-	// Get returns one project, discriminating ok vs degraded via GetProjectResult.
-	Get(ctx context.Context, id domain.ProjectID) (GetProjectResult, error)
+	// Get returns one project, discriminating ok vs degraded via GetResult.
+	Get(ctx context.Context, id domain.ProjectID) (GetResult, error)
 
 	// Add registers a new project from a git repository path.
-	Add(ctx context.Context, in AddProjectInput) (Project, error)
+	Add(ctx context.Context, in AddInput) (Project, error)
 
 	// Remove unregisters a project, stopping its sessions and reclaiming
 	// managed workspaces.
-	Remove(ctx context.Context, id domain.ProjectID) (RemoveProjectResult, error)
+	Remove(ctx context.Context, id domain.ProjectID) (RemoveResult, error)
 }
 
-// ProjectService implements project registration and lookup use-cases for controllers.
-type ProjectService struct {
-	store ProjectStore
+// Service implements project registration and lookup use-cases for controllers.
+type Service struct {
+	store Store
 }
 
-var _ ProjectManager = (*ProjectService)(nil)
+var _ Manager = (*Service)(nil)
 
-// NewProject returns a project service backed by the given durable store.
-func NewProject(store ProjectStore) *ProjectService {
-	return &ProjectService{store: store}
+// New returns a project service backed by the given durable store.
+func New(store Store) *Service {
+	return &Service{store: store}
 }
 
 // List returns every active registered project.
-func (m *ProjectService) List(ctx context.Context) ([]ProjectSummary, error) {
+func (m *Service) List(ctx context.Context) ([]Summary, error) {
 	projects, err := m.store.ListProjects(ctx)
 	if err != nil {
-		return nil, projectInternal("PROJECTS_LIST_FAILED", "Failed to load projects")
+		return nil, internal("PROJECTS_LIST_FAILED", "Failed to load projects")
 	}
-	out := make([]ProjectSummary, 0, len(projects))
+	out := make([]Summary, 0, len(projects))
 	for _, row := range projects {
-		out = append(out, ProjectSummary{
+		out = append(out, Summary{
 			ID:            domain.ProjectID(row.ID),
 			Name:          displayName(row),
 			SessionPrefix: sessionPrefix(row.ID),
@@ -60,29 +60,29 @@ func (m *ProjectService) List(ctx context.Context) ([]ProjectSummary, error) {
 }
 
 // Get returns one active project by id.
-func (m *ProjectService) Get(ctx context.Context, id domain.ProjectID) (GetProjectResult, error) {
+func (m *Service) Get(ctx context.Context, id domain.ProjectID) (GetResult, error) {
 	if err := validateProjectID(id); err != nil {
-		return GetProjectResult{}, err
+		return GetResult{}, err
 	}
 	row, ok, err := m.store.GetProject(ctx, string(id))
 	if err != nil {
-		return GetProjectResult{}, projectInternal("PROJECT_LOAD_FAILED", "Failed to load project")
+		return GetResult{}, internal("PROJECT_LOAD_FAILED", "Failed to load project")
 	}
 	if !ok || !row.ArchivedAt.IsZero() {
-		return GetProjectResult{}, projectNotFound("PROJECT_NOT_FOUND", "Unknown project")
+		return GetResult{}, notFound("PROJECT_NOT_FOUND", "Unknown project")
 	}
 	p := projectFromRow(row)
-	return GetProjectResult{Status: "ok", Project: &p}, nil
+	return GetResult{Status: "ok", Project: &p}, nil
 }
 
 // Add registers a local git repository as a project.
-func (m *ProjectService) Add(ctx context.Context, in AddProjectInput) (Project, error) {
+func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 	path, err := normalizePath(in.Path)
 	if err != nil {
 		return Project{}, err
 	}
 	if !isGitRepo(path) {
-		return Project{}, projectBadRequest("NOT_A_GIT_REPO", "Repository path must point to a git repository", nil)
+		return Project{}, badRequest("NOT_A_GIT_REPO", "Repository path must point to a git repository", nil)
 	}
 
 	id := defaultProjectID(path)
@@ -102,17 +102,17 @@ func (m *ProjectService) Add(ctx context.Context, in AddProjectInput) (Project, 
 	}
 
 	if existing, ok, err := m.store.FindProjectByPath(ctx, path); err != nil {
-		return Project{}, projectInternal("PROJECT_LOAD_FAILED", "Failed to load project")
+		return Project{}, internal("PROJECT_LOAD_FAILED", "Failed to load project")
 	} else if ok {
-		return Project{}, projectConflict("PATH_ALREADY_REGISTERED", "A project at this path is already registered", map[string]any{
+		return Project{}, conflict("PATH_ALREADY_REGISTERED", "A project at this path is already registered", map[string]any{
 			"existingProjectId":  existing.ID,
 			"suggestedProjectId": string(m.suggestID(ctx, id)),
 		})
 	}
 	if existing, ok, err := m.store.GetProject(ctx, string(id)); err != nil {
-		return Project{}, projectInternal("PROJECT_LOAD_FAILED", "Failed to load project")
+		return Project{}, internal("PROJECT_LOAD_FAILED", "Failed to load project")
 	} else if ok && existing.Path != path {
-		return Project{}, projectConflict("ID_ALREADY_REGISTERED", "A project with this id is already registered for a different path", map[string]any{
+		return Project{}, conflict("ID_ALREADY_REGISTERED", "A project with this id is already registered for a different path", map[string]any{
 			"existingProjectId":  existing.ID,
 			"suggestedProjectId": string(m.suggestID(ctx, id)),
 		})
@@ -131,21 +131,21 @@ func (m *ProjectService) Add(ctx context.Context, in AddProjectInput) (Project, 
 }
 
 // Remove archives a project registration.
-func (m *ProjectService) Remove(ctx context.Context, id domain.ProjectID) (RemoveProjectResult, error) {
+func (m *Service) Remove(ctx context.Context, id domain.ProjectID) (RemoveResult, error) {
 	if err := validateProjectID(id); err != nil {
-		return RemoveProjectResult{}, err
+		return RemoveResult{}, err
 	}
 	ok, err := m.store.ArchiveProject(ctx, string(id), time.Now())
 	if err != nil {
-		return RemoveProjectResult{}, projectInternal("PROJECT_REMOVE_FAILED", "Failed to remove project")
+		return RemoveResult{}, internal("PROJECT_REMOVE_FAILED", "Failed to remove project")
 	}
 	if !ok {
-		return RemoveProjectResult{}, projectNotFound("PROJECT_NOT_FOUND", "Unknown project")
+		return RemoveResult{}, notFound("PROJECT_NOT_FOUND", "Unknown project")
 	}
-	return RemoveProjectResult{ProjectID: id, RemovedStorageDir: false}, nil
+	return RemoveResult{ProjectID: id, RemovedStorageDir: false}, nil
 }
 
-func (m *ProjectService) suggestID(ctx context.Context, base domain.ProjectID) domain.ProjectID {
+func (m *Service) suggestID(ctx context.Context, base domain.ProjectID) domain.ProjectID {
 	for i := 1; ; i++ {
 		candidate := domain.ProjectID(string(base) + strconv.Itoa(i))
 		if _, ok, _ := m.store.GetProject(ctx, string(candidate)); !ok {
@@ -174,12 +174,12 @@ func displayName(row domain.ProjectRecord) string {
 func normalizePath(raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return "", projectBadRequest("PATH_REQUIRED", "Repository path is required", nil)
+		return "", badRequest("PATH_REQUIRED", "Repository path is required", nil)
 	}
 	if strings.HasPrefix(raw, "~") {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			return "", projectBadRequest("INVALID_PATH", "Repository path could not be expanded", nil)
+			return "", badRequest("INVALID_PATH", "Repository path could not be expanded", nil)
 		}
 		if raw == "~" {
 			raw = home
@@ -189,7 +189,7 @@ func normalizePath(raw string) (string, error) {
 	}
 	abs, err := filepath.Abs(raw)
 	if err != nil {
-		return "", projectBadRequest("INVALID_PATH", "Repository path is invalid", nil)
+		return "", badRequest("INVALID_PATH", "Repository path is invalid", nil)
 	}
 	return filepath.Clean(abs), nil
 }
@@ -229,7 +229,7 @@ var projectIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 func validateProjectID(id domain.ProjectID) error {
 	raw := string(id)
 	if raw == "" || raw == "." || raw == ".." || strings.ContainsAny(raw, `/\`) || !projectIDPattern.MatchString(raw) {
-		return projectBadRequest("INVALID_PROJECT_ID", "Project id failed storage-path validation", nil)
+		return badRequest("INVALID_PROJECT_ID", "Project id failed storage-path validation", nil)
 	}
 	return nil
 }

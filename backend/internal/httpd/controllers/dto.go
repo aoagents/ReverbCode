@@ -5,7 +5,7 @@ import (
 	"errors"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
-	"github.com/aoagents/agent-orchestrator/backend/internal/service"
+	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 )
 
 // HTTP response envelopes for the projects surface — the SINGLE definition of
@@ -13,7 +13,7 @@ import (
 // apispec.Build reflects these same types into openapi.yaml, so the served
 // contract and the generated spec can't disagree. The request side needs no
 // wrappers: handlers decode the body straight into the project commands
-// (service.AddProjectInput), which apispec also reflects.
+// (projectsvc.AddInput), which apispec also reflects.
 
 // ProjectIDParam is the {id} path parameter shared by the /projects/{id}
 // routes. Handlers read it via chi.URLParam (see projectID); it is declared here
@@ -25,12 +25,12 @@ type ProjectIDParam struct {
 
 // ListProjectsResponse is the body of GET /api/v1/projects.
 type ListProjectsResponse struct {
-	Projects []service.ProjectSummary `json:"projects"`
+	Projects []projectsvc.Summary `json:"projects"`
 }
 
 // ProjectResponse is the { project } body shared by POST /projects (201).
 type ProjectResponse struct {
-	Project service.Project `json:"project"`
+	Project projectsvc.Project `json:"project"`
 }
 
 // GetProjectResponse is the { status, project } body of GET /projects/{id},
@@ -45,8 +45,8 @@ type GetProjectResponse struct {
 // emits the right object) and exposes the oneOf variants to the spec reflector
 // (so apispec.Build emits `oneOf: [Project, Degraded]`) — one type, both jobs.
 type ProjectOrDegraded struct {
-	Project  *service.Project
-	Degraded *service.DegradedProject
+	Project  *projectsvc.Project
+	Degraded *projectsvc.Degraded
 }
 
 // MarshalJSON encodes whichever variant is set (Project or Degraded).
@@ -75,14 +75,14 @@ var errEmptyProjectOrDegraded = errors.New("controllers: GetResult has neither P
 // JSONSchemaOneOf is read by swaggest's reflector (apispec.Build) to emit the
 // oneOf for this field; it is not used at runtime.
 func (ProjectOrDegraded) JSONSchemaOneOf() []interface{} {
-	return []interface{}{service.Project{}, service.DegradedProject{}}
+	return []interface{}{projectsvc.Project{}, projectsvc.Degraded{}}
 }
 
 // newGetProjectResponse maps the internal GetResult onto the wire envelope —
 // the explicit project→httpd boundary the result type exists for. It errors
 // when the result sets neither variant, so the handler can return a clean 500
 // BEFORE writing the 200 status rather than flushing a truncated body.
-func newGetProjectResponse(res service.GetProjectResult) (GetProjectResponse, error) {
+func newGetProjectResponse(res projectsvc.GetResult) (GetProjectResponse, error) {
 	if res.Project == nil && res.Degraded == nil {
 		return GetProjectResponse{}, errEmptyProjectOrDegraded
 	}

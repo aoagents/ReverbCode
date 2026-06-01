@@ -13,7 +13,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
-	"github.com/aoagents/agent-orchestrator/backend/internal/service"
+	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
 )
 
 type fakeSessionService struct {
@@ -27,7 +27,7 @@ func newFakeSessionService() *fakeSessionService {
 	return &fakeSessionService{sessions: map[domain.SessionID]domain.Session{s.ID: s}}
 }
 
-func (f *fakeSessionService) List(_ context.Context, filter service.SessionListFilter) ([]domain.Session, error) {
+func (f *fakeSessionService) List(_ context.Context, filter sessionsvc.ListFilter) ([]domain.Session, error) {
 	var out []domain.Session
 	for _, s := range f.sessions {
 		if filter.ProjectID != "" && s.ProjectID != filter.ProjectID {

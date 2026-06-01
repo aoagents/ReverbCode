@@ -1,4 +1,4 @@
-package service
+package session
 
 import (
 	"context"
@@ -9,37 +9,37 @@ import (
 	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
 )
 
-// SessionStore is the read-only persistence surface needed to assemble controller-facing session read models.
-type SessionStore interface {
+// Store is the read-only persistence surface needed to assemble controller-facing session read models.
+type Store interface {
 	GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error)
 	ListSessions(ctx context.Context, project domain.ProjectID) ([]domain.SessionRecord, error)
 	ListAllSessions(ctx context.Context) ([]domain.SessionRecord, error)
 	GetDisplayPRFactsForSession(ctx context.Context, id domain.SessionID) (domain.PRFacts, bool, error)
 }
 
-// SessionListFilter captures API-facing session list query filters.
-type SessionListFilter struct {
+// ListFilter captures API-facing session list query filters.
+type ListFilter struct {
 	ProjectID        domain.ProjectID
 	Active           *bool
 	OrchestratorOnly bool
 	Fresh            bool
 }
 
-// Session is the controller-facing session service. It delegates command-side
+// Service is the controller-facing session service. It delegates command-side
 // session operations to the internal sessionmanager.Manager and owns read-model
 // assembly, including user-facing display status derivation.
-type Session struct {
+type Service struct {
 	manager *sessionmanager.Manager
-	store   SessionStore
+	store   Store
 }
 
-// NewSession wires a controller-facing session service over an internal session Manager.
-func NewSession(manager *sessionmanager.Manager, store SessionStore) *Session {
-	return &Session{manager: manager, store: store}
+// New wires a controller-facing session service over an internal session Manager.
+func New(manager *sessionmanager.Manager, store Store) *Service {
+	return &Service{manager: manager, store: store}
 }
 
 // Spawn creates a session and returns the API-facing read model.
-func (s *Session) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Session, error) {
+func (s *Service) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Session, error) {
 	rec, err := s.manager.Spawn(ctx, cfg)
 	if err != nil {
 		return domain.Session{}, err
@@ -48,7 +48,7 @@ func (s *Session) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 }
 
 // Restore relaunches a terminated session and returns the API-facing read model.
-func (s *Session) Restore(ctx context.Context, id domain.SessionID) (domain.Session, error) {
+func (s *Service) Restore(ctx context.Context, id domain.SessionID) (domain.Session, error) {
 	rec, err := s.manager.Restore(ctx, id)
 	if err != nil {
 		return domain.Session{}, err
@@ -57,22 +57,22 @@ func (s *Session) Restore(ctx context.Context, id domain.SessionID) (domain.Sess
 }
 
 // Kill delegates terminal intent and teardown to the internal manager.
-func (s *Session) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
+func (s *Service) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 	return s.manager.Kill(ctx, id)
 }
 
 // Send delegates agent messaging to the internal manager.
-func (s *Session) Send(ctx context.Context, id domain.SessionID, message string) error {
+func (s *Service) Send(ctx context.Context, id domain.SessionID, message string) error {
 	return s.manager.Send(ctx, id, message)
 }
 
 // Cleanup delegates terminal workspace cleanup to the internal manager.
-func (s *Session) Cleanup(ctx context.Context, project domain.ProjectID) ([]domain.SessionID, error) {
+func (s *Service) Cleanup(ctx context.Context, project domain.ProjectID) ([]domain.SessionID, error) {
 	return s.manager.Cleanup(ctx, project)
 }
 
 // List returns sessions as enriched display models after applying API filters.
-func (s *Session) List(ctx context.Context, filter SessionListFilter) ([]domain.Session, error) {
+func (s *Service) List(ctx context.Context, filter ListFilter) ([]domain.Session, error) {
 	recs, err := s.listRecords(ctx, filter.ProjectID)
 	if err != nil {
 		return nil, err
@@ -91,7 +91,7 @@ func (s *Session) List(ctx context.Context, filter SessionListFilter) ([]domain.
 	return out, nil
 }
 
-func (s *Session) listRecords(ctx context.Context, project domain.ProjectID) ([]domain.SessionRecord, error) {
+func (s *Service) listRecords(ctx context.Context, project domain.ProjectID) ([]domain.SessionRecord, error) {
 	if project == "" {
 		recs, err := s.store.ListAllSessions(ctx)
 		if err != nil {
@@ -106,7 +106,7 @@ func (s *Session) listRecords(ctx context.Context, project domain.ProjectID) ([]
 	return recs, nil
 }
 
-func matchesSessionFilter(rec domain.SessionRecord, filter SessionListFilter) bool {
+func matchesSessionFilter(rec domain.SessionRecord, filter ListFilter) bool {
 	if filter.Active != nil && rec.IsTerminated == *filter.Active {
 		return false
 	}
@@ -120,7 +120,7 @@ func matchesSessionFilter(rec domain.SessionRecord, filter SessionListFilter) bo
 }
 
 // Get returns one session as an enriched display model, or sessionmanager.ErrNotFound if it is absent.
-func (s *Session) Get(ctx context.Context, id domain.SessionID) (domain.Session, error) {
+func (s *Service) Get(ctx context.Context, id domain.SessionID) (domain.Session, error) {
 	rec, ok, err := s.store.GetSession(ctx, id)
 	if err != nil {
 		return domain.Session{}, fmt.Errorf("get %s: %w", id, err)
@@ -131,7 +131,7 @@ func (s *Session) Get(ctx context.Context, id domain.SessionID) (domain.Session,
 	return s.toSession(ctx, rec)
 }
 
-func (s *Session) toSession(ctx context.Context, rec domain.SessionRecord) (domain.Session, error) {
+func (s *Service) toSession(ctx context.Context, rec domain.SessionRecord) (domain.Session, error) {
 	pr, ok, err := s.store.GetDisplayPRFactsForSession(ctx, rec.ID)
 	if err != nil {
 		return domain.Session{}, fmt.Errorf("pr facts %s: %w", rec.ID, err)

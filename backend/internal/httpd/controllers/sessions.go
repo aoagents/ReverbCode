@@ -14,7 +14,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apispec"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
-	"github.com/aoagents/agent-orchestrator/backend/internal/service"
+	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
 	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
 )
 
@@ -25,7 +25,7 @@ const (
 
 // SessionService is the controller-facing session service contract.
 type SessionService interface {
-	List(ctx context.Context, filter service.SessionListFilter) ([]domain.Session, error)
+	List(ctx context.Context, filter sessionsvc.ListFilter) ([]domain.Session, error)
 	Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Session, error)
 	Get(ctx context.Context, id domain.SessionID) (domain.Session, error)
 	Restore(ctx context.Context, id domain.SessionID) (domain.Session, error)
@@ -183,7 +183,7 @@ func (c *SessionsController) spawnOrchestrator(w http.ResponseWriter, r *http.Re
 	}
 	if in.Clean {
 		active := true
-		orchestrators, err := c.Svc.List(r.Context(), service.SessionListFilter{ProjectID: in.ProjectID, Active: &active, OrchestratorOnly: true})
+		orchestrators, err := c.Svc.List(r.Context(), sessionsvc.ListFilter{ProjectID: in.ProjectID, Active: &active, OrchestratorOnly: true})
 		if err != nil {
 			writeSessionError(w, r, err)
 			return
@@ -209,27 +209,27 @@ func sessionID(r *http.Request) domain.SessionID {
 	return domain.SessionID(chi.URLParam(r, "sessionId"))
 }
 
-func parseSessionListFilter(r *http.Request) (service.SessionListFilter, error) {
+func parseSessionListFilter(r *http.Request) (sessionsvc.ListFilter, error) {
 	q := r.URL.Query()
-	filter := service.SessionListFilter{ProjectID: domain.ProjectID(q.Get("project"))}
+	filter := sessionsvc.ListFilter{ProjectID: domain.ProjectID(q.Get("project"))}
 	if raw := q.Get("active"); raw != "" {
 		active, err := strconv.ParseBool(raw)
 		if err != nil {
-			return service.SessionListFilter{}, errors.New("active must be a boolean")
+			return sessionsvc.ListFilter{}, errors.New("active must be a boolean")
 		}
 		filter.Active = &active
 	}
 	if raw := q.Get("orchestratorOnly"); raw != "" {
 		orchestratorOnly, err := strconv.ParseBool(raw)
 		if err != nil {
-			return service.SessionListFilter{}, errors.New("orchestratorOnly must be a boolean")
+			return sessionsvc.ListFilter{}, errors.New("orchestratorOnly must be a boolean")
 		}
 		filter.OrchestratorOnly = orchestratorOnly
 	}
 	if raw := q.Get("fresh"); raw != "" {
 		fresh, err := strconv.ParseBool(raw)
 		if err != nil {
-			return service.SessionListFilter{}, errors.New("fresh must be a boolean")
+			return sessionsvc.ListFilter{}, errors.New("fresh must be a boolean")
 		}
 		filter.Fresh = fresh
 	}

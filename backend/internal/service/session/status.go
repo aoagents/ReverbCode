@@ -1,4 +1,4 @@
-package service
+package session
 
 import "github.com/aoagents/agent-orchestrator/backend/internal/domain"
 
