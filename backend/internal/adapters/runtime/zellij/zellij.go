@@ -156,6 +156,25 @@ func (r *Runtime) Destroy(ctx context.Context, handle ports.RuntimeHandle) error
 	return nil
 }
 
+// WriteChars types s into the session's pane via `zellij action write-chars`.
+// Single shot, no chunking, no follow-up Enter. The pane-ping messenger
+// (panep) sequences body + newline as two separate calls so the agent's input
+// handler sees one well-formed line followed by a submit.
+//
+// Not part of ports.Runtime — runtime adapters that don't model a typing
+// surface (none of the message-injection adapters), and panep depends on the
+// narrow RuntimePaneWriter contract instead of the full Runtime interface.
+func (r *Runtime) WriteChars(ctx context.Context, handle ports.RuntimeHandle, s string) error {
+	id, paneID, err := handleID(handle)
+	if err != nil {
+		return err
+	}
+	if _, err := r.run(ctx, writeCharsArgs(id, paneID, s)...); err != nil {
+		return fmt.Errorf("zellij runtime: write-chars %s/%s: %w", id, paneID, err)
+	}
+	return nil
+}
+
 // SendMessage pastes a message into the session's pane (chunked) and presses
 // Enter to submit it.
 func (r *Runtime) SendMessage(ctx context.Context, handle ports.RuntimeHandle, message string) error {

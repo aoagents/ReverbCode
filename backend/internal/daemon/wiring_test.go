@@ -8,7 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/messenger/composite"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/messenger/inbox"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/messenger/panep"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/zellij"
 	"github.com/aoagents/agent-orchestrator/backend/internal/cdc"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
@@ -95,7 +97,7 @@ func TestWiring_SessionStackSharesSingletons(t *testing.T) {
 
 	projects := project.NewManager(store)
 	runtime := zellij.New(zellij.Options{})
-	messenger := inbox.New(newStoreWorkspaceLookup(store))
+	messenger := newSessionMessenger(store, runtime, nil)
 	lcStack := startLifecycle(ctx, store, runtime, messenger, nil)
 	// Cancel-then-Stop in order: Stop drains the reaper goroutine, which only
 	// exits when ctx is cancelled. A naive `defer cancel(); defer lcStack.Stop()`
@@ -117,6 +119,23 @@ func TestWiring_SessionStackSharesSingletons(t *testing.T) {
 	}
 	if ss.messenger != messenger {
 		t.Error("buildSessionStack must reuse the messenger it is given, not construct a second one")
+	}
+	// The daemon's session messenger is a composite: inbox first (durable
+	// file write — must succeed), then panep (best-effort live pane ping).
+	// Reversing this would tell the agent about a file the inbox messenger
+	// failed to write.
+	comp, ok := messenger.(*composite.Messenger)
+	if !ok {
+		t.Fatalf("session messenger should be *composite.Messenger, got %T", messenger)
+	}
+	if len(comp.Inner) != 2 {
+		t.Fatalf("composite should wrap exactly 2 inner messengers (inbox + panep), got %d", len(comp.Inner))
+	}
+	if _, ok := comp.Inner[0].(*inbox.Messenger); !ok {
+		t.Errorf("composite Inner[0] should be *inbox.Messenger, got %T", comp.Inner[0])
+	}
+	if _, ok := comp.Inner[1].(*panep.Messenger); !ok {
+		t.Errorf("composite Inner[1] should be *panep.Messenger, got %T", comp.Inner[1])
 	}
 
 	// End-to-end: a session row in the shared store should be reachable through

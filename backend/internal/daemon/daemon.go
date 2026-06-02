@@ -11,7 +11,6 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/messenger/inbox"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/zellij"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd"
@@ -64,7 +63,7 @@ func Run() error {
 	// dual-LCM / dual-project-store hazards that fragmented adapters create.
 	runtimeAdapter := zellij.New(zellij.Options{})
 	projects := project.NewManager(store)
-	messenger := inbox.New(newStoreWorkspaceLookup(store))
+	messenger := newSessionMessenger(store, runtimeAdapter, log)
 
 	// Terminal streaming: the Zellij runtime supplies the PTY-attach command and
 	// liveness; the CDC broadcaster feeds the session-state channel. The manager

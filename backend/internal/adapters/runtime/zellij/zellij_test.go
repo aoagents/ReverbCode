@@ -291,6 +291,35 @@ func TestParseVersion(t *testing.T) {
 	}
 }
 
+// WriteChars is the narrow seam panep's RuntimePaneWriter calls — a single
+// `zellij action write-chars` against the handle's pane, no chunking, no
+// follow-up Enter. The composite messenger sequences body + newline as two
+// separate calls.
+func TestWriteCharsInvokesZellijAction(t *testing.T) {
+	fr := &fakeRunner{}
+	r := New(Options{Timeout: time.Second})
+	r.runner = fr
+
+	if err := r.WriteChars(context.Background(), ports.RuntimeHandle{ID: "sess-1/terminal_0"}, "hi"); err != nil {
+		t.Fatalf("WriteChars: %v", err)
+	}
+	if len(fr.calls) != 1 {
+		t.Fatalf("calls = %d, want 1", len(fr.calls))
+	}
+	want := []string{"--session", "sess-1", "action", "write-chars", "--pane-id", "terminal_0", "hi"}
+	if got := fr.calls[0].args; !reflect.DeepEqual(got, want) {
+		t.Fatalf("WriteChars args = %#v, want %#v", got, want)
+	}
+}
+
+func TestWriteCharsRejectsBadHandle(t *testing.T) {
+	r := New(Options{Timeout: time.Second})
+	r.runner = &fakeRunner{}
+	if err := r.WriteChars(context.Background(), ports.RuntimeHandle{ID: ""}, "hi"); err == nil {
+		t.Fatal("WriteChars with empty handle: got nil, want error")
+	}
+}
+
 func TestSendMessageChunksAndSendsEnter(t *testing.T) {
 	fr := &fakeRunner{}
 	r := New(Options{Timeout: time.Second, ChunkSize: 5})

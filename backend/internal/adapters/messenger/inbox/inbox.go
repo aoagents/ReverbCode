@@ -66,7 +66,7 @@ func (m *Messenger) Send(ctx context.Context, id domain.SessionID, message strin
 		return fmt.Errorf("inbox: prepare inbox for %s: %w", id, err)
 	}
 
-	name := filenameFor(m.clock(), message)
+	name := FilenameFor(TimeFromContext(ctx, m.clock), message)
 	if err := os.WriteFile(filepath.Join(inboxDir, name), []byte(message), 0o600); err != nil {
 		return fmt.Errorf("inbox: write %s for %s: %w", name, id, err)
 	}
@@ -100,11 +100,36 @@ func ensureRealDir(path string) error {
 	}
 }
 
-// filenameFor builds a sortable, collision-resistant name from the timestamp
+// FilenameFor builds a sortable, collision-resistant name from the timestamp
 // and message body. Underscore separator keeps the timestamp's own dashes
-// distinguishable from the hash prefix.
-func filenameFor(t time.Time, message string) string {
+// distinguishable from the hash prefix. Exported so adapters that point at the
+// file (e.g. the pane-ping messenger) can derive the same name the inbox
+// messenger would write for the same (t, message).
+func FilenameFor(t time.Time, message string) string {
 	sum := sha256.Sum256([]byte(message))
 	hash := hex.EncodeToString(sum[:])[:8]
 	return strconv.FormatInt(t.UnixNano(), 10) + "_" + hash + ".md"
+}
+
+// sendTimeKey scopes the shared "Send timestamp" composite injects so inbox
+// and panep derive the same filename for one Send call. The key is unexported
+// — only the inbox.WithTime / TimeFromContext helpers can read or write it.
+type sendTimeKey struct{}
+
+// WithTime attaches t to ctx as the shared timestamp the inbox messenger and
+// any peers (panep) should use when deriving a filename via FilenameFor. The
+// composite messenger calls this so a single Send produces one filename across
+// every inner messenger, regardless of how long inbox's file I/O takes.
+func WithTime(ctx context.Context, t time.Time) context.Context {
+	return context.WithValue(ctx, sendTimeKey{}, t)
+}
+
+// TimeFromContext returns the timestamp WithTime stashed on ctx, falling back
+// to fallback() if none is present. Callers running outside the composite
+// (e.g. tests, direct use of inbox.Messenger) just get the fallback.
+func TimeFromContext(ctx context.Context, fallback func() time.Time) time.Time {
+	if t, ok := ctx.Value(sendTimeKey{}).(time.Time); ok {
+		return t
+	}
+	return fallback()
 }
