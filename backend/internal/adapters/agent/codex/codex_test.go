@@ -339,6 +339,97 @@ func TestSessionInfoFalseWhenNoHookMetadata(t *testing.T) {
 	}
 }
 
+func TestEnsureCodexHooksFeatureEnabledEdgeCases(t *testing.T) {
+	tests := []struct {
+		name     string
+		seed     *string // nil means do not create config.toml
+		wantHas  []string
+		wantMiss []string
+	}{
+		{
+			name:    "missing config.toml is created with features block",
+			seed:    nil,
+			wantHas: []string{"[features]", codexHooksFeatureLine},
+		},
+		{
+			name:    "empty config.toml is populated with features block",
+			seed:    strPtr(""),
+			wantHas: []string{"[features]", codexHooksFeatureLine},
+		},
+		{
+			name:    "existing features block without hooks gains hooks=true",
+			seed:    strPtr("[features]\nother = true\n"),
+			wantHas: []string{"[features]", codexHooksFeatureLine, "other = true"},
+		},
+		{
+			name:     "hooks=true already present is a no-op",
+			seed:     strPtr("[features]\nhooks = true\n"),
+			wantHas:  []string{"[features]", codexHooksFeatureLine},
+			wantMiss: []string{codexLegacyHookFeatureLine},
+		},
+		{
+			name:     "legacy codex_hooks=true is replaced with hooks=true",
+			seed:     strPtr("[features]\ncodex_hooks = true\n"),
+			wantHas:  []string{"[features]", codexHooksFeatureLine},
+			wantMiss: []string{codexLegacyHookFeatureLine},
+		},
+		{
+			name:     "both hooks=true and legacy line keep only the new line",
+			seed:     strPtr("[features]\nhooks = true\ncodex_hooks = true\n"),
+			wantHas:  []string{"[features]", codexHooksFeatureLine},
+			wantMiss: []string{codexLegacyHookFeatureLine},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			workspace := t.TempDir()
+			configDir := filepath.Join(workspace, codexHooksDirName)
+			configPath := filepath.Join(configDir, codexConfigFileName)
+			if tt.seed != nil {
+				if err := os.MkdirAll(configDir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(configPath, []byte(*tt.seed), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			// No-op check: snapshot the file content before and after for
+			// the cases the helper documents as no-ops.
+			var before []byte
+			if tt.seed != nil && strings.Contains(*tt.seed, codexHooksFeatureLine) && !strings.Contains(*tt.seed, codexLegacyHookFeatureLine) {
+				before = []byte(*tt.seed)
+			}
+
+			if err := ensureCodexHooksFeatureEnabled(workspace); err != nil {
+				t.Fatalf("ensureCodexHooksFeatureEnabled: %v", err)
+			}
+
+			data, err := os.ReadFile(configPath)
+			if err != nil {
+				t.Fatalf("read %s: %v", configPath, err)
+			}
+			got := string(data)
+			for _, want := range tt.wantHas {
+				if !strings.Contains(got, want) {
+					t.Fatalf("config.toml missing %q\n--- got ---\n%s", want, got)
+				}
+			}
+			for _, miss := range tt.wantMiss {
+				if strings.Contains(got, miss) {
+					t.Fatalf("config.toml unexpectedly contains %q\n--- got ---\n%s", miss, got)
+				}
+			}
+			if before != nil && string(data) != string(before) {
+				t.Fatalf("expected no-op, content changed\n--- before ---\n%s\n--- after ---\n%s", before, data)
+			}
+		})
+	}
+}
+
+func strPtr(s string) *string { return &s }
+
 func contains(values []string, needle string) bool {
 	for _, value := range values {
 		if value == needle {
