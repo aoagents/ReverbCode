@@ -183,6 +183,45 @@ func TestWiring_SessionMessengerSendsToRuntimePane(t *testing.T) {
 	}
 }
 
+func TestWiring_SessionMessengerWrapsLookupErrors(t *testing.T) {
+	store, err := sqlite.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	messenger := newSessionMessenger(store, &captureRuntimeSender{}, nil)
+	err = messenger.Send(context.Background(), "missing", "hello")
+	if !errors.Is(err, sessionmanager.ErrNotFound) {
+		t.Fatalf("missing session should wrap ErrNotFound, got %v", err)
+	}
+}
+
+func TestWiring_SessionMessengerRequiresRuntimeHandle(t *testing.T) {
+	store, err := sqlite.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	ctx := context.Background()
+	if err := store.UpsertProject(ctx, domain.ProjectRecord{ID: "p", Path: "/repo/p", RegisteredAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	rec, err := store.CreateSession(ctx, domain.SessionRecord{
+		ProjectID: "p", Kind: domain.KindWorker,
+		Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: time.Now()},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	messenger := newSessionMessenger(store, &captureRuntimeSender{}, nil)
+	err = messenger.Send(ctx, rec.ID, "hello")
+	if !errors.Is(err, sessionmanager.ErrIncompleteHandle) {
+		t.Fatalf("missing runtime handle should wrap ErrIncompleteHandle, got %v", err)
+	}
+}
+
 // TestProjectRepoResolver_ResolvesRegisteredProject asserts the DB-backed repo
 // resolver turns a registered project into its on-disk repo path (so spawns
 // materialise a worktree), and fails loudly for an unregistered project.

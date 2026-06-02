@@ -95,11 +95,11 @@ func (m runtimeMessenger) Send(ctx context.Context, id domain.SessionID, message
 		return err
 	}
 	if !ok {
-		return fmt.Errorf("session %s not found", id)
+		return fmt.Errorf("session %s: %w", id, sessionmanager.ErrNotFound)
 	}
 	handleID := rec.Metadata.RuntimeHandleID
 	if handleID == "" {
-		return fmt.Errorf("session %s has no runtime handle", id)
+		return fmt.Errorf("session %s: %w", id, sessionmanager.ErrIncompleteHandle)
 	}
 	return m.runtime.SendMessage(ctx, ports.RuntimeHandle{ID: handleID}, message)
 }

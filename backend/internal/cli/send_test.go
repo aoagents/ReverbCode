@@ -83,7 +83,7 @@ func TestSend_Success(t *testing.T) {
 	}
 }
 
-func TestSend_TrimsLeadingAndTrailingWhitespace(t *testing.T) {
+func TestSend_PreservesMessageWhitespace(t *testing.T) {
 	cfg := setConfigEnv(t)
 	srv, capture := sendServer(t, http.StatusOK, `{"ok":true,"sessionId":"demo-1","message":"hi"}`)
 	writeRunFileFor(t, cfg, srv)
@@ -100,8 +100,8 @@ func TestSend_TrimsLeadingAndTrailingWhitespace(t *testing.T) {
 	if err := json.Unmarshal([]byte(capture.body), &req); err != nil {
 		t.Fatalf("decode body: %v\nbody=%s", err, capture.body)
 	}
-	if req.Message != "hi" {
-		t.Errorf("server received %q, want trimmed %q", req.Message, "hi")
+	if req.Message != "  hi  " {
+		t.Errorf("server received %q, want preserved whitespace", req.Message)
 	}
 }
 

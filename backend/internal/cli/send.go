@@ -37,10 +37,10 @@ func newSendCommand(ctx *commandContext) *cobra.Command {
 }
 
 func (c *commandContext) sendMessage(ctx context.Context, opts sendOptions) error {
-	message := strings.TrimSpace(opts.message)
-	if message == "" {
+	if strings.TrimSpace(opts.message) == "" {
 		return usageError{errors.New("usage: --message is required")}
 	}
+	message := opts.message
 	session := strings.TrimSpace(opts.session)
 	if session == "" {
 		return usageError{errors.New("usage: --session is required")}
