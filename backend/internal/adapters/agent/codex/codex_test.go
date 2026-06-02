@@ -236,7 +236,7 @@ func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 	cmd, ok, err := plugin.GetRestoreCommand(context.Background(), ports.RestoreConfig{
 		Permissions: ports.PermissionModeAuto,
 		Session: ports.SessionRef{
-			Metadata: map[string]string{codexAgentSessionIDMetadataKey: "thread-123"},
+			Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "thread-123"},
 		},
 	})
 	if err != nil {
@@ -267,7 +267,7 @@ func TestGetRestoreCommandFalseWithoutAgentSessionID(t *testing.T) {
 	}{
 		{"empty session ref", ports.SessionRef{}},
 		{"empty metadata", ports.SessionRef{Metadata: map[string]string{}}},
-		{"blank agent session metadata", ports.SessionRef{Metadata: map[string]string{codexAgentSessionIDMetadataKey: "   "}}},
+		{"blank agent session metadata", ports.SessionRef{Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "   "}}},
 		{"workspace path only", ports.SessionRef{WorkspacePath: "/some/path"}},
 	}
 	for _, tc := range cases {
@@ -295,7 +295,7 @@ func TestSessionInfoReadsHookMetadata(t *testing.T) {
 	info, ok, err := plugin.SessionInfo(context.Background(), ports.SessionRef{
 		WorkspacePath: "/some/path",
 		Metadata: map[string]string{
-			codexAgentSessionIDMetadataKey: "thread-123",
+			ports.MetadataKeyAgentSessionID: "thread-123",
 			codexTitleMetadataKey:          "Fix login redirect",
 			codexSummaryMetadataKey:        "Updated the auth callback and tests.",
 			"ignored":                      "not returned",

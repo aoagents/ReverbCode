@@ -41,10 +41,10 @@ const (
 	// Normalized session-metadata keys the Claude Code hooks persist into the
 	// AO session store and SessionInfo reads back. Shared vocabulary
 	// with the Codex adapter so the dashboard treats every agent uniformly.
-	// agentSessionId is also the preferred restore id.
-	claudeAgentSessionIDMetadataKey = "agentSessionId"
-	claudeTitleMetadataKey          = "title"
-	claudeSummaryMetadataKey        = "summary"
+	// The native session id key lives in ports as MetadataKeyAgentSessionID
+	// because the Session Manager also reads it.
+	claudeTitleMetadataKey   = "title"
+	claudeSummaryMetadataKey = "summary"
 )
 
 // claudeSessionNamespace seeds the UUIDv5 derivation that maps an AO
@@ -187,7 +187,7 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 		return nil, false, err
 	}
 
-	sessionID := strings.TrimSpace(cfg.Session.Metadata[claudeAgentSessionIDMetadataKey])
+	sessionID := strings.TrimSpace(cfg.Session.Metadata[ports.MetadataKeyAgentSessionID])
 	if sessionID == "" && cfg.Session.ID != "" {
 		// Explicit fallback for pre-hook sessions: the id AO
 		// deterministically pinned via --session-id at launch.
@@ -219,7 +219,7 @@ func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (por
 		return ports.SessionInfo{}, false, err
 	}
 	info := ports.SessionInfo{
-		AgentSessionID: session.Metadata[claudeAgentSessionIDMetadataKey],
+		AgentSessionID: session.Metadata[ports.MetadataKeyAgentSessionID],
 		Title:          session.Metadata[claudeTitleMetadataKey],
 		Summary:        session.Metadata[claudeSummaryMetadataKey],
 	}

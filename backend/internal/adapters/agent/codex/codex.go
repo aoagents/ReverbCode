@@ -20,9 +20,8 @@ import (
 )
 
 const (
-	codexAgentSessionIDMetadataKey = "agentSessionId"
-	codexTitleMetadataKey          = "title"
-	codexSummaryMetadataKey        = "summary"
+	codexTitleMetadataKey   = "title"
+	codexSummaryMetadataKey = "summary"
 )
 
 // Plugin is the Codex agent adapter. It is safe for concurrent use; the binary
@@ -104,7 +103,7 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	if err := ctx.Err(); err != nil {
 		return nil, false, err
 	}
-	agentSessionID := strings.TrimSpace(cfg.Session.Metadata[codexAgentSessionIDMetadataKey])
+	agentSessionID := strings.TrimSpace(cfg.Session.Metadata[ports.MetadataKeyAgentSessionID])
 	if agentSessionID == "" {
 		return nil, false, nil
 	}
@@ -129,7 +128,7 @@ func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (por
 		return ports.SessionInfo{}, false, err
 	}
 	info := ports.SessionInfo{
-		AgentSessionID: session.Metadata[codexAgentSessionIDMetadataKey],
+		AgentSessionID: session.Metadata[ports.MetadataKeyAgentSessionID],
 		Title:          session.Metadata[codexTitleMetadataKey],
 		Summary:        session.Metadata[codexSummaryMetadataKey],
 	}
