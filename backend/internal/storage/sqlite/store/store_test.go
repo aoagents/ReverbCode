@@ -263,6 +263,31 @@ func TestWriteSCMObservationPersistsMetadataChecksReviewsAndComments(t *testing.
 	}
 }
 
+func TestWritePRPreservesSCMReviewThreads(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	r, _ := s.CreateSession(ctx, sampleRecord("mer"))
+	now := time.Now().UTC().Truncate(time.Second)
+	pr := domain.PullRequest{URL: "https://github.com/o/r/pull/1", SessionID: r.ID, Number: 1, UpdatedAt: now}
+	threads := []domain.PullRequestReviewThread{{ThreadID: "t1", Path: "main.go", Line: 7, SemanticHash: "thread-v1", UpdatedAt: now}}
+
+	if err := s.WriteSCMObservation(ctx, pr, nil, threads, nil, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WritePR(ctx, domain.PullRequest{URL: pr.URL, SessionID: r.ID, Number: 1, CI: domain.CIPassing, UpdatedAt: now.Add(time.Second)}, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	gotThreads, err := s.ListPRReviewThreads(ctx, pr.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(gotThreads) != 1 || gotThreads[0].ThreadID != "t1" || gotThreads[0].SemanticHash != "thread-v1" {
+		t.Fatalf("legacy WritePR must preserve SCM-owned review threads, got %+v", gotThreads)
+	}
+}
+
 func TestCDCTriggersPopulateChangeLog(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

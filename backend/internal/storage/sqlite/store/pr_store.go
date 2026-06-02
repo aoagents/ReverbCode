@@ -27,13 +27,15 @@ var (
 	_ ports.SCMWriter = (*Store)(nil)
 )
 
-// WritePR persists a full PR observation — scalar facts, check runs, and the
+// WritePR persists a legacy PR observation — scalar facts, check runs, and the
 // replacement comment set — in one write transaction, so the rows and the
 // change_log events their triggers emit are committed all-or-nothing. The scalar
 // PR upsert runs first so the checks'/comments' CDC triggers can resolve the
-// session id from the pr row within the same transaction.
+// session id from the pr row within the same transaction. It intentionally does
+// not touch pr_review_threads: those rows are owned by WriteSCMObservation's
+// slower review-thread refresh path.
 func (s *Store) WritePR(ctx context.Context, pr domain.PullRequest, checks []domain.PullRequestCheck, comments []domain.PullRequestComment) error {
-	return s.writePR(ctx, pr, checks, nil, comments, true)
+	return s.writePR(ctx, pr, checks, nil, comments, false, true)
 }
 
 // WriteSCMObservation persists a provider-neutral SCM observation in one write
@@ -41,10 +43,10 @@ func (s *Store) WritePR(ctx context.Context, pr domain.PullRequest, checks []dom
 // and comments are replaced only when replaceReview is true, because review
 // polling runs at a slower cadence than metadata/CI polling.
 func (s *Store) WriteSCMObservation(ctx context.Context, pr domain.PullRequest, checks []domain.PullRequestCheck, threads []domain.PullRequestReviewThread, comments []domain.PullRequestComment, replaceReview bool) error {
-	return s.writePR(ctx, pr, checks, threads, comments, replaceReview)
+	return s.writePR(ctx, pr, checks, threads, comments, replaceReview, replaceReview)
 }
 
-func (s *Store) writePR(ctx context.Context, pr domain.PullRequest, checks []domain.PullRequestCheck, threads []domain.PullRequestReviewThread, comments []domain.PullRequestComment, replaceReview bool) error {
+func (s *Store) writePR(ctx context.Context, pr domain.PullRequest, checks []domain.PullRequestCheck, threads []domain.PullRequestReviewThread, comments []domain.PullRequestComment, replaceThreads, replaceComments bool) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	return s.inTx(ctx, "write pr observation", func(q *gen.Queries) error {
@@ -63,18 +65,24 @@ func (s *Store) writePR(ctx context.Context, pr domain.PullRequest, checks []dom
 				return err
 			}
 		}
-		if replaceReview {
+		if replaceThreads {
 			if err := q.DeletePRReviewThreads(ctx, pr.URL); err != nil {
 				return err
 			}
+		}
+		if replaceComments {
 			if err := q.DeletePRComments(ctx, pr.URL); err != nil {
 				return err
 			}
+		}
+		if replaceThreads {
 			for _, th := range threads {
 				if err := q.UpsertPRReviewThread(ctx, genReviewThreadParams(pr.URL, th)); err != nil {
 					return fmt.Errorf("review thread %q: %w", th.ThreadID, err)
 				}
 			}
+		}
+		if replaceComments {
 			for _, c := range comments {
 				if err := q.InsertPRComment(ctx, genCommentParams(pr.URL, c)); err != nil {
 					return fmt.Errorf("comment %q: %w", c.ID, err)
