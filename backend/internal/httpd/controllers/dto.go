@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/project"
 )
 
@@ -93,4 +94,47 @@ func newGetProjectResponse(res project.GetResult) (GetProjectResponse, error) {
 		Status:  res.Status,
 		Project: ProjectOrDegraded{Project: res.Project, Degraded: res.Degraded},
 	}, nil
+}
+
+// SessionIDParam is the {id} path parameter shared by session item and command
+// routes.
+type SessionIDParam struct {
+	ID string `path:"id" description:"Session identifier."`
+}
+
+// ListSessionsQuery is the filter surface for GET /api/v1/sessions.
+type ListSessionsQuery struct {
+	Project          string `query:"project" description:"Optional project id filter."`
+	Active           *bool  `query:"active" description:"Optional active/terminal filter."`
+	OrchestratorOnly *bool  `query:"orchestratorOnly" description:"When true, return only orchestrator sessions."`
+	Fresh            *bool  `query:"fresh" description:"Optional freshness filter for dashboard reads."`
+}
+
+// SpawnSessionRequest is the body of POST /api/v1/sessions.
+type SpawnSessionRequest struct {
+	ProjectID domain.ProjectID `json:"projectId" description:"Project that owns the session."`
+	IssueID   domain.IssueID   `json:"issueId,omitempty" description:"Optional tracker issue id."`
+	Prompt    string           `json:"prompt,omitempty" description:"Initial prompt passed to the agent."`
+}
+
+// ListSessionsResponse is the body of GET /api/v1/sessions.
+type ListSessionsResponse struct {
+	Sessions []domain.Session `json:"sessions"`
+}
+
+// SessionResponse is the { session } body shared by session read, spawn, and
+// restore routes.
+type SessionResponse struct {
+	Session domain.Session `json:"session"`
+}
+
+// SendSessionRequest is the body of POST /api/v1/sessions/{id}/send.
+type SendSessionRequest struct {
+	Message string `json:"message" description:"Message to send to the session agent."`
+}
+
+// SendSessionResponse is the success body of POST /api/v1/sessions/{id}/send.
+type SendSessionResponse struct {
+	SessionID domain.SessionID `json:"sessionId"`
+	Message   string           `json:"message"`
 }

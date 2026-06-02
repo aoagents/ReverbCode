@@ -58,16 +58,18 @@ func Build() ([]byte, error) {
 	r.Spec.Tags = []openapi31.Tag{
 		*(&openapi31.Tag{Name: "projects"}).WithDescription(
 			"Project registry, configuration, and lifecycle administration"),
+		*(&openapi31.Tag{Name: "sessions"}).WithDescription(
+			"Session lifecycle commands and dashboard read models"),
 	}
 
-	for _, op := range projectOperations() {
+	for _, op := range append(projectOperations(), sessionOperations()...) {
 		oc, err := r.NewOperationContext(op.method, op.path)
 		if err != nil {
 			return nil, fmt.Errorf("new operation %s %s: %w", op.method, op.path, err)
 		}
 		oc.SetID(op.id)
 		oc.SetSummary(op.summary)
-		oc.SetTags("projects")
+		oc.SetTags(op.tag)
 		for _, param := range op.pathParams {
 			oc.AddReqStructure(param)
 		}
@@ -109,12 +111,27 @@ var schemaNames = map[string]string{
 	// httpd/envelope
 	"EnvelopeAPIError": "APIError",
 	// domain
-	"DomainProjectID": "ProjectID",
+	"DomainProjectID":     "ProjectID",
+	"DomainSessionID":     "SessionID",
+	"DomainIssueID":       "IssueID",
+	"DomainSession":       "Session",
+	"DomainSessionRecord": "SessionRecord",
+	"DomainSessionStatus": "SessionStatus",
+	"DomainSessionKind":   "SessionKind",
+	"DomainAgentHarness":  "AgentHarness",
+	"DomainActivity":      "Activity",
 	// httpd/controllers (wire envelopes)
 	"ControllersListProjectsResponse": "ListProjectsResponse",
 	"ControllersProjectResponse":      "ProjectResponse",
 	"ControllersGetProjectResponse":   "ProjectGetResponse",
 	"ControllersProjectOrDegraded":    "ProjectOrDegraded",
+	"ControllersSessionIDParam":       "SessionIDParam",
+	"ControllersListSessionsQuery":    "ListSessionsQuery",
+	"ControllersSpawnSessionRequest":  "SpawnSessionRequest",
+	"ControllersListSessionsResponse": "ListSessionsResponse",
+	"ControllersSessionResponse":      "SessionResponse",
+	"ControllersSendSessionRequest":   "SendSessionRequest",
+	"ControllersSendSessionResponse":  "SendSessionResponse",
 	// project (entities + DTOs)
 	"ProjectProject":           "Project",
 	"ProjectSummary":           "Summary",
@@ -190,10 +207,10 @@ type respUnit struct {
 }
 
 type operation struct {
-	method, path, id, summary string
-	pathParams                []any // path/query param containers (e.g. ProjectIDParam)
-	reqBody                   any   // JSON request body struct, nil when the op takes none
-	resps                     []respUnit
+	method, path, id, summary, tag string
+	pathParams                     []any // path/query param containers (e.g. ProjectIDParam)
+	reqBody                        any   // JSON request body struct, nil when the op takes none
+	resps                          []respUnit
 }
 
 // projectOperations declares the 7 canonical /projects operations. The set must
@@ -203,6 +220,7 @@ func projectOperations() []operation {
 	return []operation{
 		{
 			method: http.MethodGet, path: "/api/v1/projects", id: "listProjects",
+			tag:     "projects",
 			summary: "List all registered projects (active + degraded)",
 			resps: []respUnit{
 				{http.StatusOK, controllers.ListProjectsResponse{}},
@@ -211,6 +229,7 @@ func projectOperations() []operation {
 		},
 		{
 			method: http.MethodPost, path: "/api/v1/projects", id: "addProject",
+			tag:     "projects",
 			summary: "Register a new project from a git repository path",
 			reqBody: project.AddInput{},
 			resps: []respUnit{
@@ -222,6 +241,7 @@ func projectOperations() []operation {
 		},
 		{
 			method: http.MethodPost, path: "/api/v1/projects/reload", id: "reloadProjects",
+			tag:     "projects",
 			summary: "Invalidate cached config and re-scan the project registry",
 			resps: []respUnit{
 				{http.StatusOK, project.ReloadResult{}},
@@ -230,6 +250,7 @@ func projectOperations() []operation {
 		},
 		{
 			method: http.MethodGet, path: "/api/v1/projects/{id}", id: "getProject",
+			tag:        "projects",
 			summary:    "Fetch one project; discriminates ok vs degraded",
 			pathParams: []any{controllers.ProjectIDParam{}},
 			resps: []respUnit{
@@ -240,6 +261,7 @@ func projectOperations() []operation {
 		},
 		{
 			method: http.MethodPatch, path: "/api/v1/projects/{id}", id: "updateProjectConfig",
+			tag:        "projects",
 			summary:    "Patch behaviour-only fields (identity is frozen)",
 			pathParams: []any{controllers.ProjectIDParam{}},
 			reqBody:    project.UpdateConfigInput{},
@@ -253,6 +275,7 @@ func projectOperations() []operation {
 		},
 		{
 			method: http.MethodDelete, path: "/api/v1/projects/{id}", id: "removeProject",
+			tag:        "projects",
 			summary:    "Remove a project; stops sessions, cleans workspaces, unregisters",
 			pathParams: []any{controllers.ProjectIDParam{}},
 			resps: []respUnit{
@@ -264,12 +287,81 @@ func projectOperations() []operation {
 		},
 		{
 			method: http.MethodPost, path: "/api/v1/projects/{id}/repair", id: "repairProject",
+			tag:        "projects",
 			summary:    "Recover a degraded project where automatic repair is available",
 			pathParams: []any{controllers.ProjectIDParam{}},
 			resps: []respUnit{
 				{http.StatusOK, controllers.ProjectResponse{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+	}
+}
+
+// sessionOperations declares the first session route-shell slice. It only
+// includes routes whose wire bytes are settled enough to code-generate.
+func sessionOperations() []operation {
+	return []operation{
+		{
+			method: http.MethodGet, path: "/api/v1/sessions", id: "listSessions",
+			tag:     "sessions",
+			summary: "List dashboard sessions",
+			pathParams: []any{
+				controllers.ListSessionsQuery{},
+			},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ListSessionsResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/sessions", id: "spawnSession",
+			tag:     "sessions",
+			summary: "Spawn a new session",
+			reqBody: controllers.SpawnSessionRequest{},
+			resps: []respUnit{
+				{http.StatusCreated, controllers.SessionResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/sessions/{id}", id: "getSession",
+			tag:        "sessions",
+			summary:    "Fetch one dashboard session",
+			pathParams: []any{controllers.SessionIDParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.SessionResponse{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/sessions/{id}/restore", id: "restoreSession",
+			tag:        "sessions",
+			summary:    "Restore a terminated session",
+			pathParams: []any{controllers.SessionIDParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.SessionResponse{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusUnprocessableEntity, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/sessions/{id}/send", id: "sendSessionMessage",
+			tag:        "sessions",
+			summary:    "Send a message to a session",
+			pathParams: []any{controllers.SessionIDParam{}},
+			reqBody:    controllers.SendSessionRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.SendSessionResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
 			},
 		},

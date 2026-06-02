@@ -242,6 +242,215 @@ paths:
       summary: Invalidate cached config and re-scan the project registry
       tags:
       - projects
+  /api/v1/sessions:
+    get:
+      operationId: listSessions
+      parameters:
+      - description: Optional project id filter.
+        in: query
+        name: project
+        schema:
+          description: Optional project id filter.
+          type: string
+      - description: Optional active/terminal filter.
+        in: query
+        name: active
+        schema:
+          description: Optional active/terminal filter.
+          type:
+          - "null"
+          - boolean
+      - description: When true, return only orchestrator sessions.
+        in: query
+        name: orchestratorOnly
+        schema:
+          description: When true, return only orchestrator sessions.
+          type:
+          - "null"
+          - boolean
+      - description: Optional freshness filter for dashboard reads.
+        in: query
+        name: fresh
+        schema:
+          description: Optional freshness filter for dashboard reads.
+          type:
+          - "null"
+          - boolean
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListSessionsResponse'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: List dashboard sessions
+      tags:
+      - sessions
+    post:
+      operationId: spawnSession
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SpawnSessionRequest'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionResponse'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Spawn a new session
+      tags:
+      - sessions
+  /api/v1/sessions/{id}:
+    get:
+      operationId: getSession
+      parameters:
+      - description: Session identifier.
+        in: path
+        name: id
+        required: true
+        schema:
+          description: Session identifier.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Fetch one dashboard session
+      tags:
+      - sessions
+  /api/v1/sessions/{id}/restore:
+    post:
+      operationId: restoreSession
+      parameters:
+      - description: Session identifier.
+        in: path
+        name: id
+        required: true
+        schema:
+          description: Session identifier.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Restore a terminated session
+      tags:
+      - sessions
+  /api/v1/sessions/{id}/send:
+    post:
+      operationId: sendSessionMessage
+      parameters:
+      - description: Session identifier.
+        in: path
+        name: id
+        required: true
+        schema:
+          description: Session identifier.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendSessionRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SendSessionResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Send a message to a session
+      tags:
+      - sessions
 components:
   schemas:
     APIError:
@@ -261,6 +470,17 @@ components:
       - error
       - code
       - message
+      type: object
+    Activity:
+      properties:
+        lastActivityAt:
+          format: date-time
+          type: string
+        state:
+          type: string
+      required:
+      - state
+      - lastActivityAt
       type: object
     AddInput:
       properties:
@@ -301,6 +521,15 @@ components:
           type: array
       required:
       - projects
+      type: object
+    ListSessionsResponse:
+      properties:
+        sessions:
+          items:
+            $ref: '#/components/schemas/Session'
+          type: array
+      required:
+      - sessions
       type: object
     Project:
       properties:
@@ -405,6 +634,79 @@ components:
         signatureHeader:
           type: string
       type: object
+    SendSessionRequest:
+      properties:
+        message:
+          description: Message to send to the session agent.
+          type: string
+      required:
+      - message
+      type: object
+    SendSessionResponse:
+      properties:
+        message:
+          type: string
+        sessionId:
+          type: string
+      required:
+      - sessionId
+      - message
+      type: object
+    Session:
+      properties:
+        activity:
+          $ref: '#/components/schemas/Activity'
+        createdAt:
+          format: date-time
+          type: string
+        harness:
+          type: string
+        id:
+          type: string
+        isTerminated:
+          type: boolean
+        issueId:
+          type: string
+        kind:
+          type: string
+        projectId:
+          type: string
+        status:
+          type: string
+        updatedAt:
+          format: date-time
+          type: string
+      required:
+      - id
+      - projectId
+      - kind
+      - activity
+      - isTerminated
+      - createdAt
+      - updatedAt
+      - status
+      type: object
+    SessionResponse:
+      properties:
+        session:
+          $ref: '#/components/schemas/Session'
+      required:
+      - session
+      type: object
+    SpawnSessionRequest:
+      properties:
+        issueId:
+          description: Optional tracker issue id.
+          type: string
+        projectId:
+          description: Project that owns the session.
+          type: string
+        prompt:
+          description: Initial prompt passed to the agent.
+          type: string
+      required:
+      - projectId
+      type: object
     Summary:
       properties:
         id:
@@ -443,3 +745,5 @@ components:
 tags:
 - description: Project registry, configuration, and lifecycle administration
   name: projects
+- description: Session lifecycle commands and dashboard read models
+  name: sessions
