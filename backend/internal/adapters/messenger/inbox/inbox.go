@@ -42,12 +42,15 @@ var _ ports.AgentMessenger = (*Messenger)(nil)
 // Send writes message into <workspace>/.ao/inbox/<unix-nano>_<sha256-prefix>.md.
 //
 // Filename collisions are practically impossible: nanosecond timestamp plus an
-// 8-char hash of the body. We do not retry on EEXIST.
+// 8-char hash of the body. The write uses O_EXCL so a collision (two identical
+// messages on the same pinned nanosecond) surfaces as an error rather than
+// silently clobbering the earlier message; we do not retry on EEXIST.
 //
 // Symlink safety: if .ao or .ao/inbox already exists as a symlink, refuse.
-// Otherwise os.MkdirAll creates real directories and os.WriteFile (which uses
-// O_CREATE|O_WRONLY|O_TRUNC without O_NOFOLLOW) writes the message body. The
-// inbox is owned by ao; a symlink there is either user misconfig or attack.
+// Otherwise os.MkdirAll creates real directories and the O_CREATE|O_EXCL open
+// writes the message body. O_EXCL also refuses to follow a symlink at the final
+// path component. The inbox is owned by ao; a symlink there is either user
+// misconfig or attack.
 func (m *Messenger) Send(ctx context.Context, id domain.SessionID, message string) error {
 	ws, err := m.lookup.WorkspacePath(ctx, id)
 	if err != nil {
@@ -67,8 +70,16 @@ func (m *Messenger) Send(ctx context.Context, id domain.SessionID, message strin
 	}
 
 	name := FilenameFor(TimeFromContext(ctx, m.clock), message)
-	if err := os.WriteFile(filepath.Join(inboxDir, name), []byte(message), 0o600); err != nil {
+	f, err := os.OpenFile(filepath.Join(inboxDir, name), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
 		return fmt.Errorf("inbox: write %s for %s: %w", name, id, err)
+	}
+	if _, err := f.WriteString(message); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("inbox: write body %s for %s: %w", name, id, err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("inbox: close %s for %s: %w", name, id, err)
 	}
 	return nil
 }

@@ -118,6 +118,27 @@ func TestSend_TwoSendsProduceTwoFiles(t *testing.T) {
 	}
 }
 
+// TestSend_CollisionOnPinnedTimeSurfacesError guards the O_EXCL write: when the
+// composite pins one timestamp for the whole fan-out (inbox.WithTime) and the
+// same message is sent twice on that timestamp, the second write must error
+// rather than silently clobber the first message's file.
+func TestSend_CollisionOnPinnedTimeSurfacesError(t *testing.T) {
+	dir := t.TempDir()
+	m := inbox.New(fakeLookup{path: dir})
+	ctx := inbox.WithTime(context.Background(), time.Unix(0, 1_700_000_000_123_456_789))
+
+	if err := m.Send(ctx, "s-1", "dup"); err != nil {
+		t.Fatalf("first send: %v", err)
+	}
+	if err := m.Send(ctx, "s-1", "dup"); err == nil {
+		t.Fatal("second send with the same pinned time + message should error, not clobber")
+	}
+	entries, _ := os.ReadDir(filepath.Join(dir, ".ao", "inbox"))
+	if len(entries) != 1 {
+		t.Fatalf("want exactly 1 file preserved, got %d", len(entries))
+	}
+}
+
 func TestSend_UnknownSessionReturnsError(t *testing.T) {
 	m := inbox.New(fakeLookup{err: errors.New("not found")})
 	err := m.Send(context.Background(), "s-1", "x")
