@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -255,6 +256,62 @@ func TestSpawn_DefaultsBranchFromSessionID(t *testing.T) {
 	// An empty SpawnConfig.Branch defaults to a unique per-session branch.
 	if got := st.sessions[s.ID].Metadata.Branch; got != "ao/mer-1" {
 		t.Fatalf("default branch = %q, want ao/mer-1", got)
+	}
+}
+
+func TestSpawnWorker_AppendsActiveOrchestratorContact(t *testing.T) {
+	m, st, _, _ := newManager()
+	st.num = 1
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindOrchestrator}
+
+	s, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Prompt: "do it"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prompt := st.sessions[s.ID].Metadata.Prompt
+	for _, want := range []string{
+		"do it",
+		"## Orchestrator coordination",
+		`ao send --session mer-1 --message "<your message>"`,
+		"Only ping the orchestrator for true blockers, cross-session coordination",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("prompt missing %q:\n%s", want, prompt)
+		}
+	}
+}
+
+func TestSpawnWorker_SkipsTerminatedOrchestratorContact(t *testing.T) {
+	m, st, _, _ := newManager()
+	st.num = 1
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindOrchestrator, IsTerminated: true}
+
+	s, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Prompt: "do it"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prompt := st.sessions[s.ID].Metadata.Prompt
+	if strings.Contains(prompt, "## Orchestrator coordination") || strings.Contains(prompt, "ao send --session mer-1") {
+		t.Fatalf("terminated orchestrator should not be added to prompt:\n%s", prompt)
+	}
+}
+
+func TestSpawnOrchestrator_UsesCoordinatorPrompt(t *testing.T) {
+	m, st, _, _ := newManager()
+	s, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindOrchestrator})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prompt := st.sessions[s.ID].Metadata.Prompt
+	for _, want := range []string{
+		"You are the human-facing coordinator for project mer",
+		`ao spawn --project mer --prompt "<clear worker task>"`,
+		"`ao send`",
+		"avoid doing implementation yourself unless it is necessary",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("prompt missing %q:\n%s", want, prompt)
+		}
 	}
 }
 

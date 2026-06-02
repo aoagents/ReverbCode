@@ -99,6 +99,11 @@ func New(d Deps) *Manager {
 // workspace and runtime, then reports completion to the LCM. A failure after the
 // row exists parks it as terminated and rolls back what was built.
 func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.SessionRecord, error) {
+	prompt, err := m.buildSpawnPrompt(ctx, cfg)
+	if err != nil {
+		return domain.SessionRecord{}, fmt.Errorf("spawn: prompt: %w", err)
+	}
+
 	rec, err := m.store.CreateSession(ctx, seedRecord(cfg, m.clock()))
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("spawn: create: %w", err)
@@ -118,7 +123,6 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: workspace: %w", id, err)
 	}
 
-	prompt := buildPrompt(cfg)
 	agent, ok := m.agents.Agent(cfg.Harness)
 	if !ok {
 		_ = m.workspace.Destroy(ctx, ws)
@@ -318,6 +322,71 @@ func buildPrompt(cfg ports.SpawnConfig) string {
 		return cfg.AgentRules
 	default:
 		return cfg.Prompt + "\n\n" + cfg.AgentRules
+	}
+}
+
+func (m *Manager) buildSpawnPrompt(ctx context.Context, cfg ports.SpawnConfig) (string, error) {
+	prompt := buildPrompt(cfg)
+	switch cfg.Kind {
+	case domain.KindOrchestrator:
+		return appendPromptSection(orchestratorPrompt(cfg.ProjectID), prompt), nil
+	case domain.KindWorker:
+		orchestratorID, ok, err := m.activeOrchestratorSessionID(ctx, cfg.ProjectID)
+		if err != nil {
+			return "", err
+		}
+		if ok {
+			prompt = appendPromptSection(prompt, workerOrchestratorPrompt(orchestratorID))
+		}
+	}
+	return prompt, nil
+}
+
+func (m *Manager) activeOrchestratorSessionID(ctx context.Context, project domain.ProjectID) (domain.SessionID, bool, error) {
+	recs, err := m.store.ListSessions(ctx, project)
+	if err != nil {
+		return "", false, fmt.Errorf("list sessions for %s: %w", project, err)
+	}
+	var id domain.SessionID
+	for _, rec := range recs {
+		if rec.ProjectID == project && rec.Kind == domain.KindOrchestrator && !rec.IsTerminated {
+			id = rec.ID
+		}
+	}
+	return id, id != "", nil
+}
+
+func orchestratorPrompt(project domain.ProjectID) string {
+	return fmt.Sprintf(`## Orchestrator role
+
+You are the human-facing coordinator for project %s. Coordinate work for the human, keep the project moving, and avoid doing implementation yourself unless it is necessary.
+
+Spawn worker sessions for implementation with:
+`+"`ao spawn --project %s --prompt \"<clear worker task>\"`"+`
+
+Message workers with `+"`ao send`"+`, for example:
+`+"`ao send --session <worker-session-id> --message \"<your message>\"`"+`
+
+Use workers for focused implementation tasks, track their progress, synthesize their results, and only step into implementation directly for true emergencies or small coordination fixes.`, project, project)
+}
+
+func workerOrchestratorPrompt(orchestratorID domain.SessionID) string {
+	return fmt.Sprintf(`## Orchestrator coordination
+
+An active orchestrator session exists for this project. If you hit a true blocker or need cross-session coordination, message it with:
+`+"`ao send --session %s --message \"<your message>\"`"+`
+
+Only ping the orchestrator for true blockers, cross-session coordination, or decisions that cannot be resolved within your own task.`, orchestratorID)
+}
+
+func appendPromptSection(prompt, section string) string {
+	switch {
+	case prompt == "":
+		return section
+	case section == "":
+		return prompt
+	default:
+		return prompt + "\n\n" + section
 	}
 }
 
