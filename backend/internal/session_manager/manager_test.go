@@ -245,3 +245,26 @@ func TestCleanup_ReclaimsTerminalWorkspaces(t *testing.T) {
 		t.Fatal("live workspace must not be destroyed")
 	}
 }
+
+func TestSpawn_DefaultsBranchFromSessionID(t *testing.T) {
+	m, st, _, _ := newManager()
+	s, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// An empty SpawnConfig.Branch defaults to a unique per-session branch.
+	if got := st.sessions[s.ID].Metadata.Branch; got != "ao/mer-1" {
+		t.Fatalf("default branch = %q, want ao/mer-1", got)
+	}
+}
+
+func TestSpawn_KeepsExplicitBranch(t *testing.T) {
+	m, st, _, _ := newManager()
+	s, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Branch: "feature/x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions[s.ID].Metadata.Branch; got != "feature/x" {
+		t.Fatalf("explicit branch = %q, want feature/x", got)
+	}
+}

@@ -132,3 +132,31 @@ func TestWiring_StartSessionBuildsSessionService(t *testing.T) {
 		t.Fatal("startSession returned nil session service")
 	}
 }
+
+// TestProjectRepoResolver_ResolvesRegisteredProject asserts the DB-backed repo
+// resolver turns a registered project into its on-disk repo path (so spawns
+// materialise a worktree), and fails loudly for an unregistered project.
+func TestProjectRepoResolver_ResolvesRegisteredProject(t *testing.T) {
+	store, err := sqlite.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	ctx := context.Background()
+	if err := store.UpsertProject(ctx, domain.ProjectRecord{ID: "mer", Path: "/repo/mer", RegisteredAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+
+	r := projectRepoResolver{store: store}
+	got, err := r.RepoPath("mer")
+	if err != nil {
+		t.Fatalf("RepoPath(mer): %v", err)
+	}
+	if got != "/repo/mer" {
+		t.Fatalf("RepoPath(mer) = %q, want /repo/mer", got)
+	}
+	if _, err := r.RepoPath("nope"); err == nil {
+		t.Fatal("expected an error for an unregistered project")
+	}
+}

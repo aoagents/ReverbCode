@@ -63,10 +63,10 @@ func startSession(cfg config.Config, runtime ports.Runtime, store *sqlite.Store,
 		// Per-session worktrees live under the data dir, so a single AO_DATA_DIR
 		// override moves all durable per-user state together.
 		ManagedRoot: filepath.Join(cfg.DataDir, "worktrees"),
-		// An empty resolver fails every project lookup with a clear
-		// "no repo configured for project" error until the projects table feeds
-		// repo paths in — better than silently misrouting spawns.
-		RepoResolver: gitworktree.StaticRepoResolver{},
+		// Resolve each project's source repo from the projects table, so a
+		// session spawned for a registered project materialises its worktree off
+		// that repo. Unregistered projects fail loudly.
+		RepoResolver: projectRepoResolver{store: store},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("session workspace: %w", err)
@@ -144,4 +144,29 @@ func buildAgentResolver(defaultAgent string, log *slog.Logger) (ports.AgentResol
 	}
 	log.Info("built per-session agent resolver", "default", defaultAgent, "registered", ids)
 	return resolver, nil
+}
+
+// projectRepoResolver resolves a project's on-disk repo path from the projects
+// table so gitworktree can materialise per-session worktrees off it. It replaces
+// the empty StaticRepoResolver the daemon used before (which failed every
+// lookup), turning a registered project into a spawnable one.
+type projectRepoResolver struct{ store *sqlite.Store }
+
+var _ gitworktree.RepoResolver = projectRepoResolver{}
+
+func (r projectRepoResolver) RepoPath(projectID domain.ProjectID) (string, error) {
+	rec, ok, err := r.store.GetProject(context.Background(), string(projectID))
+	if err != nil {
+		return "", fmt.Errorf("look up project %q: %w", projectID, err)
+	}
+	if !ok {
+		return "", fmt.Errorf("no project registered with id %q — add one with `ao project add`", projectID)
+	}
+	if !rec.ArchivedAt.IsZero() {
+		return "", fmt.Errorf("project %q is archived", projectID)
+	}
+	if rec.Path == "" {
+		return "", fmt.Errorf("project %q has no repo path on record", projectID)
+	}
+	return rec.Path, nil
 }

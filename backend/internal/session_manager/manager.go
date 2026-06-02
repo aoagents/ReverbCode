@@ -101,7 +101,14 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	}
 	id := rec.ID
 
-	ws, err := m.workspace.Create(ctx, ports.WorkspaceConfig{ProjectID: cfg.ProjectID, SessionID: id, Branch: cfg.Branch})
+	branch := cfg.Branch
+	if branch == "" {
+		// A fresh, unique branch per session: gitworktree can't add a worktree on
+		// a branch already checked out elsewhere (e.g. main), so default to one
+		// derived from the assigned session id.
+		branch = "ao/" + string(id)
+	}
+	ws, err := m.workspace.Create(ctx, ports.WorkspaceConfig{ProjectID: cfg.ProjectID, SessionID: id, Branch: branch})
 	if err != nil {
 		m.markSpawnFailedTerminated(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: workspace: %w", id, err)
