@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 
@@ -38,12 +39,29 @@ func (e apiError) String() string {
 	return msg
 }
 
+// getJSON sends GET /api/v1/<path> to the running daemon and decodes a 2xx
+// response into out. A missing daemon or non-2xx API envelope is rendered the
+// same way as mutating calls.
+func (c *commandContext) getJSON(ctx context.Context, path string, out any) error {
+	return c.doJSON(ctx, http.MethodGet, path, nil, out)
+}
+
 // postJSON sends body as JSON to POST /api/v1/<path> on the running daemon and
 // decodes a 2xx response into out (out may be nil). A non-2xx response becomes
 // an error built from the API error envelope. A missing run-file or a stale one
 // (dead PID) yields a clear "not running" message rather than a
 // connection-refused dump.
 func (c *commandContext) postJSON(ctx context.Context, path string, body, out any) error {
+	return c.doJSON(ctx, http.MethodPost, path, body, out)
+}
+
+// deleteJSON sends DELETE /api/v1/<path> to the running daemon and decodes a
+// 2xx response into out.
+func (c *commandContext) deleteJSON(ctx context.Context, path string, out any) error {
+	return c.doJSON(ctx, http.MethodDelete, path, nil, out)
+}
+
+func (c *commandContext) doJSON(ctx context.Context, method, path string, body, out any) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -59,19 +77,25 @@ func (c *commandContext) postJSON(ctx context.Context, path string, body, out an
 		return fmt.Errorf("AO daemon is not running (stale run-file at %s) — start it with `ao start`", cfg.RunFilePath)
 	}
 
-	payload, err := json.Marshal(body)
-	if err != nil {
-		return err
+	var reader io.Reader = http.NoBody
+	if body != nil {
+		payload, err := json.Marshal(body)
+		if err != nil {
+			return err
+		}
+		reader = bytes.NewReader(payload)
 	}
 	url := fmt.Sprintf("http://%s:%d/api/v1/%s", config.LoopbackHost, info.Port, path)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctx, method, url, reader)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Content-Type", "application/json")
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 
 	// Reuse the injected client's transport (keeps it stubbable in tests) but
-	// give mutating calls far more headroom than the 2s status-probe timeout.
+	// give daemon API calls far more headroom than the 2s status-probe timeout.
 	client := *c.deps.HTTPClient
 	client.Timeout = commandTimeout
 	resp, err := client.Do(req)
