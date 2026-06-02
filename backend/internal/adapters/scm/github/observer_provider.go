@@ -19,6 +19,11 @@ import (
 
 const scmBatchCheckContextLimit = 100
 
+// githubReviewThreadMaxPages bounds a single review-thread refresh. GitHub
+// returns 100 threads per page, so this permits up to 5000 threads while keeping
+// one poll from allocating unbounded memory or issuing unlimited GraphQL calls.
+const githubReviewThreadMaxPages = 50
+
 // ParseRepository normalizes a GitHub remote/origin URL into a provider-neutral
 // repository key. It accepts https://github.com/owner/repo(.git),
 // git@github.com:owner/repo(.git), and path-only owner/repo inputs used by tests.
@@ -138,7 +143,7 @@ func (p *Provider) FetchReviewThreads(ctx context.Context, ref ports.SCMPRRef) (
 	var all []ports.SCMReviewThreadObservation
 	var decision string
 	var cursor string
-	for {
+	for page := 0; page < githubReviewThreadMaxPages; page++ {
 		query := buildReviewThreadsQuery(ref, cursor)
 		data, err := p.client.doGraphQL(ctx, query, nil)
 		if err != nil {
@@ -160,6 +165,12 @@ func (p *Provider) FetchReviewThreads(ctx context.Context, ref ports.SCMPRRef) (
 		}
 		cursor = str(pi["endCursor"])
 		if cursor == "" {
+			break
+		}
+		if page == githubReviewThreadMaxPages-1 {
+			p.logger.Warn("github scm: review thread page limit reached",
+				"repo", repoFullName(ref.Repo), "pr", ref.Number,
+				"max_pages", githubReviewThreadMaxPages)
 			break
 		}
 	}
@@ -304,7 +315,7 @@ func scmChecksFromGraphQL(pr map[string]any) []ports.SCMCheckObservation {
 		switch typ {
 		case "CheckRun":
 			ch.Name = str(n["name"])
-			ch.Status = strings.ToLower(str(n["status"]))
+			ch.Status = string(checkStatusFromGraphQL(n))
 			ch.Conclusion = strings.ToLower(str(n["conclusion"]))
 			ch.URL = firstNonEmpty(str(n["detailsUrl"]), str(n["url"]))
 			if id := int64(num(n["databaseId"])); id > 0 {
@@ -312,7 +323,7 @@ func scmChecksFromGraphQL(pr map[string]any) []ports.SCMCheckObservation {
 			}
 		case "StatusContext":
 			ch.Name = str(n["context"])
-			ch.Status = strings.ToLower(str(n["state"]))
+			ch.Status = string(checkStatusFromGraphQL(n))
 			ch.Conclusion = strings.ToLower(str(n["state"]))
 			ch.URL = str(n["targetUrl"])
 		default:
@@ -321,7 +332,6 @@ func scmChecksFromGraphQL(pr map[string]any) []ports.SCMCheckObservation {
 		if ch.Name == "" {
 			continue
 		}
-		ch.Status = string(checkStatusFromGraphQL(n))
 		out = append(out, ch)
 	}
 	return out

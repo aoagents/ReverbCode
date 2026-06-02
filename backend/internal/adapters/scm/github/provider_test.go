@@ -1120,3 +1120,54 @@ func TestObserve_AssertsPRObservationShape(t *testing.T) {
 	o.Comments = nil
 	_ = o
 }
+
+func TestSCMChecksFromGraphQL_StatusContextUsesState(t *testing.T) {
+	pr := map[string]any{
+		"commits": map[string]any{"nodes": []any{
+			map[string]any{"commit": map[string]any{"statusCheckRollup": map[string]any{
+				"contexts": map[string]any{"nodes": []any{
+					map[string]any{"__typename": "StatusContext", "context": "legacy", "state": "FAILURE", "targetUrl": "https://ci/legacy"},
+					map[string]any{"__typename": "CheckRun", "name": "actions", "status": "COMPLETED", "conclusion": "SUCCESS", "detailsUrl": "https://ci/actions"},
+				}},
+			}}},
+		}},
+	}
+	checks := scmChecksFromGraphQL(pr)
+	if len(checks) != 2 {
+		t.Fatalf("checks = %d, want 2: %+v", len(checks), checks)
+	}
+	if checks[0].Name != "legacy" || checks[0].Status != string(domain.PRCheckFailed) || checks[0].Conclusion != "failure" {
+		t.Fatalf("legacy StatusContext not normalized from state: %+v", checks[0])
+	}
+	if checks[1].Name != "actions" || checks[1].Status != string(domain.PRCheckPassed) || checks[1].Conclusion != "success" {
+		t.Fatalf("CheckRun not normalized from conclusion: %+v", checks[1])
+	}
+}
+
+func TestFetchReviewThreadsStopsAtPageLimit(t *testing.T) {
+	fake := newFakeGH(t)
+	fake.on(http.MethodPost, "/graphql", func(w http.ResponseWriter, r *http.Request) {
+		page := fake.callsTo(http.MethodPost, "/graphql")
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": map[string]any{"repo": map[string]any{"pullRequest": map[string]any{
+				"reviewDecision": "CHANGES_REQUESTED",
+				"reviewThreads": map[string]any{
+					"nodes":    []any{map[string]any{"id": "thread-" + strconv.Itoa(page), "path": "main.go", "line": page, "isResolved": false, "comments": map[string]any{"nodes": []any{}}}},
+					"pageInfo": map[string]any{"hasNextPage": true, "endCursor": "cursor-" + strconv.Itoa(page)},
+				},
+			}}},
+		})
+	})
+	p := newProviderForTest(t, fake)
+	review, err := p.FetchReviewThreads(ctx(), ports.SCMPRRef{Repo: ports.SCMRepo{Provider: "github", Host: "github.com", Owner: "o", Name: "r", Repo: "o/r"}, Number: 1})
+	if err != nil {
+		t.Fatalf("FetchReviewThreads: %v", err)
+	}
+	if got := fake.callsTo(http.MethodPost, "/graphql"); got != githubReviewThreadMaxPages {
+		t.Fatalf("graphql calls = %d, want capped at %d", got, githubReviewThreadMaxPages)
+	}
+	if len(review.Threads) != githubReviewThreadMaxPages {
+		t.Fatalf("threads = %d, want %d", len(review.Threads), githubReviewThreadMaxPages)
+	}
+}

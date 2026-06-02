@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"path"
@@ -29,6 +30,7 @@ type ProviderOptions struct {
 	RESTBase   string
 	GraphQLURL string
 	UserAgent  string
+	Logger     *slog.Logger
 }
 
 // Provider observes one GitHub pull request and returns a normalized
@@ -37,6 +39,7 @@ type ProviderOptions struct {
 // observation primitive that loop will call.
 type Provider struct {
 	client *Client
+	logger *slog.Logger
 }
 
 // NewProvider returns a Provider. If opts.Client is supplied it is used
@@ -60,7 +63,11 @@ func NewProvider(opts ProviderOptions) (*Provider, error) {
 			UserAgent:  opts.UserAgent,
 		})
 	}
-	return &Provider{client: c}, nil
+	logger := opts.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &Provider{client: c, logger: logger}, nil
 }
 
 // Observe fetches the current state of one PR by its github.com URL and
