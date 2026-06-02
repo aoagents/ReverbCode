@@ -121,8 +121,6 @@ var schemaNames = map[string]string{
 	"ControllersProjectResponse":            "ProjectResponse",
 	"ControllersGetProjectResponse":         "ProjectGetResponse",
 	"ControllersProjectOrDegraded":          "ProjectOrDegraded",
-	"ControllersProjectIDParam":             "ProjectIDParam",
-	"ControllersSessionIDParam":             "SessionIDParam",
 	"ControllersListSessionsQuery":          "ListSessionsQuery",
 	"ControllersListSessionsResponse":       "ListSessionsResponse",
 	"ControllersSpawnSessionRequest":        "SpawnSessionRequest",
@@ -136,7 +134,6 @@ var schemaNames = map[string]string{
 	"ControllersSpawnOrchestratorResponse":  "SpawnOrchestratorResponse",
 	"ControllersOrchestratorResponse":       "OrchestratorResponse",
 	// httpd/controllers — PR wire envelopes
-	"ControllersPRIDParam":              "PRIDParam",
 	"ControllersMergePRResponse":        "MergePRResponse",
 	"ControllersResolveCommentsRequest": "ResolveCommentsRequest",
 	"ControllersResolveCommentsResponse": "ResolveCommentsResponse",
