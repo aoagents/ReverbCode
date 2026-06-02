@@ -17,8 +17,8 @@ import (
 
 // startSCMObserver wires the provider-neutral SCM observer with the GitHub
 // provider used by v1. Missing credentials do not fail daemon startup; the
-// observer is skipped and a warning is logged so local/offline development keeps
-// working.
+// observer performs a lazy credential check in its background goroutine, logs
+// one warning, and disables itself before any provider API calls.
 func startSCMObserver(ctx context.Context, store *sqlite.Store, lcm *lifecycle.Manager, logger *slog.Logger) <-chan struct{} {
 	tokens := scmgithub.FallbackTokenSource{
 		scmgithub.EnvTokenSource{EnvVars: []string{"AO_GITHUB_TOKEN"}},
@@ -27,9 +27,8 @@ func startSCMObserver(ctx context.Context, store *sqlite.Store, lcm *lifecycle.M
 	// Avoid token preflight on daemon startup. GHTokenSource may shell out to `gh`,
 	// which is too slow/flaky for the startup readiness path (especially on
 	// Windows CI). The provider will resolve credentials lazily in its background
-	// observer goroutine when it actually needs to call GitHub.
-	client := scmgithub.NewClient(scmgithub.ClientOptions{Token: tokens})
-	provider, err := scmgithub.NewProvider(scmgithub.ProviderOptions{Client: client})
+	// observer goroutine before it makes any GitHub API call.
+	provider, err := scmgithub.NewProvider(scmgithub.ProviderOptions{Token: tokens, SkipTokenPreflight: true})
 	if err != nil {
 		if errors.Is(err, scmgithub.ErrNoToken) || errors.Is(err, scmgithub.ErrAuthFailed) {
 			logger.Warn("scm observer disabled: no usable GitHub token", "err", err)

@@ -57,6 +57,10 @@ type Lifecycle interface {
 	ApplySCMObservation(ctx context.Context, sessionID domain.SessionID, obs ports.SCMObservation) error
 }
 
+type credentialChecker interface {
+	SCMCredentialsAvailable(ctx context.Context) (bool, error)
+}
+
 // Config holds optional observer knobs. Zero values use production defaults.
 type Config struct {
 	// Tick is the fast PR/CI polling interval. Zero uses DefaultTickInterval.
@@ -122,6 +126,10 @@ type Observer struct {
 	clock func() time.Time
 	// logger receives non-fatal operational failures.
 	logger *slog.Logger
+	// credentialsChecked records whether an optional provider credential gate ran.
+	credentialsChecked bool
+	// disabled is set after the credential gate reports unavailable credentials.
+	disabled bool
 	// Cache holds bounded in-memory provider ETags and review poll timestamps.
 	Cache ObserverCache
 }
@@ -194,11 +202,20 @@ func (o *Observer) Poll(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if o.disabled {
+		return nil
+	}
 	subjects, err := o.discoverSubjects(ctx)
 	if err != nil {
 		return err
 	}
 	if len(subjects) == 0 {
+		return nil
+	}
+	if err := o.checkCredentials(ctx); err != nil {
+		return err
+	}
+	if o.disabled {
 		return nil
 	}
 
@@ -274,6 +291,31 @@ func (o *Observer) Poll(ctx context.Context) error {
 				o.logger.Error("scm observer: lifecycle notification failed", "session", subj.session.ID, "pr", pr.URL, "err", err)
 			}
 		}
+	}
+	return nil
+}
+
+func (o *Observer) checkCredentials(ctx context.Context) error {
+	if o.credentialsChecked {
+		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	o.credentialsChecked = true
+	checker, ok := o.provider.(credentialChecker)
+	if !ok {
+		return nil
+	}
+	available, err := checker.SCMCredentialsAvailable(ctx)
+	if err != nil {
+		o.disabled = true
+		o.logger.Warn("scm observer disabled: provider credentials unavailable", "err", err)
+		return nil
+	}
+	if !available {
+		o.disabled = true
+		o.logger.Warn("scm observer disabled: provider credentials unavailable")
 	}
 	return nil
 }

@@ -97,16 +97,34 @@ type fakeProvider struct {
 	reviews      map[string]ports.SCMReviewObservation
 	logTails     map[string]string
 
-	detectCalls  int
-	fetchBatches [][]ports.SCMPRRef
-	logCalls     int
-	reviewCalls  int
+	credentialGate   bool
+	credentialOK     bool
+	credentialErr    error
+	credentialChecks int
+	repoGuardCalls   int
+	detectCalls      int
+	fetchBatches     [][]ports.SCMPRRef
+	logCalls         int
+	reviewCalls      int
+}
+
+func (p *fakeProvider) SCMCredentialsAvailable(context.Context) (bool, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.credentialChecks++
+	if !p.credentialGate {
+		return true, nil
+	}
+	return p.credentialOK, p.credentialErr
 }
 
 func (p *fakeProvider) ParseRepository(remote string) (ports.SCMRepo, bool) {
 	return testRepo, remote != ""
 }
 func (p *fakeProvider) RepoPRListGuard(_ context.Context, repo ports.SCMRepo, _ string) (ports.SCMGuardResult, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.repoGuardCalls++
 	return p.repoGuards[prKey(repo, 0)], nil
 }
 func (p *fakeProvider) DetectPRByBranch(_ context.Context, _ ports.SCMRepo, branch string) (ports.SCMPRObservation, error) {
@@ -203,6 +221,30 @@ func TestStartAsyncPerformsImmediatePollAndStopsOnCancel(t *testing.T) {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("observer did not exit after context cancellation")
+	}
+}
+
+func TestPoll_DisablesOnceWhenCredentialsUnavailable(t *testing.T) {
+	store := testStoreWithSession()
+	provider := &fakeProvider{
+		credentialGate: true,
+		credentialOK:   false,
+		repoGuards:     map[string]ports.SCMGuardResult{prKey(testRepo, 0): {ETag: "v1"}},
+		observations:   map[string]ports.SCMObservation{},
+	}
+	obs := newTestObserver(store, provider, &fakeLifecycle{}, time.Unix(1, 0).UTC())
+	if err := obs.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := obs.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if provider.credentialChecks != 1 {
+		t.Fatalf("credential checks = %d, want one lazy check", provider.credentialChecks)
+	}
+	if provider.repoGuardCalls != 0 || provider.detectCalls != 0 || len(provider.fetchBatches) != 0 {
+		t.Fatalf("provider API calls should be skipped without credentials: guards=%d detects=%d batches=%d",
+			provider.repoGuardCalls, provider.detectCalls, len(provider.fetchBatches))
 	}
 }
 
