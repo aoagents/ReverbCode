@@ -4,6 +4,8 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/zellij"
 )
 
 type spawnOptions struct {
@@ -58,9 +60,18 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 			if err := ctx.postJSON(cmd.Context(), "sessions", req, &res); err != nil {
 				return err
 			}
-			_, err := fmt.Fprintf(cmd.OutOrStdout(),
-				"spawned session %s (%s)\nattach with: zellij attach %s   (or `zellij list-sessions`)\n",
-				res.Session.ID, res.Session.Status, res.Session.ID)
+			out := cmd.OutOrStdout()
+			if _, err := fmt.Fprintf(out, "spawned session %s (%s)\n", res.Session.ID, res.Session.Status); err != nil {
+				return err
+			}
+			// The daemon runs zellij under a short, non-default socket dir (see
+			// zellij.DefaultSocketDir), so a plain `zellij attach` wouldn't find
+			// the session — prefix the env so the hint is copy-pasteable.
+			attach := fmt.Sprintf("zellij attach %s", res.Session.ID)
+			if dir := zellij.DefaultSocketDir(); dir != "" {
+				attach = fmt.Sprintf("ZELLIJ_SOCKET_DIR=%s %s", dir, attach)
+			}
+			_, err := fmt.Fprintf(out, "attach with: %s\n", attach)
 			return err
 		},
 	}

@@ -167,3 +167,23 @@ func TestProjectRepoResolver_ResolvesRegisteredProject(t *testing.T) {
 		t.Fatalf("unregistered-project error should wrap ErrProjectNotResolvable, got %v", err)
 	}
 }
+
+// TestDaemonZellijSocketDir_LeavesBudgetForSessionNames guards the fix for the
+// zellij "session name must be less than 0 characters" spawn failure: the
+// daemon's socket dir must be short enough that a max-length (48-char) session
+// name still fits the ~103-byte unix-domain-socket-path budget. zellij's long
+// $TMPDIR default (the bug) would fail this.
+func TestDaemonZellijSocketDir_LeavesBudgetForSessionNames(t *testing.T) {
+	dir := zellij.DefaultSocketDir()
+	if dir == "" {
+		t.Skip("zellij not used on this platform")
+	}
+	const (
+		unixSocketPathMax = 103 // sun_path budget zellij enforces on macOS
+		zellijOverhead    = 24  // zellij's version subdir + separators (generous)
+		maxSessionName    = 48  // zellijSessionName's cap
+	)
+	if budget := unixSocketPathMax - len(dir) - zellijOverhead; budget < maxSessionName {
+		t.Fatalf("zellij socket dir %q too long: %d bytes left for the session name, need >= %d", dir, budget, maxSessionName)
+	}
+}

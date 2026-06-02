@@ -58,6 +58,19 @@ type Runtime struct {
 
 var _ ports.Runtime = (*Runtime)(nil)
 
+// DefaultSocketDir returns a short, stable ZELLIJ_SOCKET_DIR for AO's daemon.
+// zellij's own default lives under $TMPDIR (long on macOS), which leaves almost
+// none of the ~103-byte unix-socket-path budget for the session name — a long
+// session id then fails with "session name must be less than 0 characters". A
+// short dir restores ample budget. Empty on Windows, where zellij is not used.
+// Pure: callers that run zellij should MkdirAll the result.
+func DefaultSocketDir() string {
+	if runtime.GOOS == "windows" {
+		return ""
+	}
+	return "/tmp/ao-zellij-" + strconv.Itoa(os.Getuid())
+}
+
 type runner interface {
 	Run(ctx context.Context, env []string, name string, args ...string) ([]byte, error)
 }
