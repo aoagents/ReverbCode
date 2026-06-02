@@ -278,7 +278,7 @@ func (c *commandContext) fetchScopedSession(ctx context.Context, id, project str
 		return sessionDTO{}, err
 	}
 	if project != "" && res.Session.ProjectID != project {
-		return sessionDTO{}, fmt.Errorf("session %s is not in project %s", id, project)
+		return sessionDTO{}, usageError{fmt.Errorf("session %s is not in project %s", id, project)}
 	}
 	return res.Session, nil
 }

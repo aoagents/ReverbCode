@@ -107,6 +107,32 @@ func TestSessionList_ProjectFilterAndDefaultFiltering(t *testing.T) {
 	}
 }
 
+func TestSessionList_JSONOutputDecodes(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, _ := sessionCommandServer(t)
+	writeRunFileFor(t, cfg, srv)
+
+	out, errOut, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "session", "ls", "--project", "demo", "--json")
+	if err != nil {
+		t.Fatalf("session ls --json failed: %v\nstderr=%s", err, errOut)
+	}
+	var got sessionListOutput
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("session ls --json output is not decodable: %v\noutput=%s", err, out)
+	}
+	if got.Meta.HiddenTerminatedCount != 1 {
+		t.Fatalf("hiddenTerminatedCount = %d, want 1", got.Meta.HiddenTerminatedCount)
+	}
+	if len(got.Data) != 1 {
+		t.Fatalf("len(data) = %d, want 1; data=%#v", len(got.Data), got.Data)
+	}
+	if got.Data[0].ID != "demo-1" || got.Data[0].ProjectID != "demo" || got.Data[0].Role != "worker" {
+		t.Fatalf("unexpected JSON entry: %#v", got.Data[0])
+	}
+}
+
 func TestSessionGet_SuccessWithProjectScope(t *testing.T) {
 	cfg := setConfigEnv(t)
 	srv, log := sessionCommandServer(t)
@@ -124,6 +150,26 @@ func TestSessionGet_SuccessWithProjectScope(t *testing.T) {
 	want := []string{"GET /api/v1/sessions/demo-1"}
 	if got := log.all(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("requests = %#v, want %#v", got, want)
+	}
+}
+
+func TestSessionGet_JSONOutputDecodes(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, _ := sessionCommandServer(t)
+	writeRunFileFor(t, cfg, srv)
+
+	out, errOut, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "session", "get", "demo-1", "--project", "demo", "--json")
+	if err != nil {
+		t.Fatalf("session get --json failed: %v\nstderr=%s", err, errOut)
+	}
+	var got sessionResponse
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("session get --json output is not decodable: %v\noutput=%s", err, out)
+	}
+	if got.Session.ID != "demo-1" || got.Session.ProjectID != "demo" || got.Session.Status != "working" {
+		t.Fatalf("unexpected session JSON: %#v", got.Session)
 	}
 }
 
@@ -192,6 +238,9 @@ func TestSessionGet_ProjectMismatchDoesNotPassScope(t *testing.T) {
 	}, "session", "get", "demo-1", "--project", "other")
 	if err == nil {
 		t.Fatal("expected project mismatch to fail")
+	}
+	if got := ExitCode(err); got != 2 {
+		t.Fatalf("exit code = %d, want 2", got)
 	}
 	if !strings.Contains(err.Error(), "not in project other") {
 		t.Fatalf("unexpected error: %v", err)
