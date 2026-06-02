@@ -36,6 +36,22 @@ func newPRTestServer(t *testing.T, svc prsvc.ActionManager) *httptest.Server {
 	return srv
 }
 
+// ---- Nil service → 503 SCM_NOT_CONFIGURED ----
+
+func TestPRsRoutes_NilService_MergeReturns503(t *testing.T) {
+	srv := newPRTestServer(t, nil)
+	body, status, headers := doRequest(t, srv, "POST", "/api/v1/prs/1/merge", "")
+	assertJSON(t, headers)
+	assertErrorCode(t, body, status, http.StatusServiceUnavailable, "SCM_NOT_CONFIGURED")
+}
+
+func TestPRsRoutes_NilService_ResolveCommentsReturns503(t *testing.T) {
+	srv := newPRTestServer(t, nil)
+	body, status, headers := doRequest(t, srv, "POST", "/api/v1/prs/1/resolve-comments", "")
+	assertJSON(t, headers)
+	assertErrorCode(t, body, status, http.StatusServiceUnavailable, "SCM_NOT_CONFIGURED")
+}
+
 // ---- Merge: 200 ----
 
 func TestPRsRoutes_Merge_200(t *testing.T) {

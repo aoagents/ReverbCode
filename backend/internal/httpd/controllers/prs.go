@@ -23,6 +23,10 @@ func (c *PRsController) Register(r chi.Router) {
 }
 
 func (c *PRsController) merge(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		envelope.WriteAPIError(w, r, http.StatusServiceUnavailable, "unavailable", "SCM_NOT_CONFIGURED", "SCM integration is not configured for this daemon", nil)
+		return
+	}
 	prID := chi.URLParam(r, "id")
 	res, err := c.Svc.Merge(r.Context(), prID)
 	if err != nil {
@@ -33,6 +37,10 @@ func (c *PRsController) merge(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *PRsController) resolveComments(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		envelope.WriteAPIError(w, r, http.StatusServiceUnavailable, "unavailable", "SCM_NOT_CONFIGURED", "SCM integration is not configured for this daemon", nil)
+		return
+	}
 	prID := chi.URLParam(r, "id")
 
 	// Body is optional: omitting it resolves all unresolved threads.
@@ -48,6 +56,23 @@ func (c *PRsController) resolveComments(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	envelope.WriteJSON(w, http.StatusOK, ResolveCommentsResponse{OK: true, Resolved: res.Resolved})
+}
+
+// writePRError maps PR sentinel errors to their locked HTTP envelopes,
+// falling back to 500 for unexpected failures.
+func writePRError(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, prsvc.ErrPRNotFound):
+		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "PR_NOT_FOUND", "Unknown PR", nil)
+	case errors.Is(err, prsvc.ErrPRNotMergeable):
+		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict", "PR_NOT_MERGEABLE", "PR is not mergeable", nil)
+	case errors.Is(err, prsvc.ErrPRPreconditions):
+		envelope.WriteAPIError(w, r, http.StatusUnprocessableEntity, "unprocessable", "PR_PRECONDITIONS_UNMET", "PR merge preconditions are not met", nil)
+	case errors.Is(err, prsvc.ErrNothingToResolve):
+		envelope.WriteAPIError(w, r, http.StatusUnprocessableEntity, "unprocessable", "NOTHING_TO_RESOLVE", "No unresolved review threads to resolve", nil)
+	default:
+		envelope.WriteAPIError(w, r, http.StatusInternalServerError, "internal", "PR_OPERATION_FAILED", "PR operation failed", nil)
+	}
 }
 
 // isEmptyBody reports whether err signals an absent or empty request body.

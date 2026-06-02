@@ -34,10 +34,6 @@ type API struct {
 // per-request timeout so the REST group can apply it without re-reading the
 // environment.
 func NewAPI(cfg config.Config, deps APIDeps) *API {
-	prSvc := deps.PRs
-	if prSvc == nil {
-		prSvc = prsvc.NewActionService()
-	}
 	return &API{
 		cfg: cfg,
 		projects: &controllers.ProjectsController{
@@ -46,7 +42,7 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 		sessions: &controllers.SessionsController{
 			Svc: deps.Sessions,
 		},
-		prs: &controllers.PRsController{Svc: prSvc},
+		prs: &controllers.PRsController{Svc: deps.PRs},
 	}
 }
 
