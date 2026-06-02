@@ -233,12 +233,6 @@ paths:
         schema:
           description: PR number.
           type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ResolveCommentsRequest'
-        required: true
       responses:
         "200":
           content:
@@ -760,13 +754,6 @@ components:
           type: string
       required:
       - displayName
-      type: object
-    ResolveCommentsRequest:
-      properties:
-        commentIds:
-          items:
-            type: string
-          type: array
       type: object
     ResolveCommentsResponse:
       properties:

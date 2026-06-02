@@ -387,7 +387,7 @@ func prOperations() []operation {
 			method: http.MethodPost, path: "/api/v1/prs/{id}/resolve-comments", id: "resolveComments", tag: "prs",
 			summary:    "Resolve review threads on a pull request",
 			pathParams: []any{controllers.PRIDParam{}},
-			reqBody:    controllers.ResolveCommentsRequest{},
+			reqBody:    nil, // body is optional: omitting it resolves all unresolved threads
 			resps: []respUnit{
 				{http.StatusOK, controllers.ResolveCommentsResponse{}},
 				{http.StatusNotFound, envelope.APIError{}},
