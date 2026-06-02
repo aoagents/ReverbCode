@@ -97,6 +97,9 @@ func (m runtimeMessenger) Send(ctx context.Context, id domain.SessionID, message
 	if !ok {
 		return fmt.Errorf("session %s: %w", id, sessionmanager.ErrNotFound)
 	}
+	if rec.IsTerminated {
+		return fmt.Errorf("session %s: %w", id, sessionmanager.ErrTerminated)
+	}
 	handleID := rec.Metadata.RuntimeHandleID
 	if handleID == "" {
 		return fmt.Errorf("session %s: %w", id, sessionmanager.ErrIncompleteHandle)

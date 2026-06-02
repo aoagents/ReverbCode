@@ -222,6 +222,37 @@ func TestWiring_SessionMessengerRequiresRuntimeHandle(t *testing.T) {
 	}
 }
 
+func TestWiring_SessionMessengerRejectsTerminatedSession(t *testing.T) {
+	store, err := sqlite.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	ctx := context.Background()
+	if err := store.UpsertProject(ctx, domain.ProjectRecord{ID: "p", Path: "/repo/p", RegisteredAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	rec, err := store.CreateSession(ctx, domain.SessionRecord{
+		ProjectID: "p", Kind: domain.KindWorker,
+		IsTerminated: true,
+		Activity:     domain.Activity{State: domain.ActivityIdle, LastActivityAt: time.Now()},
+		Metadata:     domain.SessionMetadata{RuntimeHandleID: "ao-1/terminal_0"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := &captureRuntimeSender{}
+	messenger := newSessionMessenger(store, runtime, nil)
+	err = messenger.Send(ctx, rec.ID, "hello")
+	if !errors.Is(err, sessionmanager.ErrTerminated) {
+		t.Fatalf("terminated session should wrap ErrTerminated, got %v", err)
+	}
+	if runtime.handle.ID != "" || runtime.message != "" {
+		t.Fatalf("runtime should not be called for terminated sessions, got handle=%q message=%q", runtime.handle.ID, runtime.message)
+	}
+}
+
 // TestProjectRepoResolver_ResolvesRegisteredProject asserts the DB-backed repo
 // resolver turns a registered project into its on-disk repo path (so spawns
 // materialise a worktree), and fails loudly for an unregistered project.
