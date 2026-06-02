@@ -177,6 +177,96 @@ paths:
       summary: Fetch one project; discriminates ok vs degraded
       tags:
       - projects
+  /api/v1/prs/{id}/merge:
+    post:
+      operationId: mergePR
+      parameters:
+      - description: PR number or identifier.
+        in: path
+        name: id
+        required: true
+        schema:
+          description: PR number or identifier.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MergePRResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Unprocessable Entity
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Merge a pull request (SCM lane — shell only)
+      tags:
+      - prs
+  /api/v1/prs/{id}/resolve-comments:
+    post:
+      operationId: resolveComments
+      parameters:
+      - description: PR number or identifier.
+        in: path
+        name: id
+        required: true
+        schema:
+          description: PR number or identifier.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResolveCommentsRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResolveCommentsResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Unprocessable Entity
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Resolve review comments on a pull request (SCM lane — shell only)
+      tags:
+      - prs
   /api/v1/sessions:
     get:
       operationId: listSessions
@@ -563,6 +653,19 @@ components:
       required:
       - sessions
       type: object
+    MergePRResponse:
+      properties:
+        method:
+          type: string
+        ok:
+          type: boolean
+        prNumber:
+          type: integer
+      required:
+      - ok
+      - prNumber
+      - method
+      type: object
     OrchestratorResponse:
       properties:
         id:
@@ -657,6 +760,23 @@ components:
           type: string
       required:
       - displayName
+      type: object
+    ResolveCommentsRequest:
+      properties:
+        commentIds:
+          items:
+            type: string
+          type: array
+      type: object
+    ResolveCommentsResponse:
+      properties:
+        ok:
+          type: boolean
+        resolved:
+          type: integer
+      required:
+      - ok
+      - resolved
       type: object
     RestoreSessionResponse:
       properties:
@@ -822,3 +942,5 @@ tags:
   name: projects
 - description: Agent session lifecycle and messaging
   name: sessions
+- description: Pull-request actions (SCM lane — shells only)
+  name: prs

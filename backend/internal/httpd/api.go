@@ -28,6 +28,7 @@ type API struct {
 	cfg      config.Config
 	projects *controllers.ProjectsController
 	sessions *controllers.SessionsController
+	prs      *controllers.PRsController
 }
 
 // NewAPI constructs the API surface from its dependencies. cfg carries the
@@ -42,6 +43,7 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 		sessions: &controllers.SessionsController{
 			Svc: deps.Sessions,
 		},
+		prs: &controllers.PRsController{},
 	}
 }
 
@@ -61,6 +63,7 @@ func (a *API) Register(root chi.Router) {
 			r.Use(middleware.Timeout(timeout))
 			a.projects.Register(r)
 			a.sessions.Register(r)
+			a.prs.Register(r)
 			// Sibling REST controllers plug in here.
 		})
 		// Surfaces that intentionally bypass the REST timeout register at this level.
