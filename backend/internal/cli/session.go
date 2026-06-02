@@ -50,13 +50,10 @@ type sessionResponse struct {
 }
 
 type killSessionResponse struct {
-	OK        bool   `json:"ok"`
 	SessionID string `json:"sessionId"`
-	Freed     bool   `json:"freed,omitempty"`
 }
 
 type restoreSessionResponse struct {
-	OK        bool       `json:"ok"`
 	SessionID string     `json:"sessionId"`
 	Session   sessionDTO `json:"session"`
 }
