@@ -217,8 +217,8 @@ func buildSCMBatchQuery(refs []ports.SCMPRRef) (string, []string) {
 	for i, ref := range refs {
 		alias := fmt.Sprintf("pr%d", i)
 		aliases[i] = alias
-		b.WriteString(fmt.Sprintf("%s: repository(owner:%s,name:%s){ pullRequest(number:%d){ %s } }\n",
-			alias, graphQLString(ref.Repo.Owner), graphQLString(ref.Repo.Name), ref.Number, scmPRFields()))
+		_, _ = fmt.Fprintf(&b, "%s: repository(owner:%s,name:%s){ pullRequest(number:%d){ %s } }\n",
+			alias, graphQLString(ref.Repo.Owner), graphQLString(ref.Repo.Name), ref.Number, scmPRFields())
 	}
 	b.WriteString("}")
 	return b.String(), aliases
