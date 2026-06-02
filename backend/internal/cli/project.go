@@ -289,7 +289,7 @@ func confirmProjectRemoval(cmd *cobra.Command, id string) (bool, error) {
 	}
 	reader := bufio.NewReader(cmd.InOrStdin())
 	line, err := reader.ReadString('\n')
-	if err != nil && len(line) == 0 {
+	if err != nil && line == "" {
 		return false, err
 	}
 	return strings.TrimSpace(line) == id, nil
