@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -56,6 +57,30 @@ func TestZellijSessionNameSanitizesIssueRefs(t *testing.T) {
 	}
 	if got == "repo/issue#42.1" {
 		t.Fatal("sanitized id still contains raw unsafe characters")
+	}
+}
+
+// SessionName must return the exact name Create registers a session under, so
+// callers that print an attach hint (e.g. `ao spawn`) reference the real
+// session. A short, conforming id passes through; a long one is sanitised to a
+// different name — printing the raw id there would send users to a missing
+// session.
+func TestSessionNameMatchesCreateNaming(t *testing.T) {
+	short := "myproj-1"
+	if got := SessionName(short); got != short {
+		t.Fatalf("SessionName(%q) = %q, want it unchanged", short, got)
+	}
+
+	long := domain.SessionID(strings.Repeat("x", 60) + "-1")
+	viaCreate, err := zellijSessionName(long)
+	if err != nil {
+		t.Fatalf("zellijSessionName: %v", err)
+	}
+	if got := SessionName(string(long)); got != viaCreate {
+		t.Fatalf("SessionName = %q, but Create uses %q", got, viaCreate)
+	}
+	if SessionName(string(long)) == string(long) {
+		t.Fatal("expected a long id to be sanitised to a different name")
 	}
 }
 

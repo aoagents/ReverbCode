@@ -228,7 +228,10 @@ var projectIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
 func validateProjectID(id domain.ProjectID) error {
 	raw := string(id)
-	if raw == "" || raw == "." || raw == ".." || strings.ContainsAny(raw, `/\`) || !projectIDPattern.MatchString(raw) {
+	// Reject any "." run: a "." prefix fails the pattern, but an embedded ".."
+	// (e.g. "a..b") passes it yet yields a branch like "ao/a..b-1" that git's
+	// check-ref-format rejects — surfacing as an opaque 500 at spawn time.
+	if raw == "" || raw == "." || strings.Contains(raw, "..") || strings.ContainsAny(raw, `/\`) || !projectIDPattern.MatchString(raw) {
 		return badRequest("INVALID_PROJECT_ID", "Project id failed storage-path validation", nil)
 	}
 	return nil

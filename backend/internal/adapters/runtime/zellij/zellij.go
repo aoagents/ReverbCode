@@ -343,10 +343,18 @@ func zellijSessionName(id domain.SessionID) (string, error) {
 	if raw == "" {
 		return "", errors.New("zellij runtime: session id is required")
 	}
-	if sessionIDPattern.MatchString(raw) && len(raw) <= 48 {
-		return raw, nil
+	return SessionName(raw), nil
+}
+
+// SessionName returns the zellij session name the runtime registers for a given
+// session id — applying the same sanitisation Create does. Callers that print an
+// attach hint (e.g. `ao spawn`) must use this rather than the raw id, since a
+// long or non-conforming id maps to a different, sanitised session name.
+func SessionName(id string) string {
+	if sessionIDPattern.MatchString(id) && len(id) <= 48 {
+		return id
 	}
-	return sanitizedSessionName(raw), nil
+	return sanitizedSessionName(id)
 }
 
 func sanitizedSessionName(raw string) string {

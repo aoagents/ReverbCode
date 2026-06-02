@@ -125,6 +125,11 @@ func TestManager_AddValidationAndConflicts(t *testing.T) {
 	_, err = m.Add(ctx, project.AddInput{Path: t.TempDir()}) // exists but not a git repo
 	wantCode(t, err, "NOT_A_GIT_REPO")
 
+	// An embedded ".." passes the id pattern but would yield an invalid git
+	// branch (ao/a..b-1) at spawn time; reject it up front as a clear 400.
+	_, err = m.Add(ctx, project.AddInput{Path: gitRepo(t), ProjectID: ptr("a..b")})
+	wantCode(t, err, "INVALID_PROJECT_ID")
+
 	repoA, repoB := gitRepo(t), gitRepo(t)
 	if _, err := m.Add(ctx, project.AddInput{Path: repoA, ProjectID: ptr("shared")}); err != nil {
 		t.Fatalf("seed add: %v", err)

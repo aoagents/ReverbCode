@@ -66,8 +66,10 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 			}
 			// The daemon runs zellij under a short, non-default socket dir (see
 			// zellij.DefaultSocketDir), so a plain `zellij attach` wouldn't find
-			// the session — prefix the env so the hint is copy-pasteable.
-			attach := fmt.Sprintf("zellij attach %s", res.Session.ID)
+			// the session — prefix the env so the hint is copy-pasteable. Use the
+			// sanitised name zellij actually registers (zellij.SessionName): a long
+			// session id maps to a different name than the raw id.
+			attach := fmt.Sprintf("zellij attach %s", zellij.SessionName(res.Session.ID))
 			if dir := zellij.DefaultSocketDir(); dir != "" {
 				attach = fmt.Sprintf("ZELLIJ_SOCKET_DIR=%s %s", dir, attach)
 			}

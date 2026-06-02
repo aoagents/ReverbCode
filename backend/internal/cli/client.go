@@ -18,9 +18,24 @@ import (
 const commandTimeout = 2 * time.Minute
 
 // apiError is the subset of the daemon's JSON error envelope the CLI surfaces.
+// RequestID is surfaced so a failed command can be correlated with daemon logs.
 type apiError struct {
-	Message string `json:"message"`
-	Code    string `json:"code"`
+	Message   string `json:"message"`
+	Code      string `json:"code"`
+	RequestID string `json:"requestId"`
+}
+
+// String renders the envelope for the user: "<message> (<code>) [request <id>]",
+// omitting whichever parts the daemon left empty.
+func (e apiError) String() string {
+	msg := e.Message
+	if e.Code != "" {
+		msg = fmt.Sprintf("%s (%s)", msg, e.Code)
+	}
+	if e.RequestID != "" {
+		msg = fmt.Sprintf("%s [request %s]", msg, e.RequestID)
+	}
+	return msg
 }
 
 // postJSON sends body as JSON to POST /api/v1/<path> on the running daemon and
@@ -68,14 +83,10 @@ func (c *commandContext) postJSON(ctx context.Context, path string, body, out an
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		var e apiError
 		_ = json.NewDecoder(resp.Body).Decode(&e)
-		switch {
-		case e.Message != "" && e.Code != "":
-			return fmt.Errorf("%s (%s)", e.Message, e.Code)
-		case e.Message != "":
-			return fmt.Errorf("%s", e.Message)
-		default:
+		if e.Message == "" {
 			return fmt.Errorf("daemon returned HTTP %d", resp.StatusCode)
 		}
+		return fmt.Errorf("%s", e.String())
 	}
 	if out != nil {
 		if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
