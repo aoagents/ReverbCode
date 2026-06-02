@@ -20,7 +20,12 @@ func startSCMObserver(ctx context.Context, store *sqlite.Store, lcm *lifecycle.M
 		scmgithub.EnvTokenSource{EnvVars: []string{"AO_GITHUB_TOKEN"}},
 		&scmgithub.GHTokenSource{},
 	}
-	provider, err := scmgithub.NewProvider(scmgithub.ProviderOptions{Token: tokens})
+	// Avoid token preflight on daemon startup. GHTokenSource may shell out to `gh`,
+	// which is too slow/flaky for the startup readiness path (especially on
+	// Windows CI). The provider will resolve credentials lazily in its background
+	// observer goroutine when it actually needs to call GitHub.
+	client := scmgithub.NewClient(scmgithub.ClientOptions{Token: tokens})
+	provider, err := scmgithub.NewProvider(scmgithub.ProviderOptions{Client: client})
 	if err != nil {
 		if errors.Is(err, scmgithub.ErrNoToken) || errors.Is(err, scmgithub.ErrAuthFailed) {
 			logger.Warn("scm observer disabled: no usable GitHub token", "err", err)
