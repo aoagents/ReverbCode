@@ -27,6 +27,16 @@ func worktreeRemoveArgs(repo, path string) []string {
 	return []string{"-C", repo, "worktree", "remove", path}
 }
 
+// worktreeRemoveForceArgs is used ONLY by Create's cleanup-on-failure path.
+// It is deliberately distinct from worktreeRemoveArgs (which omits --force
+// for Destroy) because the contexts are different: Destroy operates on
+// worktrees that may contain in-progress agent commits; Create cleanup
+// operates on an orphan from a just-attempted creation where no agent has
+// committed. NEVER use this from Destroy.
+func worktreeRemoveForceArgs(repo, path string) []string {
+	return []string{"-C", repo, "worktree", "remove", "--force", path}
+}
+
 func worktreePruneArgs(repo string) []string {
 	return []string{"-C", repo, "worktree", "prune"}
 }

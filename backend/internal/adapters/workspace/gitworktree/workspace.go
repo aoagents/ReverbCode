@@ -213,6 +213,7 @@ func (w *Workspace) addWorktree(ctx context.Context, repo, path, branch string) 
 	}
 	if localBranch {
 		if _, err := w.run(ctx, w.binary, worktreeAddBranchArgs(repo, path, branch)...); err != nil {
+			w.cleanupOrphan(ctx, repo, path)
 			return fmt.Errorf("gitworktree: worktree add existing branch %q: %w", branch, err)
 		}
 		return nil
@@ -222,9 +223,18 @@ func (w *Workspace) addWorktree(ctx context.Context, repo, path, branch string) 
 		return err
 	}
 	if _, err := w.run(ctx, w.binary, worktreeAddNewBranchArgs(repo, branch, path, baseRef)...); err != nil {
+		w.cleanupOrphan(ctx, repo, path)
 		return fmt.Errorf("gitworktree: worktree add branch %q from %q: %w", branch, baseRef, err)
 	}
 	return nil
+}
+
+// cleanupOrphan best-effort removes an orphan worktree left by a failed
+// `git worktree add`. Errors are swallowed: the caller is already returning
+// the underlying add failure, which is the actionable signal. Safe to use
+// --force here because no agent has had a chance to commit into this path.
+func (w *Workspace) cleanupOrphan(ctx context.Context, repo, path string) {
+	_, _ = w.run(ctx, w.binary, worktreeRemoveForceArgs(repo, path)...)
 }
 
 func (w *Workspace) validateBranch(ctx context.Context, repo, branch string) error {
