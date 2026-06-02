@@ -160,13 +160,13 @@ func (r projectRepoResolver) RepoPath(projectID domain.ProjectID) (string, error
 		return "", fmt.Errorf("look up project %q: %w", projectID, err)
 	}
 	if !ok {
-		return "", fmt.Errorf("no project registered with id %q — add one with `ao project add`", projectID)
+		return "", fmt.Errorf("no project registered with id %q — add one with `ao project add`: %w", projectID, sessionmanager.ErrProjectNotResolvable)
 	}
 	if !rec.ArchivedAt.IsZero() {
-		return "", fmt.Errorf("project %q is archived", projectID)
+		return "", fmt.Errorf("project %q is archived: %w", projectID, sessionmanager.ErrProjectNotResolvable)
 	}
 	if rec.Path == "" {
-		return "", fmt.Errorf("project %q has no repo path on record", projectID)
+		return "", fmt.Errorf("project %q has no repo path on record: %w", projectID, sessionmanager.ErrProjectNotResolvable)
 	}
 	return rec.Path, nil
 }

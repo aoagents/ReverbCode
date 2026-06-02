@@ -253,6 +253,8 @@ func writeSessionError(w http.ResponseWriter, r *http.Request, err error) {
 		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict", "SESSION_NOT_RESTORABLE", "Session is not restorable", nil)
 	case errors.Is(err, sessionmanager.ErrIncompleteHandle):
 		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict", "SESSION_INCOMPLETE_HANDLE", "Session is missing runtime or workspace handles", nil)
+	case errors.Is(err, sessionmanager.ErrProjectNotResolvable):
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "PROJECT_NOT_RESOLVABLE", "Project is not registered or has no repo — register it with `ao project add`", nil)
 	default:
 		envelope.WriteAPIError(w, r, http.StatusInternalServerError, "internal", "SESSION_OPERATION_FAILED", "Session operation failed", nil)
 	}

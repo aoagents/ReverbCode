@@ -17,6 +17,9 @@ var (
 	ErrNotFound         = errors.New("session: not found")
 	ErrNotRestorable    = errors.New("session: not restorable (not terminal)")
 	ErrIncompleteHandle = errors.New("session: incomplete teardown handle")
+	// ErrProjectNotResolvable means the spawn's project has no usable repo
+	// (unregistered, archived, or missing a path). The API maps it to a 400.
+	ErrProjectNotResolvable = errors.New("session: project repo not resolvable")
 )
 
 // Env vars a spawned process reads to learn who it is.

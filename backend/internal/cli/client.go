@@ -25,8 +25,9 @@ type apiError struct {
 
 // postJSON sends body as JSON to POST /api/v1/<path> on the running daemon and
 // decodes a 2xx response into out (out may be nil). A non-2xx response becomes
-// an error built from the API error envelope, and a missing daemon yields a
-// clear "not running" message rather than a connection-refused dump.
+// an error built from the API error envelope. A missing run-file or a stale one
+// (dead PID) yields a clear "not running" message rather than a
+// connection-refused dump.
 func (c *commandContext) postJSON(ctx context.Context, path string, body, out any) error {
 	cfg, err := config.Load()
 	if err != nil {
@@ -38,6 +39,9 @@ func (c *commandContext) postJSON(ctx context.Context, path string, body, out an
 	}
 	if info == nil {
 		return fmt.Errorf("AO daemon is not running — start it with `ao start`")
+	}
+	if !c.deps.ProcessAlive(info.PID) {
+		return fmt.Errorf("AO daemon is not running (stale run-file at %s) — start it with `ao start`", cfg.RunFilePath)
 	}
 
 	payload, err := json.Marshal(body)
@@ -51,9 +55,11 @@ func (c *commandContext) postJSON(ctx context.Context, path string, body, out an
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	// A dedicated client: mutating calls need far more headroom than the 2s
-	// status-probe client in Deps.
-	resp, err := (&http.Client{Timeout: commandTimeout}).Do(req)
+	// Reuse the injected client's transport (keeps it stubbable in tests) but
+	// give mutating calls far more headroom than the 2s status-probe timeout.
+	client := *c.deps.HTTPClient
+	client.Timeout = commandTimeout
+	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("call daemon: %w", err)
 	}

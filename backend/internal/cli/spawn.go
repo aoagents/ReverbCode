@@ -30,7 +30,6 @@ type spawnResult struct {
 	Session struct {
 		ID     string `json:"id"`
 		Status string `json:"status"`
-		Branch string `json:"branch"`
 	} `json:"session"`
 }
 
@@ -60,8 +59,8 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 				return err
 			}
 			_, err := fmt.Fprintf(cmd.OutOrStdout(),
-				"spawned session %s (%s) on branch %s\nattach with: zellij attach %s   (or `zellij list-sessions`)\n",
-				res.Session.ID, res.Session.Status, res.Session.Branch, res.Session.ID)
+				"spawned session %s (%s)\nattach with: zellij attach %s   (or `zellij list-sessions`)\n",
+				res.Session.ID, res.Session.Status, res.Session.ID)
 			return err
 		},
 	}
