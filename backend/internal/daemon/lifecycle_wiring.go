@@ -9,6 +9,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/claudecode"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/codex"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/opencode"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/workspace/gitworktree"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -118,7 +119,7 @@ func newSessionMessenger(store *sqlite.Store, runtime runtimeMessageSender, _ *s
 // empty/duplicate id — a programmer error, not a runtime condition.
 func buildAgentRegistry() (*adapters.Registry, error) {
 	reg := adapters.NewRegistry()
-	for _, a := range []adapters.Adapter{claudecode.New(), codex.New()} {
+	for _, a := range []adapters.Adapter{claudecode.New(), codex.New(), opencode.New()} {
 		if err := reg.Register(a); err != nil {
 			return nil, fmt.Errorf("register agent adapter %q: %w", a.Manifest().ID, err)
 		}
