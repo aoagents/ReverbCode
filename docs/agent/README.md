@@ -2,7 +2,7 @@
 
 ## Goal
 
-Agent adapters let AO run and observe different CLI coding agents without hardcoding agent-specific behavior into the spawn engine. Every CLI coding agent must implement the contract in `backend/internal/adapters/agent/agent.go`.
+Agent adapters let AO run and observe different CLI coding agents without hardcoding agent-specific behavior into the spawn engine. Every CLI coding agent must implement the contract in `backend/internal/ports/agent.go`.
 
 The important current slice is hook-derived session info. AO should know a running worker's native agent session id, title, and summary from agent hooks installed in the per-session worktree, not from scanning agent transcript/cache files.
 
@@ -12,8 +12,8 @@ The important current slice is hook-derived session info. AO should know a runni
 - Hook installation happens at worktree/session creation time.
 - `SessionInfo` reads normalized metadata persisted in AO's session store.
 - `SessionInfo` must not infer display info by reading agent transcript/cache files.
-- `SummaryIsFallback` is removed from `agent.SessionInfo`.
-- `TranscriptPath` is removed from `agent.SessionInfo`.
+- `SummaryIsFallback` is removed from `ports.SessionInfo`.
+- `TranscriptPath` is removed from `ports.SessionInfo`.
 - `Title` and `Summary` are both first-class fields.
 - `Title` is derived from the user prompt hook.
 - `Summary` is derived from the stop/final assistant hook.
@@ -21,7 +21,7 @@ The important current slice is hook-derived session info. AO should know a runni
 
 ## Agent Contract
 
-The shared contract lives in `backend/internal/adapters/agent/agent.go`.
+The shared contract lives in `backend/internal/ports/agent.go`.
 
 Required adapter behavior:
 
