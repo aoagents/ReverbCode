@@ -10,18 +10,19 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apispec"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/controllers"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
-	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	prsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/pr"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 )
 
-// APIDeps bundles every Manager the API layer's controllers depend on.
+// APIDeps bundles every service the API layer's controllers depend on.
 // Controllers see only resource-level interfaces; they do not reach through to
 // lifecycle reducers, adapters, or storage. A nil dependency keeps its routes
-// registered but returns the OpenAPI-backed 501 response.
+// registered but returns the OpenAPI-backed 501 response (SCM not configured,
+// sessions not wired, etc.).
 type APIDeps struct {
 	Projects projectsvc.Manager
 	Sessions controllers.SessionService
-	PRs      ports.PRService
+	PRs      prsvc.ActionManager
 }
 
 // API owns one controller per resource and is the single Register call the

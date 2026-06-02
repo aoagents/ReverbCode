@@ -219,7 +219,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
-      summary: Merge a pull request (SCM lane — shell only)
+      summary: Squash-merge a pull request
       tags:
       - prs
   /api/v1/prs/{id}/resolve-comments:
@@ -264,7 +264,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
-      summary: Resolve review comments on a pull request (SCM lane — shell only)
+      summary: Resolve review threads on a pull request
       tags:
       - prs
   /api/v1/sessions:
@@ -942,5 +942,5 @@ tags:
   name: projects
 - description: Agent session lifecycle and messaging
   name: sessions
-- description: Pull-request actions (SCM lane — shells only)
+- description: Pull-request actions (SCM lane)
   name: prs

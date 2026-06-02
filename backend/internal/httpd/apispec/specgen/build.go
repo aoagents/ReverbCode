@@ -60,7 +60,7 @@ func Build() ([]byte, error) {
 		*(&openapi31.Tag{Name: "sessions"}).WithDescription(
 			"Agent session lifecycle and messaging"),
 		*(&openapi31.Tag{Name: "prs"}).WithDescription(
-			"Pull-request actions (SCM lane — shells only)"),
+			"Pull-request actions (SCM lane)"),
 	}
 
 	for _, op := range operations() {
@@ -369,11 +369,14 @@ func sessionOperations() []operation {
 	}
 }
 
+// prOperations declares the PR action operations. These live in the SCM lane:
+// the handler delegates to a PRService backed by the SCM provider. A nil
+// PRService (SCM not configured) returns 501 for both routes.
 func prOperations() []operation {
 	return []operation{
 		{
 			method: http.MethodPost, path: "/api/v1/prs/{id}/merge", id: "mergePR", tag: "prs",
-			summary:    "Merge a pull request (SCM lane — shell only)",
+			summary:    "Squash-merge a pull request",
 			pathParams: []any{controllers.PRIDParam{}},
 			resps: []respUnit{
 				{http.StatusOK, controllers.MergePRResponse{}},
@@ -385,7 +388,7 @@ func prOperations() []operation {
 		},
 		{
 			method: http.MethodPost, path: "/api/v1/prs/{id}/resolve-comments", id: "resolveComments", tag: "prs",
-			summary:    "Resolve review comments on a pull request (SCM lane — shell only)",
+			summary:    "Resolve review threads on a pull request",
 			pathParams: []any{controllers.PRIDParam{}},
 			reqBody:    controllers.ResolveCommentsRequest{},
 			resps: []respUnit{

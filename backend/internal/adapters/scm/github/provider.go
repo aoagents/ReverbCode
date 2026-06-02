@@ -621,12 +621,18 @@ func repoPath(owner, repo string, elems ...string) string {
 // PR action operations
 // ---------------------------------------------------------------------------
 
+// resolveThreadMutation resolves a single review thread by its GraphQL node ID.
+// The mutation is idempotent: GitHub silently accepts an already-resolved thread.
 const resolveThreadMutation = `mutation ResolveThread($threadId:ID!){
   resolveReviewThread(input:{threadId:$threadId}){
     thread{ id isResolved }
   }
 }`
 
+// unresolvedThreadsQuery fetches review thread IDs and their resolved state.
+// last:100 matches GitHub's documented per-page maximum for reviewThreads; PRs
+// with more than 100 threads are uncommon and the service resolves the first
+// page only (a follow-up can add pagination if needed).
 const unresolvedThreadsQuery = `query UnresolvedThreads($owner:String!,$repo:String!,$number:Int!){
   repository(owner:$owner,name:$repo){
     pullRequest(number:$number){

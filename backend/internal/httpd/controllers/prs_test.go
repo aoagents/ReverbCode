@@ -10,27 +10,25 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd"
-	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
-	"github.com/aoagents/agent-orchestrator/backend/internal/scm"
+	prsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/pr"
 )
 
-// fakePRService is a configurable test double for ports.PRService.
 type fakePRService struct {
-	mergeResult   ports.MergeResult
+	mergeResult   prsvc.MergeResult
 	mergeErr      error
-	resolveResult ports.ResolveResult
+	resolveResult prsvc.ResolveResult
 	resolveErr    error
 }
 
-func (f *fakePRService) Merge(_ context.Context, _ string) (ports.MergeResult, error) {
+func (f *fakePRService) Merge(_ context.Context, _ string) (prsvc.MergeResult, error) {
 	return f.mergeResult, f.mergeErr
 }
 
-func (f *fakePRService) ResolveComments(_ context.Context, _ string, _ []string) (ports.ResolveResult, error) {
+func (f *fakePRService) ResolveComments(_ context.Context, _ string, _ []string) (prsvc.ResolveResult, error) {
 	return f.resolveResult, f.resolveErr
 }
 
-func newPRTestServer(t *testing.T, svc ports.PRService) *httptest.Server {
+func newPRTestServer(t *testing.T, svc prsvc.ActionManager) *httptest.Server {
 	t.Helper()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	srv := httptest.NewServer(httpd.NewRouterWithAPI(config.Config{}, log, nil, httpd.APIDeps{PRs: svc}))
@@ -65,7 +63,7 @@ func TestPRsRoutes_NilService_ResolveCommentsReturns501(t *testing.T) {
 // ---- Merge: 200 ----
 
 func TestPRsRoutes_Merge_200(t *testing.T) {
-	svc := &fakePRService{mergeResult: ports.MergeResult{PRNumber: 42, Method: "squash"}}
+	svc := &fakePRService{mergeResult: prsvc.MergeResult{PRNumber: 42, Method: "squash"}}
 	srv := newPRTestServer(t, svc)
 
 	body, status, _ := doRequest(t, srv, "POST", "/api/v1/prs/42/merge", "")
@@ -86,7 +84,7 @@ func TestPRsRoutes_Merge_200(t *testing.T) {
 // ---- Merge: 404 ----
 
 func TestPRsRoutes_Merge_404(t *testing.T) {
-	svc := &fakePRService{mergeErr: scm.ErrPRNotFound}
+	svc := &fakePRService{mergeErr: prsvc.ErrPRNotFound}
 	srv := newPRTestServer(t, svc)
 
 	body, status, headers := doRequest(t, srv, "POST", "/api/v1/prs/99/merge", "")
@@ -97,7 +95,7 @@ func TestPRsRoutes_Merge_404(t *testing.T) {
 // ---- Merge: 409 ----
 
 func TestPRsRoutes_Merge_409(t *testing.T) {
-	svc := &fakePRService{mergeErr: scm.ErrPRNotMergeable}
+	svc := &fakePRService{mergeErr: prsvc.ErrPRNotMergeable}
 	srv := newPRTestServer(t, svc)
 
 	body, status, headers := doRequest(t, srv, "POST", "/api/v1/prs/1/merge", "")
@@ -108,7 +106,7 @@ func TestPRsRoutes_Merge_409(t *testing.T) {
 // ---- Merge: 422 ----
 
 func TestPRsRoutes_Merge_422(t *testing.T) {
-	svc := &fakePRService{mergeErr: scm.ErrPRPreconditions}
+	svc := &fakePRService{mergeErr: prsvc.ErrPRPreconditions}
 	srv := newPRTestServer(t, svc)
 
 	body, status, headers := doRequest(t, srv, "POST", "/api/v1/prs/1/merge", "")
@@ -119,7 +117,7 @@ func TestPRsRoutes_Merge_422(t *testing.T) {
 // ---- ResolveComments: 200 ----
 
 func TestPRsRoutes_ResolveComments_200(t *testing.T) {
-	svc := &fakePRService{resolveResult: ports.ResolveResult{Resolved: 3}}
+	svc := &fakePRService{resolveResult: prsvc.ResolveResult{Resolved: 3}}
 	srv := newPRTestServer(t, svc)
 
 	body, status, _ := doRequest(t, srv, "POST", "/api/v1/prs/42/resolve-comments", `{"commentIds":["T_1","T_2","T_3"]}`)
@@ -137,7 +135,7 @@ func TestPRsRoutes_ResolveComments_200(t *testing.T) {
 }
 
 func TestPRsRoutes_ResolveComments_200_NoBody(t *testing.T) {
-	svc := &fakePRService{resolveResult: ports.ResolveResult{Resolved: 2}}
+	svc := &fakePRService{resolveResult: prsvc.ResolveResult{Resolved: 2}}
 	srv := newPRTestServer(t, svc)
 
 	body, status, _ := doRequest(t, srv, "POST", "/api/v1/prs/42/resolve-comments", "")
@@ -149,7 +147,7 @@ func TestPRsRoutes_ResolveComments_200_NoBody(t *testing.T) {
 // ---- ResolveComments: 404 ----
 
 func TestPRsRoutes_ResolveComments_404(t *testing.T) {
-	svc := &fakePRService{resolveErr: scm.ErrPRNotFound}
+	svc := &fakePRService{resolveErr: prsvc.ErrPRNotFound}
 	srv := newPRTestServer(t, svc)
 
 	body, status, headers := doRequest(t, srv, "POST", "/api/v1/prs/99/resolve-comments", "")
@@ -160,7 +158,7 @@ func TestPRsRoutes_ResolveComments_404(t *testing.T) {
 // ---- ResolveComments: 422 ----
 
 func TestPRsRoutes_ResolveComments_422(t *testing.T) {
-	svc := &fakePRService{resolveErr: scm.ErrNothingToResolve}
+	svc := &fakePRService{resolveErr: prsvc.ErrNothingToResolve}
 	srv := newPRTestServer(t, svc)
 
 	body, status, headers := doRequest(t, srv, "POST", "/api/v1/prs/1/resolve-comments", "")

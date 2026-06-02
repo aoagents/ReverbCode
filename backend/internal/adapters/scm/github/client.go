@@ -28,8 +28,8 @@ var (
 	ErrNotFound      = errors.New("github scm: not found")
 	ErrAuthFailed    = errors.New("github scm: authentication failed")
 	ErrRateLimited   = errors.New("github scm: rate limited")
-	ErrNotMergeable  = errors.New("github scm: not mergeable")  // 405 on pull merge
-	ErrUnprocessable = errors.New("github scm: unprocessable")  // 422 validation failure
+	ErrNotMergeable  = errors.New("github scm: not mergeable")  // 405 (method not allowed) or 409 (HEAD modified)
+	ErrUnprocessable = errors.New("github scm: unprocessable")  // 422 validation failure (draft, missing checks/reviews)
 )
 
 // RateLimitError carries the structured backoff hints from a rate-limit
