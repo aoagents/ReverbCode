@@ -76,7 +76,7 @@ func wrapLaunchCommand(cfg ports.RuntimeConfig, shellPath string) string {
 		b.WriteString(shellQuote(path))
 		b.WriteString("; ")
 	}
-	b.WriteString(cfg.LaunchCommand)
+	b.WriteString(quoteArgv(cfg.Argv))
 	b.WriteString("; exec ")
 	b.WriteString(shellQuote(shellPath))
 	b.WriteString(" -i")
@@ -94,4 +94,15 @@ func sortedKeys(m map[string]string) []string {
 
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+}
+
+// quoteArgv renders an agent's argv as a single POSIX-shell command string,
+// single-quoting each argument so a value with spaces (e.g. a prompt) stays one
+// word when the wrapper script is run via `sh -lc`.
+func quoteArgv(argv []string) string {
+	parts := make([]string, len(argv))
+	for i, a := range argv {
+		parts[i] = shellQuote(a)
+	}
+	return strings.Join(parts, " ")
 }

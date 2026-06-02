@@ -40,9 +40,30 @@ func (s *stubRuntime) IsAlive(context.Context, ports.RuntimeHandle) (bool, error
 
 type stubAgent struct{}
 
-func (stubAgent) GetLaunchCommand(ports.AgentConfig) string          { return "launch" }
-func (stubAgent) GetEnvironment(ports.AgentConfig) map[string]string { return map[string]string{} }
-func (stubAgent) GetRestoreCommand(id string) string                 { return "resume " + id }
+func (stubAgent) GetConfigSpec(context.Context) (ports.ConfigSpec, error) {
+	return ports.ConfigSpec{}, nil
+}
+func (stubAgent) GetLaunchCommand(context.Context, ports.LaunchConfig) ([]string, error) {
+	return []string{"launch"}, nil
+}
+func (stubAgent) GetPromptDeliveryStrategy(context.Context, ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
+	return ports.PromptDeliveryInCommand, nil
+}
+func (stubAgent) GetAgentHooks(context.Context, ports.WorkspaceHookConfig) error { return nil }
+func (stubAgent) GetRestoreCommand(_ context.Context, cfg ports.RestoreConfig) ([]string, bool, error) {
+	if id := cfg.Session.Metadata[ports.MetadataKeyAgentSessionID]; id != "" {
+		return []string{"resume", id}, true, nil
+	}
+	return nil, false, nil
+}
+func (stubAgent) SessionInfo(context.Context, ports.SessionRef) (ports.SessionInfo, bool, error) {
+	return ports.SessionInfo{}, false, nil
+}
+
+// stubAgents resolves every harness to the same stubAgent.
+type stubAgents struct{}
+
+func (stubAgents) Agent(domain.AgentHarness) (ports.Agent, bool) { return stubAgent{}, true }
 
 type stubWorkspace struct {
 	root string
@@ -129,7 +150,7 @@ func openLiveStack(t *testing.T, dataDir string) *liveStack {
 	wsRoot := t.TempDir()
 	sm := session.New(session.Deps{
 		Runtime:   &stubRuntime{id: "h1", name: "tmux"},
-		Agent:     stubAgent{},
+		Agents:    stubAgents{},
 		Workspace: &stubWorkspace{root: wsRoot},
 		Store:     store,
 		Messenger: messenger,

@@ -2,10 +2,13 @@ package daemon
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"path/filepath"
-	"sync"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/claudecode"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/codex"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/tmux"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/workspace/gitworktree"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
@@ -56,11 +59,12 @@ type sessionStack struct {
 }
 
 // startSession constructs the Session Manager over the real tmux Runtime and
-// gitworktree Workspace, the LCM and adapter created by startLifecycle, and the
-// loud-stub Agent / Messenger / Notifier ports that have no production
-// implementations yet. It does NOT mount any HTTP routes — those come with the
-// daemon lane (#10). Returning the SM here lets main hold the wired-but-quiet
-// instance so future route wiring is a one-line plumb-through.
+// gitworktree Workspace, the LCM and store from startLifecycle, and the agent
+// adapter selected by cfg.Agent from the registry (see buildAgentRegistry). The
+// Messenger remains a stub until the runtime/agent nudge path lands. It does NOT
+// mount any HTTP routes — those come with the daemon lane (#10). Returning the
+// SM here lets main hold the wired instance so future route wiring is a
+// one-line plumb-through.
 func startSession(ctx context.Context, cfg config.Config, ls *lifecycleStack, log *slog.Logger) (*sessionStack, error) {
 	_ = ctx // reserved for future ctx-aware plugin construction; today's tmux/gitworktree constructors are synchronous.
 	runtime := tmux.New(tmux.Options{})
@@ -80,11 +84,14 @@ func startSession(ctx context.Context, cfg config.Config, ls *lifecycleStack, lo
 		return nil, err
 	}
 
-	agent := newNoopAgent(log)
+	agents, err := buildAgentResolver(cfg.Agent, log)
+	if err != nil {
+		return nil, err
+	}
 
 	sm := session.New(session.Deps{
 		Runtime:   runtime,
-		Agent:     agent,
+		Agents:    agents,
 		Workspace: ws,
 		Store:     ls.Store,
 		Messenger: noopMessenger{},
@@ -101,49 +108,65 @@ type noopMessenger struct{}
 
 func (noopMessenger) Send(context.Context, domain.SessionID, string) error { return nil }
 
-// agentNotWiredSentinel is the launch / restore command (and env-var key)
-// noopAgent returns. tmux will try to exec a binary named exactly this and fail
-// fast, so a Spawn against the loud stub surfaces a clear runtime error rather
-// than starting a quiet, broken session.
-const agentNotWiredSentinel = "AO_AGENT_HARNESS_NOT_WIRED"
-
-// noopAgent is a loud stub for ports.Agent. There is no production Agent
-// adapter on main yet; rather than panic at construction, this struct lets the
-// daemon stand up the Session Manager, then logs a single warning the first
-// time any SM call route through it and returns sentinel commands that make
-// the runtime layer fail loudly.
-type noopAgent struct {
-	log  *slog.Logger
-	once *sync.Once
+// buildAgentRegistry returns a registry populated with the agent adapters the
+// daemon ships. Each implements ports.Agent and is keyed by its manifest id, so
+// cfg.Agent can select one without the daemon hard-coding a concrete type.
+// Registration only fails on an empty/duplicate id — a programmer error, not a
+// runtime condition — so it surfaces as a startup error.
+func buildAgentRegistry() (*adapters.Registry, error) {
+	reg := adapters.NewRegistry()
+	for _, a := range []adapters.Adapter{claudecode.New(), codex.New()} {
+		if err := reg.Register(a); err != nil {
+			return nil, fmt.Errorf("register agent adapter %q: %w", a.Manifest().ID, err)
+		}
+	}
+	return reg, nil
 }
 
-var _ ports.Agent = (*noopAgent)(nil)
-
-func newNoopAgent(log *slog.Logger) *noopAgent {
-	return &noopAgent{log: log, once: &sync.Once{}}
+// agentRegistry adapts the generic adapter Registry to ports.AgentResolver: it
+// maps a session's harness onto the registered adapter of the same id and
+// asserts that adapter drives an agent. An empty harness falls back to the
+// daemon's configured default (AO_AGENT), so a spawn that names no harness still
+// gets a real agent.
+type agentRegistry struct {
+	reg            *adapters.Registry
+	defaultHarness domain.AgentHarness
 }
 
-func (n *noopAgent) warn() {
-	n.once.Do(func() {
-		n.log.Warn(
-			"agent harness not wired: Spawn/Restore will fail at the runtime layer until a ports.Agent adapter is built",
-			"sentinel", agentNotWiredSentinel,
-			"next_step", "implement a per-harness ports.Agent adapter and plug it into startSession",
-		)
-	})
+var _ ports.AgentResolver = agentRegistry{}
+
+func (a agentRegistry) Agent(harness domain.AgentHarness) (ports.Agent, bool) {
+	if harness == "" {
+		harness = a.defaultHarness
+	}
+	adapter, ok := a.reg.Get(string(harness))
+	if !ok {
+		return nil, false
+	}
+	agent, ok := adapter.(ports.Agent)
+	return agent, ok
 }
 
-func (n *noopAgent) GetLaunchCommand(ports.AgentConfig) string {
-	n.warn()
-	return agentNotWiredSentinel
-}
-
-func (n *noopAgent) GetEnvironment(ports.AgentConfig) map[string]string {
-	n.warn()
-	return map[string]string{agentNotWiredSentinel: "1"}
-}
-
-func (n *noopAgent) GetRestoreCommand(string) string {
-	n.warn()
-	return agentNotWiredSentinel
+// buildAgentResolver constructs the per-session agent resolver: a registry of the
+// shipped adapters plus the configured default harness. It fails fast if the
+// default does not resolve, so a typo'd AO_AGENT surfaces at startup rather than
+// at the first spawn that omits a harness.
+func buildAgentResolver(defaultAgent string, log *slog.Logger) (ports.AgentResolver, error) {
+	if defaultAgent == "" {
+		defaultAgent = config.DefaultAgent
+	}
+	reg, err := buildAgentRegistry()
+	if err != nil {
+		return nil, err
+	}
+	resolver := agentRegistry{reg: reg, defaultHarness: domain.AgentHarness(defaultAgent)}
+	if _, ok := resolver.Agent(""); !ok {
+		return nil, fmt.Errorf("configured default agent %q is not a registered adapter", defaultAgent)
+	}
+	ids := make([]string, 0)
+	for _, mf := range reg.Manifests() {
+		ids = append(ids, mf.ID)
+	}
+	log.Info("wired per-session agent resolver", "default", defaultAgent, "registered", ids)
+	return resolver, nil
 }

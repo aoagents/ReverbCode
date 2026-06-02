@@ -31,7 +31,7 @@ const (
 // Manager implements ports.SessionManager over the outbound ports.
 type Manager struct {
 	runtime   ports.Runtime
-	agent     ports.Agent
+	agents    ports.AgentResolver
 	workspace ports.Workspace
 	store     ports.SessionStore
 	messenger ports.AgentMessenger
@@ -44,7 +44,7 @@ var _ ports.SessionManager = (*Manager)(nil)
 // Deps are the collaborators a Session Manager needs; New wires them together.
 type Deps struct {
 	Runtime   ports.Runtime
-	Agent     ports.Agent
+	Agents    ports.AgentResolver
 	Workspace ports.Workspace
 	Store     ports.SessionStore
 	Messenger ports.AgentMessenger
@@ -57,7 +57,7 @@ type Deps struct {
 func New(d Deps) *Manager {
 	m := &Manager{
 		runtime:   d.Runtime,
-		agent:     d.Agent,
+		agents:    d.Agents,
 		workspace: d.Workspace,
 		store:     d.Store,
 		messenger: d.Messenger,
@@ -74,6 +74,11 @@ func New(d Deps) *Manager {
 // workspace and runtime, then reports completion to the LCM. A failure after the
 // row exists routes it to a terminal errored state and rolls back what was built.
 func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Session, error) {
+	agent, ok := m.agents.Agent(cfg.Harness)
+	if !ok {
+		return domain.Session{}, fmt.Errorf("spawn: no agent adapter for harness %q", cfg.Harness)
+	}
+
 	rec, err := m.store.CreateSession(ctx, seedRecord(cfg, m.clock()))
 	if err != nil {
 		return domain.Session{}, fmt.Errorf("spawn: create: %w", err)
@@ -86,12 +91,23 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.Session{}, fmt.Errorf("spawn %s: workspace: %w", id, err)
 	}
 
-	agentCfg := ports.AgentConfig{SessionID: id, WorkspacePath: ws.Path, Prompt: buildPrompt(cfg)}
+	prompt := buildPrompt(cfg)
+	argv, err := agent.GetLaunchCommand(ctx, ports.LaunchConfig{
+		SessionID:     string(id),
+		WorkspacePath: ws.Path,
+		Prompt:        prompt,
+		IssueID:       string(cfg.IssueID),
+	})
+	if err != nil {
+		_ = m.workspace.Destroy(ctx, ws)
+		m.markErrored(ctx, id)
+		return domain.Session{}, fmt.Errorf("spawn %s: launch command: %w", id, err)
+	}
 	handle, err := m.runtime.Create(ctx, ports.RuntimeConfig{
 		SessionID:     id,
 		WorkspacePath: ws.Path,
-		LaunchCommand: m.agent.GetLaunchCommand(agentCfg),
-		Env:           spawnEnv(m.agent.GetEnvironment(agentCfg), id, cfg.ProjectID, cfg.IssueID),
+		Argv:          argv,
+		Env:           spawnEnv(id, cfg.ProjectID, cfg.IssueID),
 	})
 	if err != nil {
 		_ = m.workspace.Destroy(ctx, ws)
@@ -99,7 +115,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.Session{}, fmt.Errorf("spawn %s: runtime: %w", id, err)
 	}
 
-	outcome := ports.SpawnOutcome{Branch: ws.Branch, WorkspacePath: ws.Path, RuntimeHandle: handle, Prompt: agentCfg.Prompt}
+	outcome := ports.SpawnOutcome{Branch: ws.Branch, WorkspacePath: ws.Path, RuntimeHandle: handle, Prompt: prompt}
 	if err := m.lcm.OnSpawnCompleted(ctx, id, outcome); err != nil {
 		_ = m.runtime.Destroy(ctx, handle)
 		_ = m.workspace.Destroy(ctx, ws)
@@ -162,20 +178,24 @@ func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.Sess
 		return domain.Session{}, fmt.Errorf("restore %s: nothing to resume from", id)
 	}
 
+	agent, ok := m.agents.Agent(rec.Lifecycle.Harness)
+	if !ok {
+		return domain.Session{}, fmt.Errorf("restore %s: no agent adapter for harness %q", id, rec.Lifecycle.Harness)
+	}
+
 	ws, err := m.workspace.Restore(ctx, ports.WorkspaceConfig{ProjectID: rec.ProjectID, SessionID: id, Branch: meta.Branch})
 	if err != nil {
 		return domain.Session{}, fmt.Errorf("restore %s: workspace: %w", id, err)
 	}
-	agentCfg := ports.AgentConfig{SessionID: id, WorkspacePath: ws.Path, Prompt: meta.Prompt}
-	launch := m.agent.GetRestoreCommand(meta.AgentSessionID)
-	if meta.AgentSessionID == "" {
-		launch = m.agent.GetLaunchCommand(agentCfg)
+	argv, err := m.restoreArgv(ctx, id, ws.Path, meta, agent)
+	if err != nil {
+		return domain.Session{}, fmt.Errorf("restore %s: %w", id, err)
 	}
 	handle, err := m.runtime.Create(ctx, ports.RuntimeConfig{
 		SessionID:     id,
 		WorkspacePath: ws.Path,
-		LaunchCommand: launch,
-		Env:           spawnEnv(m.agent.GetEnvironment(agentCfg), id, rec.ProjectID, rec.IssueID),
+		Argv:          argv,
+		Env:           spawnEnv(id, rec.ProjectID, rec.IssueID),
 	})
 	if err != nil {
 		return domain.Session{}, fmt.Errorf("restore %s: runtime: %w", id, err)
@@ -281,6 +301,34 @@ func seedRecord(cfg ports.SpawnConfig, now time.Time) domain.SessionRecord {
 	}
 }
 
+// restoreArgv builds the argv to relaunch a torn-down session: the agent's
+// native resume command when it can continue the session, else a fresh launch.
+// The agent decides via ok=false (e.g. no native session id captured yet), so
+// the SM no longer second-guesses restorability from the metadata itself.
+func (m *Manager) restoreArgv(ctx context.Context, id domain.SessionID, workspacePath string, meta domain.SessionMetadata, agent ports.Agent) ([]string, error) {
+	ref := ports.SessionRef{
+		ID:            string(id),
+		WorkspacePath: workspacePath,
+		Metadata:      map[string]string{ports.MetadataKeyAgentSessionID: meta.AgentSessionID},
+	}
+	cmd, ok, err := agent.GetRestoreCommand(ctx, ports.RestoreConfig{Session: ref})
+	if err != nil {
+		return nil, fmt.Errorf("restore command: %w", err)
+	}
+	if ok {
+		return cmd, nil
+	}
+	argv, err := agent.GetLaunchCommand(ctx, ports.LaunchConfig{
+		SessionID:     string(id),
+		WorkspacePath: workspacePath,
+		Prompt:        meta.Prompt,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("launch command: %w", err)
+	}
+	return argv, nil
+}
+
 // buildPrompt assembles the spawn prompt from the explicit config (the full
 // 3-layer assembly lands later).
 func buildPrompt(cfg ports.SpawnConfig) string {
@@ -294,15 +342,12 @@ func buildPrompt(cfg ports.SpawnConfig) string {
 	}
 }
 
-func spawnEnv(base map[string]string, id domain.SessionID, project domain.ProjectID, issue domain.IssueID) map[string]string {
-	env := make(map[string]string, len(base)+3)
-	for k, v := range base {
-		env[k] = v
+func spawnEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueID) map[string]string {
+	return map[string]string{
+		EnvSessionID: string(id),
+		EnvProjectID: string(project),
+		EnvIssueID:   string(issue),
 	}
-	env[EnvSessionID] = string(id)
-	env[EnvProjectID] = string(project)
-	env[EnvIssueID] = string(issue)
-	return env
 }
 
 func runtimeHandle(meta domain.SessionMetadata) ports.RuntimeHandle {

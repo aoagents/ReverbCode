@@ -85,6 +85,7 @@ linters:
       excludes:
         - G104 # unchecked errors — errcheck owns this
         - G304 # file inclusion via variable — paths are config/run-file/worktree-derived, not user input
+        - G703 # path traversal via taint analysis — same as G304: binary-resolution and worktree-derived paths, not user input
 
   exclusions:
     generated: lax # skip sqlc/codegen ("Code generated ... DO NOT EDIT")

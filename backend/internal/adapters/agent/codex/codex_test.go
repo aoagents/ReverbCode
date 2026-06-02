@@ -9,14 +9,14 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 func TestGetLaunchCommandBuildsCrossPlatformArgv(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "codex"}
 
-	cmd, err := plugin.GetLaunchCommand(context.Background(), agent.LaunchConfig{
-		Permissions:      agent.PermissionModeBypassPermissions,
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Permissions:      ports.PermissionModeBypassPermissions,
 		Prompt:           "-fix this",
 		SystemPromptFile: filepath.Join("tmp", "prompt with spaces.md"),
 		SystemPrompt:     "ignored",
@@ -40,28 +40,28 @@ func TestGetLaunchCommandBuildsCrossPlatformArgv(t *testing.T) {
 func TestGetLaunchCommandMapsApprovalModes(t *testing.T) {
 	tests := []struct {
 		name        string
-		permission  agent.PermissionMode
+		permission  ports.PermissionMode
 		want        []string
 		notExpected string
 	}{
 		{
 			name:        "default",
-			permission:  agent.PermissionModeDefault,
+			permission:  ports.PermissionModeDefault,
 			notExpected: "--ask-for-approval",
 		},
 		{
 			name:       "accept-edits",
-			permission: agent.PermissionModeAcceptEdits,
+			permission: ports.PermissionModeAcceptEdits,
 			want:       []string{"--ask-for-approval", "on-request"},
 		},
 		{
 			name:       "auto",
-			permission: agent.PermissionModeAuto,
+			permission: ports.PermissionModeAuto,
 			want:       []string{"--ask-for-approval", "on-request", "-c", `approvals_reviewer="auto_review"`},
 		},
 		{
 			name:       "bypass-permissions",
-			permission: agent.PermissionModeBypassPermissions,
+			permission: ports.PermissionModeBypassPermissions,
 			want:       []string{"--dangerously-bypass-approvals-and-sandbox"},
 		},
 		{
@@ -74,7 +74,7 @@ func TestGetLaunchCommandMapsApprovalModes(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			plugin := &Plugin{resolvedBinary: "codex"}
-			cmd, err := plugin.GetLaunchCommand(context.Background(), agent.LaunchConfig{
+			cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
 				Permissions: tt.permission,
 			})
 			if err != nil {
@@ -93,11 +93,11 @@ func TestGetLaunchCommandMapsApprovalModes(t *testing.T) {
 func TestGetPromptDeliveryStrategyIsInCommand(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "codex"}
 
-	got, err := plugin.GetPromptDeliveryStrategy(context.Background(), agent.LaunchConfig{})
+	got, err := plugin.GetPromptDeliveryStrategy(context.Background(), ports.LaunchConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != agent.PromptDeliveryInCommand {
+	if got != ports.PromptDeliveryInCommand {
 		t.Fatalf("unexpected strategy: %q", got)
 	}
 }
@@ -127,7 +127,7 @@ func TestGetAgentHooksInstallsCodexHooks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cfg := agent.WorkspaceHookConfig{
+	cfg := ports.WorkspaceHookConfig{
 		DataDir:       t.TempDir(),
 		SessionID:     "sess-1",
 		WorkspacePath: workspace,
@@ -135,7 +135,7 @@ func TestGetAgentHooksInstallsCodexHooks(t *testing.T) {
 	if err := plugin.GetAgentHooks(context.Background(), cfg); err != nil {
 		t.Fatal(err)
 	}
-	// A second install must not duplicate Better-AO hook commands.
+	// A second install must not duplicate AO hook commands.
 	if err := plugin.GetAgentHooks(context.Background(), cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -151,19 +151,10 @@ func TestGetAgentHooksInstallsCodexHooks(t *testing.T) {
 	if config.Hooks == nil {
 		t.Fatalf("hooks config missing hooks object: %#v", config)
 	}
-	templateHooks, err := codexEmbeddedHookGroups()
-	if err != nil {
-		t.Fatal(err)
-	}
-	for event, templateGroups := range templateHooks {
-		entries := config.Hooks[event]
-		for _, templateGroup := range templateGroups {
-			for _, hook := range templateGroup.Hooks {
-				count := countCodexHookCommand(entries, hook.Command)
-				if count != 1 {
-					t.Fatalf("%s command count = %d, want 1 in %#v", event, count, entries)
-				}
-			}
+	for _, spec := range codexManagedHooks {
+		entries := config.Hooks[spec.Event]
+		if count := countCodexHookCommand(entries, spec.Command); count != 1 {
+			t.Fatalf("%s command count = %d, want 1 in %#v", spec.Event, count, entries)
 		}
 	}
 	stopEntries := config.Hooks["Stop"]
@@ -180,12 +171,71 @@ func TestGetAgentHooksInstallsCodexHooks(t *testing.T) {
 	}
 }
 
+func TestUninstallHooksRemovesCodexHooks(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "codex"}
+	workspace := t.TempDir()
+	hooksPath := filepath.Join(workspace, ".codex", "hooks.json")
+
+	ctx := context.Background()
+	cfg := ports.WorkspaceHookConfig{DataDir: t.TempDir(), SessionID: "sess-1", WorkspacePath: workspace}
+
+	// Pre-seed a user's own Stop hook; it must survive uninstall.
+	if err := os.MkdirAll(filepath.Dir(hooksPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	existing := `{"hooks":{"Stop":[{"matcher":null,"hooks":[{"type":"command","command":"custom stop hook","timeout":3}]}]}}`
+	if err := os.WriteFile(hooksPath, []byte(existing), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := plugin.GetAgentHooks(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if installed, err := plugin.AreHooksInstalled(ctx, workspace); err != nil || !installed {
+		t.Fatalf("AreHooksInstalled after install = (%v, %v), want (true, nil)", installed, err)
+	}
+
+	if err := plugin.UninstallHooks(ctx, workspace); err != nil {
+		t.Fatal(err)
+	}
+	if installed, err := plugin.AreHooksInstalled(ctx, workspace); err != nil || installed {
+		t.Fatalf("AreHooksInstalled after uninstall = (%v, %v), want (false, nil)", installed, err)
+	}
+
+	data, err := os.ReadFile(hooksPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config codexHookFile
+	if err := json.Unmarshal(data, &config); err != nil {
+		t.Fatal(err)
+	}
+	for _, spec := range codexManagedHooks {
+		if got := countCodexHookCommand(config.Hooks[spec.Event], spec.Command); got != 0 {
+			t.Fatalf("%s command %q count = %d after uninstall, want 0", spec.Event, spec.Command, got)
+		}
+	}
+	if countCodexHookCommand(config.Hooks["Stop"], "custom stop hook") != 1 {
+		t.Fatalf("user Stop hook not preserved: %#v", config.Hooks["Stop"])
+	}
+
+	// The shared hooks feature flag in config.toml is left in place — it enables
+	// every Codex hook, not just AO's.
+	configData, err := os.ReadFile(filepath.Join(workspace, ".codex", "config.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(configData), codexHooksFeatureLine) {
+		t.Fatalf("config.toml hooks feature flag removed by uninstall: %s", configData)
+	}
+}
+
 func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "codex"}
 
-	cmd, ok, err := plugin.GetRestoreCommand(context.Background(), agent.RestoreConfig{
-		Permissions: agent.PermissionModeAuto,
-		Session: agent.SessionRef{
+	cmd, ok, err := plugin.GetRestoreCommand(context.Background(), ports.RestoreConfig{
+		Permissions: ports.PermissionModeAuto,
+		Session: ports.SessionRef{
 			Metadata: map[string]string{codexAgentSessionIDMetadataKey: "thread-123"},
 		},
 	})
@@ -213,17 +263,17 @@ func TestGetRestoreCommandFalseWithoutAgentSessionID(t *testing.T) {
 
 	cases := []struct {
 		name string
-		ref  agent.SessionRef
+		ref  ports.SessionRef
 	}{
-		{"empty session ref", agent.SessionRef{}},
-		{"empty metadata", agent.SessionRef{Metadata: map[string]string{}}},
-		{"blank agent session metadata", agent.SessionRef{Metadata: map[string]string{codexAgentSessionIDMetadataKey: "   "}}},
-		{"workspace path only", agent.SessionRef{WorkspacePath: "/some/path"}},
+		{"empty session ref", ports.SessionRef{}},
+		{"empty metadata", ports.SessionRef{Metadata: map[string]string{}}},
+		{"blank agent session metadata", ports.SessionRef{Metadata: map[string]string{codexAgentSessionIDMetadataKey: "   "}}},
+		{"workspace path only", ports.SessionRef{WorkspacePath: "/some/path"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			cmd, ok, err := plugin.GetRestoreCommand(context.Background(), agent.RestoreConfig{
-				Permissions: agent.PermissionModeAuto,
+			cmd, ok, err := plugin.GetRestoreCommand(context.Background(), ports.RestoreConfig{
+				Permissions: ports.PermissionModeAuto,
 				Session:     tc.ref,
 			})
 			if err != nil {
@@ -242,7 +292,7 @@ func TestGetRestoreCommandFalseWithoutAgentSessionID(t *testing.T) {
 func TestSessionInfoReadsHookMetadata(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "codex"}
 
-	info, ok, err := plugin.SessionInfo(context.Background(), agent.SessionRef{
+	info, ok, err := plugin.SessionInfo(context.Background(), ports.SessionRef{
 		WorkspacePath: "/some/path",
 		Metadata: map[string]string{
 			codexAgentSessionIDMetadataKey: "thread-123",
@@ -274,7 +324,7 @@ func TestSessionInfoReadsHookMetadata(t *testing.T) {
 func TestSessionInfoFalseWhenNoHookMetadata(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "codex"}
 
-	info, ok, err := plugin.SessionInfo(context.Background(), agent.SessionRef{
+	info, ok, err := plugin.SessionInfo(context.Background(), ports.SessionRef{
 		WorkspacePath: "/some/path",
 		Metadata:      map[string]string{},
 	})
@@ -284,7 +334,7 @@ func TestSessionInfoFalseWhenNoHookMetadata(t *testing.T) {
 	if ok {
 		t.Fatalf("ok = true, want false")
 	}
-	if !reflect.DeepEqual(info, agent.SessionInfo{}) {
+	if !reflect.DeepEqual(info, ports.SessionInfo{}) {
 		t.Fatalf("info = %#v, want zero value", info)
 	}
 }

@@ -2,15 +2,15 @@
 
 ## Goal
 
-Agent adapters let Better-AO run and observe different CLI coding agents without hardcoding agent-specific behavior into the spawn engine. Every CLI coding agent must implement the contract in `backend/internal/adapters/agent/agent.go`.
+Agent adapters let AO run and observe different CLI coding agents without hardcoding agent-specific behavior into the spawn engine. Every CLI coding agent must implement the contract in `backend/internal/adapters/agent/agent.go`.
 
-The important current slice is hook-derived session info. Better-AO should know a running worker's native agent session id, title, and summary from agent hooks installed in the per-session worktree, not from scanning agent transcript/cache files.
+The important current slice is hook-derived session info. AO should know a running worker's native agent session id, title, and summary from agent hooks installed in the per-session worktree, not from scanning agent transcript/cache files.
 
 ## Current Decisions
 
-- Better-AO only needs to derive session info for Better-AO-managed sessions.
+- AO only needs to derive session info for AO-managed sessions.
 - Hook installation happens at worktree/session creation time.
-- `SessionInfo` reads normalized metadata persisted in Better-AO's session store.
+- `SessionInfo` reads normalized metadata persisted in AO's session store.
 - `SessionInfo` must not infer display info by reading agent transcript/cache files.
 - `SummaryIsFallback` is removed from `agent.SessionInfo`.
 - `TranscriptPath` is removed from `agent.SessionInfo`.
@@ -28,7 +28,7 @@ Required adapter behavior:
 - `GetConfigSpec` describes user-facing agent config.
 - `GetLaunchCommand` builds the native agent command.
 - `GetPromptDeliveryStrategy` says whether the prompt is passed in argv or sent after launch.
-- `GetAgentHooks` installs or merges Better-AO hooks into the agent's workspace-local hook config.
+- `GetAgentHooks` installs or merges AO hooks into the agent's workspace-local hook config.
 - `GetRestoreCommand` builds a native resume command when restore is supported.
 - `SessionInfo` returns normalized metadata:
   - `AgentSessionID`
@@ -38,7 +38,7 @@ Required adapter behavior:
 
 Implementation layout:
 
-- Agent-specific hook installation and embedded hook templates should live beside the agent adapter in `backend/internal/adapters/agent/<agent>/hooks.go`.
+- Agent-specific hook installation should live beside the agent adapter in `backend/internal/adapters/agent/<agent>/hooks.go`; the hook commands are defined in code, not embedded template files.
 - Launch, restore, and session-info behavior can stay in the main agent implementation unless the file grows enough to justify another split.
 
 ## Metadata Keys
@@ -55,22 +55,22 @@ The original spawn prompt may remain in metadata as `prompt` for launch/debug fa
 
 Agent adapters install hooks into the worktree-local config owned by the native agent.
 
-Hook callbacks run through hidden Better-AO CLI commands:
+Hook callbacks run through hidden AO CLI commands:
 
 ```text
-better-ao hooks <agent-adapter> <event>
+ao hooks <agent-adapter> <event>
 ```
 
 The callback:
 
 1. Reads the native hook JSON payload from stdin.
-2. Reads the Better-AO session id from `BETTER_AO_SESSION_ID`.
-3. Opens `~/.better-ao/state.db`.
+2. Reads the AO session id from `AO_SESSION_ID`.
+3. Opens the AO SQLite store (`ao.db`) in the data dir — `AO_DATA_DIR`, default `<user config dir>/agent-orchestrator/data`.
 4. Merges normalized metadata into the matching session row.
 5. Publishes `session.updated` when metadata changed.
 6. Prints `{}` and exits 0 for successful no-op cases, including non-AO sessions or missing rows.
 
-The spawn engine inserts the Better-AO session row before launching the durability provider so early startup hooks can update an existing row. If launch fails after insertion, spawn deletes the row during rollback.
+The spawn engine inserts the AO session row before launching the durability provider so early startup hooks can update an existing row. If launch fails after insertion, spawn deletes the row during rollback.
 
 ## Restore Boundary
 
@@ -95,7 +95,7 @@ Hook metadata changes publish `session.updated`. The frontend listens to `sessio
 
 Agent adapter behavior:
 
-- Agent hook installation preserves user hooks and deduplicates Better-AO hooks.
+- Agent hook installation preserves user hooks and deduplicates AO hooks.
 - Hook callbacks persist native session id, title, and summary.
 - `SessionInfo` returns normalized fields from persisted metadata.
 - `SessionInfo` does not read transcripts or caches for title/summary.
@@ -112,7 +112,6 @@ Engine and UI:
 Verification:
 
 ```sh
-go test ./...
-node --test scripts/*.test.mjs
-pnpm --filter @better-ao/web lint:ts
+(cd backend && go test ./...)
+(cd frontend && npm run typecheck)
 ```

@@ -23,7 +23,7 @@ func TestRuntimeIntegration(t *testing.T) {
 	h, err := r.Create(ctx, ports.RuntimeConfig{
 		SessionID:     "ao_itest_tmux",
 		WorkspacePath: t.TempDir(),
-		LaunchCommand: "printf ready\\n",
+		Argv:          []string{"printf", "ready\\n"},
 		Env:           map[string]string{"AO_SESSION_ID": id},
 	})
 	if err != nil {
@@ -85,7 +85,7 @@ func TestRuntimeIntegrationUsesExactTargets(t *testing.T) {
 	h, err := r.Create(ctx, ports.RuntimeConfig{
 		SessionID:     "ao_exact_target_long",
 		WorkspacePath: t.TempDir(),
-		LaunchCommand: "cat",
+		Argv:          []string{"cat"},
 	})
 	if err != nil {
 		t.Fatalf("Create: %v", err)

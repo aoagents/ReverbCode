@@ -30,7 +30,7 @@ func TestRuntimeIntegration(t *testing.T) {
 	h, err := r.Create(ctx, ports.RuntimeConfig{
 		SessionID:     "ao_itest_zj",
 		WorkspacePath: t.TempDir(),
-		LaunchCommand: "printf ready-$AO_SESSION_ID\\n",
+		Argv:          []string{"sh", "-c", "printf ready-$AO_SESSION_ID\\n"},
 		Env:           map[string]string{"AO_SESSION_ID": id},
 	})
 	if err != nil {
@@ -96,7 +96,7 @@ func TestRuntimeIntegrationUsesExactSessionParsing(t *testing.T) {
 	h, err := r.Create(ctx, ports.RuntimeConfig{
 		SessionID:     "ao_zj_exact_long",
 		WorkspacePath: t.TempDir(),
-		LaunchCommand: "printf ready\\n",
+		Argv:          []string{"printf", "ready\\n"},
 	})
 	if err != nil {
 		t.Fatalf("Create: %v", err)

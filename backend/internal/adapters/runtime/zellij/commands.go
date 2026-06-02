@@ -129,7 +129,7 @@ func wrapLaunchCommandUnix(cfg ports.RuntimeConfig, shellPath string) string {
 		b.WriteString(shellQuote(path))
 		b.WriteString("; ")
 	}
-	b.WriteString(cfg.LaunchCommand)
+	b.WriteString(quoteArgvUnix(cfg.Argv))
 	b.WriteString("; exec ")
 	b.WriteString(shellQuote(shellPath))
 	b.WriteString(" -i")
@@ -158,7 +158,7 @@ func wrapLaunchCommandPowerShell(cfg ports.RuntimeConfig) string {
 		b.WriteString(psQuote(path))
 		b.WriteString("; ")
 	}
-	b.WriteString(cfg.LaunchCommand)
+	b.WriteString(quoteArgvPowerShell(cfg.Argv))
 	return b.String()
 }
 
@@ -184,7 +184,7 @@ func wrapLaunchCommandCmd(cfg ports.RuntimeConfig) string {
 		b.WriteString(cmdQuote(path))
 		b.WriteString("\" && ")
 	}
-	b.WriteString(cfg.LaunchCommand)
+	b.WriteString(quoteArgvCmd(cfg.Argv))
 	return b.String()
 }
 
@@ -207,6 +207,40 @@ func psQuote(s string) string {
 
 func cmdQuote(s string) string {
 	return strings.ReplaceAll(s, "\"", "\"\"")
+}
+
+// quoteArgvUnix renders argv as a POSIX-shell command, single-quoting each
+// argument so a value with spaces stays one word under `sh -lc`.
+func quoteArgvUnix(argv []string) string {
+	parts := make([]string, len(argv))
+	for i, a := range argv {
+		parts[i] = shellQuote(a)
+	}
+	return strings.Join(parts, " ")
+}
+
+// quoteArgvPowerShell renders argv for `powershell -Command`. The call operator
+// `&` is required so a quoted first token is invoked as a command rather than
+// echoed as a string literal.
+func quoteArgvPowerShell(argv []string) string {
+	if len(argv) == 0 {
+		return ""
+	}
+	parts := make([]string, len(argv))
+	for i, a := range argv {
+		parts[i] = psQuote(a)
+	}
+	return "& " + strings.Join(parts, " ")
+}
+
+// quoteArgvCmd renders argv for cmd.exe, wrapping each argument in double quotes
+// (doubling any embedded quote) so spaces don't split a single argument.
+func quoteArgvCmd(argv []string) string {
+	parts := make([]string, len(argv))
+	for i, a := range argv {
+		parts[i] = "\"" + strings.ReplaceAll(a, "\"", "\"\"") + "\""
+	}
+	return strings.Join(parts, " ")
 }
 
 func kdlQuote(s string) string {

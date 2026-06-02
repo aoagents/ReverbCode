@@ -82,7 +82,7 @@ func TestWrapLaunchCommandExportsEnvAndKeepsPaneAlive(t *testing.T) {
 	}
 	defer func() { getenv = oldGetenv }()
 
-	got := wrapLaunchCommand(ports.RuntimeConfig{LaunchCommand: "ao run", Env: map[string]string{
+	got := wrapLaunchCommand(ports.RuntimeConfig{Argv: []string{"ao", "run"}, Env: map[string]string{
 		"AO_SESSION_ID": "sess-1",
 		"ODD":           "can't",
 		"PATH":          "/custom/bin:/usr/bin",
@@ -92,7 +92,7 @@ func TestWrapLaunchCommandExportsEnvAndKeepsPaneAlive(t *testing.T) {
 		"export AO_SESSION_ID='sess-1';",
 		"export ODD='can'\\''t';",
 		"export PATH='/custom/bin:/usr/bin';",
-		"ao run; exec '/bin/zsh' -i",
+		"'ao' 'run'; exec '/bin/zsh' -i",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("wrapped command missing %q in %q", want, got)
@@ -108,7 +108,7 @@ func TestCreateRunsNewSessionAndDisablesStatus(t *testing.T) {
 	handle, err := r.Create(context.Background(), ports.RuntimeConfig{
 		SessionID:     "sess-1",
 		WorkspacePath: "/tmp/ws",
-		LaunchCommand: "echo ready",
+		Argv:          []string{"echo", "ready"},
 		Env:           map[string]string{"AO_SESSION_ID": "sess-1"},
 	})
 	if err != nil {
@@ -136,7 +136,7 @@ func TestCreateNormalizesUnsafeSessionID(t *testing.T) {
 	handle, err := r.Create(context.Background(), ports.RuntimeConfig{
 		SessionID:     "repo/issue#42",
 		WorkspacePath: "/tmp/ws",
-		LaunchCommand: "echo ready",
+		Argv:          []string{"echo", "ready"},
 	})
 	if err != nil {
 		t.Fatalf("Create: %v", err)

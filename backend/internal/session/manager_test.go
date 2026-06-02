@@ -121,11 +121,32 @@ func (r *fakeRuntime) IsAlive(context.Context, ports.RuntimeHandle) (bool, error
 
 type fakeAgent struct{}
 
-func (fakeAgent) GetLaunchCommand(ports.AgentConfig) string { return "launch" }
-func (fakeAgent) GetEnvironment(ports.AgentConfig) map[string]string {
-	return map[string]string{"X": "1"}
+func (fakeAgent) GetConfigSpec(context.Context) (ports.ConfigSpec, error) {
+	return ports.ConfigSpec{}, nil
 }
-func (fakeAgent) GetRestoreCommand(id string) string { return "resume " + id }
+func (fakeAgent) GetLaunchCommand(context.Context, ports.LaunchConfig) ([]string, error) {
+	return []string{"launch"}, nil
+}
+func (fakeAgent) GetPromptDeliveryStrategy(context.Context, ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
+	return ports.PromptDeliveryInCommand, nil
+}
+func (fakeAgent) GetAgentHooks(context.Context, ports.WorkspaceHookConfig) error { return nil }
+func (fakeAgent) GetRestoreCommand(_ context.Context, cfg ports.RestoreConfig) ([]string, bool, error) {
+	if id := cfg.Session.Metadata[ports.MetadataKeyAgentSessionID]; id != "" {
+		return []string{"resume", id}, true, nil
+	}
+	return nil, false, nil
+}
+func (fakeAgent) SessionInfo(context.Context, ports.SessionRef) (ports.SessionInfo, bool, error) {
+	return ports.SessionInfo{}, false, nil
+}
+
+// fakeAgents resolves every harness (including the empty one the spawn/restore
+// tests use) to the same fakeAgent, exercising the resolver path without caring
+// which harness is requested.
+type fakeAgents struct{}
+
+func (fakeAgents) Agent(domain.AgentHarness) (ports.Agent, bool) { return fakeAgent{}, true }
 
 type fakeWorkspace struct {
 	destroyErr error
@@ -155,7 +176,7 @@ func newManager() (*Manager, *fakeStore, *fakeRuntime, *fakeWorkspace) {
 	rt := &fakeRuntime{}
 	ws := &fakeWorkspace{}
 	m := New(Deps{
-		Runtime: rt, Agent: fakeAgent{}, Workspace: ws,
+		Runtime: rt, Agents: fakeAgents{}, Workspace: ws,
 		Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
 	})
 	return m, st, rt, ws

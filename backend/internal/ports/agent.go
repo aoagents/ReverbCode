@@ -1,27 +1,31 @@
-package agent
+package ports
 
 import (
 	"context"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
-// Agent defines the behavior every CLI coding agent adapter must provide.
+// Agent is the contract every CLI coding agent adapter (claude-code, codex, …)
+// must satisfy. It supplies the argv and process configuration the Session
+// Manager needs to launch, restore, and read back a native agent session.
 type Agent interface {
-	// GetConfigSpec describes the agent-specific config keys Better-AO can
-	// expose to users in ~/.better-ao/config.yaml.
+	// GetConfigSpec describes the agent-specific config keys AO can
+	// expose to users in the AO config.
 	GetConfigSpec(ctx context.Context) (ConfigSpec, error)
 
-	// GetLaunchCommand builds the command Better-AO should run to start this agent.
+	// GetLaunchCommand builds the argv AO should run to start this agent.
 	GetLaunchCommand(ctx context.Context, cfg LaunchConfig) (cmd []string, err error)
 
-	// GetPromptDeliveryStrategy tells Better-AO whether the prompt is included in
+	// GetPromptDeliveryStrategy tells AO whether the prompt is included in
 	// the launch command or must be sent after the agent process starts.
 	GetPromptDeliveryStrategy(ctx context.Context, cfg LaunchConfig) (PromptDeliveryStrategy, error)
 
-	// GetAgentHooks installs or merges Better-AO hooks into the agent's
+	// GetAgentHooks installs or merges AO hooks into the agent's
 	// native workspace-local hook config. It must preserve user-defined hooks.
 	GetAgentHooks(ctx context.Context, cfg WorkspaceHookConfig) error
 
-	// GetRestoreCommand builds a command that continues an existing native agent
+	// GetRestoreCommand builds an argv that continues an existing native agent
 	// session. ok=false means no existing native session can be continued.
 	GetRestoreCommand(ctx context.Context, cfg RestoreConfig) (cmd []string, ok bool, err error)
 
@@ -30,9 +34,24 @@ type Agent interface {
 	SessionInfo(ctx context.Context, session SessionRef) (info SessionInfo, ok bool, err error)
 }
 
-// Config contains values loaded from the selected agent's config section.
+// AgentResolver maps a session's harness onto the Agent adapter that drives it,
+// so the Session Manager can spawn (and restore) a different agent per session
+// without depending on the concrete adapter registry. ok=false means no adapter
+// is registered for that harness.
+type AgentResolver interface {
+	Agent(harness domain.AgentHarness) (Agent, bool)
+}
+
+// MetadataKeyAgentSessionID is the SessionRef.Metadata key that carries an
+// agent's native session id. It matches the json tag on
+// domain.SessionMetadata.AgentSessionID and the key the adapters read, so the
+// Session Manager can bridge its typed metadata onto a SessionRef without
+// either side hard-coding the other's vocabulary.
+const MetadataKeyAgentSessionID = "agentSessionId"
+
+// AgentConfig holds values loaded from the selected agent's config section.
 // Agent adapters own validation for their custom keys.
-type Config map[string]any
+type AgentConfig map[string]any
 
 // ConfigSpec describes the agent-specific config keys AO can expose to users.
 type ConfigSpec struct {
@@ -49,9 +68,10 @@ type ConfigField struct {
 	Enum        []string
 }
 
-// ConfigFieldType is the primitive value kind Better-AO expects for a field.
+// ConfigFieldType is the primitive value kind AO expects for a field.
 type ConfigFieldType string
 
+// The primitive value kinds a ConfigField can declare.
 const (
 	ConfigFieldString     ConfigFieldType = "string"
 	ConfigFieldBool       ConfigFieldType = "bool"
@@ -62,7 +82,7 @@ const (
 
 // LaunchConfig carries inputs needed to build a new agent launch command.
 type LaunchConfig struct {
-	Config           Config
+	Config           AgentConfig
 	IssueID          string
 	Permissions      PermissionMode
 	Prompt           string
@@ -74,7 +94,7 @@ type LaunchConfig struct {
 
 // WorkspaceHookConfig carries inputs needed to install workspace-local agent hooks.
 type WorkspaceHookConfig struct {
-	Config        Config
+	Config        AgentConfig
 	DataDir       string
 	SessionID     string
 	WorkspacePath string
@@ -82,12 +102,12 @@ type WorkspaceHookConfig struct {
 
 // RestoreConfig carries inputs needed to continue an existing native agent session.
 type RestoreConfig struct {
-	Config      Config
+	Config      AgentConfig
 	Permissions PermissionMode
 	Session     SessionRef
 }
 
-// SessionRef identifies a Better-AO session whose agent-owned metadata may be read.
+// SessionRef identifies an AO session whose agent-owned metadata may be read.
 type SessionRef struct {
 	ID            string
 	Metadata      map[string]string
@@ -105,19 +125,21 @@ type SessionInfo struct {
 // PermissionMode controls how much review an agent requires before acting.
 type PermissionMode string
 
+// The permission modes adapters map onto their agent's native approval flags.
 const (
-	// "default" is special: adapters emit no flag for it so the agent resolves
-	// its starting mode from the user's own config (e.g. Claude's TUI reading
-	// ~/.claude/settings.json defaultMode).
+	// PermissionModeDefault is special: adapters emit no flag for it so the
+	// agent resolves its starting mode from the user's own config (e.g.
+	// Claude's TUI reading ~/.claude/settings.json defaultMode).
 	PermissionModeDefault           PermissionMode = "default"
 	PermissionModeAcceptEdits       PermissionMode = "accept-edits"
 	PermissionModeAuto              PermissionMode = "auto"
 	PermissionModeBypassPermissions PermissionMode = "bypass-permissions"
 )
 
-// PromptDeliveryStrategy describes how Better-AO should deliver the initial prompt.
+// PromptDeliveryStrategy describes how AO should deliver the initial prompt.
 type PromptDeliveryStrategy string
 
+// How the orchestrator hands the initial prompt to a freshly launched agent.
 const (
 	PromptDeliveryInCommand  PromptDeliveryStrategy = "in_command"
 	PromptDeliveryAfterStart PromptDeliveryStrategy = "after_start"

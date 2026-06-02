@@ -31,6 +31,9 @@ const (
 	// DefaultShutdownTimeout is the hard cap on graceful shutdown. After this
 	// the process exits even if connections are still draining.
 	DefaultShutdownTimeout = 10 * time.Second
+	// DefaultAgent is the agent adapter id the daemon wires when AO_AGENT is
+	// unset. It matches the claude-code adapter's manifest id.
+	DefaultAgent = "claude-code"
 )
 
 // Config is the fully-resolved daemon configuration. It is immutable once
@@ -50,6 +53,10 @@ type Config struct {
 	// DataDir is the directory holding durable state (the SQLite database and
 	// the CDC JSONL log). It is created on first use by the storage layer.
 	DataDir string
+	// Agent is the id of the agent adapter the daemon wires into the Session
+	// Manager (see DefaultAgent). Selected by AO_AGENT; startSession fails fast
+	// if no adapter with this id is registered.
+	Agent string
 }
 
 // Addr returns the host:port the HTTP server binds. It uses net.JoinHostPort so
@@ -69,6 +76,7 @@ func (c Config) Addr() string {
 //	AO_SHUTDOWN_TIMEOUT  shutdown deadline   (Go duration > 0, default 10s)
 //	AO_RUN_FILE          running.json path   (default <state-dir>/running.json)
 //	AO_DATA_DIR          durable state dir   (default <state-dir>/data)
+//	AO_AGENT             agent adapter id    (default claude-code)
 //
 // The bind host is not configurable: the daemon is loopback-only by design.
 func Load() (Config, error) {
@@ -77,6 +85,7 @@ func Load() (Config, error) {
 		Port:            DefaultPort,
 		RequestTimeout:  DefaultRequestTimeout,
 		ShutdownTimeout: DefaultShutdownTimeout,
+		Agent:           DefaultAgent,
 	}
 
 	if raw := os.Getenv("AO_PORT"); raw != "" {
@@ -104,6 +113,10 @@ func Load() (Config, error) {
 			return Config{}, err
 		}
 		cfg.ShutdownTimeout = d
+	}
+
+	if raw := os.Getenv("AO_AGENT"); raw != "" {
+		cfg.Agent = raw
 	}
 
 	runFile, err := resolveRunFilePath()

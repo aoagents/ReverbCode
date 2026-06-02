@@ -2,14 +2,14 @@
 //
 // It builds the argv to launch `claude` as an interactive session inside a
 // session's worktree, installs worktree-local hooks that report normalized
-// session metadata (native id, title, summary) back into Better-AO's store,
+// session metadata (native id, title, summary) back into AO's store,
 // and supports resume: GetLaunchCommand pins a stable `--session-id` so
 // GetRestoreCommand can rebuild `claude --resume <uuid>`. SessionInfo reads the
 // hook-captured metadata from the store — it does not parse transcripts.
 // GetConfigSpec remains a no-op (no agent-specific config keys yet).
 //
 // Claude Code starts an interactive session by default (no -p/--print), which
-// is exactly what better-ao wants: a live agent the user can attach to in the
+// is exactly what AO wants: a live agent the user can attach to in the
 // browser terminal or via `zellij attach`. The initial task prompt is passed
 // as the positional argument; the orchestrator system prompt (if any) is
 // appended to Claude's default system prompt so its built-in coding
@@ -30,16 +30,16 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
-	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 const (
 	// adapterID is the registry id and the value users pass to
-	// `better-ao spawn --agent`.
+	// `ao spawn --agent`.
 	adapterID = "claude-code"
 
 	// Normalized session-metadata keys the Claude Code hooks persist into the
-	// Better-AO session store and SessionInfo reads back. Shared vocabulary
+	// AO session store and SessionInfo reads back. Shared vocabulary
 	// with the Codex adapter so the dashboard treats every agent uniformly.
 	// agentSessionId is also the preferred restore id.
 	claudeAgentSessionIDMetadataKey = "agentSessionId"
@@ -47,25 +47,29 @@ const (
 	claudeSummaryMetadataKey        = "summary"
 )
 
-// claudeSessionNamespace seeds the UUIDv5 derivation that maps a better-ao
+// claudeSessionNamespace seeds the UUIDv5 derivation that maps an AO
 // session id onto a stable Claude Code `--session-id`. A fixed namespace makes
 // the mapping deterministic, so GetLaunchCommand (which pins --session-id at
 // launch) and GetRestoreCommand (which recomputes it as a fallback for
 // pre-hook sessions) agree without persisting anything.
 var claudeSessionNamespace = uuid.MustParse("a1f0c3d2-7b54-4e96-8a2b-0d9e1f2a3b4c")
 
+// Plugin is the Claude Code agent adapter. It is safe for concurrent use; the
+// binary path is resolved once and cached under binaryMu.
 type Plugin struct {
 	binaryMu       sync.Mutex
 	resolvedBinary string
 }
 
+// New returns a ready-to-register Claude Code adapter.
 func New() *Plugin {
 	return &Plugin{}
 }
 
 var _ adapters.Adapter = (*Plugin)(nil)
-var _ agent.Agent = (*Plugin)(nil)
+var _ ports.Agent = (*Plugin)(nil)
 
+// Manifest returns the adapter's static self-description.
 func (p *Plugin) Manifest() adapters.Manifest {
 	return adapters.Manifest{
 		ID:          adapterID,
@@ -78,11 +82,13 @@ func (p *Plugin) Manifest() adapters.Manifest {
 	}
 }
 
-func (p *Plugin) GetConfigSpec(ctx context.Context) (agent.ConfigSpec, error) {
+// GetConfigSpec reports the agent-specific config keys. Claude Code exposes
+// none yet.
+func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
 	if err := ctx.Err(); err != nil {
-		return agent.ConfigSpec{}, err
+		return ports.ConfigSpec{}, err
 	}
-	return agent.ConfigSpec{}, nil
+	return ports.ConfigSpec{}, nil
 }
 
 // GetLaunchCommand builds the argv to start an interactive Claude Code
@@ -94,17 +100,17 @@ func (p *Plugin) GetConfigSpec(ctx context.Context) (agent.ConfigSpec, error) {
 //	       [-- <prompt>]
 //
 // --session-id pins Claude's native session UUID to a value derived from the
-// better-ao session id, so the session is resumable later (see
+// AO session id, so the session is resumable later (see
 // GetRestoreCommand) and its transcript is locatable (see SessionInfo) without
 // a separate capture step.
 //
-// <mode> is acceptEdits, auto, or bypassPermissions. better-ao's "default"
+// <mode> is acceptEdits, auto, or bypassPermissions. AO's "default"
 // mode emits no --permission-mode flag, so Claude's TUI resolves the starting
 // mode from ~/.claude/settings.json exactly as a normal launch.
 //
 // The prompt is passed after `--` so a prompt beginning with "-" is not
 // mistaken for a flag.
-func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg agent.LaunchConfig) (cmd []string, err error) {
+func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (cmd []string, err error) {
 	binary, err := p.claudeBinary(ctx)
 	if err != nil {
 		return nil, err
@@ -134,24 +140,26 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg agent.LaunchConfig) (
 	return cmd, nil
 }
 
-func (p *Plugin) GetPromptDeliveryStrategy(ctx context.Context, cfg agent.LaunchConfig) (agent.PromptDeliveryStrategy, error) {
+// GetPromptDeliveryStrategy reports that Claude Code receives its prompt in the
+// launch command itself.
+func (p *Plugin) GetPromptDeliveryStrategy(ctx context.Context, cfg ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	return agent.PromptDeliveryInCommand, nil
+	return ports.PromptDeliveryInCommand, nil
 }
 
 // PreLaunch is an optional capability the spawn engine invokes (via type
 // assertion) immediately before creating the session. Claude Code shows a
 // blocking "do you trust this folder?" dialog the first time it runs in any
-// directory. Every better-ao worktree is a fresh path, so without this the
+// directory. Every AO worktree is a fresh path, so without this the
 // agent would hang at that prompt with no one to answer it.
 //
-// A better-ao worktree is derived from the repo the user is already running
-// better-ao in, so it is inherently trusted. PreLaunch records that trust in
+// An AO worktree is derived from the repo the user is already running
+// AO in, so it is inherently trusted. PreLaunch records that trust in
 // ~/.claude.json before launch, additively and atomically, so it cannot
 // clobber a concurrently-running Claude instance's config.
-func (p *Plugin) PreLaunch(ctx context.Context, cfg agent.LaunchConfig) error {
+func (p *Plugin) PreLaunch(ctx context.Context, cfg ports.LaunchConfig) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -169,19 +177,19 @@ func (p *Plugin) PreLaunch(ctx context.Context, cfg agent.LaunchConfig) error {
 // session: `claude [--permission-mode <mode>] --resume <agentSessionId>`. It
 // prefers the hook-captured native session id from
 // cfg.Session.Metadata["agentSessionId"]; for sessions created before hooks
-// captured it, it falls back to the deterministic UUID better-ao pins via
+// captured it, it falls back to the deterministic UUID AO pins via
 // --session-id at launch. ok is false only when neither is available, so the
 // caller fresh-spawns. The command re-applies the permission mode (resume
 // otherwise reverts to the configured default) but not the prompt/system
 // prompt, which the session already carries.
-func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg agent.RestoreConfig) (cmd []string, ok bool, err error) {
+func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig) (cmd []string, ok bool, err error) {
 	if err := ctx.Err(); err != nil {
 		return nil, false, err
 	}
 
 	sessionID := strings.TrimSpace(cfg.Session.Metadata[claudeAgentSessionIDMetadataKey])
 	if sessionID == "" && cfg.Session.ID != "" {
-		// Explicit fallback for pre-hook sessions: the id better-ao
+		// Explicit fallback for pre-hook sessions: the id AO
 		// deterministically pinned via --session-id at launch.
 		sessionID = claudeSessionUUID(cfg.Session.ID)
 	}
@@ -193,43 +201,44 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg agent.RestoreConfig)
 	if err != nil {
 		return nil, false, err
 	}
-	cmd = []string{binary}
+	cmd = make([]string, 0, 5)
+	cmd = append(cmd, binary)
 	appendPermissionFlags(&cmd, cfg.Permissions)
 	cmd = append(cmd, "--resume", sessionID)
 	return cmd, true, nil
 }
 
 // SessionInfo surfaces the normalized session metadata that the Claude Code
-// hooks persisted into Better-AO's store: the native session id, the title (the
+// hooks persisted into AO's store: the native session id, the title (the
 // first user prompt), and the summary (the final assistant message). It reads
 // only from session.Metadata — never from transcript files — and returns
 // ok=false when none of those fields are present. Metadata is intentionally nil:
 // there is no Claude-specific field callers need beyond the normalized ones.
-func (p *Plugin) SessionInfo(ctx context.Context, session agent.SessionRef) (agent.SessionInfo, bool, error) {
+func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (ports.SessionInfo, bool, error) {
 	if err := ctx.Err(); err != nil {
-		return agent.SessionInfo{}, false, err
+		return ports.SessionInfo{}, false, err
 	}
-	info := agent.SessionInfo{
+	info := ports.SessionInfo{
 		AgentSessionID: session.Metadata[claudeAgentSessionIDMetadataKey],
 		Title:          session.Metadata[claudeTitleMetadataKey],
 		Summary:        session.Metadata[claudeSummaryMetadataKey],
 	}
 	if info.AgentSessionID == "" && info.Title == "" && info.Summary == "" {
-		return agent.SessionInfo{}, false, nil
+		return ports.SessionInfo{}, false, nil
 	}
 	return info, true, nil
 }
 
-// claudeSessionUUID maps a better-ao session id onto a stable Claude Code
-// session UUID via UUIDv5 over a fixed namespace, so the same better-ao session
+// claudeSessionUUID maps an AO session id onto a stable Claude Code
+// session UUID via UUIDv5 over a fixed namespace, so the same AO session
 // always resolves to the same Claude session.
-func claudeSessionUUID(betterAoSessionID string) string {
-	return uuid.NewSHA1(claudeSessionNamespace, []byte(betterAoSessionID)).String()
+func claudeSessionUUID(aoSessionID string) string {
+	return uuid.NewSHA1(claudeSessionNamespace, []byte(aoSessionID)).String()
 }
 
 // resolveSystemPrompt returns the system prompt text to append, preferring
 // SystemPromptFile (read from disk) over an inline SystemPrompt.
-func resolveSystemPrompt(cfg agent.LaunchConfig) (string, error) {
+func resolveSystemPrompt(cfg ports.LaunchConfig) (string, error) {
 	if cfg.SystemPromptFile != "" {
 		data, err := os.ReadFile(cfg.SystemPromptFile)
 		if err != nil {
@@ -240,7 +249,7 @@ func resolveSystemPrompt(cfg agent.LaunchConfig) (string, error) {
 	return cfg.SystemPrompt, nil
 }
 
-// appendPermissionFlags maps better-ao's permission modes onto Claude Code's
+// appendPermissionFlags maps AO's permission modes onto Claude Code's
 // --permission-mode values:
 //   - default            → no flag. Claude's TUI resolves the starting mode
 //     from ~/.claude/settings.json (defaultMode), exactly as a normal launch.
@@ -252,29 +261,29 @@ func resolveSystemPrompt(cfg agent.LaunchConfig) (string, error) {
 //     checks; equivalent to --dangerously-skip-permissions)
 //
 // Empty/unrecognized normalizes to default, so no flag is emitted.
-func appendPermissionFlags(cmd *[]string, permissions agent.PermissionMode) {
+func appendPermissionFlags(cmd *[]string, permissions ports.PermissionMode) {
 	switch normalizePermissionMode(permissions) {
-	case agent.PermissionModeDefault:
+	case ports.PermissionModeDefault:
 		// No flag: defer to the user's settings.json defaultMode.
-	case agent.PermissionModeAcceptEdits:
+	case ports.PermissionModeAcceptEdits:
 		*cmd = append(*cmd, "--permission-mode", "acceptEdits")
-	case agent.PermissionModeAuto:
+	case ports.PermissionModeAuto:
 		*cmd = append(*cmd, "--permission-mode", "auto")
-	case agent.PermissionModeBypassPermissions:
+	case ports.PermissionModeBypassPermissions:
 		*cmd = append(*cmd, "--permission-mode", "bypassPermissions")
 	}
 }
 
-func normalizePermissionMode(mode agent.PermissionMode) agent.PermissionMode {
+func normalizePermissionMode(mode ports.PermissionMode) ports.PermissionMode {
 	switch mode {
-	case agent.PermissionModeDefault,
-		agent.PermissionModeAcceptEdits,
-		agent.PermissionModeAuto,
-		agent.PermissionModeBypassPermissions:
+	case ports.PermissionModeDefault,
+		ports.PermissionModeAcceptEdits,
+		ports.PermissionModeAuto,
+		ports.PermissionModeBypassPermissions:
 		return mode
 	default:
 		// Empty or unrecognized: defer to settings.json (no flag).
-		return agent.PermissionModeDefault
+		return ports.PermissionModeDefault
 	}
 }
 
@@ -417,7 +426,7 @@ func ensureWorkspaceTrusted(configPath, workspacePath string) error {
 		return fmt.Errorf("claude-code: create temp config: %w", err)
 	}
 	tmpName := tmp.Name()
-	defer os.Remove(tmpName) // no-op once renamed
+	defer func() { _ = os.Remove(tmpName) }() // no-op once renamed
 
 	if _, err := tmp.Write(out); err != nil {
 		_ = tmp.Close()

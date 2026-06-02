@@ -10,6 +10,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/cdc"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -135,6 +136,80 @@ func TestWiring_SessionManagerSharesLifecycleStoreAndLCM(t *testing.T) {
 	if gotLCMPtr != lcStack.LCM {
 		t.Fatalf("SM.lcm pointer (%p) differs from lcStack.LCM (%p)", gotLCMPtr, lcStack.LCM)
 	}
+}
+
+// TestWiring_SessionManagerResolvesRealAgentsPerHarness asserts startSession
+// plugs a real registry-backed per-session resolver — not the old loud noop stub
+// — into the Session Manager: each harness resolves to the matching registered
+// adapter, an empty harness falls back to config.DefaultAgent (AO_AGENT), and an
+// unknown harness misses. It reads SM's unexported agents field (same
+// reflect+unsafe scope as inspectSessionDeps).
+func TestWiring_SessionManagerResolvesRealAgentsPerHarness(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	store, err := sqlite.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	cfg := config.Config{DataDir: t.TempDir()} // empty Agent must default to claude-code
+
+	lcStack := startLifecycle(ctx, store, log)
+	t.Cleanup(func() {
+		cancel()
+		lcStack.Stop()
+	})
+
+	sStack, err := startSession(ctx, cfg, lcStack, log)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resolver := inspectSessionAgents(t, sStack.SM)
+	for _, tc := range []struct {
+		harness domain.AgentHarness
+		wantID  string
+	}{
+		{domain.HarnessClaudeCode, "claude-code"},
+		{domain.HarnessCodex, "codex"},
+		{"", config.DefaultAgent}, // empty harness falls back to the AO_AGENT default
+	} {
+		agent, ok := resolver.Agent(tc.harness)
+		if !ok {
+			t.Fatalf("resolver has no agent for harness %q", tc.harness)
+		}
+		described, ok := agent.(adapters.Adapter)
+		if !ok {
+			t.Fatalf("agent for harness %q is %T, not a registered adapters.Adapter — looks like a stub", tc.harness, agent)
+		}
+		if got := described.Manifest().ID; got != tc.wantID {
+			t.Fatalf("harness %q resolved to adapter %q, want %q", tc.harness, got, tc.wantID)
+		}
+	}
+	if _, ok := resolver.Agent("definitely-not-an-agent"); ok {
+		t.Fatal("unknown harness resolved to an agent; want a miss")
+	}
+}
+
+// inspectSessionAgents reads session.Manager's unexported agents field via the
+// same reflect+unsafe escape hatch as inspectSessionDeps (manager.go forbids
+// adding accessors). If the field is renamed upstream, this is the one place to
+// touch.
+func inspectSessionAgents(t *testing.T, sm *session.Manager) ports.AgentResolver {
+	t.Helper()
+	v := reflect.ValueOf(sm).Elem()
+	f := v.FieldByName("agents")
+	if !f.IsValid() {
+		t.Fatalf("session.Manager.agents field renamed — update inspectSessionAgents")
+	}
+	val := reflect.NewAt(f.Type(), unsafe.Pointer(f.UnsafeAddr())).Elem().Interface()
+	resolver, ok := val.(ports.AgentResolver)
+	if !ok {
+		t.Fatalf("session.Manager.agents is %T, not a ports.AgentResolver", val)
+	}
+	return resolver
 }
 
 // inspectSessionDeps reads session.Manager's unexported store and lcm fields.

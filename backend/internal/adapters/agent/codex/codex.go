@@ -2,7 +2,7 @@
 // resuming hook-tracked sessions, installing workspace-local hooks, and reading
 // hook-derived session info.
 //
-// Better-AO-managed sessions derive native session identity and display
+// AO-managed sessions derive native session identity and display
 // metadata from Codex hooks instead of transcript/cache scans.
 package codex
 
@@ -16,7 +16,7 @@ import (
 	"sync"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
-	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 const (
@@ -25,18 +25,22 @@ const (
 	codexSummaryMetadataKey        = "summary"
 )
 
+// Plugin is the Codex agent adapter. It is safe for concurrent use; the binary
+// path is resolved once and cached under binaryMu.
 type Plugin struct {
 	binaryMu       sync.Mutex
 	resolvedBinary string
 }
 
+// New returns a ready-to-register Codex adapter.
 func New() *Plugin {
 	return &Plugin{}
 }
 
 var _ adapters.Adapter = (*Plugin)(nil)
-var _ agent.Agent = (*Plugin)(nil)
+var _ ports.Agent = (*Plugin)(nil)
 
+// Manifest returns the adapter's static self-description.
 func (p *Plugin) Manifest() adapters.Manifest {
 	return adapters.Manifest{
 		ID:          "codex",
@@ -49,14 +53,18 @@ func (p *Plugin) Manifest() adapters.Manifest {
 	}
 }
 
-func (p *Plugin) GetConfigSpec(ctx context.Context) (agent.ConfigSpec, error) {
+// GetConfigSpec reports the agent-specific config keys. Codex exposes none yet.
+func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
 	if err := ctx.Err(); err != nil {
-		return agent.ConfigSpec{}, err
+		return ports.ConfigSpec{}, err
 	}
-	return agent.ConfigSpec{}, nil
+	return ports.ConfigSpec{}, nil
 }
 
-func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg agent.LaunchConfig) (cmd []string, err error) {
+// GetLaunchCommand builds the argv to start a new Codex session, applying the
+// no-update-check and approval flags, optional system-prompt instructions, and
+// the initial prompt (passed after `--` so a leading "-" is not read as a flag).
+func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (cmd []string, err error) {
 	binary, err := p.codexBinary(ctx)
 	if err != nil {
 		return nil, err
@@ -79,18 +87,20 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg agent.LaunchConfig) (
 	return cmd, nil
 }
 
-func (p *Plugin) GetPromptDeliveryStrategy(ctx context.Context, cfg agent.LaunchConfig) (agent.PromptDeliveryStrategy, error) {
+// GetPromptDeliveryStrategy reports that Codex receives its prompt in the
+// launch command itself.
+func (p *Plugin) GetPromptDeliveryStrategy(ctx context.Context, cfg ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	return agent.PromptDeliveryInCommand, nil
+	return ports.PromptDeliveryInCommand, nil
 }
 
 // GetRestoreCommand rebuilds the argv that continues an existing Codex
 // session: `codex resume <agentSessionId>`. ok is false when the hook-derived
 // native session id has not landed yet, so callers can fall back to fresh
 // launch behavior.
-func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg agent.RestoreConfig) (cmd []string, ok bool, err error) {
+func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig) (cmd []string, ok bool, err error) {
 	if err := ctx.Err(); err != nil {
 		return nil, false, err
 	}
@@ -104,7 +114,8 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg agent.RestoreConfig)
 		return nil, false, err
 	}
 
-	cmd = []string{binary, "resume"}
+	cmd = make([]string, 0, 8)
+	cmd = append(cmd, binary, "resume")
 	appendNoUpdateCheckFlag(&cmd)
 	appendApprovalFlags(&cmd, cfg.Permissions)
 	cmd = append(cmd, agentSessionID)
@@ -113,17 +124,17 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg agent.RestoreConfig)
 
 // SessionInfo surfaces Codex hook-derived metadata. Metadata is intentionally
 // nil for Codex: callers get the normalized fields directly.
-func (p *Plugin) SessionInfo(ctx context.Context, session agent.SessionRef) (agent.SessionInfo, bool, error) {
+func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (ports.SessionInfo, bool, error) {
 	if err := ctx.Err(); err != nil {
-		return agent.SessionInfo{}, false, err
+		return ports.SessionInfo{}, false, err
 	}
-	info := agent.SessionInfo{
+	info := ports.SessionInfo{
 		AgentSessionID: session.Metadata[codexAgentSessionIDMetadataKey],
 		Title:          session.Metadata[codexTitleMetadataKey],
 		Summary:        session.Metadata[codexSummaryMetadataKey],
 	}
 	if info.AgentSessionID == "" && info.Title == "" && info.Summary == "" {
-		return agent.SessionInfo{}, false, nil
+		return ports.SessionInfo{}, false, nil
 	}
 	return info, true, nil
 }
@@ -217,28 +228,28 @@ func appendNoUpdateCheckFlag(cmd *[]string) {
 	*cmd = append(*cmd, "-c", "check_for_update_on_startup=false")
 }
 
-func appendApprovalFlags(cmd *[]string, permissions agent.PermissionMode) {
+func appendApprovalFlags(cmd *[]string, permissions ports.PermissionMode) {
 	switch normalizePermissionMode(permissions) {
-	case agent.PermissionModeDefault:
+	case ports.PermissionModeDefault:
 		// No flag: defer to the user's Codex config/default behavior.
-	case agent.PermissionModeAcceptEdits:
+	case ports.PermissionModeAcceptEdits:
 		*cmd = append(*cmd, "--ask-for-approval", "on-request")
-	case agent.PermissionModeAuto:
+	case ports.PermissionModeAuto:
 		*cmd = append(*cmd, "--ask-for-approval", "on-request", "-c", `approvals_reviewer="auto_review"`)
-	case agent.PermissionModeBypassPermissions:
+	case ports.PermissionModeBypassPermissions:
 		*cmd = append(*cmd, "--dangerously-bypass-approvals-and-sandbox")
 	}
 }
 
-func normalizePermissionMode(mode agent.PermissionMode) agent.PermissionMode {
+func normalizePermissionMode(mode ports.PermissionMode) ports.PermissionMode {
 	switch mode {
-	case agent.PermissionModeDefault,
-		agent.PermissionModeAcceptEdits,
-		agent.PermissionModeAuto,
-		agent.PermissionModeBypassPermissions:
+	case ports.PermissionModeDefault,
+		ports.PermissionModeAcceptEdits,
+		ports.PermissionModeAuto,
+		ports.PermissionModeBypassPermissions:
 		return mode
 	default:
-		return agent.PermissionModeDefault
+		return ports.PermissionModeDefault
 	}
 }
 

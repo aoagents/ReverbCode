@@ -84,7 +84,7 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 	if cfg.WorkspacePath == "" {
 		return ports.RuntimeHandle{}, errors.New("tmux runtime: workspace path is required")
 	}
-	if cfg.LaunchCommand == "" {
+	if len(cfg.Argv) == 0 {
 		return ports.RuntimeHandle{}, errors.New("tmux runtime: launch command is required")
 	}
 
