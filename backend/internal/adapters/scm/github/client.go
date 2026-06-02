@@ -25,8 +25,8 @@ const (
 // errors.Is; the orchestrator's lifecycle code is intentionally insulated
 // from raw HTTP status codes.
 var (
-	ErrNotFound   = errors.New("github scm: not found")
-	ErrAuthFailed = errors.New("github scm: authentication failed")
+	ErrNotFound    = errors.New("github scm: not found")
+	ErrAuthFailed  = errors.New("github scm: authentication failed")
 	ErrRateLimited = errors.New("github scm: rate limited")
 )
 

@@ -134,8 +134,8 @@ var schemaNames = map[string]string{
 	"ControllersSpawnOrchestratorResponse":  "SpawnOrchestratorResponse",
 	"ControllersOrchestratorResponse":       "OrchestratorResponse",
 	// httpd/controllers — PR wire envelopes
-	"ControllersMergePRResponse":        "MergePRResponse",
-	"ControllersResolveCommentsRequest": "ResolveCommentsRequest",
+	"ControllersMergePRResponse":         "MergePRResponse",
+	"ControllersResolveCommentsRequest":  "ResolveCommentsRequest",
 	"ControllersResolveCommentsResponse": "ResolveCommentsResponse",
 	// service/project entities + DTOs
 	"ProjectProject":          "Project",
