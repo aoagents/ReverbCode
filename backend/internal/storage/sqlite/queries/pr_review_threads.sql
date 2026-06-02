@@ -1,3 +1,4 @@
+-- Summary: SQLC queries for replacing and reading normalized PR review threads.
 -- name: UpsertPRReviewThread :exec
 INSERT INTO pr_review_threads (pr_url, thread_id, path, line, resolved, is_bot, semantic_hash, updated_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?)

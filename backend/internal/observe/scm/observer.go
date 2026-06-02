@@ -59,24 +59,37 @@ type Lifecycle interface {
 
 // Config holds optional observer knobs. Zero values use production defaults.
 type Config struct {
-	Tick           time.Duration
+	// Tick is the fast PR/CI polling interval. Zero uses DefaultTickInterval.
+	Tick time.Duration
+	// ReviewInterval is the slower review-thread refresh interval.
 	ReviewInterval time.Duration
-	Clock          func() time.Time
-	Logger         *slog.Logger
-	CacheMax       int
+	// Clock supplies timestamps for observations and tests. Nil uses time.Now.
+	Clock func() time.Time
+	// Logger receives operational diagnostics for provider/store/lifecycle failures.
+	Logger *slog.Logger
+	// CacheMax bounds each in-memory ETag/review cache. Zero uses DefaultCacheMax.
+	CacheMax int
 }
 
 // ObserverCache stores provider ETags and review polling timestamps in memory.
 // It is intentionally non-persistent for v1; cold restarts simply revalidate.
 type ObserverCache struct {
-	RepoPRListETag      map[string]string
-	CommitChecksETag    map[string]string
-	ReviewETag          map[string]string
-	LastReviewPollAt    map[string]time.Time
-	repoOrder           []string
-	commitOrder         []string
+	// RepoPRListETag maps repository keys to the last open-PR-list ETag.
+	RepoPRListETag map[string]string
+	// CommitChecksETag maps repo+commit keys to the last check-runs ETag.
+	CommitChecksETag map[string]string
+	// ReviewETag is reserved for provider review-thread ETags when supported.
+	ReviewETag map[string]string
+	// LastReviewPollAt maps PR keys to the last review-thread fetch timestamp.
+	LastReviewPollAt map[string]time.Time
+	// repoOrder tracks FIFO eviction order for RepoPRListETag.
+	repoOrder []string
+	// commitOrder tracks FIFO eviction order for CommitChecksETag.
+	commitOrder []string
+	// lastReviewPollOrder tracks FIFO eviction order for LastReviewPollAt.
 	lastReviewPollOrder []string
-	max                 int
+	// max is the maximum number of entries each cache map retains.
+	max int
 }
 
 func newCache(maxEntries int) ObserverCache {
@@ -95,14 +108,22 @@ func newCache(maxEntries int) ObserverCache {
 // Observer coordinates provider polling, semantic diffing, persistence, and
 // lifecycle notifications for SCM observations.
 type Observer struct {
-	provider       Provider
-	store          Store
-	lifecycle      Lifecycle
-	tick           time.Duration
+	// provider is the SCM adapter used for all provider/network operations.
+	provider Provider
+	// store supplies sessions/projects/local PR state and receives transactional writes.
+	store Store
+	// lifecycle is notified after successful persistence of meaningful changes.
+	lifecycle Lifecycle
+	// tick is the active PR/CI polling cadence.
+	tick time.Duration
+	// reviewInterval is the minimum duration between review-thread fetches per PR.
 	reviewInterval time.Duration
-	clock          func() time.Time
-	logger         *slog.Logger
-	Cache          ObserverCache
+	// clock supplies observation timestamps.
+	clock func() time.Time
+	// logger receives non-fatal operational failures.
+	logger *slog.Logger
+	// Cache holds bounded in-memory provider ETags and review poll timestamps.
+	Cache ObserverCache
 }
 
 // New constructs an Observer with default cadence/cache settings for zero

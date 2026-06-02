@@ -1,3 +1,5 @@
+-- Summary: extend PR persistence for provider-neutral SCM observations, CI/check detail,
+-- review-thread storage, and semantic hashes used by the SCM observer.
 -- +goose Up
 -- +goose StatementBegin
 ALTER TABLE pr ADD COLUMN provider TEXT NOT NULL DEFAULT '';

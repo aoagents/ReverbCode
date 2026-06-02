@@ -1,5 +1,9 @@
 package daemon
 
+// This file wires the provider-neutral SCM observer into daemon startup using
+// the GitHub provider for v1. It keeps provider setup non-blocking for readiness
+// by resolving tokens lazily inside the background observer path.
+
 import (
 	"context"
 	"errors"

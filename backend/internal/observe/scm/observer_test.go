@@ -1,5 +1,9 @@
 package scm
 
+// This file tests the SCM observer orchestration contract with fake provider,
+// store, and lifecycle collaborators so ETag decisions, batching, log fetching,
+// review cadence, semantic hashes, and notification behavior stay provider-neutral.
+
 import (
 	"context"
 	"errors"

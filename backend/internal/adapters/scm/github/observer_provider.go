@@ -1,5 +1,9 @@
 package github
 
+// This file contains the GitHub implementation of the provider-neutral SCM observer contract.
+// It handles repository parsing, REST ETag guards, branch PR discovery, GraphQL
+// batch PR reads, failed-check log tails, and review-thread pagination.
+
 import (
 	"context"
 	"crypto/sha256"
