@@ -8,14 +8,16 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 const (
-	defaultGitBinary = "git"
-	defaultBranch    = "main"
+	defaultGitBinary      = "git"
+	defaultBranch         = "main"
+	defaultCommandTimeout = 30 * time.Second
 )
 
 // ErrUnsafePath is returned when a resolved worktree path escapes the managed
@@ -393,7 +395,21 @@ func pathExistsNonEmpty(path string) (bool, error) {
 	return false, fmt.Errorf("gitworktree: inspect path %q: %w", path, err)
 }
 
+// withDefaultTimeout returns ctx unchanged when it already has a deadline, or
+// wraps it with a default per-command timeout otherwise. The caller is the
+// authority on cancellation — we only fill in a backstop so a forgotten
+// `context.Background()` can't hang on `git fetch` against an unreachable
+// remote.
+func withDefaultTimeout(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc) {
+	if _, ok := ctx.Deadline(); ok {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, d)
+}
+
 func runCommand(ctx context.Context, binary string, args ...string) ([]byte, error) {
+	ctx, cancel := withDefaultTimeout(ctx, defaultCommandTimeout)
+	defer cancel()
 	cmd := exec.CommandContext(ctx, binary, args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {

@@ -8,9 +8,34 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
+
+func TestWithDefaultTimeoutNoExistingDeadline(t *testing.T) {
+	ctx := context.Background()
+	wrapped, cancel := withDefaultTimeout(ctx, defaultCommandTimeout)
+	defer cancel()
+	deadline, ok := wrapped.Deadline()
+	if !ok {
+		t.Fatal("expected deadline, got none")
+	}
+	until := time.Until(deadline)
+	if until <= 0 || until > defaultCommandTimeout {
+		t.Fatalf("deadline %v not in (0, %v]", until, defaultCommandTimeout)
+	}
+}
+
+func TestWithDefaultTimeoutPreservesExistingDeadline(t *testing.T) {
+	parent, parentCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer parentCancel()
+	wrapped, cancel := withDefaultTimeout(parent, defaultCommandTimeout)
+	defer cancel()
+	if wrapped != parent {
+		t.Fatal("expected same context when deadline already set")
+	}
+}
 
 func TestCommandArgs(t *testing.T) {
 	repo := "/repo"
