@@ -225,7 +225,7 @@ func (w *Workspace) validateBranch(ctx context.Context, repo, branch string) err
 }
 
 func (w *Workspace) resolveBaseRef(ctx context.Context, repo, branch string) (string, error) {
-	candidates := baseRefCandidates(branch, w.defaultBranch)
+	candidates := baseRefCandidates(branch, w.defaultBranch, w.hasOriginRemote(ctx, repo))
 	for _, ref := range candidates {
 		exists, err := w.refExists(ctx, repo, ref)
 		if err != nil {
@@ -236,6 +236,18 @@ func (w *Workspace) resolveBaseRef(ctx context.Context, repo, branch string) (st
 		}
 	}
 	return "", fmt.Errorf("gitworktree: no base ref found for branch %q (tried %s)", branch, strings.Join(candidates, ", "))
+}
+
+// hasOriginRemote reports whether the repo has a remote named "origin". The
+// error from git is intentionally swallowed: any failure — including "no such
+// remote", corrupt config, or transient I/O — is treated as "origin absent".
+// This is safe because the callers (resolveBaseRef, Create, Restore) fall
+// back to local refs; the worst outcome of a false negative is that
+// remote-tracking candidates are skipped, which is exactly correct for a
+// no-origin repo.
+func (w *Workspace) hasOriginRemote(ctx context.Context, repo string) bool {
+	_, err := w.run(ctx, w.binary, remoteGetURLOriginArgs(repo)...)
+	return err == nil
 }
 
 func (w *Workspace) refExists(ctx context.Context, repo, ref string) (bool, error) {

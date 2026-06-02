@@ -57,6 +57,7 @@ func TestCommandArgs(t *testing.T) {
 		{"remove", worktreeRemoveArgs(repo, path), []string{"-C", repo, "worktree", "remove", path}},
 		{"prune", worktreePruneArgs(repo), []string{"-C", repo, "worktree", "prune"}},
 		{"list", worktreeListPorcelainArgs(repo), []string{"-C", repo, "worktree", "list", "--porcelain"}},
+		{"remote get-url", remoteGetURLOriginArgs(repo), []string{"-C", repo, "remote", "get-url", "origin"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -67,17 +68,55 @@ func TestCommandArgs(t *testing.T) {
 	}
 }
 
-func TestBaseRefCandidates(t *testing.T) {
-	got := baseRefCandidates("feature/test", "main")
+func TestBaseRefCandidatesWithOrigin(t *testing.T) {
+	got := baseRefCandidates("feature/test", "main", true)
 	want := []string{"origin/feature/test", "origin/main", "feature/test"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("candidates = %#v, want %#v", got, want)
 	}
 
-	got = baseRefCandidates("feature/test", "upstream/main")
+	got = baseRefCandidates("feature/test", "upstream/main", true)
 	want = []string{"origin/feature/test", "upstream/main", "feature/test"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("qualified candidates = %#v, want %#v", got, want)
+	}
+}
+
+func TestBaseRefCandidatesWithoutOrigin(t *testing.T) {
+	got := baseRefCandidates("feature/test", "main", false)
+	want := []string{"feature/test"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("no-origin plain default = %#v, want %#v", got, want)
+	}
+
+	got = baseRefCandidates("feature/test", "upstream/main", false)
+	want = []string{"upstream/main", "feature/test"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("no-origin qualified default = %#v, want %#v", got, want)
+	}
+}
+
+func TestHasOriginRemote(t *testing.T) {
+	ws, err := New(Options{ManagedRoot: t.TempDir(), RepoResolver: StaticRepoResolver{"p": "/repo"}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	var lastArgs []string
+	ws.run = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		lastArgs = append([]string{}, args...)
+		return []byte("git@github.com:foo/bar.git\n"), nil
+	}
+	if !ws.hasOriginRemote(context.Background(), "/repo") {
+		t.Fatal("expected true when remote get-url succeeds")
+	}
+	if want := []string{"-C", "/repo", "remote", "get-url", "origin"}; !reflect.DeepEqual(lastArgs, want) {
+		t.Fatalf("args = %#v, want %#v", lastArgs, want)
+	}
+	ws.run = func(context.Context, string, ...string) ([]byte, error) {
+		return nil, errors.New("fatal: no such remote 'origin'")
+	}
+	if ws.hasOriginRemote(context.Background(), "/repo") {
+		t.Fatal("expected false when remote get-url fails")
 	}
 }
 

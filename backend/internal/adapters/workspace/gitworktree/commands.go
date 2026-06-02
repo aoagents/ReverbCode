@@ -35,12 +35,26 @@ func worktreeListPorcelainArgs(repo string) []string {
 	return []string{"-C", repo, "worktree", "list", "--porcelain"}
 }
 
-func baseRefCandidates(branch, defaultBranch string) []string {
-	candidates := []string{"origin/" + branch}
-	if strings.Contains(defaultBranch, "/") {
+func remoteGetURLOriginArgs(repo string) []string {
+	return []string{"-C", repo, "remote", "get-url", "origin"}
+}
+
+// baseRefCandidates returns the ordered list of refs to probe for a new
+// worktree's base. When hasOrigin is true we prefer remote-tracking refs;
+// when false we skip them entirely so we don't burn subprocesses on lookups
+// that can't succeed. defaultBranch may already be qualified (e.g.
+// "upstream/main"), in which case it is used as-is.
+func baseRefCandidates(branch, defaultBranch string, hasOrigin bool) []string {
+	var candidates []string
+	if hasOrigin {
+		candidates = append(candidates, "origin/"+branch)
+		if strings.Contains(defaultBranch, "/") {
+			candidates = append(candidates, defaultBranch)
+		} else {
+			candidates = append(candidates, "origin/"+defaultBranch)
+		}
+	} else if strings.Contains(defaultBranch, "/") {
 		candidates = append(candidates, defaultBranch)
-	} else {
-		candidates = append(candidates, "origin/"+defaultBranch)
 	}
 	return append(candidates, branch)
 }
