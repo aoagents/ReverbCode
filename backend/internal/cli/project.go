@@ -47,15 +47,15 @@ type projectSummary struct {
 }
 
 type projectDetails struct {
-	ID            string         `json:"id"`
-	Name          string         `json:"name"`
-	Path          string         `json:"path"`
-	Repo          string         `json:"repo"`
-	DefaultBranch string         `json:"defaultBranch"`
-	Agent         string         `json:"agent,omitempty"`
-	Tracker       map[string]any `json:"tracker,omitempty"`
-	SCM           map[string]any `json:"scm,omitempty"`
-	ResolveError  string         `json:"resolveError,omitempty"`
+	ID             string         `json:"id"`
+	Name           string         `json:"name"`
+	Path           string         `json:"path"`
+	Repo           string         `json:"repo"`
+	DefaultBranch  string         `json:"defaultBranch"`
+	DefaultHarness string         `json:"agent,omitempty"`
+	Tracker        map[string]any `json:"tracker,omitempty"`
+	SCM            map[string]any `json:"scm,omitempty"`
+	ResolveError   string         `json:"resolveError,omitempty"`
 }
 
 type projectListResult struct {
@@ -269,7 +269,7 @@ func writeProjectDetails(cmd *cobra.Command, res projectGetResult) error {
 		{label: "path", value: p.Path},
 		{label: "repo", value: p.Repo},
 		{label: "default branch", value: p.DefaultBranch},
-		{label: "agent", value: p.Agent},
+		{label: "default harness", value: p.DefaultHarness},
 		{label: "resolve error", value: p.ResolveError},
 	}
 	for _, f := range fields {
