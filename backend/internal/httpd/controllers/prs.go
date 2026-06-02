@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apispec"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
 	prsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/pr"
 )
@@ -24,7 +25,7 @@ func (c *PRsController) Register(r chi.Router) {
 
 func (c *PRsController) merge(w http.ResponseWriter, r *http.Request) {
 	if c.Svc == nil {
-		envelope.WriteAPIError(w, r, http.StatusServiceUnavailable, "unavailable", "SCM_NOT_CONFIGURED", "SCM integration is not configured for this daemon", nil)
+		apispec.NotImplemented(w, r, "POST", "/api/v1/prs/{id}/merge")
 		return
 	}
 	prID := chi.URLParam(r, "id")
@@ -38,7 +39,7 @@ func (c *PRsController) merge(w http.ResponseWriter, r *http.Request) {
 
 func (c *PRsController) resolveComments(w http.ResponseWriter, r *http.Request) {
 	if c.Svc == nil {
-		envelope.WriteAPIError(w, r, http.StatusServiceUnavailable, "unavailable", "SCM_NOT_CONFIGURED", "SCM integration is not configured for this daemon", nil)
+		apispec.NotImplemented(w, r, "POST", "/api/v1/prs/{id}/resolve-comments")
 		return
 	}
 	prID := chi.URLParam(r, "id")

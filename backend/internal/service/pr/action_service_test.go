@@ -14,6 +14,9 @@ func TestMerge_ReturnsSquash(t *testing.T) {
 	if res.Method != "squash" {
 		t.Errorf("method = %q, want squash", res.Method)
 	}
+	if res.PRNumber != 42 {
+		t.Errorf("PRNumber = %d, want 42", res.PRNumber)
+	}
 }
 
 func TestResolveComments_ReturnsOK(t *testing.T) {
