@@ -125,6 +125,17 @@ func TestResolveComments_PRNotFound(t *testing.T) {
 	}
 }
 
+func TestResolveComments_ExplicitIDs_PRNotFound(t *testing.T) {
+	// Explicit IDs supplied but the PR itself doesn't exist: the existence
+	// probe must surface ErrPRNotFound so the path param is not a no-op.
+	p := &fakeProvider{listErr: scmgithub.ErrNotFound}
+	svc := newTestService(p)
+	_, err := svc.ResolveComments(context.Background(), "99", []string{"T_A"})
+	if !errors.Is(err, ErrPRNotFound) {
+		t.Errorf("err = %v, want ErrPRNotFound", err)
+	}
+}
+
 func TestResolveComments_InvalidID(t *testing.T) {
 	svc := newTestService(&fakeProvider{})
 	_, err := svc.ResolveComments(context.Background(), "bad", nil)

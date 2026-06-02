@@ -91,6 +91,12 @@ func (s *ActionService) ResolveComments(ctx context.Context, prID string, commen
 			return ResolveResult{}, ErrNothingToResolve
 		}
 		threadIDs = ids
+	} else {
+		// Verify the PR exists so the {id} path parameter is not silently
+		// ignored when explicit thread IDs are supplied.
+		if _, err := s.provider.ListUnresolvedThreadIDs(ctx, s.owner, s.repo, num); err != nil {
+			return ResolveResult{}, mapResolveError(err)
+		}
 	}
 
 	var resolved int
