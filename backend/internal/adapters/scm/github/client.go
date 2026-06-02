@@ -25,9 +25,11 @@ const (
 // errors.Is; the orchestrator's lifecycle code is intentionally insulated
 // from raw HTTP status codes.
 var (
-	ErrNotFound    = errors.New("github scm: not found")
-	ErrAuthFailed  = errors.New("github scm: authentication failed")
-	ErrRateLimited = errors.New("github scm: rate limited")
+	ErrNotFound      = errors.New("github scm: not found")
+	ErrAuthFailed    = errors.New("github scm: authentication failed")
+	ErrRateLimited   = errors.New("github scm: rate limited")
+	ErrNotMergeable  = errors.New("github scm: not mergeable")  // 405 on pull merge
+	ErrUnprocessable = errors.New("github scm: unprocessable")  // 422 validation failure
 )
 
 // RateLimitError carries the structured backoff hints from a rate-limit
@@ -378,6 +380,12 @@ func classifyError(resp *http.Response, body []byte) error {
 	switch resp.StatusCode {
 	case http.StatusNotFound:
 		return fmt.Errorf("%w: %s", ErrNotFound, msg)
+	case http.StatusMethodNotAllowed: // 405: PR is not in a mergeable state
+		return fmt.Errorf("%w: %s", ErrNotMergeable, msg)
+	case http.StatusConflict: // 409: merge conflict (HEAD modified)
+		return fmt.Errorf("%w: %s", ErrNotMergeable, msg)
+	case http.StatusUnprocessableEntity: // 422: validation failed (draft, missing checks/reviews)
+		return fmt.Errorf("%w: %s", ErrUnprocessable, msg)
 	case http.StatusTooManyRequests:
 		return rateLimited(resp, msg)
 	case http.StatusUnauthorized:

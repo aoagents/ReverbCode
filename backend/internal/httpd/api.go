@@ -10,6 +10,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apispec"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/controllers"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 )
 
@@ -20,6 +21,7 @@ import (
 type APIDeps struct {
 	Projects projectsvc.Manager
 	Sessions controllers.SessionService
+	PRs      ports.PRService
 }
 
 // API owns one controller per resource and is the single Register call the
@@ -43,7 +45,7 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 		sessions: &controllers.SessionsController{
 			Svc: deps.Sessions,
 		},
-		prs: &controllers.PRsController{},
+		prs: &controllers.PRsController{Svc: deps.PRs},
 	}
 }
 

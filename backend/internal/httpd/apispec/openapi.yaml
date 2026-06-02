@@ -181,12 +181,12 @@ paths:
     post:
       operationId: mergePR
       parameters:
-      - description: PR number or identifier.
+      - description: PR number.
         in: path
         name: id
         required: true
         schema:
-          description: PR number or identifier.
+          description: PR number.
           type: string
       responses:
         "200":
@@ -226,12 +226,12 @@ paths:
     post:
       operationId: resolveComments
       parameters:
-      - description: PR number or identifier.
+      - description: PR number.
         in: path
         name: id
         required: true
         schema:
-          description: PR number or identifier.
+          description: PR number.
           type: string
       requestBody:
         content:

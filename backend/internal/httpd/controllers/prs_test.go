@@ -1,6 +1,7 @@
 package controllers_test
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"net/http"
@@ -9,9 +10,35 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	"github.com/aoagents/agent-orchestrator/backend/internal/scm"
 )
 
-func newPRsTestServer(t *testing.T) *httptest.Server {
+// fakePRService is a configurable test double for ports.PRService.
+type fakePRService struct {
+	mergeResult   ports.MergeResult
+	mergeErr      error
+	resolveResult ports.ResolveResult
+	resolveErr    error
+}
+
+func (f *fakePRService) Merge(_ context.Context, _ string) (ports.MergeResult, error) {
+	return f.mergeResult, f.mergeErr
+}
+
+func (f *fakePRService) ResolveComments(_ context.Context, _ string, _ []string) (ports.ResolveResult, error) {
+	return f.resolveResult, f.resolveErr
+}
+
+func newPRTestServer(t *testing.T, svc ports.PRService) *httptest.Server {
+	t.Helper()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := httptest.NewServer(httpd.NewRouterWithAPI(config.Config{}, log, nil, httpd.APIDeps{PRs: svc}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func newPRTestServerNoService(t *testing.T) *httptest.Server {
 	t.Helper()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	srv := httptest.NewServer(httpd.NewRouter(config.Config{}, log, nil))
@@ -19,43 +46,133 @@ func newPRsTestServer(t *testing.T) *httptest.Server {
 	return srv
 }
 
-func TestPRsRoutes_MergeReturns501(t *testing.T) {
-	srv := newPRsTestServer(t)
+// ---- Nil service → 501 ----
 
+func TestPRsRoutes_NilService_MergeReturns501(t *testing.T) {
+	srv := newPRTestServerNoService(t)
 	body, status, headers := doRequest(t, srv, "POST", "/api/v1/prs/1/merge", "")
 	assertJSON(t, headers)
 	assertErrorCode(t, body, status, http.StatusNotImplemented, "NOT_IMPLEMENTED")
 }
 
-func TestPRsRoutes_ResolveCommentsReturns501(t *testing.T) {
-	srv := newPRsTestServer(t)
-
+func TestPRsRoutes_NilService_ResolveCommentsReturns501(t *testing.T) {
+	srv := newPRTestServerNoService(t)
 	body, status, headers := doRequest(t, srv, "POST", "/api/v1/prs/1/resolve-comments", "")
 	assertJSON(t, headers)
 	assertErrorCode(t, body, status, http.StatusNotImplemented, "NOT_IMPLEMENTED")
 }
 
-func TestPRsRoutes_MergeIncludesSpecSlice(t *testing.T) {
-	srv := newPRsTestServer(t)
+// ---- Merge: 200 ----
 
-	body, _, _ := doRequest(t, srv, "POST", "/api/v1/prs/42/merge", "")
+func TestPRsRoutes_Merge_200(t *testing.T) {
+	svc := &fakePRService{mergeResult: ports.MergeResult{PRNumber: 42, Method: "squash"}}
+	srv := newPRTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/prs/42/merge", "")
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", status, body)
+	}
 	var resp struct {
-		Code string         `json:"code"`
-		Spec map[string]any `json:"spec"`
+		OK       bool   `json:"ok"`
+		PRNumber int    `json:"prNumber"`
+		Method   string `json:"method"`
 	}
 	mustJSON(t, body, &resp)
-	if resp.Code != "NOT_IMPLEMENTED" {
-		t.Fatalf("code = %q, want NOT_IMPLEMENTED", resp.Code)
-	}
-	if resp.Spec == nil {
-		t.Fatal("spec field missing from 501 body")
+	if !resp.OK || resp.PRNumber != 42 || resp.Method != "squash" {
+		t.Errorf("resp = %+v, want {ok:true prNumber:42 method:squash}", resp)
 	}
 }
 
-func TestPRsRoutes_ResolveCommentsIncludesSpecSlice(t *testing.T) {
-	srv := newPRsTestServer(t)
+// ---- Merge: 404 ----
 
-	body, _, _ := doRequest(t, srv, "POST", "/api/v1/prs/42/resolve-comments", `{"commentIds":["c1"]}`)
+func TestPRsRoutes_Merge_404(t *testing.T) {
+	svc := &fakePRService{mergeErr: scm.ErrPRNotFound}
+	srv := newPRTestServer(t, svc)
+
+	body, status, headers := doRequest(t, srv, "POST", "/api/v1/prs/99/merge", "")
+	assertJSON(t, headers)
+	assertErrorCode(t, body, status, http.StatusNotFound, "PR_NOT_FOUND")
+}
+
+// ---- Merge: 409 ----
+
+func TestPRsRoutes_Merge_409(t *testing.T) {
+	svc := &fakePRService{mergeErr: scm.ErrPRNotMergeable}
+	srv := newPRTestServer(t, svc)
+
+	body, status, headers := doRequest(t, srv, "POST", "/api/v1/prs/1/merge", "")
+	assertJSON(t, headers)
+	assertErrorCode(t, body, status, http.StatusConflict, "PR_NOT_MERGEABLE")
+}
+
+// ---- Merge: 422 ----
+
+func TestPRsRoutes_Merge_422(t *testing.T) {
+	svc := &fakePRService{mergeErr: scm.ErrPRPreconditions}
+	srv := newPRTestServer(t, svc)
+
+	body, status, headers := doRequest(t, srv, "POST", "/api/v1/prs/1/merge", "")
+	assertJSON(t, headers)
+	assertErrorCode(t, body, status, http.StatusUnprocessableEntity, "PR_PRECONDITIONS_UNMET")
+}
+
+// ---- ResolveComments: 200 ----
+
+func TestPRsRoutes_ResolveComments_200(t *testing.T) {
+	svc := &fakePRService{resolveResult: ports.ResolveResult{Resolved: 3}}
+	srv := newPRTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/prs/42/resolve-comments", `{"commentIds":["T_1","T_2","T_3"]}`)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", status, body)
+	}
+	var resp struct {
+		OK       bool `json:"ok"`
+		Resolved int  `json:"resolved"`
+	}
+	mustJSON(t, body, &resp)
+	if !resp.OK || resp.Resolved != 3 {
+		t.Errorf("resp = %+v, want {ok:true resolved:3}", resp)
+	}
+}
+
+func TestPRsRoutes_ResolveComments_200_NoBody(t *testing.T) {
+	svc := &fakePRService{resolveResult: ports.ResolveResult{Resolved: 2}}
+	srv := newPRTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/prs/42/resolve-comments", "")
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", status, body)
+	}
+}
+
+// ---- ResolveComments: 404 ----
+
+func TestPRsRoutes_ResolveComments_404(t *testing.T) {
+	svc := &fakePRService{resolveErr: scm.ErrPRNotFound}
+	srv := newPRTestServer(t, svc)
+
+	body, status, headers := doRequest(t, srv, "POST", "/api/v1/prs/99/resolve-comments", "")
+	assertJSON(t, headers)
+	assertErrorCode(t, body, status, http.StatusNotFound, "PR_NOT_FOUND")
+}
+
+// ---- ResolveComments: 422 ----
+
+func TestPRsRoutes_ResolveComments_422(t *testing.T) {
+	svc := &fakePRService{resolveErr: scm.ErrNothingToResolve}
+	srv := newPRTestServer(t, svc)
+
+	body, status, headers := doRequest(t, srv, "POST", "/api/v1/prs/1/resolve-comments", "")
+	assertJSON(t, headers)
+	assertErrorCode(t, body, status, http.StatusUnprocessableEntity, "NOTHING_TO_RESOLVE")
+}
+
+// ---- 501 body includes spec slice ----
+
+func TestPRsRoutes_501BodyIncludesSpec(t *testing.T) {
+	srv := newPRTestServerNoService(t)
+	body, _, _ := doRequest(t, srv, "POST", "/api/v1/prs/1/merge", "")
 	var resp struct {
 		Code string         `json:"code"`
 		Spec map[string]any `json:"spec"`

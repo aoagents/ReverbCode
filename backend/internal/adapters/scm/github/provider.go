@@ -618,6 +618,66 @@ func repoPath(owner, repo string, elems ...string) string {
 }
 
 // ---------------------------------------------------------------------------
+// PR action operations
+// ---------------------------------------------------------------------------
+
+const resolveThreadMutation = `mutation ResolveThread($threadId:ID!){
+  resolveReviewThread(input:{threadId:$threadId}){
+    thread{ id isResolved }
+  }
+}`
+
+const unresolvedThreadsQuery = `query UnresolvedThreads($owner:String!,$repo:String!,$number:Int!){
+  repository(owner:$owner,name:$repo){
+    pullRequest(number:$number){
+      reviewThreads(last:100){ nodes{ id isResolved } }
+    }
+  }
+}`
+
+// MergePR squash-merges the given PR. Returns ErrNotFound, ErrNotMergeable,
+// or ErrUnprocessable on expected failure modes; all other errors are transport/auth.
+func (p *Provider) MergePR(ctx context.Context, owner, repo string, prNumber int) error {
+	mergePath := repoPath(owner, repo, "pulls", strconv.Itoa(prNumber), "merge")
+	_, err := p.client.doREST(ctx, http.MethodPut, mergePath, nil, map[string]string{"merge_method": "squash"})
+	return err
+}
+
+// ListUnresolvedThreadIDs returns the GitHub node IDs of unresolved review
+// threads on the given PR. Returns ErrNotFound if the PR is absent.
+func (p *Provider) ListUnresolvedThreadIDs(ctx context.Context, owner, repo string, prNumber int) ([]string, error) {
+	data, err := p.client.doGraphQL(ctx, unresolvedThreadsQuery, map[string]any{
+		"owner": owner, "repo": repo, "number": prNumber,
+	})
+	if err != nil {
+		return nil, err
+	}
+	repoData, _ := data["repository"].(map[string]any)
+	pr, _ := repoData["pullRequest"].(map[string]any)
+	if pr == nil {
+		return nil, fmt.Errorf("%w: PR %d not found in graphql response", ErrNotFound, prNumber)
+	}
+	threads, _ := pr["reviewThreads"].(map[string]any)
+	rawNodes := nodes(threads["nodes"])
+	var out []string
+	for _, n := range rawNodes {
+		if !boolv(n["isResolved"]) {
+			if id := str(n["id"]); id != "" {
+				out = append(out, id)
+			}
+		}
+	}
+	return out, nil
+}
+
+// ResolveThread resolves a single review thread by its GitHub node ID.
+// Idempotent: already-resolved threads are silently accepted.
+func (p *Provider) ResolveThread(ctx context.Context, threadID string) error {
+	_, err := p.client.doGraphQL(ctx, resolveThreadMutation, map[string]any{"threadId": threadID})
+	return err
+}
+
+// ---------------------------------------------------------------------------
 // Small JSON-ish accessors
 // ---------------------------------------------------------------------------
 
