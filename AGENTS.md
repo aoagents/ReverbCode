@@ -40,11 +40,6 @@ npm run typecheck
 npm run build
 ```
 
-Notes:
-- CI runs `go build ./...`, `go vet ./...`, `go test -race ./...`, and golangci-lint from `backend/`.
-- Some local macOS environments have a `zellij` socket-path issue in `backend/internal/terminal`; if needed for local-only validation, use a short PATH without `zellij` ahead of the test run or rely on CI's Linux environment.
-- `agent-ci` currently requires `--all` or `--workflow <path>` even if older task text says `npx @redwoodjs/agent-ci run`.
-
 ## Where to look first
 
 - `README.md` — current run/config/test quickstart.
@@ -53,7 +48,7 @@ Notes:
 - `docs/status.md` — current implementation state and next integration work.
 - `docs/cli/README.md` — intended CLI shape: thin Cobra client over daemon HTTP, never direct storage/runtime access.
 - `docs/agent/README.md` — agent adapter contract and hook behavior.
-- `CLAUDE.md` — none exists at the repo root as of this writing. If one is added later, read it with this file.
+- `CLAUDE.md` — compatibility pointer for Claude Code; it directs agents back to `AGENTS.md`.
 
 For code entry points:
 
@@ -67,8 +62,7 @@ For code entry points:
 
 ## Coding conventions
 
-- Make surgical changes. Do not perform unprompted refactors, broad renames, formatting churn, or architectural cleanups while fixing a focused issue.
-- Prefer editing existing files over creating new ones unless a new file clearly matches an established package pattern.
+- Keep every change surgical and directly tied to the task. Avoid drive-by cleanup, broad renames, formatting churn, speculative abstractions, and architectural refactors unless the task explicitly asks for them.
 - Follow existing Go package boundaries. CLI code should call daemon HTTP routes through shared CLI client helpers; it should not open SQLite, spawn runtimes, or call adapters directly.
 - Keep Cobra commands in the relevant command file and table-test them in the style of `backend/internal/cli/*_test.go`.
 - Mirror existing response/request DTOs in the CLI instead of importing HTTP controller packages into CLI code, unless the package already establishes that dependency.
