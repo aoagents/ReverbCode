@@ -15,15 +15,16 @@
 // The opencode-native session id (and prompt/model where known) is piped to the
 // hook command as JSON on stdin, run with cwd set to the worktree so AO can
 // correlate the opencode session to its AO session. Every invocation is
-// best-effort: a missing `ao` binary or a failing hook must never crash the
-// user's opencode session, so each call is guarded (`command -v ao`) and
-// wrapped in try/catch.
+// best-effort and must never crash the user's opencode session: a missing `ao`
+// binary is a guarded no-op (`command -v ao`), and spawn exceptions, non-zero
+// exit codes, and malformed event payloads are caught and surfaced through
+// opencode's structured logger (client.app.log) for diagnosis — never rethrown.
 //
 // `import type` is erased at runtime by Bun's transpiler, so this loads even
 // before opencode has installed @opencode-ai/plugin into the config dir.
 import type { Plugin } from "@opencode-ai/plugin"
 
-export const aoActivity: Plugin = async ({ directory }) => {
+export const aoActivity: Plugin = async ({ directory, client }) => {
   // Fire user-prompt-submit only once per user message (it can surface on both
   // message.updated and message.part.updated).
   const seenUserMessages = new Set<string>()
@@ -34,9 +35,22 @@ export const aoActivity: Plugin = async ({ directory }) => {
   const messageStore = new Map<string, any>()
 
   // Wrap in `sh -c` with a guard so a missing `ao` binary is a silent no-op
-  // rather than a per-event error in the user's session.
+  // (exit 0) rather than a per-event error in the user's session.
   function hookCmd(hookName: string): string[] {
     return ["sh", "-c", `if ! command -v ao >/dev/null 2>&1; then exit 0; fi; exec ao hooks opencode ${hookName}`]
+  }
+
+  // Report a hook failure through opencode's structured logger. Best-effort: the
+  // log call must itself never throw or reject back into opencode, hence the
+  // optional chaining + swallowed rejection.
+  function logHookFailure(hookName: string, detail: string) {
+    try {
+      void client?.app
+        ?.log?.({ body: { service: "ao-activity", level: "error", message: `hook ${hookName} failed: ${detail}` } })
+        ?.catch?.(() => {})
+    } catch {
+      // The logger itself is unavailable — nothing more we can safely do.
+    }
   }
 
   // All hooks are dispatched synchronously (Bun.spawnSync), for two reasons:
@@ -48,16 +62,25 @@ export const aoActivity: Plugin = async ({ directory }) => {
   //      hook returns, so events are reported strictly in dispatch order.
   //   2. `opencode run` exits on the idle event, so an async stop hook would be
   //      killed before completing.
+  //
+  // A non-zero exit (the guard makes a missing `ao` exit 0, so this is a real
+  // `ao hooks` failure) or a spawn exception is logged with its stderr and never
+  // rethrown, so reporting failures are diagnosable without crashing opencode.
   function callHookSync(hookName: string, payload: Record<string, unknown>) {
     try {
-      Bun.spawnSync(hookCmd(hookName), {
+      const result = Bun.spawnSync(hookCmd(hookName), {
         cwd: directory,
         stdin: new TextEncoder().encode(JSON.stringify(payload) + "\n"),
         stdout: "ignore",
-        stderr: "ignore",
+        stderr: "pipe",
       })
-    } catch {
-      // Best-effort: never let a reporting failure surface to opencode.
+      if (!result.success) {
+        const stderr = result.stderr ? new TextDecoder().decode(result.stderr).trim() : ""
+        logHookFailure(hookName, `exited ${result.exitCode}${stderr ? `: ${stderr}` : ""}`)
+      }
+    } catch (err) {
+      // The spawn itself failed (e.g. no `sh` on PATH). Never propagate.
+      logHookFailure(hookName, err instanceof Error ? err.message : String(err))
     }
   }
 
@@ -128,8 +151,10 @@ export const aoActivity: Plugin = async ({ directory }) => {
             break
           }
         }
-      } catch {
-        // Best-effort: never let a reporting failure surface to opencode.
+      } catch (err) {
+        // A malformed/unexpected event payload must never crash opencode; log
+        // it (tagged with the event type) for diagnosis and move on.
+        logHookFailure(`event:${(event as any)?.type ?? "unknown"}`, err instanceof Error ? err.message : String(err))
       }
     },
   }
