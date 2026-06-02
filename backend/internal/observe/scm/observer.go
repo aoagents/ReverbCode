@@ -86,12 +86,17 @@ type ObserverCache struct {
 	ReviewETag map[string]string
 	// LastReviewPollAt maps PR keys to the last review-thread fetch timestamp.
 	LastReviewPollAt map[string]time.Time
+	// ReviewRefreshFailed marks PRs whose review-thread refresh failed; the
+	// next poll retries regardless of the normal review cadence/status rules.
+	ReviewRefreshFailed map[string]bool
 	// repoOrder tracks FIFO eviction order for RepoPRListETag.
 	repoOrder []string
 	// commitOrder tracks FIFO eviction order for CommitChecksETag.
 	commitOrder []string
 	// lastReviewPollOrder tracks FIFO eviction order for LastReviewPollAt.
 	lastReviewPollOrder []string
+	// reviewFailedOrder tracks FIFO eviction order for ReviewRefreshFailed.
+	reviewFailedOrder []string
 	// max is the maximum number of entries each cache map retains.
 	max int
 }
@@ -101,11 +106,12 @@ func newCache(maxEntries int) ObserverCache {
 		maxEntries = DefaultCacheMax
 	}
 	return ObserverCache{
-		RepoPRListETag:   map[string]string{},
-		CommitChecksETag: map[string]string{},
-		ReviewETag:       map[string]string{},
-		LastReviewPollAt: map[string]time.Time{},
-		max:              maxEntries,
+		RepoPRListETag:      map[string]string{},
+		CommitChecksETag:    map[string]string{},
+		ReviewETag:          map[string]string{},
+		LastReviewPollAt:    map[string]time.Time{},
+		ReviewRefreshFailed: map[string]bool{},
+		max:                 maxEntries,
 	}
 }
 
@@ -196,6 +202,25 @@ type repoGuardState struct {
 	err     error
 }
 
+type pendingCacheString struct {
+	key   string
+	value string
+}
+
+type refreshSelection struct {
+	refs          []ports.SCMPRRef
+	subjectsByPR  map[string]*subject
+	commitETags   map[string]pendingCacheString
+	candidateKeys map[string]bool
+}
+
+type persistenceOptions struct {
+	reviewFetched         bool
+	preserveLocalMetadata bool
+	preserveLocalCI       bool
+	preserveLocalReview   bool
+}
+
 // Poll runs one synchronous SCM observation cycle.
 func (o *Observer) Poll(ctx context.Context) error {
 	now := o.clock().UTC()
@@ -220,25 +245,40 @@ func (o *Observer) Poll(ctx context.Context) error {
 	}
 
 	repoGuards := o.guardRepos(ctx, subjects)
+	repoRefreshOK := pendingRepoRefreshes(repoGuards)
+	markRepoRefreshFailed := func(repo ports.SCMRepo) {
+		key := prKey(repo, 0)
+		if _, ok := repoRefreshOK[key]; ok {
+			repoRefreshOK[key] = false
+		}
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	o.detectMissingPRs(ctx, subjects, repoGuards, now)
+	o.detectMissingPRs(ctx, subjects, repoGuards, now, markRepoRefreshFailed)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 
-	refs, subjectsByPR := o.selectRefreshCandidates(ctx, subjects, repoGuards)
+	selection := o.selectRefreshCandidates(ctx, subjects, repoGuards, markRepoRefreshFailed)
 	observations := map[string]ports.SCMObservation{}
-	for _, chunk := range chunks(refs, BatchSize) {
+	prRefreshOK := map[string]bool{}
+	for key := range selection.candidateKeys {
+		prRefreshOK[key] = false
+	}
+	for _, chunk := range chunks(selection.refs, BatchSize) {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		batch, err := o.provider.FetchPullRequests(ctx, chunk)
 		if err != nil {
 			o.logger.Error("scm observer: GraphQL PR batch failed", "err", err)
+			for _, ref := range chunk {
+				markRepoRefreshFailed(ref.Repo)
+			}
 			continue
 		}
+		chunkSeen := map[string]bool{}
 		for _, obs := range batch {
 			obs.ObservedAt = now
 			key := prKeyFromObs(obs)
@@ -246,10 +286,17 @@ func (o *Observer) Poll(ctx context.Context) error {
 				continue
 			}
 			observations[key] = obs
+			chunkSeen[key] = true
+		}
+		for _, ref := range chunk {
+			key := prKey(ref.Repo, ref.Number)
+			if !chunkSeen[key] {
+				markRepoRefreshFailed(ref.Repo)
+			}
 		}
 	}
 
-	for key, subj := range subjectsByPR {
+	for key, subj := range selection.subjectsByPR {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -263,7 +310,9 @@ func (o *Observer) Poll(ctx context.Context) error {
 	}
 
 	reviewRefreshed := map[string]bool{}
-	o.refreshReviews(ctx, subjects, observations, subjectsByPR, reviewRefreshed, now)
+	localOnlyObservations := map[string]bool{}
+	reviewStale := map[string]bool{}
+	o.refreshReviews(ctx, subjects, observations, selection.subjectsByPR, reviewRefreshed, localOnlyObservations, reviewStale, now)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -272,24 +321,54 @@ func (o *Observer) Poll(ctx context.Context) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		subj, ok := subjectsByPR[key]
+		subj, ok := selection.subjectsByPR[key]
 		if !ok {
 			continue
 		}
 		local := subj.known
-		prepared := o.prepareForPersistence(obs, local, reviewRefreshed[key], now)
-		if !prepared.Changed.Metadata && !prepared.Changed.CI && !prepared.Changed.Review {
-			continue
+		opts := persistenceOptions{
+			reviewFetched:         reviewRefreshed[key],
+			preserveLocalMetadata: localOnlyObservations[key],
+			preserveLocalCI:       localOnlyObservations[key],
+			preserveLocalReview:   reviewStale[key],
 		}
-		pr, checks, threads, comments := domainFromObservation(subj.session.ID, prepared, local, reviewRefreshed[key], now)
-		if err := o.store.WriteSCMObservation(ctx, pr, checks, threads, comments, reviewRefreshed[key]); err != nil {
-			o.logger.Error("scm observer: DB write failed", "session", subj.session.ID, "pr", pr.URL, "err", err)
+		prepared := o.prepareForPersistence(obs, local, opts, now)
+		if !prepared.Changed.Metadata && !prepared.Changed.CI && !prepared.Changed.Review {
+			prRefreshOK[key] = true
 			continue
 		}
 		if o.lifecycle != nil {
 			if err := o.lifecycle.ApplySCMObservation(ctx, subj.session.ID, prepared); err != nil {
-				o.logger.Error("scm observer: lifecycle notification failed", "session", subj.session.ID, "pr", pr.URL, "err", err)
+				o.logger.Error("scm observer: lifecycle notification failed", "session", subj.session.ID, "pr", firstNonEmpty(prepared.PR.URL, prepared.PR.HTMLURL, local.URL), "err", err)
+				markRepoRefreshFailed(subj.repo)
+				continue
 			}
+		}
+		pr, checks, threads, comments := domainFromObservation(subj.session.ID, prepared, local, opts, now)
+		if err := o.store.WriteSCMObservation(ctx, pr, checks, threads, comments, reviewRefreshed[key]); err != nil {
+			o.logger.Error("scm observer: DB write failed", "session", subj.session.ID, "pr", pr.URL, "err", err)
+			markRepoRefreshFailed(subj.repo)
+			continue
+		}
+		prRefreshOK[key] = true
+	}
+	for key, ok := range prRefreshOK {
+		if !ok {
+			continue
+		}
+		if pending, found := selection.commitETags[key]; found {
+			o.cacheSetString(o.Cache.CommitChecksETag, &o.Cache.commitOrder, pending.key, pending.value)
+		}
+		if reviewRefreshed[key] {
+			o.cacheSetTime(o.Cache.LastReviewPollAt, &o.Cache.lastReviewPollOrder, key, now)
+		}
+	}
+	for key, ok := range repoRefreshOK {
+		if !ok {
+			continue
+		}
+		if etag := repoGuards[key].result.ETag; etag != "" {
+			o.cacheSetString(o.Cache.RepoPRListETag, &o.Cache.repoOrder, key, etag)
 		}
 	}
 	return nil
@@ -359,7 +438,12 @@ func (o *Observer) discoverSubjects(ctx context.Context) (map[string]*subject, e
 		known, hasPR := chooseKnownPR(prs)
 		s := &subject{session: sess, project: proj, repo: repo, branch: branch, known: known, hasPR: hasPR}
 		if hasPR && known.Number > 0 {
-			out[prKey(repo, known.Number)] = s
+			key := prKey(repo, known.Number)
+			if existing, ok := out[key]; ok {
+				o.logger.Warn("scm observer: duplicate tracked PR ownership skipped", "pr", key, "kept_session", existing.session.ID, "skipped_session", sess.ID)
+				continue
+			}
+			out[key] = s
 		} else {
 			out["session:"+string(sess.ID)] = s
 		}
@@ -398,15 +482,22 @@ func (o *Observer) guardRepos(ctx context.Context, subjects map[string]*subject)
 			out[key] = repoGuardState{hadETag: had, err: err}
 			continue
 		}
-		if res.ETag != "" {
-			o.cacheSetString(o.Cache.RepoPRListETag, &o.Cache.repoOrder, key, res.ETag)
-		}
 		out[key] = repoGuardState{result: res, hadETag: had}
 	}
 	return out
 }
 
-func (o *Observer) detectMissingPRs(ctx context.Context, subjects map[string]*subject, guards map[string]repoGuardState, now time.Time) {
+func pendingRepoRefreshes(guards map[string]repoGuardState) map[string]bool {
+	out := map[string]bool{}
+	for key, g := range guards {
+		if g.err == nil && g.result.ETag != "" {
+			out[key] = true
+		}
+	}
+	return out
+}
+
+func (o *Observer) detectMissingPRs(ctx context.Context, subjects map[string]*subject, guards map[string]repoGuardState, now time.Time, markRepoFailed func(ports.SCMRepo)) {
 	for oldKey, s := range subjects {
 		if s.hasPR {
 			continue
@@ -421,29 +512,40 @@ func (o *Observer) detectMissingPRs(ctx context.Context, subjects map[string]*su
 		pr, err := o.provider.DetectPRByBranch(ctx, s.repo, s.branch)
 		if err != nil {
 			o.logger.Debug("scm observer: no PR detected for branch", "session", s.session.ID, "branch", s.branch, "err", err)
+			if markRepoFailed != nil {
+				markRepoFailed(s.repo)
+			}
 			continue
 		}
 		if pr.Number <= 0 {
+			continue
+		}
+		newKey := prKey(s.repo, pr.Number)
+		if existing, ok := subjects[newKey]; ok && existing != s {
+			o.logger.Warn("scm observer: detected PR is already tracked by another session", "pr", newKey, "kept_session", existing.session.ID, "skipped_session", s.session.ID)
 			continue
 		}
 		s.known = domain.PullRequest{URL: pr.URL, SessionID: s.session.ID, Number: pr.Number, SourceBranch: pr.SourceBranch, TargetBranch: pr.TargetBranch, HeadSHA: pr.HeadSHA, Provider: s.repo.Provider, Host: s.repo.Host, Repo: repoFullName(s.repo), UpdatedAt: now}
 		s.hasPR = true
 		s.newlyDetected = true
 		delete(subjects, oldKey)
-		subjects[prKey(s.repo, pr.Number)] = s
+		subjects[newKey] = s
 	}
 }
 
-func (o *Observer) selectRefreshCandidates(ctx context.Context, subjects map[string]*subject, guards map[string]repoGuardState) ([]ports.SCMPRRef, map[string]*subject) {
-	var refs []ports.SCMPRRef
-	subjectsByPR := map[string]*subject{}
+func (o *Observer) selectRefreshCandidates(ctx context.Context, subjects map[string]*subject, guards map[string]repoGuardState, markRepoFailed func(ports.SCMRepo)) refreshSelection {
+	selection := refreshSelection{
+		subjectsByPR:  map[string]*subject{},
+		commitETags:   map[string]pendingCacheString{},
+		candidateKeys: map[string]bool{},
+	}
 	seen := map[string]bool{}
 	for _, s := range subjects {
 		if !s.hasPR || s.known.Number <= 0 {
 			continue
 		}
 		key := prKey(s.repo, s.known.Number)
-		subjectsByPR[key] = s
+		selection.subjectsByPR[key] = s
 		candidate := s.newlyDetected || missingLocalState(s.known)
 		g := guards[prKey(s.repo, 0)]
 		if g.err == nil && !g.result.NotModified {
@@ -455,21 +557,23 @@ func (o *Observer) selectRefreshCandidates(ctx context.Context, subjects map[str
 			res, err := o.provider.CommitChecksGuard(ctx, s.repo, s.known.HeadSHA, prev)
 			if err != nil {
 				o.logger.Error("scm observer: commit check-runs guard failed", "pr", s.known.URL, "sha", s.known.HeadSHA, "err", err)
-			} else {
-				if res.ETag != "" {
-					o.cacheSetString(o.Cache.CommitChecksETag, &o.Cache.commitOrder, commitKey, res.ETag)
+				if markRepoFailed != nil {
+					markRepoFailed(s.repo)
 				}
-				if !res.NotModified {
-					candidate = true
+			} else if !res.NotModified {
+				candidate = true
+				if res.ETag != "" {
+					selection.commitETags[key] = pendingCacheString{key: commitKey, value: res.ETag}
 				}
 			}
 		}
 		if candidate && !seen[key] {
-			refs = append(refs, ports.SCMPRRef{Repo: s.repo, Number: s.known.Number, URL: s.known.URL})
+			selection.refs = append(selection.refs, ports.SCMPRRef{Repo: s.repo, Number: s.known.Number, URL: s.known.URL})
+			selection.candidateKeys[key] = true
 			seen[key] = true
 		}
 	}
-	return refs, subjectsByPR
+	return selection
 }
 
 func missingLocalState(pr domain.PullRequest) bool {
@@ -508,6 +612,9 @@ func (o *Observer) enrichFailureLogs(ctx context.Context, obs *ports.SCMObservat
 func applyStoredFailedLogTails(obs *ports.SCMObservation, checks []domain.PullRequestCheck) bool {
 	tailsByName := map[string]string{}
 	for _, ch := range checks {
+		if obs.CI.HeadSHA != "" && ch.CommitHash != "" && ch.CommitHash != obs.CI.HeadSHA {
+			continue
+		}
 		if ch.LogTail != "" && (ch.Status == domain.PRCheckFailed || ch.Status == domain.PRCheckCancelled) {
 			tailsByName[ch.Name] = ch.LogTail
 		}
@@ -533,7 +640,7 @@ func applyStoredFailedLogTails(obs *ports.SCMObservation, checks []domain.PullRe
 	return true
 }
 
-func (o *Observer) refreshReviews(ctx context.Context, subjects map[string]*subject, observations map[string]ports.SCMObservation, subjectsByPR map[string]*subject, reviewRefreshed map[string]bool, now time.Time) {
+func (o *Observer) refreshReviews(ctx context.Context, subjects map[string]*subject, observations map[string]ports.SCMObservation, subjectsByPR map[string]*subject, reviewRefreshed, localOnlyObservations, reviewStale map[string]bool, now time.Time) {
 	for _, s := range subjects {
 		if !s.hasPR || s.known.Number <= 0 {
 			continue
@@ -550,10 +657,23 @@ func (o *Observer) refreshReviews(ctx context.Context, subjects map[string]*subj
 		review, err := o.provider.FetchReviewThreads(ctx, ports.SCMPRRef{Repo: s.repo, Number: s.known.Number, URL: s.known.URL})
 		if err != nil {
 			o.logger.Error("scm observer: review refresh failed", "pr", s.known.URL, "err", err)
+			o.cacheSetBool(o.Cache.ReviewRefreshFailed, &o.Cache.reviewFailedOrder, pkey, true)
+			if hasObs {
+				obs.Review.Decision = string(s.known.Review)
+				obs.Review.Threads = nil
+				observations[pkey] = obs
+				subjectsByPR[pkey] = s
+				reviewStale[pkey] = true
+			}
 			continue
 		}
 		if !hasObs {
-			obs = observationFromLocal(s.repo, s.known)
+			checks, err := o.store.ListChecks(ctx, s.known.URL)
+			if err != nil {
+				o.logger.Error("scm observer: list local checks for review-only refresh failed", "pr", s.known.URL, "err", err)
+			}
+			obs = observationFromLocal(s.repo, s.known, checks)
+			localOnlyObservations[pkey] = true
 		}
 		if review.Decision != "" {
 			obs.Review.Decision = review.Decision
@@ -563,11 +683,16 @@ func (o *Observer) refreshReviews(ctx context.Context, subjects map[string]*subj
 		observations[pkey] = obs
 		subjectsByPR[pkey] = s
 		reviewRefreshed[pkey] = true
-		o.cacheSetTime(o.Cache.LastReviewPollAt, &o.Cache.lastReviewPollOrder, pkey, now)
+		if _, ok := o.Cache.ReviewRefreshFailed[pkey]; ok {
+			o.Cache.ReviewRefreshFailed[pkey] = false
+		}
 	}
 }
 
 func (o *Observer) needsReviewRefresh(key string, local domain.PullRequest, decision string, hasObs bool, now time.Time) bool {
+	if o.Cache.ReviewRefreshFailed[key] {
+		return true
+	}
 	if local.ReviewHash == "" {
 		return true
 	}
@@ -584,11 +709,17 @@ func (o *Observer) needsReviewRefresh(key string, local domain.PullRequest, deci
 	return false
 }
 
-func (o *Observer) prepareForPersistence(obs ports.SCMObservation, local domain.PullRequest, reviewFetched bool, now time.Time) ports.SCMObservation {
+func (o *Observer) prepareForPersistence(obs ports.SCMObservation, local domain.PullRequest, opts persistenceOptions, now time.Time) ports.SCMObservation {
 	metadataHash := metadataSemanticHash(obs)
+	if opts.preserveLocalMetadata {
+		metadataHash = local.MetadataHash
+	}
 	ciHash := ciSemanticHash(obs.CI)
+	if opts.preserveLocalCI {
+		ciHash = local.CIHash
+	}
 	reviewHash := local.ReviewHash
-	if reviewFetched || local.ReviewHash == "" || obs.Review.Decision != string(local.Review) {
+	if !opts.preserveLocalReview && (opts.reviewFetched || local.ReviewHash == "" || obs.Review.Decision != string(local.Review)) {
 		reviewHash = reviewSemanticHash(obs.Review)
 	}
 	obs.Changed = ports.SCMChanged{
@@ -601,16 +732,33 @@ func (o *Observer) prepareForPersistence(obs ports.SCMObservation, local domain.
 	return obs
 }
 
-func domainFromObservation(sessionID domain.SessionID, obs ports.SCMObservation, local domain.PullRequest, reviewFetched bool, now time.Time) (domain.PullRequest, []domain.PullRequestCheck, []domain.PullRequestReviewThread, []domain.PullRequestComment) {
+func domainFromObservation(sessionID domain.SessionID, obs ports.SCMObservation, local domain.PullRequest, opts persistenceOptions, now time.Time) (domain.PullRequest, []domain.PullRequestCheck, []domain.PullRequestReviewThread, []domain.PullRequestComment) {
 	metadataHash := metadataSemanticHash(obs)
+	if opts.preserveLocalMetadata {
+		metadataHash = local.MetadataHash
+	}
 	ciHash := ciSemanticHash(obs.CI)
+	if opts.preserveLocalCI {
+		ciHash = local.CIHash
+	}
 	reviewHash := reviewSemanticHash(obs.Review)
 	reviewDecision := domain.ReviewDecision(firstNonEmpty(obs.Review.Decision, string(domain.ReviewNone)))
-	if !reviewFetched && local.ReviewHash != "" && reviewDecision == local.Review {
+	if opts.preserveLocalReview {
+		reviewDecision = local.Review
+		reviewHash = local.ReviewHash
+	} else if !opts.reviewFetched && local.ReviewHash != "" && reviewDecision == local.Review {
 		reviewHash = local.ReviewHash
 	}
+	observedAt := obs.ObservedAt
+	if !obs.Changed.Metadata && !obs.Changed.CI && !local.ObservedAt.IsZero() {
+		observedAt = local.ObservedAt
+	}
+	ciObservedAt := local.CIObservedAt
+	if obs.Changed.CI || ciObservedAt.IsZero() {
+		ciObservedAt = obs.ObservedAt
+	}
 	reviewObservedAt := local.ReviewObservedAt
-	if reviewFetched || reviewObservedAt.IsZero() {
+	if opts.reviewFetched || reviewObservedAt.IsZero() {
 		reviewObservedAt = obs.ObservedAt
 	}
 	pr := domain.PullRequest{
@@ -648,8 +796,8 @@ func domainFromObservation(sessionID domain.SessionID, obs ports.SCMObservation,
 		MetadataHash:             metadataHash,
 		CIHash:                   ciHash,
 		ReviewHash:               reviewHash,
-		ObservedAt:               obs.ObservedAt,
-		CIObservedAt:             obs.ObservedAt,
+		ObservedAt:               observedAt,
+		CIObservedAt:             ciObservedAt,
 		ReviewObservedAt:         reviewObservedAt,
 	}
 	checks := make([]domain.PullRequestCheck, 0, len(obs.CI.Checks))
@@ -671,17 +819,153 @@ func domainFromObservation(sessionID domain.SessionID, obs ports.SCMObservation,
 	return pr, checks, threads, comments
 }
 
-func observationFromLocal(repo ports.SCMRepo, pr domain.PullRequest) ports.SCMObservation {
+func observationFromLocal(repo ports.SCMRepo, pr domain.PullRequest, checks []domain.PullRequestCheck) ports.SCMObservation {
 	return ports.SCMObservation{
 		Fetched:      true,
 		Provider:     firstNonEmpty(pr.Provider, repo.Provider),
 		Host:         firstNonEmpty(pr.Host, repo.Host),
 		Repo:         firstNonEmpty(pr.Repo, repoFullName(repo)),
 		PR:           ports.SCMPRObservation{URL: pr.URL, Number: pr.Number, State: normalizePRState(pr.Draft, pr.Merged, pr.Closed), Draft: pr.Draft, Merged: pr.Merged, Closed: pr.Closed, SourceBranch: pr.SourceBranch, TargetBranch: pr.TargetBranch, HeadSHA: pr.HeadSHA, Title: pr.Title, Additions: pr.Additions, Deletions: pr.Deletions, ChangedFiles: pr.ChangedFiles, Author: pr.Author, BaseSHA: pr.BaseSHA, MergeCommitSHA: pr.MergeCommitSHA, ProviderState: pr.ProviderState, ProviderMergeable: pr.ProviderMergeable, ProviderMergeStateStatus: pr.ProviderMergeStateStatus, HTMLURL: pr.HTMLURL, CreatedAtProvider: pr.CreatedAtProvider, UpdatedAtProvider: pr.UpdatedAtProvider, MergedAtProvider: pr.MergedAtProvider, ClosedAtProvider: pr.ClosedAtProvider},
-		CI:           ports.SCMCIObservation{Summary: string(pr.CI), HeadSHA: pr.HeadSHA},
+		CI:           ciObservationFromLocal(pr, checks),
 		Review:       ports.SCMReviewObservation{Decision: string(pr.Review)},
-		Mergeability: ports.SCMMergeabilityObservation{State: string(pr.Mergeability)},
+		Mergeability: mergeabilityObservationFromLocal(pr),
 	}
+}
+
+func ciObservationFromLocal(pr domain.PullRequest, checks []domain.PullRequestCheck) ports.SCMCIObservation {
+	ci := ports.SCMCIObservation{
+		Summary:           firstNonEmpty(string(pr.CI), string(domain.CIUnknown)),
+		HeadSHA:           pr.HeadSHA,
+		FailedFingerprint: failedFingerprintFromCIHash(pr.CIHash),
+	}
+	tails := []string{}
+	for _, ch := range checks {
+		if pr.HeadSHA != "" && ch.CommitHash != "" && ch.CommitHash != pr.HeadSHA {
+			continue
+		}
+		if ci.HeadSHA == "" {
+			ci.HeadSHA = ch.CommitHash
+		}
+		check := ports.SCMCheckObservation{
+			Name:       ch.Name,
+			Status:     string(ch.Status),
+			Conclusion: ch.Conclusion,
+			URL:        ch.URL,
+			LogTail:    ch.LogTail,
+			ProviderID: ch.Details,
+		}
+		ci.Checks = append(ci.Checks, check)
+		if ch.Status == domain.PRCheckFailed || ch.Status == domain.PRCheckCancelled {
+			ci.FailedChecks = append(ci.FailedChecks, check)
+			if ch.LogTail != "" {
+				tails = append(tails, ch.LogTail)
+			}
+		}
+	}
+	ci.FailureLogTail = strings.Join(tails, "\n---\n")
+	return ci
+}
+
+func failedFingerprintFromCIHash(hash string) string {
+	before, _, ok := strings.Cut(hash, ":")
+	if !ok {
+		return ""
+	}
+	return before
+}
+
+func mergeabilityObservationFromLocal(pr domain.PullRequest) ports.SCMMergeabilityObservation {
+	out := mergeabilityFromProviderFacts(pr.ProviderMergeable, pr.ProviderMergeStateStatus, string(pr.CI), string(pr.Review), pr.Draft)
+	if pr.Mergeability != "" && out.State != string(pr.Mergeability) {
+		out = ports.SCMMergeabilityObservation{State: string(pr.Mergeability)}
+	} else if pr.Mergeability != "" {
+		out.State = string(pr.Mergeability)
+	}
+	switch domain.Mergeability(out.State) {
+	case domain.MergeMergeable:
+		out.Mergeable = true
+	case domain.MergeConflicting:
+		out.Conflict = true
+		if len(out.Blockers) == 0 {
+			out.Blockers = append(out.Blockers, "conflicts")
+		}
+	case domain.MergeBlocked:
+		if len(out.Blockers) == 0 {
+			out.Blockers = mergeBlockersFromLocal(pr)
+		}
+	}
+	return out
+}
+
+func mergeBlockersFromLocal(pr domain.PullRequest) []string {
+	blockers := []string{}
+	if pr.Draft {
+		blockers = append(blockers, "draft")
+	}
+	if pr.CI == domain.CIFailing {
+		blockers = append(blockers, "ci_failing")
+	}
+	switch pr.Review {
+	case domain.ReviewChangesRequest:
+		blockers = append(blockers, "changes_requested")
+	case domain.ReviewRequired:
+		blockers = append(blockers, "review_required")
+	}
+	if len(blockers) == 0 {
+		blockers = append(blockers, "blocked_by_provider")
+	}
+	return blockers
+}
+
+func mergeabilityFromProviderFacts(providerMergeable, providerMergeState, ci, review string, draft bool) ports.SCMMergeabilityObservation {
+	state := strings.ToUpper(strings.TrimSpace(providerMergeState))
+	mergeable := strings.ToUpper(strings.TrimSpace(providerMergeable))
+	out := ports.SCMMergeabilityObservation{State: string(domain.MergeUnknown)}
+	addBlocker := func(b string) { out.Blockers = append(out.Blockers, b) }
+	if state == "DIRTY" || mergeable == "CONFLICTING" {
+		out.State = string(domain.MergeConflicting)
+		out.Conflict = true
+		addBlocker("conflicts")
+		return out
+	}
+	if state == "BEHIND" || state == "BEHIND_BASE" {
+		out.BehindBase = true
+		addBlocker("behind_base")
+	}
+	if state == "BLOCKED" {
+		out.State = string(domain.MergeBlocked)
+		addBlocker("blocked_by_provider")
+	}
+	if draft {
+		out.State = string(domain.MergeBlocked)
+		addBlocker("draft")
+	}
+	if ci == string(domain.CIFailing) {
+		out.State = string(domain.MergeBlocked)
+		addBlocker("ci_failing")
+	}
+	switch review {
+	case string(domain.ReviewChangesRequest):
+		out.State = string(domain.MergeBlocked)
+		addBlocker("changes_requested")
+	case string(domain.ReviewRequired):
+		out.State = string(domain.MergeBlocked)
+		addBlocker("review_required")
+	}
+	if out.State == string(domain.MergeBlocked) {
+		return out
+	}
+	if state == "UNSTABLE" {
+		out.State = string(domain.MergeUnstable)
+		return out
+	}
+	if mergeable == "MERGEABLE" && (state == "CLEAN" || state == "HAS_HOOKS" || state == "") &&
+		(review == "" || review == string(domain.ReviewApproved) || review == string(domain.ReviewNone)) && !draft {
+		out.State = string(domain.MergeMergeable)
+		out.Mergeable = true
+		return out
+	}
+	return out
 }
 
 func chunks[T any](in []T, n int) [][]T {
@@ -813,6 +1097,18 @@ func (o *Observer) cacheSetString(m map[string]string, order *[]string, key, val
 }
 
 func (o *Observer) cacheSetTime(m map[string]time.Time, order *[]string, key string, value time.Time) {
+	if _, ok := m[key]; !ok {
+		*order = append(*order, key)
+	}
+	m[key] = value
+	for len(*order) > o.Cache.max {
+		evict := (*order)[0]
+		*order = (*order)[1:]
+		delete(m, evict)
+	}
+}
+
+func (o *Observer) cacheSetBool(m map[string]bool, order *[]string, key string, value bool) {
 	if _, ok := m[key]; !ok {
 		*order = append(*order, key)
 	}

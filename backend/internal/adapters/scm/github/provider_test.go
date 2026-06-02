@@ -1144,6 +1144,53 @@ func TestSCMChecksFromGraphQL_StatusContextUsesState(t *testing.T) {
 	}
 }
 
+func TestSCMObservationUsesRollupStateWhenContextsPaginated(t *testing.T) {
+	fx := basePRFixture()
+	var pr map[string]any
+	fx.prData(func(m map[string]any) {
+		pr = m
+		commits := m["commits"].(map[string]any)["nodes"].([]any)[0].(map[string]any)
+		commit := commits["commit"].(map[string]any)
+		roll := commit["statusCheckRollup"].(map[string]any)
+		roll["state"] = "FAILURE"
+		ctxs := roll["contexts"].(map[string]any)
+		ctxs["nodes"] = []any{
+			map[string]any{"__typename": "CheckRun", "name": "visible-pass", "status": "COMPLETED", "conclusion": "SUCCESS"},
+		}
+		ctxs["pageInfo"] = map[string]any{"hasNextPage": true}
+	})
+	obs := scmObservationFromGraphQL(ports.SCMPRRef{Repo: ports.SCMRepo{Provider: "github", Host: "github.com", Owner: "octocat", Name: "hello", Repo: "octocat/hello"}, Number: 42}, pr)
+	if obs.CI.Summary != string(domain.CIFailing) {
+		t.Fatalf("observer CI summary = %q, want failing from aggregate rollup state", obs.CI.Summary)
+	}
+	if len(obs.CI.FailedChecks) != 0 {
+		t.Fatalf("failed checks should only contain visible failing contexts, got %#v", obs.CI.FailedChecks)
+	}
+}
+
+func TestSCMMergeabilityBlocksReviewRequiredAndDraft(t *testing.T) {
+	cases := []struct {
+		name        string
+		review      string
+		draft       bool
+		wantBlocker string
+	}{
+		{name: "review required", review: string(domain.ReviewRequired), wantBlocker: "review_required"},
+		{name: "draft", review: string(domain.ReviewApproved), draft: true, wantBlocker: "draft"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := mergeabilityObservation("MERGEABLE", "CLEAN", string(domain.CIPassing), tc.review, tc.draft)
+			if got.State != string(domain.MergeBlocked) || got.Mergeable {
+				t.Fatalf("mergeability = %+v, want blocked and not mergeable", got)
+			}
+			if !contains(got.Blockers, tc.wantBlocker) {
+				t.Fatalf("blockers = %v, want %q", got.Blockers, tc.wantBlocker)
+			}
+		})
+	}
+}
+
 func TestFetchReviewThreadsStopsAtPageLimit(t *testing.T) {
 	fake := newFakeGH(t)
 	fake.on(http.MethodPost, "/graphql", func(w http.ResponseWriter, r *http.Request) {

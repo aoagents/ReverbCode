@@ -390,7 +390,10 @@ func mergeabilityFromGraphQL(pr map[string]any, rest restPull, ci domain.CIState
 		return domain.MergeConflicting
 	}
 
-	if review == domain.ReviewChangesRequest {
+	if rest.Draft || boolv(pr["isDraft"]) {
+		return domain.MergeBlocked
+	}
+	if review == domain.ReviewChangesRequest || review == domain.ReviewRequired {
 		return domain.MergeBlocked
 	}
 	if ci == domain.CIFailing {

@@ -27,6 +27,7 @@ type fakeStore struct {
 	projects map[string]domain.ProjectRecord
 	prs      map[domain.SessionID][]domain.PullRequest
 	checks   map[string][]domain.PullRequestCheck
+	writeErr error
 
 	writes []fakeWrite
 
@@ -84,6 +85,9 @@ func (s *fakeStore) ListChecks(_ context.Context, prURL string) ([]domain.PullRe
 func (s *fakeStore) WriteSCMObservation(_ context.Context, pr domain.PullRequest, checks []domain.PullRequestCheck, threads []domain.PullRequestReviewThread, comments []domain.PullRequestComment, replaceReview bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.writeErr != nil {
+		return s.writeErr
+	}
 	s.writes = append(s.writes, fakeWrite{pr: pr, checks: append([]domain.PullRequestCheck(nil), checks...), threads: append([]domain.PullRequestReviewThread(nil), threads...), comments: append([]domain.PullRequestComment(nil), comments...), replaceReview: replaceReview})
 	return nil
 }
@@ -96,6 +100,8 @@ type fakeProvider struct {
 	observations map[string]ports.SCMObservation
 	reviews      map[string]ports.SCMReviewObservation
 	logTails     map[string]string
+	fetchErr     error
+	reviewErr    error
 
 	credentialGate   bool
 	credentialOK     bool
@@ -144,6 +150,9 @@ func (p *fakeProvider) FetchPullRequests(_ context.Context, refs []ports.SCMPRRe
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.fetchBatches = append(p.fetchBatches, append([]ports.SCMPRRef(nil), refs...))
+	if p.fetchErr != nil {
+		return nil, p.fetchErr
+	}
 	out := make([]ports.SCMObservation, 0, len(refs))
 	for _, ref := range refs {
 		if obs, ok := p.observations[prKey(ref.Repo, ref.Number)]; ok {
@@ -162,12 +171,21 @@ func (p *fakeProvider) FetchReviewThreads(_ context.Context, ref ports.SCMPRRef)
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.reviewCalls++
+	if p.reviewErr != nil {
+		return ports.SCMReviewObservation{}, p.reviewErr
+	}
 	return p.reviews[prKey(ref.Repo, ref.Number)], nil
 }
 
-type fakeLifecycle struct{ observed []ports.SCMObservation }
+type fakeLifecycle struct {
+	observed []ports.SCMObservation
+	err      error
+}
 
 func (l *fakeLifecycle) ApplySCMObservation(_ context.Context, _ domain.SessionID, obs ports.SCMObservation) error {
+	if l.err != nil {
+		return l.err
+	}
 	l.observed = append(l.observed, obs)
 	return nil
 }
@@ -199,7 +217,7 @@ func testObs(num int) ports.SCMObservation {
 
 func knownPR(num int) domain.PullRequest {
 	obs := testObs(num)
-	pr, _, _, _ := domainFromObservation("p-1", obs, domain.PullRequest{}, false, time.Unix(1, 0).UTC())
+	pr, _, _, _ := domainFromObservation("p-1", obs, domain.PullRequest{}, persistenceOptions{}, time.Unix(1, 0).UTC())
 	return pr
 }
 
@@ -430,5 +448,202 @@ func TestPoll_ReviewHashDrivesPersistenceAndLifecycle(t *testing.T) {
 	}
 	if len(lc.observed) != 1 || !lc.observed[0].Changed.Review {
 		t.Fatalf("review change not notified: %#v", lc.observed)
+	}
+}
+
+func TestPoll_ReviewOnlyRefreshPreservesLocalCIAndMetadata(t *testing.T) {
+	store := testStoreWithSession()
+	localObs := testObs(1)
+	local := knownPR(1)
+	local.CI = domain.CIPassing
+	local.Review = domain.ReviewChangesRequest
+	local.ReviewHash = "old-review"
+	local.MetadataHash = metadataSemanticHash(localObs)
+	local.CIHash = ciSemanticHash(localObs.CI)
+	local.ObservedAt = time.Unix(10, 0).UTC()
+	local.CIObservedAt = time.Unix(11, 0).UTC()
+	local.ReviewObservedAt = time.Unix(12, 0).UTC()
+	store.prs["p-1"] = []domain.PullRequest{local}
+	store.checks[local.URL] = []domain.PullRequestCheck{
+		{Name: "build", CommitHash: "sha1", Status: domain.PRCheckPassed, Conclusion: "success", URL: "ci"},
+		{Name: "stale", CommitHash: "old-sha", Status: domain.PRCheckFailed, Conclusion: "failure", URL: "old-ci", LogTail: "old tail"},
+	}
+	review := ports.SCMReviewObservation{
+		Decision: string(domain.ReviewChangesRequest),
+		Threads:  []ports.SCMReviewThreadObservation{{ID: "t1", Path: "f.go", Line: 2, Comments: []ports.SCMReviewCommentObservation{{ID: "c1", Author: "ann", Body: "fix"}}}},
+	}
+	provider := &fakeProvider{
+		repoGuards: map[string]ports.SCMGuardResult{prKey(testRepo, 0): {ETag: "repo", NotModified: true}},
+		reviews:    map[string]ports.SCMReviewObservation{prKey(testRepo, 1): review},
+	}
+	now := time.Unix(200, 0).UTC()
+	obs := newTestObserver(store, provider, &fakeLifecycle{}, now)
+	obs.Cache.RepoPRListETag[prKey(testRepo, 0)] = "repo"
+	if err := obs.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.writes) != 1 {
+		t.Fatalf("writes = %d, want review-only write", len(store.writes))
+	}
+	write := store.writes[0]
+	if write.pr.MetadataHash != local.MetadataHash {
+		t.Fatalf("metadata hash changed on review-only refresh: got %q want %q", write.pr.MetadataHash, local.MetadataHash)
+	}
+	if write.pr.CIHash != local.CIHash {
+		t.Fatalf("CI hash changed on review-only refresh: got %q want %q", write.pr.CIHash, local.CIHash)
+	}
+	if !write.pr.ObservedAt.Equal(local.ObservedAt) {
+		t.Fatalf("ObservedAt changed on review-only refresh: got %s want %s", write.pr.ObservedAt, local.ObservedAt)
+	}
+	if !write.pr.CIObservedAt.Equal(local.CIObservedAt) {
+		t.Fatalf("CIObservedAt changed on review-only refresh: got %s want %s", write.pr.CIObservedAt, local.CIObservedAt)
+	}
+	if !write.pr.ReviewObservedAt.Equal(now) {
+		t.Fatalf("ReviewObservedAt = %s, want %s", write.pr.ReviewObservedAt, now)
+	}
+	if len(write.checks) != 1 || write.checks[0].Name != "build" {
+		t.Fatalf("review-only local reconstruction should include current-head checks only: %#v", write.checks)
+	}
+}
+
+func TestPoll_ReviewFetchFailureDoesNotUpdateReviewDecision(t *testing.T) {
+	store := testStoreWithSession()
+	local := knownPR(1)
+	local.Review = domain.ReviewChangesRequest
+	local.ReviewHash = reviewSemanticHash(ports.SCMReviewObservation{Decision: string(domain.ReviewChangesRequest), Threads: []ports.SCMReviewThreadObservation{{ID: "old", Comments: []ports.SCMReviewCommentObservation{{ID: "c-old", Body: "old"}}}}})
+	obsValue := testObs(1)
+	obsValue.Review.Decision = string(domain.ReviewApproved)
+	local.MetadataHash = metadataSemanticHash(obsValue)
+	local.CIHash = ciSemanticHash(obsValue.CI)
+	store.prs["p-1"] = []domain.PullRequest{local}
+	provider := &fakeProvider{
+		repoGuards:   map[string]ports.SCMGuardResult{prKey(testRepo, 0): {ETag: "repo2"}},
+		observations: map[string]ports.SCMObservation{prKey(testRepo, 1): obsValue},
+		reviewErr:    errors.New("review API down"),
+	}
+	lc := &fakeLifecycle{}
+	obs := newTestObserver(store, provider, lc, time.Unix(300, 0).UTC())
+	if err := obs.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if provider.reviewCalls != 1 {
+		t.Fatalf("reviewCalls = %d, want 1", provider.reviewCalls)
+	}
+	if len(store.writes) != 0 || len(lc.observed) != 0 {
+		t.Fatalf("review fetch failure should not persist/notify stale review data: writes=%#v lifecycle=%#v", store.writes, lc.observed)
+	}
+	if !obs.Cache.ReviewRefreshFailed[prKey(testRepo, 1)] {
+		t.Fatalf("review fetch failure was not marked for retry")
+	}
+}
+
+func TestPoll_DoesNotCommitCommitETagWhenFetchFails(t *testing.T) {
+	store := testStoreWithSession()
+	local := knownPR(1)
+	store.prs["p-1"] = []domain.PullRequest{local}
+	provider := &fakeProvider{
+		repoGuards:  map[string]ports.SCMGuardResult{prKey(testRepo, 0): {ETag: "repo", NotModified: true}},
+		checkGuards: map[string]ports.SCMGuardResult{commitKey(testRepo, "sha1"): {ETag: "ci2"}},
+		fetchErr:    errors.New("graphql down"),
+	}
+	obs := newTestObserver(store, provider, &fakeLifecycle{}, time.Unix(400, 0).UTC())
+	obs.Cache.RepoPRListETag[prKey(testRepo, 0)] = "repo"
+	obs.Cache.CommitChecksETag[commitKey(testRepo, "sha1")] = "ci1"
+	if err := obs.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := obs.Cache.CommitChecksETag[commitKey(testRepo, "sha1")]; got != "ci1" {
+		t.Fatalf("commit ETag advanced after failed fetch: got %q want ci1", got)
+	}
+}
+
+func TestPoll_LifecycleFailureDoesNotWriteOrAdvanceETags(t *testing.T) {
+	store := testStoreWithSession()
+	local := knownPR(1)
+	local.MetadataHash = "old-metadata"
+	local.CIHash = "old-ci"
+	store.prs["p-1"] = []domain.PullRequest{local}
+	changed := testObs(1)
+	changed.PR.Title = "changed title"
+	provider := &fakeProvider{
+		repoGuards:   map[string]ports.SCMGuardResult{prKey(testRepo, 0): {ETag: "repo2"}},
+		checkGuards:  map[string]ports.SCMGuardResult{commitKey(testRepo, "sha1"): {ETag: "ci2"}},
+		observations: map[string]ports.SCMObservation{prKey(testRepo, 1): changed},
+	}
+	lc := &fakeLifecycle{err: errors.New("lifecycle down")}
+	obs := newTestObserver(store, provider, lc, time.Unix(500, 0).UTC())
+	obs.Cache.RepoPRListETag[prKey(testRepo, 0)] = "repo1"
+	obs.Cache.CommitChecksETag[commitKey(testRepo, "sha1")] = "ci1"
+	if err := obs.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.writes) != 0 {
+		t.Fatalf("write occurred before lifecycle accepted observation: %#v", store.writes)
+	}
+	if got := obs.Cache.RepoPRListETag[prKey(testRepo, 0)]; got != "repo1" {
+		t.Fatalf("repo ETag advanced after lifecycle failure: got %q want repo1", got)
+	}
+	if got := obs.Cache.CommitChecksETag[commitKey(testRepo, "sha1")]; got != "ci1" {
+		t.Fatalf("commit ETag advanced after lifecycle failure: got %q want ci1", got)
+	}
+}
+
+func TestPoll_WriteFailureDoesNotAdvanceGuardETags(t *testing.T) {
+	store := testStoreWithSession()
+	store.writeErr = errors.New("db down")
+	local := knownPR(1)
+	local.MetadataHash = "old-metadata"
+	local.CIHash = "old-ci"
+	store.prs["p-1"] = []domain.PullRequest{local}
+	changed := testObs(1)
+	changed.PR.Title = "changed title"
+	provider := &fakeProvider{
+		repoGuards:   map[string]ports.SCMGuardResult{prKey(testRepo, 0): {ETag: "repo2"}},
+		checkGuards:  map[string]ports.SCMGuardResult{commitKey(testRepo, "sha1"): {ETag: "ci2"}},
+		observations: map[string]ports.SCMObservation{prKey(testRepo, 1): changed},
+	}
+	obs := newTestObserver(store, provider, &fakeLifecycle{}, time.Unix(550, 0).UTC())
+	obs.Cache.RepoPRListETag[prKey(testRepo, 0)] = "repo1"
+	obs.Cache.CommitChecksETag[commitKey(testRepo, "sha1")] = "ci1"
+	if err := obs.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := obs.Cache.RepoPRListETag[prKey(testRepo, 0)]; got != "repo1" {
+		t.Fatalf("repo ETag advanced after write failure: got %q want repo1", got)
+	}
+	if got := obs.Cache.CommitChecksETag[commitKey(testRepo, "sha1")]; got != "ci1" {
+		t.Fatalf("commit ETag advanced after write failure: got %q want ci1", got)
+	}
+}
+
+func TestPoll_DuplicateTrackedPRKeepsFirstSession(t *testing.T) {
+	store := &fakeStore{
+		sessions: []domain.SessionRecord{
+			{ID: "p-1", ProjectID: "p", Metadata: domain.SessionMetadata{Branch: "feat"}},
+			{ID: "p-2", ProjectID: "p", Metadata: domain.SessionMetadata{Branch: "feat"}},
+		},
+		projects: map[string]domain.ProjectRecord{"p": {ID: "p", RepoOriginURL: "https://github.com/o/r.git"}},
+		prs:      map[domain.SessionID][]domain.PullRequest{},
+		checks:   map[string][]domain.PullRequestCheck{},
+	}
+	pr1 := knownPR(1)
+	pr1.MetadataHash = "old-1"
+	pr2 := pr1
+	pr2.SessionID = "p-2"
+	store.prs["p-1"] = []domain.PullRequest{pr1}
+	store.prs["p-2"] = []domain.PullRequest{pr2}
+	provider := &fakeProvider{
+		repoGuards:   map[string]ports.SCMGuardResult{prKey(testRepo, 0): {ETag: "repo2"}},
+		observations: map[string]ports.SCMObservation{prKey(testRepo, 1): testObs(1)},
+	}
+	obs := newTestObserver(store, provider, &fakeLifecycle{}, time.Unix(600, 0).UTC())
+	if err := obs.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.writes) != 1 {
+		t.Fatalf("writes = %d, want exactly one owner write", len(store.writes))
+	}
+	if store.writes[0].pr.SessionID != "p-1" {
+		t.Fatalf("duplicate owner overwrote first session: wrote session %s", store.writes[0].pr.SessionID)
 	}
 }

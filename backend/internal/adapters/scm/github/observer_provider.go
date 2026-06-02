@@ -257,7 +257,7 @@ commits(last:1){ nodes{ commit{ oid statusCheckRollup{ state contexts(first:CONT
 func scmObservationFromGraphQL(ref ports.SCMPRRef, pr map[string]any) ports.SCMObservation {
 	checks := scmChecksFromGraphQL(pr)
 	failed := failedSCMChecks(checks)
-	ci := string(ciSummaryFromGraphQL(pr))
+	ci := string(ciSummaryFromRollupState(pr))
 	review := string(reviewDecisionFromGraphQL(pr))
 	providerMergeable := str(pr["mergeable"])
 	providerMergeState := str(pr["mergeStateStatus"])
@@ -304,8 +304,16 @@ func scmObservationFromGraphQL(ref ports.SCMPRRef, pr map[string]any) ports.SCMO
 		},
 		Review: ports.SCMReviewObservation{Decision: review},
 	}
-	obs.Mergeability = mergeabilityObservation(providerMergeable, providerMergeState, ci, review)
+	obs.Mergeability = mergeabilityObservation(providerMergeable, providerMergeState, ci, review, draft)
 	return obs
+}
+
+func ciSummaryFromRollupState(pr map[string]any) domain.CIState {
+	roll := statusRollup(pr)
+	if roll == nil {
+		return domain.CIUnknown
+	}
+	return mapRollupState(str(roll["state"]))
 }
 
 func scmChecksFromGraphQL(pr map[string]any) []ports.SCMCheckObservation {
@@ -365,7 +373,7 @@ func githubFailedFingerprint(head string, checks []ports.SCMCheckObservation) st
 	return hex.EncodeToString(sum[:])
 }
 
-func mergeabilityObservation(providerMergeable, providerMergeState, ci, review string) ports.SCMMergeabilityObservation {
+func mergeabilityObservation(providerMergeable, providerMergeState, ci, review string, draft bool) ports.SCMMergeabilityObservation {
 	state := strings.ToUpper(strings.TrimSpace(providerMergeState))
 	mergeable := strings.ToUpper(strings.TrimSpace(providerMergeable))
 	out := ports.SCMMergeabilityObservation{State: string(domain.MergeUnknown)}
@@ -384,13 +392,21 @@ func mergeabilityObservation(providerMergeable, providerMergeState, ci, review s
 		out.State = string(domain.MergeBlocked)
 		addBlocker("blocked_by_provider")
 	}
+	if draft {
+		out.State = string(domain.MergeBlocked)
+		addBlocker("draft")
+	}
 	if ci == string(domain.CIFailing) {
 		out.State = string(domain.MergeBlocked)
 		addBlocker("ci_failing")
 	}
-	if review == string(domain.ReviewChangesRequest) {
+	switch review {
+	case string(domain.ReviewChangesRequest):
 		out.State = string(domain.MergeBlocked)
 		addBlocker("changes_requested")
+	case string(domain.ReviewRequired):
+		out.State = string(domain.MergeBlocked)
+		addBlocker("review_required")
 	}
 	if out.State == string(domain.MergeBlocked) {
 		return out
@@ -399,7 +415,8 @@ func mergeabilityObservation(providerMergeable, providerMergeState, ci, review s
 		out.State = string(domain.MergeUnstable)
 		return out
 	}
-	if mergeable == "MERGEABLE" && (state == "CLEAN" || state == "HAS_HOOKS" || state == "") {
+	if mergeable == "MERGEABLE" && (state == "CLEAN" || state == "HAS_HOOKS" || state == "") &&
+		(review == "" || review == string(domain.ReviewApproved) || review == string(domain.ReviewNone)) && !draft {
 		out.State = string(domain.MergeMergeable)
 		out.Mergeable = true
 		return out
