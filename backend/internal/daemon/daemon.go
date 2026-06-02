@@ -70,6 +70,7 @@ func Run() error {
 	// lifecycle write path live (reducer write -> store -> DB trigger ->
 	// change_log -> poller -> broadcaster) and gives startSession the shared LCM.
 	lcStack := startLifecycle(ctx, store, runtimeAdapter, log)
+	lcStack.scmDone = startSCMObserver(ctx, store, lcStack.LCM, log)
 
 	// Wire the controller-facing session service over the same store + LCM, the
 	// zellij runtime, a gitworktree workspace, and the per-session agent resolver

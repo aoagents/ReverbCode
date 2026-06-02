@@ -14,7 +14,7 @@ import (
 )
 
 const archiveProject = `-- name: ArchiveProject :execrows
-UPDATE projects SET archived_at = ? WHERE id = ?
+UPDATE projects SET archived_at = ? WHERE id = ? AND archived_at IS NULL
 `
 
 type ArchiveProjectParams struct {

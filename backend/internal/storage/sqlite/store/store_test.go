@@ -216,6 +216,53 @@ func TestPRCommentsReplace(t *testing.T) {
 	}
 }
 
+func TestWriteSCMObservationPersistsMetadataChecksReviewsAndComments(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	r, _ := s.CreateSession(ctx, sampleRecord("mer"))
+	now := time.Now().UTC().Truncate(time.Second)
+
+	pr := domain.PullRequest{
+		URL: "https://github.com/o/r/pull/1", SessionID: r.ID, Number: 1,
+		Provider: "github", Host: "github.com", Repo: "o/r",
+		SourceBranch: "feat/75", TargetBranch: "main", HeadSHA: "h1",
+		Title: "SCM observer", Additions: 10, Deletions: 2, ChangedFiles: 3,
+		Author: "dev", BaseSHA: "b1", MergeCommitSHA: "m1",
+		ProviderState: "OPEN", ProviderMergeable: "MERGEABLE", ProviderMergeStateStatus: "CLEAN",
+		HTMLURL: "https://github.com/o/r/pull/1",
+		CI:      domain.CIFailing, Review: domain.ReviewChangesRequest, Mergeability: domain.MergeBlocked,
+		MetadataHash: "mh", CIHash: "ch", ReviewHash: "rh",
+		UpdatedAt: now, ObservedAt: now, CIObservedAt: now, ReviewObservedAt: now,
+	}
+	checks := []domain.PullRequestCheck{{Name: "build", CommitHash: "h1", Status: domain.PRCheckFailed, Conclusion: "failure", URL: "ci", Details: "99", LogTail: "boom", CreatedAt: now}}
+	threads := []domain.PullRequestReviewThread{{ThreadID: "t1", Path: "main.go", Line: 7, SemanticHash: "th", UpdatedAt: now}}
+	comments := []domain.PullRequestComment{{ThreadID: "t1", ID: "c1", Author: "reviewer", File: "main.go", Line: 7, Body: "fix", URL: "comment", CreatedAt: now}}
+
+	if err := s.WriteSCMObservation(ctx, pr, checks, threads, comments, true); err != nil {
+		t.Fatal(err)
+	}
+	got, ok, err := s.GetPR(ctx, pr.URL)
+	if err != nil || !ok {
+		t.Fatalf("get pr: ok=%v err=%v", ok, err)
+	}
+	if got.Provider != "github" || got.HeadSHA != "h1" || got.MetadataHash != "mh" || got.CIHash != "ch" || got.ReviewHash != "rh" {
+		t.Fatalf("SCM metadata not persisted: %+v", got)
+	}
+	gotChecks, _ := s.ListChecks(ctx, pr.URL)
+	if len(gotChecks) != 1 || gotChecks[0].Conclusion != "failure" || gotChecks[0].Details != "99" || gotChecks[0].LogTail != "boom" {
+		t.Fatalf("checks not persisted: %+v", gotChecks)
+	}
+	gotThreads, _ := s.ListPRReviewThreads(ctx, pr.URL)
+	if len(gotThreads) != 1 || gotThreads[0].ThreadID != "t1" || gotThreads[0].SemanticHash != "th" {
+		t.Fatalf("threads not persisted: %+v", gotThreads)
+	}
+	gotComments, _ := s.ListPRComments(ctx, pr.URL)
+	if len(gotComments) != 1 || gotComments[0].ThreadID != "t1" || gotComments[0].URL != "comment" {
+		t.Fatalf("comments not persisted: %+v", gotComments)
+	}
+}
+
 func TestCDCTriggersPopulateChangeLog(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

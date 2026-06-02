@@ -7,6 +7,7 @@ package gen
 
 import (
 	"context"
+	"database/sql"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -25,6 +26,7 @@ SELECT
         FROM pr_comment
         WHERE pr_comment.pr_url = pr.url
           AND pr_comment.resolved = 0
+          AND pr_comment.is_bot = 0
     ) AS review_comments
 FROM pr
 WHERE pr.session_id = ?
@@ -60,7 +62,14 @@ func (q *Queries) GetDisplayPRFactsBySession(ctx context.Context, sessionID doma
 }
 
 const getPR = `-- name: GetPR :one
-SELECT url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at
+SELECT
+    url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at,
+    provider, host, repo, source_branch, target_branch, head_sha, title,
+    additions, deletions, changed_files, author, base_sha, merge_commit_sha,
+    is_draft, is_merged, is_closed,
+    provider_state, provider_mergeable, provider_merge_state_status, html_url,
+    created_at_provider, updated_at_provider, merged_at_provider, closed_at_provider,
+    metadata_hash, ci_hash, review_hash, observed_at, ci_observed_at, review_observed_at
 FROM pr
 WHERE url = ?
 `
@@ -77,12 +86,49 @@ func (q *Queries) GetPR(ctx context.Context, url string) (PR, error) {
 		&i.CIState,
 		&i.Mergeability,
 		&i.UpdatedAt,
+		&i.Provider,
+		&i.Host,
+		&i.Repo,
+		&i.SourceBranch,
+		&i.TargetBranch,
+		&i.HeadSha,
+		&i.Title,
+		&i.Additions,
+		&i.Deletions,
+		&i.ChangedFiles,
+		&i.Author,
+		&i.BaseSha,
+		&i.MergeCommitSha,
+		&i.IsDraft,
+		&i.IsMerged,
+		&i.IsClosed,
+		&i.ProviderState,
+		&i.ProviderMergeable,
+		&i.ProviderMergeStateStatus,
+		&i.HtmlURL,
+		&i.CreatedAtProvider,
+		&i.UpdatedAtProvider,
+		&i.MergedAtProvider,
+		&i.ClosedAtProvider,
+		&i.MetadataHash,
+		&i.CIHash,
+		&i.ReviewHash,
+		&i.ObservedAt,
+		&i.CIObservedAt,
+		&i.ReviewObservedAt,
 	)
 	return i, err
 }
 
 const listPRsBySession = `-- name: ListPRsBySession :many
-SELECT url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at
+SELECT
+    url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at,
+    provider, host, repo, source_branch, target_branch, head_sha, title,
+    additions, deletions, changed_files, author, base_sha, merge_commit_sha,
+    is_draft, is_merged, is_closed,
+    provider_state, provider_mergeable, provider_merge_state_status, html_url,
+    created_at_provider, updated_at_provider, merged_at_provider, closed_at_provider,
+    metadata_hash, ci_hash, review_hash, observed_at, ci_observed_at, review_observed_at
 FROM pr
 WHERE session_id = ?
 ORDER BY updated_at DESC
@@ -106,6 +152,36 @@ func (q *Queries) ListPRsBySession(ctx context.Context, sessionID domain.Session
 			&i.CIState,
 			&i.Mergeability,
 			&i.UpdatedAt,
+			&i.Provider,
+			&i.Host,
+			&i.Repo,
+			&i.SourceBranch,
+			&i.TargetBranch,
+			&i.HeadSha,
+			&i.Title,
+			&i.Additions,
+			&i.Deletions,
+			&i.ChangedFiles,
+			&i.Author,
+			&i.BaseSha,
+			&i.MergeCommitSha,
+			&i.IsDraft,
+			&i.IsMerged,
+			&i.IsClosed,
+			&i.ProviderState,
+			&i.ProviderMergeable,
+			&i.ProviderMergeStateStatus,
+			&i.HtmlURL,
+			&i.CreatedAtProvider,
+			&i.UpdatedAtProvider,
+			&i.MergedAtProvider,
+			&i.ClosedAtProvider,
+			&i.MetadataHash,
+			&i.CIHash,
+			&i.ReviewHash,
+			&i.ObservedAt,
+			&i.CIObservedAt,
+			&i.ReviewObservedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -121,26 +197,94 @@ func (q *Queries) ListPRsBySession(ctx context.Context, sessionID domain.Session
 }
 
 const upsertPR = `-- name: UpsertPR :exec
-INSERT INTO pr (url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO pr (
+    url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at,
+    provider, host, repo, source_branch, target_branch, head_sha, title,
+    additions, deletions, changed_files, author, base_sha, merge_commit_sha,
+    is_draft, is_merged, is_closed,
+    provider_state, provider_mergeable, provider_merge_state_status, html_url,
+    created_at_provider, updated_at_provider, merged_at_provider, closed_at_provider,
+    metadata_hash, ci_hash, review_hash, observed_at, ci_observed_at, review_observed_at
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (url) DO UPDATE SET
     number = excluded.number,
     pr_state = excluded.pr_state,
     review_decision = excluded.review_decision,
     ci_state = excluded.ci_state,
     mergeability = excluded.mergeability,
-    updated_at = excluded.updated_at
+    updated_at = excluded.updated_at,
+    provider = excluded.provider,
+    host = excluded.host,
+    repo = excluded.repo,
+    source_branch = excluded.source_branch,
+    target_branch = excluded.target_branch,
+    head_sha = excluded.head_sha,
+    title = excluded.title,
+    additions = excluded.additions,
+    deletions = excluded.deletions,
+    changed_files = excluded.changed_files,
+    author = excluded.author,
+    base_sha = excluded.base_sha,
+    merge_commit_sha = excluded.merge_commit_sha,
+    is_draft = excluded.is_draft,
+    is_merged = excluded.is_merged,
+    is_closed = excluded.is_closed,
+    provider_state = excluded.provider_state,
+    provider_mergeable = excluded.provider_mergeable,
+    provider_merge_state_status = excluded.provider_merge_state_status,
+    html_url = excluded.html_url,
+    created_at_provider = excluded.created_at_provider,
+    updated_at_provider = excluded.updated_at_provider,
+    merged_at_provider = excluded.merged_at_provider,
+    closed_at_provider = excluded.closed_at_provider,
+    metadata_hash = excluded.metadata_hash,
+    ci_hash = excluded.ci_hash,
+    review_hash = excluded.review_hash,
+    observed_at = excluded.observed_at,
+    ci_observed_at = excluded.ci_observed_at,
+    review_observed_at = excluded.review_observed_at
 `
 
 type UpsertPRParams struct {
-	URL            string
-	SessionID      domain.SessionID
-	Number         int64
-	PRState        domain.PRState
-	ReviewDecision domain.ReviewDecision
-	CIState        domain.CIState
-	Mergeability   domain.Mergeability
-	UpdatedAt      time.Time
+	URL                      string
+	SessionID                domain.SessionID
+	Number                   int64
+	PRState                  domain.PRState
+	ReviewDecision           domain.ReviewDecision
+	CIState                  domain.CIState
+	Mergeability             domain.Mergeability
+	UpdatedAt                time.Time
+	Provider                 string
+	Host                     string
+	Repo                     string
+	SourceBranch             string
+	TargetBranch             string
+	HeadSha                  string
+	Title                    string
+	Additions                int64
+	Deletions                int64
+	ChangedFiles             int64
+	Author                   string
+	BaseSha                  string
+	MergeCommitSha           string
+	IsDraft                  int64
+	IsMerged                 int64
+	IsClosed                 int64
+	ProviderState            string
+	ProviderMergeable        string
+	ProviderMergeStateStatus string
+	HtmlURL                  string
+	CreatedAtProvider        sql.NullTime
+	UpdatedAtProvider        sql.NullTime
+	MergedAtProvider         sql.NullTime
+	ClosedAtProvider         sql.NullTime
+	MetadataHash             string
+	CIHash                   string
+	ReviewHash               string
+	ObservedAt               sql.NullTime
+	CIObservedAt             sql.NullTime
+	ReviewObservedAt         sql.NullTime
 }
 
 func (q *Queries) UpsertPR(ctx context.Context, arg UpsertPRParams) error {
@@ -153,6 +297,36 @@ func (q *Queries) UpsertPR(ctx context.Context, arg UpsertPRParams) error {
 		arg.CIState,
 		arg.Mergeability,
 		arg.UpdatedAt,
+		arg.Provider,
+		arg.Host,
+		arg.Repo,
+		arg.SourceBranch,
+		arg.TargetBranch,
+		arg.HeadSha,
+		arg.Title,
+		arg.Additions,
+		arg.Deletions,
+		arg.ChangedFiles,
+		arg.Author,
+		arg.BaseSha,
+		arg.MergeCommitSha,
+		arg.IsDraft,
+		arg.IsMerged,
+		arg.IsClosed,
+		arg.ProviderState,
+		arg.ProviderMergeable,
+		arg.ProviderMergeStateStatus,
+		arg.HtmlURL,
+		arg.CreatedAtProvider,
+		arg.UpdatedAtProvider,
+		arg.MergedAtProvider,
+		arg.ClosedAtProvider,
+		arg.MetadataHash,
+		arg.CIHash,
+		arg.ReviewHash,
+		arg.ObservedAt,
+		arg.CIObservedAt,
+		arg.ReviewObservedAt,
 	)
 	return err
 }

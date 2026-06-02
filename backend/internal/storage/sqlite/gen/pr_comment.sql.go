@@ -20,8 +20,8 @@ func (q *Queries) DeletePRComments(ctx context.Context, prUrl string) error {
 }
 
 const insertPRComment = `-- name: InsertPRComment :exec
-INSERT INTO pr_comment (pr_url, comment_id, author, file, line, body, resolved, created_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO pr_comment (pr_url, comment_id, author, file, line, body, resolved, created_at, thread_id, url, is_bot)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertPRCommentParams struct {
@@ -33,6 +33,9 @@ type InsertPRCommentParams struct {
 	Body      string
 	Resolved  bool
 	CreatedAt time.Time
+	ThreadID  string
+	URL       string
+	IsBot     int64
 }
 
 func (q *Queries) InsertPRComment(ctx context.Context, arg InsertPRCommentParams) error {
@@ -45,12 +48,15 @@ func (q *Queries) InsertPRComment(ctx context.Context, arg InsertPRCommentParams
 		arg.Body,
 		arg.Resolved,
 		arg.CreatedAt,
+		arg.ThreadID,
+		arg.URL,
+		arg.IsBot,
 	)
 	return err
 }
 
 const listPRComments = `-- name: ListPRComments :many
-SELECT pr_url, comment_id, author, file, line, body, resolved, created_at
+SELECT pr_url, comment_id, author, file, line, body, resolved, created_at, thread_id, url, is_bot
 FROM pr_comment WHERE pr_url = ? ORDER BY created_at, comment_id
 `
 
@@ -72,6 +78,9 @@ func (q *Queries) ListPRComments(ctx context.Context, prUrl string) ([]PRComment
 			&i.Body,
 			&i.Resolved,
 			&i.CreatedAt,
+			&i.ThreadID,
+			&i.URL,
+			&i.IsBot,
 		); err != nil {
 			return nil, err
 		}

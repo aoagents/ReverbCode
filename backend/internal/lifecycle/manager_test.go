@@ -142,6 +142,28 @@ func TestPRObservation_ReviewCommentsNudgeAgent(t *testing.T) {
 	}
 }
 
+func TestSCMObservationProjectsToExistingPRReactions(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	o := ports.SCMObservation{
+		Fetched: true,
+		PR:      ports.SCMPRObservation{URL: "pr1", Number: 1},
+		CI: ports.SCMCIObservation{
+			Summary: string(domain.CIFailing),
+			HeadSHA: "c1",
+			FailedChecks: []ports.SCMCheckObservation{{
+				Name: "build", Status: string(domain.PRCheckFailed), LogTail: "boom",
+			}},
+		},
+	}
+	if err := m.ApplySCMObservation(ctx, "mer-1", o); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 1 || !strings.Contains(msg.msgs[0], "boom") {
+		t.Fatalf("want SCM CI nudge with log tail, got %v", msg.msgs)
+	}
+}
+
 func TestPRObservation_MergeConflictNudgesAgent(t *testing.T) {
 	m, st, msg := newManager()
 	st.sessions["mer-1"] = working("mer-1")

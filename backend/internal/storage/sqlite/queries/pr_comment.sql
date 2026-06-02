@@ -1,10 +1,10 @@
 -- name: InsertPRComment :exec
-INSERT INTO pr_comment (pr_url, comment_id, author, file, line, body, resolved, created_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+INSERT INTO pr_comment (pr_url, comment_id, author, file, line, body, resolved, created_at, thread_id, url, is_bot)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: DeletePRComments :exec
 DELETE FROM pr_comment WHERE pr_url = ?;
 
 -- name: ListPRComments :many
-SELECT pr_url, comment_id, author, file, line, body, resolved, created_at
+SELECT pr_url, comment_id, author, file, line, body, resolved, created_at, thread_id, url, is_bot
 FROM pr_comment WHERE pr_url = ? ORDER BY created_at, comment_id;

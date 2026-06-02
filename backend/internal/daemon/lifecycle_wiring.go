@@ -28,6 +28,7 @@ type lifecycleStack struct {
 	// standing up a second store+LCM pair that would diverge under writes.
 	LCM        *lifecycle.Manager
 	reaperDone <-chan struct{}
+	scmDone    <-chan struct{}
 }
 
 // startLifecycle constructs the Lifecycle Manager over the store and starts the
@@ -40,7 +41,12 @@ func startLifecycle(ctx context.Context, store *sqlite.Store, runtime ports.Runt
 
 // Stop waits for the reaper goroutine to exit. The caller must cancel the ctx
 // passed to startLifecycle before calling Stop.
-func (l *lifecycleStack) Stop() { <-l.reaperDone }
+func (l *lifecycleStack) Stop() {
+	<-l.reaperDone
+	if l.scmDone != nil {
+		<-l.scmDone
+	}
+}
 
 // noopMessenger is a stub ports.AgentMessenger: durable writes and notifications
 // work without it; only live agent nudges are absent until the runtime/agent

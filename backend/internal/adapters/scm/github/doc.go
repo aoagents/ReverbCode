@@ -1,6 +1,6 @@
-// Package github observes GitHub pull requests for the PR Manager.
+// Package github observes GitHub pull requests for AO's SCM integrations.
 //
-// The exported surface is one function:
+// The compatibility exported surface is:
 //
 //	(*Provider).Observe(ctx, prURL) (ports.PRObservation, error)
 //
@@ -11,9 +11,11 @@
 // GET on /repos/{o}/{r}/actions/jobs/{job_id}/logs to splice the last 20
 // lines of the failed job into the observation.
 //
-// The poller / cadence loop is intentionally NOT in this package — it is
-// a follow-up PR. This adapter is the observation primitive that loop
-// will call.
+// The provider-neutral SCM observer uses the same Provider for lower-level
+// primitives: repo/commit ETag guards, branch-to-PR detection, GraphQL PR
+// batching, failed-job log tails, and review-thread pagination. The polling
+// loop itself is intentionally not in this package; it lives in
+// internal/observe/scm.
 //
 // # State mapping
 //
@@ -105,16 +107,18 @@
 //
 // # Caching
 //
-// The Client maintains an in-memory ETag cache per (method, path, query).
+// The legacy Observe path's Client maintains an in-memory ETag cache per
+// (method, path, query).
 // On the second observation of the same PR the REST GET sends
 // If-None-Match and replays the cached body on a 304 — GraphQL is always
 // re-fetched because it doesn't expose ETag-based revalidation.
 //
+// The provider-neutral observer owns its own ETag cache and calls explicit
+// provider guard methods that do not mutate the legacy Client cache.
+//
 // # Out of scope (intentionally — these are different PRs / lanes)
 //
-//   - The poller loop and cadence selection (issue #35).
 //   - Webhook ingestion (this package is polling-only).
-//   - Persistence (PR Manager owns the row mapping; see internal/service/pr).
 //   - Linear / GitLab providers (separate PRs).
 //   - Issue tracking (separate lane, see internal/adapters/tracker).
 //   - Comment-injection-into-session-context (Messenger lane, not SCM).

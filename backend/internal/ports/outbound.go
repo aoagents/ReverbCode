@@ -15,6 +15,13 @@ type PRWriter interface {
 	WritePR(ctx context.Context, pr domain.PullRequest, checks []domain.PullRequestCheck, comments []domain.PullRequestComment) error
 }
 
+// SCMWriter records provider-neutral SCM observations. Review facts are only
+// replaced when replaceReview is true so metadata/CI-only refreshes preserve the
+// last known review threads/comments.
+type SCMWriter interface {
+	WriteSCMObservation(ctx context.Context, pr domain.PullRequest, checks []domain.PullRequestCheck, threads []domain.PullRequestReviewThread, comments []domain.PullRequestComment, replaceReview bool) error
+}
+
 // AgentMessenger injects a message into a running agent.
 type AgentMessenger interface {
 	Send(ctx context.Context, id domain.SessionID, message string) error

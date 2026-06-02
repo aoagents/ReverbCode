@@ -70,6 +70,83 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 	return nil
 }
 
+// ApplySCMObservation is the provider-neutral lifecycle entrypoint used by the
+// SCM observer. The existing reaction logic still operates on PRObservation, so
+// lifecycle performs the compatibility projection internally instead of leaking
+// the old PR DTO back into the observer/provider boundary.
+func (m *Manager) ApplySCMObservation(ctx context.Context, id domain.SessionID, o ports.SCMObservation) error {
+	if !o.Fetched {
+		return nil
+	}
+	return m.ApplyPRObservation(ctx, id, scmToPRObservation(o))
+}
+
+func scmToPRObservation(o ports.SCMObservation) ports.PRObservation {
+	pr := ports.PRObservation{
+		Fetched:      o.Fetched,
+		URL:          firstSCMNonEmpty(o.PR.URL, o.PR.HTMLURL),
+		Number:       o.PR.Number,
+		Draft:        o.PR.Draft,
+		Merged:       o.PR.Merged,
+		Closed:       o.PR.Closed,
+		CI:           domain.CIState(o.CI.Summary),
+		Review:       domain.ReviewDecision(o.Review.Decision),
+		Mergeability: domain.Mergeability(o.Mergeability.State),
+	}
+	if pr.CI == "" {
+		pr.CI = domain.CIUnknown
+	}
+	if pr.Review == "" {
+		pr.Review = domain.ReviewNone
+	}
+	if pr.Mergeability == "" {
+		pr.Mergeability = domain.MergeUnknown
+	}
+	for _, ch := range o.CI.FailedChecks {
+		status := domain.PRCheckStatus(ch.Status)
+		if status == "" {
+			status = domain.PRCheckFailed
+		}
+		logTail := ch.LogTail
+		if logTail == "" {
+			logTail = o.CI.FailureLogTail
+		}
+		pr.Checks = append(pr.Checks, ports.PRCheckObservation{
+			Name:       ch.Name,
+			CommitHash: o.CI.HeadSHA,
+			Status:     status,
+			URL:        ch.URL,
+			LogTail:    logTail,
+		})
+	}
+	for _, th := range o.Review.Threads {
+		if th.Resolved || th.IsBot {
+			continue
+		}
+		for _, c := range th.Comments {
+			if c.IsBot {
+				continue
+			}
+			pr.Comments = append(pr.Comments, ports.PRCommentObservation{
+				ID:       c.ID,
+				Author:   c.Author,
+				File:     th.Path,
+				Line:     th.Line,
+				Body:     c.Body,
+				Resolved: th.Resolved,
+			})
+		}
+	}
+	return pr
+}
+
+func firstSCMNonEmpty(a, b string) string {
+	if strings.TrimSpace(a) != "" {
+		return a
+	}
+	return b
+}
+
 func hasUnresolvedComments(comments []ports.PRCommentObservation) bool {
 	for _, c := range comments {
 		if !c.Resolved {
@@ -80,8 +157,8 @@ func hasUnresolvedComments(comments []ports.PRCommentObservation) bool {
 }
 
 func reviewContent(comments []ports.PRCommentObservation) (string, string) {
-	var bodies []string
-	var ids []string
+	bodies := make([]string, 0, len(comments))
+	ids := make([]string, 0, len(comments))
 	for _, c := range comments {
 		if c.Resolved {
 			continue
