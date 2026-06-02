@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/url"
+	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -41,6 +42,9 @@ func (c *commandContext) sendMessage(ctx context.Context, opts sendOptions) erro
 		return usageError{errors.New("usage: --message is required")}
 	}
 	message := opts.message
+	if sender := strings.TrimSpace(os.Getenv("AO_SESSION_ID")); sender != "" {
+		message = "[from " + sender + "] " + message
+	}
 	session := strings.TrimSpace(opts.session)
 	if session == "" {
 		return usageError{errors.New("usage: --session is required")}

@@ -58,6 +58,7 @@ func sendServer(t *testing.T, status int, respBody string) (*httptest.Server, *s
 }
 
 func TestSend_Success(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "")
 	cfg := setConfigEnv(t)
 	srv, capture := sendServer(t, http.StatusOK,
 		`{"ok":true,"sessionId":"demo-1","message":"hello agent"}`)
@@ -83,7 +84,57 @@ func TestSend_Success(t *testing.T) {
 	}
 }
 
+func TestSend_PrefixesMessageWithSenderSessionID(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "aa-47")
+	cfg := setConfigEnv(t)
+	srv, capture := sendServer(t, http.StatusOK,
+		`{"ok":true,"sessionId":"demo-1","message":"hi"}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, errOut, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "send", "--session", "demo-1", "--message", "  hi  ")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	var req struct {
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal([]byte(capture.body), &req); err != nil {
+		t.Fatalf("decode body: %v\nbody=%s", err, capture.body)
+	}
+	want := "[from aa-47]   hi  "
+	if req.Message != want {
+		t.Errorf("captured message = %q, want %q", req.Message, want)
+	}
+}
+
+func TestSend_BlankSenderSessionIDDoesNotPrefixMessage(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", " \t ")
+	cfg := setConfigEnv(t)
+	srv, capture := sendServer(t, http.StatusOK,
+		`{"ok":true,"sessionId":"demo-1","message":"hello agent"}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, errOut, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "send", "--session", "demo-1", "--message", "hello agent")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	var req struct {
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal([]byte(capture.body), &req); err != nil {
+		t.Fatalf("decode body: %v\nbody=%s", err, capture.body)
+	}
+	if req.Message != "hello agent" {
+		t.Errorf("captured message = %q, want %q", req.Message, "hello agent")
+	}
+}
+
 func TestSend_PreservesMessageWhitespace(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "")
 	cfg := setConfigEnv(t)
 	srv, capture := sendServer(t, http.StatusOK, `{"ok":true,"sessionId":"demo-1","message":"hi"}`)
 	writeRunFileFor(t, cfg, srv)
