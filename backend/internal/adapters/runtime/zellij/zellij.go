@@ -115,6 +115,9 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 	if len(cfg.Argv) == 0 {
 		return ports.RuntimeHandle{}, errors.New("zellij runtime: launch command is required")
 	}
+	if err := validateEnvKeys(cfg.Env); err != nil {
+		return ports.RuntimeHandle{}, err
+	}
 	if err := r.ensureSupportedVersion(ctx); err != nil {
 		return ports.RuntimeHandle{}, err
 	}
@@ -130,10 +133,10 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 	}
 	paneID, err := r.findAgentPane(ctx, id)
 	if err != nil {
-		_ = r.Destroy(context.Background(), ports.RuntimeHandle{ID: id, RuntimeName: runtimeName})
+		_ = r.Destroy(context.Background(), ports.RuntimeHandle{ID: id})
 		return ports.RuntimeHandle{}, err
 	}
-	return ports.RuntimeHandle{ID: handleIDValue(id, paneID), RuntimeName: runtimeName}, nil
+	return ports.RuntimeHandle{ID: handleIDValue(id, paneID)}, nil
 }
 
 // Destroy kills the handle's zellij session. An already-gone session is treated
@@ -225,12 +228,8 @@ func (r *Runtime) ensureSupportedVersion(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("zellij runtime: check version: %w", err)
 	}
-	version, err := parseVersion(string(out))
-	if err != nil {
+	if _, err := CheckVersionOutput(string(out)); err != nil {
 		return fmt.Errorf("zellij runtime: check version: %w", err)
-	}
-	if compareVersion(version, semver{minMajor, minMinor, minPatch}) < 0 {
-		return fmt.Errorf("zellij runtime: unsupported zellij version %s; require >= %d.%d.%d", version, minMajor, minMinor, minPatch)
 	}
 	return nil
 }
@@ -384,9 +383,6 @@ func validatePaneID(id string) error {
 }
 
 func handleID(handle ports.RuntimeHandle) (string, string, error) {
-	if handle.RuntimeName != "" && handle.RuntimeName != runtimeName {
-		return "", "", fmt.Errorf("zellij runtime: wrong runtime %q", handle.RuntimeName)
-	}
 	parts := strings.Split(handle.ID, "/")
 	if len(parts) == 1 {
 		if err := validateSessionID(parts[0]); err != nil {
@@ -470,6 +466,25 @@ func tailLines(s string, n int) string {
 	}
 	return strings.Join(lines[len(lines)-n:], "")
 }
+
+// RequiredVersion returns the minimum Zellij version AO's runtime adapter
+// supports.
+func RequiredVersion() string { return minSupportedVersion().String() }
+
+// CheckVersionOutput parses `zellij --version` output, returning the parsed
+// version when it satisfies AO's minimum runtime requirement.
+func CheckVersionOutput(out string) (string, error) {
+	version, err := parseVersion(out)
+	if err != nil {
+		return "", err
+	}
+	if compareVersion(version, minSupportedVersion()) < 0 {
+		return version.String(), fmt.Errorf("unsupported zellij version %s; require >= %s", version, RequiredVersion())
+	}
+	return version.String(), nil
+}
+
+func minSupportedVersion() semver { return semver{minMajor, minMinor, minPatch} }
 
 type semver struct {
 	major int

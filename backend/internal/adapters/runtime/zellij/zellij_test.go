@@ -83,16 +83,12 @@ func TestValidateSessionAndPaneID(t *testing.T) {
 }
 
 func TestHandleID(t *testing.T) {
-	session, pane, err := handleID(ports.RuntimeHandle{ID: "sess-1/terminal_7", RuntimeName: runtimeName})
+	session, pane, err := handleID(ports.RuntimeHandle{ID: "sess-1/terminal_7"})
 	if err != nil {
 		t.Fatalf("handleID: %v", err)
 	}
 	if session != "sess-1" || pane != "terminal_7" {
 		t.Fatalf("handleID = %q/%q", session, pane)
-	}
-	_, _, err = handleID(ports.RuntimeHandle{ID: "sess-1/terminal_7", RuntimeName: "tmux"})
-	if err == nil {
-		t.Fatal("wrong runtime: got nil, want error")
 	}
 }
 
@@ -176,6 +172,20 @@ func TestBuildLayoutUsesCmdLaunchOnCmdShells(t *testing.T) {
 	}
 }
 
+func TestCreateRejectsInvalidEnvKeys(t *testing.T) {
+	r := New(Options{Binary: "zellij-test", Timeout: time.Second, Shell: "/bin/zsh"})
+	r.runner = &fakeRunner{}
+	_, err := r.Create(context.Background(), ports.RuntimeConfig{
+		SessionID:     "sess-1",
+		WorkspacePath: "/tmp/ws",
+		Argv:          []string{"echo", "ready"},
+		Env:           map[string]string{"BAD KEY": "x"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "invalid env key") {
+		t.Fatalf("Create err = %v, want invalid env key", err)
+	}
+}
+
 func TestCreateStartsSessionAndDiscoversPane(t *testing.T) {
 	fr := &fakeRunner{outputs: [][]byte{[]byte("zellij 0.44.3"), nil, []byte(`[{"id":0,"is_plugin":true,"title":"zellij:tab-bar"},{"id":3,"is_plugin":false,"title":"agent"}]`)}}
 	r := New(Options{Binary: "zellij-test", Timeout: time.Second, Shell: "/bin/zsh", SocketDir: "/tmp/zj", ConfigDir: "/tmp/cfg"})
@@ -190,7 +200,7 @@ func TestCreateStartsSessionAndDiscoversPane(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if handle != (ports.RuntimeHandle{ID: "sess-1/terminal_3", RuntimeName: runtimeName}) {
+	if handle != (ports.RuntimeHandle{ID: "sess-1/terminal_3"}) {
 		t.Fatalf("handle = %+v, want zellij handle", handle)
 	}
 	if len(fr.calls) != 3 {
@@ -212,7 +222,7 @@ func TestCreateStartsSessionAndDiscoversPane(t *testing.T) {
 
 func TestAttachCommandUsesSocketDir(t *testing.T) {
 	r := New(Options{SocketDir: "/tmp/zj"})
-	args, err := r.AttachCommand(ports.RuntimeHandle{ID: "sess-1/terminal_0", RuntimeName: runtimeName})
+	args, err := r.AttachCommand(ports.RuntimeHandle{ID: "sess-1/terminal_0"})
 	if err != nil {
 		t.Fatalf("AttachCommand: %v", err)
 	}
@@ -270,6 +280,15 @@ func TestParseVersion(t *testing.T) {
 	if compareVersion(semver{0, 44, 2}, semver{0, 44, 3}) >= 0 {
 		t.Fatal("compareVersion should order 0.44.2 before 0.44.3")
 	}
+	if got := RequiredVersion(); got != "0.44.3" {
+		t.Fatalf("RequiredVersion = %q, want 0.44.3", got)
+	}
+	if got, err := CheckVersionOutput("zellij 0.44.3"); err != nil || got != "0.44.3" {
+		t.Fatalf("CheckVersionOutput supported = %q, %v", got, err)
+	}
+	if _, err := CheckVersionOutput("zellij 0.44.2"); err == nil {
+		t.Fatal("CheckVersionOutput unsupported: got nil error")
+	}
 }
 
 func TestSendMessageChunksAndSendsEnter(t *testing.T) {
@@ -277,7 +296,7 @@ func TestSendMessageChunksAndSendsEnter(t *testing.T) {
 	r := New(Options{Timeout: time.Second, ChunkSize: 5})
 	r.runner = fr
 
-	if err := r.SendMessage(context.Background(), ports.RuntimeHandle{ID: "sess-1/terminal_0", RuntimeName: runtimeName}, "hello世界"); err != nil {
+	if err := r.SendMessage(context.Background(), ports.RuntimeHandle{ID: "sess-1/terminal_0"}, "hello世界"); err != nil {
 		t.Fatalf("SendMessage: %v", err)
 	}
 	if len(fr.calls) != 4 {
@@ -302,7 +321,7 @@ func TestGetOutputTrimsLines(t *testing.T) {
 	r := New(Options{Timeout: time.Second})
 	r.runner = fr
 
-	out, err := r.GetOutput(context.Background(), ports.RuntimeHandle{ID: "sess-1/terminal_0", RuntimeName: runtimeName}, 2)
+	out, err := r.GetOutput(context.Background(), ports.RuntimeHandle{ID: "sess-1/terminal_0"}, 2)
 	if err != nil {
 		t.Fatalf("GetOutput: %v", err)
 	}
@@ -316,7 +335,7 @@ func TestIsAliveParsesNoFormattingOutput(t *testing.T) {
 	r := New(Options{Timeout: time.Second})
 	r.runner = fr
 
-	alive, err := r.IsAlive(context.Background(), ports.RuntimeHandle{ID: "sess-1/terminal_0", RuntimeName: runtimeName})
+	alive, err := r.IsAlive(context.Background(), ports.RuntimeHandle{ID: "sess-1/terminal_0"})
 	if err != nil {
 		t.Fatalf("IsAlive: %v", err)
 	}
@@ -336,7 +355,7 @@ func TestIsAliveTreatsExitStatusAsNotAlive(t *testing.T) {
 	r := New(Options{Timeout: time.Second})
 	r.runner = fr
 
-	alive, err := r.IsAlive(context.Background(), ports.RuntimeHandle{ID: "sess-1/terminal_0", RuntimeName: runtimeName})
+	alive, err := r.IsAlive(context.Background(), ports.RuntimeHandle{ID: "sess-1/terminal_0"})
 	if err != nil {
 		t.Fatalf("IsAlive: %v", err)
 	}
@@ -350,7 +369,7 @@ func TestDestroyIsIdempotentWhenSessionMissing(t *testing.T) {
 	r := New(Options{Timeout: time.Second})
 	r.runner = fr
 
-	if err := r.Destroy(context.Background(), ports.RuntimeHandle{ID: "sess-1/terminal_0", RuntimeName: runtimeName}); err != nil {
+	if err := r.Destroy(context.Background(), ports.RuntimeHandle{ID: "sess-1/terminal_0"}); err != nil {
 		t.Fatalf("Destroy: %v", err)
 	}
 	if len(fr.calls) != 1 || fr.calls[0].args[0] != "kill-session" {
@@ -360,7 +379,7 @@ func TestDestroyIsIdempotentWhenSessionMissing(t *testing.T) {
 
 func TestGetOutputValidatesLines(t *testing.T) {
 	r := New(Options{Timeout: time.Second})
-	_, err := r.GetOutput(context.Background(), ports.RuntimeHandle{ID: "sess-1/terminal_0", RuntimeName: runtimeName}, 0)
+	_, err := r.GetOutput(context.Background(), ports.RuntimeHandle{ID: "sess-1/terminal_0"}, 0)
 	if err == nil {
 		t.Fatal("GetOutput lines=0: got nil, want error")
 	}

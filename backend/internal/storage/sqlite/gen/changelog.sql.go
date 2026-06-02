@@ -10,12 +10,12 @@ import (
 )
 
 const maxChangeLogSeq = `-- name: MaxChangeLogSeq :one
-SELECT COALESCE(MAX(seq), 0) AS seq FROM change_log
+SELECT CAST(COALESCE(MAX(seq), 0) AS INTEGER) AS seq FROM change_log
 `
 
-func (q *Queries) MaxChangeLogSeq(ctx context.Context) (interface{}, error) {
+func (q *Queries) MaxChangeLogSeq(ctx context.Context) (int64, error) {
 	row := q.db.QueryRowContext(ctx, maxChangeLogSeq)
-	var seq interface{}
+	var seq int64
 	err := row.Scan(&seq)
 	return seq, err
 }
@@ -32,47 +32,6 @@ type ReadChangeLogAfterParams struct {
 
 func (q *Queries) ReadChangeLogAfter(ctx context.Context, arg ReadChangeLogAfterParams) ([]ChangeLog, error) {
 	rows, err := q.db.QueryContext(ctx, readChangeLogAfter, arg.Seq, arg.Limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []ChangeLog{}
-	for rows.Next() {
-		var i ChangeLog
-		if err := rows.Scan(
-			&i.Seq,
-			&i.ProjectID,
-			&i.SessionID,
-			&i.EventType,
-			&i.Payload,
-			&i.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const readChangeLogAfterForProject = `-- name: ReadChangeLogAfterForProject :many
-SELECT seq, project_id, session_id, event_type, payload, created_at
-FROM change_log WHERE project_id = ? AND seq > ? ORDER BY seq LIMIT ?
-`
-
-type ReadChangeLogAfterForProjectParams struct {
-	ProjectID string
-	Seq       int64
-	Limit     int64
-}
-
-func (q *Queries) ReadChangeLogAfterForProject(ctx context.Context, arg ReadChangeLogAfterForProjectParams) ([]ChangeLog, error) {
-	rows, err := q.db.QueryContext(ctx, readChangeLogAfterForProject, arg.ProjectID, arg.Seq, arg.Limit)
 	if err != nil {
 		return nil, err
 	}

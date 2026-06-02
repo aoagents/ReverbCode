@@ -7,24 +7,19 @@ package gen
 
 import (
 	"context"
-	"database/sql"
 	"time"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
-const deleteSession = `-- name: DeleteSession :exec
-DELETE FROM sessions WHERE id = ?
-`
-
-func (q *Queries) DeleteSession(ctx context.Context, id string) error {
-	_, err := q.db.ExecContext(ctx, deleteSession, id)
-	return err
-}
-
 const getSession = `-- name: GetSession :one
-SELECT id, project_id, num, issue_id, kind, harness, session_state, termination_reason, is_alive, activity_state, activity_last_at, activity_source, detecting_attempts, detecting_started_at, detecting_evidence_hash, branch, workspace_path, runtime_handle_id, runtime_name, agent_session_id, prompt, created_at, updated_at FROM sessions WHERE id = ?
+SELECT id, project_id, num, issue_id, kind, harness,
+    activity_state, activity_last_at, is_terminated, branch, workspace_path,
+    runtime_handle_id, agent_session_id, prompt, created_at, updated_at
+FROM sessions WHERE id = ?
 `
 
-func (q *Queries) GetSession(ctx context.Context, id string) (Session, error) {
+func (q *Queries) GetSession(ctx context.Context, id domain.SessionID) (Session, error) {
 	row := q.db.QueryRowContext(ctx, getSession, id)
 	var i Session
 	err := row.Scan(
@@ -34,19 +29,12 @@ func (q *Queries) GetSession(ctx context.Context, id string) (Session, error) {
 		&i.IssueID,
 		&i.Kind,
 		&i.Harness,
-		&i.SessionState,
-		&i.TerminationReason,
-		&i.IsAlive,
 		&i.ActivityState,
 		&i.ActivityLastAt,
-		&i.ActivitySource,
-		&i.DetectingAttempts,
-		&i.DetectingStartedAt,
-		&i.DetectingEvidenceHash,
+		&i.IsTerminated,
 		&i.Branch,
 		&i.WorkspacePath,
 		&i.RuntimeHandleID,
-		&i.RuntimeName,
 		&i.AgentSessionID,
 		&i.Prompt,
 		&i.CreatedAt,
@@ -58,38 +46,29 @@ func (q *Queries) GetSession(ctx context.Context, id string) (Session, error) {
 const insertSession = `-- name: InsertSession :exec
 INSERT INTO sessions (
     id, project_id, num, issue_id, kind, harness,
-    session_state, termination_reason, is_alive,
-    activity_state, activity_last_at, activity_source,
-    detecting_attempts, detecting_started_at, detecting_evidence_hash,
-    branch, workspace_path, runtime_handle_id, runtime_name, agent_session_id, prompt,
+    activity_state, activity_last_at, is_terminated,
+    branch, workspace_path, runtime_handle_id, agent_session_id, prompt,
     created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertSessionParams struct {
-	ID                    string
-	ProjectID             string
-	Num                   int64
-	IssueID               string
-	Kind                  string
-	Harness               string
-	SessionState          string
-	TerminationReason     string
-	IsAlive               int64
-	ActivityState         string
-	ActivityLastAt        time.Time
-	ActivitySource        string
-	DetectingAttempts     sql.NullInt64
-	DetectingStartedAt    sql.NullTime
-	DetectingEvidenceHash sql.NullString
-	Branch                string
-	WorkspacePath         string
-	RuntimeHandleID       string
-	RuntimeName           string
-	AgentSessionID        string
-	Prompt                string
-	CreatedAt             time.Time
-	UpdatedAt             time.Time
+	ID              domain.SessionID
+	ProjectID       domain.ProjectID
+	Num             int64
+	IssueID         domain.IssueID
+	Kind            domain.SessionKind
+	Harness         domain.AgentHarness
+	ActivityState   domain.ActivityState
+	ActivityLastAt  time.Time
+	IsTerminated    bool
+	Branch          string
+	WorkspacePath   string
+	RuntimeHandleID string
+	AgentSessionID  string
+	Prompt          string
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) error {
@@ -100,19 +79,12 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) er
 		arg.IssueID,
 		arg.Kind,
 		arg.Harness,
-		arg.SessionState,
-		arg.TerminationReason,
-		arg.IsAlive,
 		arg.ActivityState,
 		arg.ActivityLastAt,
-		arg.ActivitySource,
-		arg.DetectingAttempts,
-		arg.DetectingStartedAt,
-		arg.DetectingEvidenceHash,
+		arg.IsTerminated,
 		arg.Branch,
 		arg.WorkspacePath,
 		arg.RuntimeHandleID,
-		arg.RuntimeName,
 		arg.AgentSessionID,
 		arg.Prompt,
 		arg.CreatedAt,
@@ -122,7 +94,10 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) er
 }
 
 const listAllSessions = `-- name: ListAllSessions :many
-SELECT id, project_id, num, issue_id, kind, harness, session_state, termination_reason, is_alive, activity_state, activity_last_at, activity_source, detecting_attempts, detecting_started_at, detecting_evidence_hash, branch, workspace_path, runtime_handle_id, runtime_name, agent_session_id, prompt, created_at, updated_at FROM sessions ORDER BY project_id, num
+SELECT id, project_id, num, issue_id, kind, harness,
+    activity_state, activity_last_at, is_terminated, branch, workspace_path,
+    runtime_handle_id, agent_session_id, prompt, created_at, updated_at
+FROM sessions ORDER BY project_id, num
 `
 
 func (q *Queries) ListAllSessions(ctx context.Context) ([]Session, error) {
@@ -141,19 +116,12 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]Session, error) {
 			&i.IssueID,
 			&i.Kind,
 			&i.Harness,
-			&i.SessionState,
-			&i.TerminationReason,
-			&i.IsAlive,
 			&i.ActivityState,
 			&i.ActivityLastAt,
-			&i.ActivitySource,
-			&i.DetectingAttempts,
-			&i.DetectingStartedAt,
-			&i.DetectingEvidenceHash,
+			&i.IsTerminated,
 			&i.Branch,
 			&i.WorkspacePath,
 			&i.RuntimeHandleID,
-			&i.RuntimeName,
 			&i.AgentSessionID,
 			&i.Prompt,
 			&i.CreatedAt,
@@ -173,10 +141,13 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]Session, error) {
 }
 
 const listSessionsByProject = `-- name: ListSessionsByProject :many
-SELECT id, project_id, num, issue_id, kind, harness, session_state, termination_reason, is_alive, activity_state, activity_last_at, activity_source, detecting_attempts, detecting_started_at, detecting_evidence_hash, branch, workspace_path, runtime_handle_id, runtime_name, agent_session_id, prompt, created_at, updated_at FROM sessions WHERE project_id = ? ORDER BY num
+SELECT id, project_id, num, issue_id, kind, harness,
+    activity_state, activity_last_at, is_terminated, branch, workspace_path,
+    runtime_handle_id, agent_session_id, prompt, created_at, updated_at
+FROM sessions WHERE project_id = ? ORDER BY num
 `
 
-func (q *Queries) ListSessionsByProject(ctx context.Context, projectID string) ([]Session, error) {
+func (q *Queries) ListSessionsByProject(ctx context.Context, projectID domain.ProjectID) ([]Session, error) {
 	rows, err := q.db.QueryContext(ctx, listSessionsByProject, projectID)
 	if err != nil {
 		return nil, err
@@ -192,19 +163,12 @@ func (q *Queries) ListSessionsByProject(ctx context.Context, projectID string) (
 			&i.IssueID,
 			&i.Kind,
 			&i.Harness,
-			&i.SessionState,
-			&i.TerminationReason,
-			&i.IsAlive,
 			&i.ActivityState,
 			&i.ActivityLastAt,
-			&i.ActivitySource,
-			&i.DetectingAttempts,
-			&i.DetectingStartedAt,
-			&i.DetectingEvidenceHash,
+			&i.IsTerminated,
 			&i.Branch,
 			&i.WorkspacePath,
 			&i.RuntimeHandleID,
-			&i.RuntimeName,
 			&i.AgentSessionID,
 			&i.Prompt,
 			&i.CreatedAt,
@@ -227,7 +191,7 @@ const nextSessionNum = `-- name: NextSessionNum :one
 SELECT COALESCE(MAX(num), 0) + 1 AS next FROM sessions WHERE project_id = ?
 `
 
-func (q *Queries) NextSessionNum(ctx context.Context, projectID string) (int64, error) {
+func (q *Queries) NextSessionNum(ctx context.Context, projectID domain.ProjectID) (int64, error) {
 	row := q.db.QueryRowContext(ctx, nextSessionNum, projectID)
 	var next int64
 	err := row.Scan(&next)
@@ -237,35 +201,26 @@ func (q *Queries) NextSessionNum(ctx context.Context, projectID string) (int64, 
 const updateSession = `-- name: UpdateSession :exec
 UPDATE sessions SET
     issue_id = ?, kind = ?, harness = ?,
-    session_state = ?, termination_reason = ?, is_alive = ?,
-    activity_state = ?, activity_last_at = ?, activity_source = ?,
-    detecting_attempts = ?, detecting_started_at = ?, detecting_evidence_hash = ?,
-    branch = ?, workspace_path = ?, runtime_handle_id = ?, runtime_name = ?, agent_session_id = ?, prompt = ?,
+    activity_state = ?, activity_last_at = ?, is_terminated = ?,
+    branch = ?, workspace_path = ?, runtime_handle_id = ?, agent_session_id = ?, prompt = ?,
     updated_at = ?
 WHERE id = ?
 `
 
 type UpdateSessionParams struct {
-	IssueID               string
-	Kind                  string
-	Harness               string
-	SessionState          string
-	TerminationReason     string
-	IsAlive               int64
-	ActivityState         string
-	ActivityLastAt        time.Time
-	ActivitySource        string
-	DetectingAttempts     sql.NullInt64
-	DetectingStartedAt    sql.NullTime
-	DetectingEvidenceHash sql.NullString
-	Branch                string
-	WorkspacePath         string
-	RuntimeHandleID       string
-	RuntimeName           string
-	AgentSessionID        string
-	Prompt                string
-	UpdatedAt             time.Time
-	ID                    string
+	IssueID         domain.IssueID
+	Kind            domain.SessionKind
+	Harness         domain.AgentHarness
+	ActivityState   domain.ActivityState
+	ActivityLastAt  time.Time
+	IsTerminated    bool
+	Branch          string
+	WorkspacePath   string
+	RuntimeHandleID string
+	AgentSessionID  string
+	Prompt          string
+	UpdatedAt       time.Time
+	ID              domain.SessionID
 }
 
 func (q *Queries) UpdateSession(ctx context.Context, arg UpdateSessionParams) error {
@@ -273,19 +228,12 @@ func (q *Queries) UpdateSession(ctx context.Context, arg UpdateSessionParams) er
 		arg.IssueID,
 		arg.Kind,
 		arg.Harness,
-		arg.SessionState,
-		arg.TerminationReason,
-		arg.IsAlive,
 		arg.ActivityState,
 		arg.ActivityLastAt,
-		arg.ActivitySource,
-		arg.DetectingAttempts,
-		arg.DetectingStartedAt,
-		arg.DetectingEvidenceHash,
+		arg.IsTerminated,
 		arg.Branch,
 		arg.WorkspacePath,
 		arg.RuntimeHandleID,
-		arg.RuntimeName,
 		arg.AgentSessionID,
 		arg.Prompt,
 		arg.UpdatedAt,

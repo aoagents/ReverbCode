@@ -10,7 +10,6 @@ import (
 )
 
 const (
-	runtimeName       = "zellij"
 	agentPaneName     = "agent"
 	defaultChunkBytes = 16 * 1024
 )
@@ -186,6 +185,31 @@ func wrapLaunchCommandCmd(cfg ports.RuntimeConfig) string {
 	}
 	b.WriteString(quoteArgvCmd(cfg.Argv))
 	return b.String()
+}
+
+func validateEnvKeys(env map[string]string) error {
+	for key := range env {
+		if !validEnvKey(key) {
+			return fmt.Errorf("zellij runtime: invalid env key %q", key)
+		}
+	}
+	return nil
+}
+
+func validEnvKey(key string) bool {
+	if key == "" {
+		return false
+	}
+	for i, r := range key {
+		if r == '_' || (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') {
+			continue
+		}
+		if i > 0 && r >= '0' && r <= '9' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func sortedKeys(m map[string]string) []string {

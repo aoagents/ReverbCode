@@ -13,11 +13,7 @@ type processStartConfig struct {
 	Stderr *os.File
 }
 
-type processHandle struct {
-	PID int
-}
-
-func startProcess(cfg processStartConfig) (processHandle, error) {
+func startProcess(cfg processStartConfig) error {
 	cmd := exec.Command(cfg.Path, cfg.Args...)
 	cmd.Env = cfg.Env
 	cmd.Stdout = cfg.Stdout
@@ -27,8 +23,8 @@ func startProcess(cfg processStartConfig) (processHandle, error) {
 	// freshly spawned daemon (it would otherwise share the launcher's group).
 	cmd.SysProcAttr = detachSysProcAttr()
 	if err := cmd.Start(); err != nil {
-		return processHandle{}, err
+		return err
 	}
 	go func() { _ = cmd.Wait() }()
-	return processHandle{PID: cmd.Process.Pid}, nil
+	return nil
 }

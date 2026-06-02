@@ -9,5 +9,78 @@ sql:
         out: "internal/storage/sqlite/gen"
         emit_json_tags: false
         emit_prepared_queries: false
-        emit_interface: true
+        emit_interface: false
         emit_empty_slices: true
+        initialisms:
+          - id
+          - url
+          - pr
+          - ci
+        overrides:
+          - column: "change_log.project_id"
+            go_type:
+              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
+              type: "ProjectID"
+          - column: "change_log.session_id"
+            go_type:
+              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
+              type: "SessionID"
+              pointer: true
+          - column: "change_log.event_type"
+            go_type:
+              import: "github.com/aoagents/agent-orchestrator/backend/internal/cdc"
+              type: "EventType"
+          - column: "pr.session_id"
+            go_type:
+              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
+              type: "SessionID"
+          - column: "pr.pr_state"
+            go_type:
+              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
+              type: "PRState"
+          - column: "pr.review_decision"
+            go_type:
+              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
+              type: "ReviewDecision"
+          - column: "pr.ci_state"
+            go_type:
+              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
+              type: "CIState"
+          - column: "pr.mergeability"
+            go_type:
+              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
+              type: "Mergeability"
+          - column: "pr_checks.status"
+            go_type:
+              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
+              type: "PRCheckStatus"
+          - column: "pr_comment.resolved"
+            go_type: "bool"
+          - column: "projects.id"
+            go_type:
+              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
+              type: "ProjectID"
+          - column: "sessions.id"
+            go_type:
+              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
+              type: "SessionID"
+          - column: "sessions.project_id"
+            go_type:
+              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
+              type: "ProjectID"
+          - column: "sessions.issue_id"
+            go_type:
+              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
+              type: "IssueID"
+          - column: "sessions.kind"
+            go_type:
+              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
+              type: "SessionKind"
+          - column: "sessions.harness"
+            go_type:
+              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
+              type: "AgentHarness"
+          - column: "sessions.activity_state"
+            go_type:
+              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
+              type: "ActivityState"

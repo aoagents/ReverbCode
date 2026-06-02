@@ -9,20 +9,44 @@ import (
 	"context"
 	"database/sql"
 	"time"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
-const archiveProject = `-- name: ArchiveProject :exec
+const archiveProject = `-- name: ArchiveProject :execrows
 UPDATE projects SET archived_at = ? WHERE id = ?
 `
 
 type ArchiveProjectParams struct {
 	ArchivedAt sql.NullTime
-	ID         string
+	ID         domain.ProjectID
 }
 
-func (q *Queries) ArchiveProject(ctx context.Context, arg ArchiveProjectParams) error {
-	_, err := q.db.ExecContext(ctx, archiveProject, arg.ArchivedAt, arg.ID)
-	return err
+func (q *Queries) ArchiveProject(ctx context.Context, arg ArchiveProjectParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, archiveProject, arg.ArchivedAt, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const findProjectByPath = `-- name: FindProjectByPath :one
+SELECT id, path, repo_origin_url, display_name, registered_at, archived_at
+FROM projects WHERE path = ? AND archived_at IS NULL
+`
+
+func (q *Queries) FindProjectByPath(ctx context.Context, path string) (Project, error) {
+	row := q.db.QueryRowContext(ctx, findProjectByPath, path)
+	var i Project
+	err := row.Scan(
+		&i.ID,
+		&i.Path,
+		&i.RepoOriginURL,
+		&i.DisplayName,
+		&i.RegisteredAt,
+		&i.ArchivedAt,
+	)
+	return i, err
 }
 
 const getProject = `-- name: GetProject :one
@@ -30,13 +54,13 @@ SELECT id, path, repo_origin_url, display_name, registered_at, archived_at
 FROM projects WHERE id = ?
 `
 
-func (q *Queries) GetProject(ctx context.Context, id string) (Project, error) {
+func (q *Queries) GetProject(ctx context.Context, id domain.ProjectID) (Project, error) {
 	row := q.db.QueryRowContext(ctx, getProject, id)
 	var i Project
 	err := row.Scan(
 		&i.ID,
 		&i.Path,
-		&i.RepoOriginUrl,
+		&i.RepoOriginURL,
 		&i.DisplayName,
 		&i.RegisteredAt,
 		&i.ArchivedAt,
@@ -61,7 +85,7 @@ func (q *Queries) ListProjects(ctx context.Context) ([]Project, error) {
 		if err := rows.Scan(
 			&i.ID,
 			&i.Path,
-			&i.RepoOriginUrl,
+			&i.RepoOriginURL,
 			&i.DisplayName,
 			&i.RegisteredAt,
 			&i.ArchivedAt,
@@ -90,9 +114,9 @@ ON CONFLICT (id) DO UPDATE SET
 `
 
 type UpsertProjectParams struct {
-	ID            string
+	ID            domain.ProjectID
 	Path          string
-	RepoOriginUrl string
+	RepoOriginURL string
 	DisplayName   string
 	RegisteredAt  time.Time
 	ArchivedAt    sql.NullTime
@@ -102,7 +126,7 @@ func (q *Queries) UpsertProject(ctx context.Context, arg UpsertProjectParams) er
 	_, err := q.db.ExecContext(ctx, upsertProject,
 		arg.ID,
 		arg.Path,
-		arg.RepoOriginUrl,
+		arg.RepoOriginURL,
 		arg.DisplayName,
 		arg.RegisteredAt,
 		arg.ArchivedAt,

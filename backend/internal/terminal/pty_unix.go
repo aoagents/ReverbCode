@@ -41,9 +41,7 @@ func (p *creackPTY) Resize(rows, cols uint16) error {
 	return pty.Setsize(p.f, &pty.Winsize{Rows: rows, Cols: cols})
 }
 
-func (p *creackPTY) Wait() error { return p.cmd.Wait() }
-
-// Close stops the attach process and releases the PTY. tmux attach exits cleanly
+// Close stops the attach process and releases the PTY. Zellij attach exits cleanly
 // when the master closes, but kill the process to be sure it does not linger.
 //
 // It is idempotent: both the session run loop (after copyOut returns) and

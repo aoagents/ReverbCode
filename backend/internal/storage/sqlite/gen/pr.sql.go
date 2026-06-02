@@ -8,31 +8,73 @@ package gen
 import (
 	"context"
 	"time"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
-const deletePR = `-- name: DeletePR :exec
-DELETE FROM pr WHERE url = ?
+const getDisplayPRFactsBySession = `-- name: GetDisplayPRFactsBySession :one
+SELECT
+    pr.url,
+    pr.number,
+    pr.pr_state,
+    pr.review_decision,
+    pr.ci_state,
+    pr.mergeability,
+    EXISTS (
+        SELECT 1
+        FROM pr_comment
+        WHERE pr_comment.pr_url = pr.url
+          AND pr_comment.resolved = 0
+    ) AS review_comments
+FROM pr
+WHERE pr.session_id = ?
+ORDER BY
+    CASE WHEN pr.pr_state NOT IN ('merged', 'closed') THEN 0 ELSE 1 END,
+    pr.updated_at DESC
+LIMIT 1
 `
 
-func (q *Queries) DeletePR(ctx context.Context, url string) error {
-	_, err := q.db.ExecContext(ctx, deletePR, url)
-	return err
+type GetDisplayPRFactsBySessionRow struct {
+	URL            string
+	Number         int64
+	PRState        domain.PRState
+	ReviewDecision domain.ReviewDecision
+	CIState        domain.CIState
+	Mergeability   domain.Mergeability
+	ReviewComments bool
+}
+
+func (q *Queries) GetDisplayPRFactsBySession(ctx context.Context, sessionID domain.SessionID) (GetDisplayPRFactsBySessionRow, error) {
+	row := q.db.QueryRowContext(ctx, getDisplayPRFactsBySession, sessionID)
+	var i GetDisplayPRFactsBySessionRow
+	err := row.Scan(
+		&i.URL,
+		&i.Number,
+		&i.PRState,
+		&i.ReviewDecision,
+		&i.CIState,
+		&i.Mergeability,
+		&i.ReviewComments,
+	)
+	return i, err
 }
 
 const getPR = `-- name: GetPR :one
-SELECT url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at FROM pr WHERE url = ?
+SELECT url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at
+FROM pr
+WHERE url = ?
 `
 
-func (q *Queries) GetPR(ctx context.Context, url string) (Pr, error) {
+func (q *Queries) GetPR(ctx context.Context, url string) (PR, error) {
 	row := q.db.QueryRowContext(ctx, getPR, url)
-	var i Pr
+	var i PR
 	err := row.Scan(
-		&i.Url,
+		&i.URL,
 		&i.SessionID,
 		&i.Number,
-		&i.PrState,
+		&i.PRState,
 		&i.ReviewDecision,
-		&i.CiState,
+		&i.CIState,
 		&i.Mergeability,
 		&i.UpdatedAt,
 	)
@@ -40,25 +82,28 @@ func (q *Queries) GetPR(ctx context.Context, url string) (Pr, error) {
 }
 
 const listPRsBySession = `-- name: ListPRsBySession :many
-SELECT url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at FROM pr WHERE session_id = ? ORDER BY updated_at DESC
+SELECT url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at
+FROM pr
+WHERE session_id = ?
+ORDER BY updated_at DESC
 `
 
-func (q *Queries) ListPRsBySession(ctx context.Context, sessionID string) ([]Pr, error) {
+func (q *Queries) ListPRsBySession(ctx context.Context, sessionID domain.SessionID) ([]PR, error) {
 	rows, err := q.db.QueryContext(ctx, listPRsBySession, sessionID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []Pr{}
+	items := []PR{}
 	for rows.Next() {
-		var i Pr
+		var i PR
 		if err := rows.Scan(
-			&i.Url,
+			&i.URL,
 			&i.SessionID,
 			&i.Number,
-			&i.PrState,
+			&i.PRState,
 			&i.ReviewDecision,
-			&i.CiState,
+			&i.CIState,
 			&i.Mergeability,
 			&i.UpdatedAt,
 		); err != nil {
@@ -79,7 +124,6 @@ const upsertPR = `-- name: UpsertPR :exec
 INSERT INTO pr (url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (url) DO UPDATE SET
-    session_id = excluded.session_id,
     number = excluded.number,
     pr_state = excluded.pr_state,
     review_decision = excluded.review_decision,
@@ -89,24 +133,24 @@ ON CONFLICT (url) DO UPDATE SET
 `
 
 type UpsertPRParams struct {
-	Url            string
-	SessionID      string
+	URL            string
+	SessionID      domain.SessionID
 	Number         int64
-	PrState        string
-	ReviewDecision string
-	CiState        string
-	Mergeability   string
+	PRState        domain.PRState
+	ReviewDecision domain.ReviewDecision
+	CIState        domain.CIState
+	Mergeability   domain.Mergeability
 	UpdatedAt      time.Time
 }
 
 func (q *Queries) UpsertPR(ctx context.Context, arg UpsertPRParams) error {
 	_, err := q.db.ExecContext(ctx, upsertPR,
-		arg.Url,
+		arg.URL,
 		arg.SessionID,
 		arg.Number,
-		arg.PrState,
+		arg.PRState,
 		arg.ReviewDecision,
-		arg.CiState,
+		arg.CIState,
 		arg.Mergeability,
 		arg.UpdatedAt,
 	)

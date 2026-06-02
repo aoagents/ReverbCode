@@ -3,6 +3,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/daemon"
+	"github.com/aoagents/agent-orchestrator/backend/internal/processalive"
 )
 
 // Execute runs the ao CLI with process stdio.
@@ -48,29 +50,35 @@ type Deps struct {
 	Out io.Writer
 	Err io.Writer
 
-	HTTPClient   *http.Client
-	Executable   func() (string, error)
-	StartProcess func(processStartConfig) (processHandle, error)
-	ProcessAlive func(pid int) bool
-	LookPath     func(file string) (string, error)
-	Now          func() time.Time
-	Sleep        func(time.Duration)
+	HTTPClient    *http.Client
+	Executable    func() (string, error)
+	StartProcess  func(processStartConfig) error
+	ProcessAlive  func(pid int) bool
+	LookPath      func(file string) (string, error)
+	CommandOutput func(ctx context.Context, name string, args ...string) ([]byte, error)
+	Now           func() time.Time
+	Sleep         func(time.Duration)
 }
 
 // DefaultDeps returns production dependencies.
 func DefaultDeps() Deps {
 	return Deps{
-		In:           os.Stdin,
-		Out:          os.Stdout,
-		Err:          os.Stderr,
-		HTTPClient:   &http.Client{Timeout: 2 * time.Second},
-		Executable:   os.Executable,
-		StartProcess: startProcess,
-		ProcessAlive: processAlive,
-		LookPath:     exec.LookPath,
-		Now:          time.Now,
-		Sleep:        time.Sleep,
+		In:            os.Stdin,
+		Out:           os.Stdout,
+		Err:           os.Stderr,
+		HTTPClient:    &http.Client{Timeout: 2 * time.Second},
+		Executable:    os.Executable,
+		StartProcess:  startProcess,
+		ProcessAlive:  processalive.Alive,
+		LookPath:      exec.LookPath,
+		CommandOutput: commandOutput,
+		Now:           time.Now,
+		Sleep:         time.Sleep,
 	}
+}
+
+func commandOutput(ctx context.Context, name string, args ...string) ([]byte, error) {
+	return exec.CommandContext(ctx, name, args...).CombinedOutput()
 }
 
 func (d Deps) withDefaults() Deps {
@@ -98,6 +106,9 @@ func (d Deps) withDefaults() Deps {
 	}
 	if d.LookPath == nil {
 		d.LookPath = def.LookPath
+	}
+	if d.CommandOutput == nil {
+		d.CommandOutput = def.CommandOutput
 	}
 	if d.Now == nil {
 		d.Now = def.Now
@@ -146,11 +157,19 @@ type commandContext struct {
 	deps Deps
 }
 
+func noArgs(cmd *cobra.Command, args []string) error {
+	if err := cobra.ExactArgs(0)(cmd, args); err != nil {
+		return usageError{err}
+	}
+	return nil
+}
+
 func newDaemonCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:    "daemon",
 		Short:  "Run the AO backend daemon",
 		Hidden: true,
+		Args:   noArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return daemon.Run()
 		},

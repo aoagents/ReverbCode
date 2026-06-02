@@ -34,6 +34,27 @@ func TestRootHelpDoesNotShowDaemon(t *testing.T) {
 	}
 }
 
+func TestCommandsRejectUnexpectedArgs(t *testing.T) {
+	for _, args := range [][]string{
+		{"daemon", "extra"},
+		{"start", "extra"},
+		{"stop", "extra"},
+		{"status", "extra"},
+		{"doctor", "extra"},
+		{"version", "extra"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			_, _, err := executeCLI(t, Deps{}, args...)
+			if err == nil {
+				t.Fatal("expected usage error")
+			}
+			if got := ExitCode(err); got != 2 {
+				t.Fatalf("ExitCode(%v) = %d, want 2", err, got)
+			}
+		})
+	}
+}
+
 func TestStatusStoppedJSON(t *testing.T) {
 	setConfigEnv(t)
 
@@ -71,9 +92,9 @@ func TestStartReturnsExistingReadyDaemon(t *testing.T) {
 	var started bool
 	out, _, err := executeCLI(t, Deps{
 		ProcessAlive: func(pid int) bool { return pid == os.Getpid() },
-		StartProcess: func(processStartConfig) (processHandle, error) {
+		StartProcess: func(processStartConfig) error {
 			started = true
-			return processHandle{}, nil
+			return nil
 		},
 		Now: func() time.Time { return time.Unix(110, 0).UTC() },
 	}, "start", "--json")
@@ -115,7 +136,7 @@ func TestStartClearsStaleRunFileBeforeSpawning(t *testing.T) {
 
 	out, _, err := executeCLI(t, Deps{
 		ProcessAlive: func(pid int) bool { return pid == 4242 || pid == os.Getpid() },
-		StartProcess: func(processStartConfig) (processHandle, error) {
+		StartProcess: func(processStartConfig) error {
 			info, err := runfile.Read(cfg.runFile)
 			if err != nil {
 				t.Fatal(err)
@@ -127,7 +148,7 @@ func TestStartClearsStaleRunFileBeforeSpawning(t *testing.T) {
 			if err := runfile.Write(cfg.runFile, runfile.Info{PID: os.Getpid(), Port: port, StartedAt: time.Unix(110, 0).UTC()}); err != nil {
 				t.Fatal(err)
 			}
-			return processHandle{PID: os.Getpid()}, nil
+			return nil
 		},
 		Now: func() time.Time { return time.Unix(120, 0).UTC() },
 	}, "start", "--json")
@@ -301,9 +322,9 @@ func TestStartDoesNotSpawnWhenLiveProbeFails(t *testing.T) {
 	var started bool
 	_, _, err := executeCLI(t, Deps{
 		ProcessAlive: func(pid int) bool { return pid == 4242 },
-		StartProcess: func(processStartConfig) (processHandle, error) {
+		StartProcess: func(processStartConfig) error {
 			started = true
-			return processHandle{}, nil
+			return nil
 		},
 	}, "start", "--timeout", "1ns", "--json")
 	if err == nil {

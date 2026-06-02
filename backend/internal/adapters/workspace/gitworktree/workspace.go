@@ -143,7 +143,7 @@ func (w *Workspace) Destroy(ctx context.Context, info ports.WorkspaceInfo) error
 	if err != nil {
 		return err
 	}
-	if worktreeRegistered(records, path) {
+	if _, ok := findWorktree(records, path); ok {
 		if removeErr != nil {
 			return fmt.Errorf("gitworktree: refusing to remove %q: path is still registered after git worktree prune (worktree remove: %w)", path, removeErr)
 		}
@@ -153,26 +153,6 @@ func (w *Workspace) Destroy(ctx context.Context, info ports.WorkspaceInfo) error
 		return fmt.Errorf("gitworktree: remove unregistered path %q: %w", path, err)
 	}
 	return nil
-}
-
-// List returns the managed worktrees that belong to a project.
-func (w *Workspace) List(ctx context.Context, project domain.ProjectID) ([]ports.WorkspaceInfo, error) {
-	if project == "" {
-		return nil, errors.New("gitworktree: project id is required")
-	}
-	repo, err := w.repoPath(project)
-	if err != nil {
-		return nil, err
-	}
-	records, err := w.listRecords(ctx, repo)
-	if err != nil {
-		return nil, err
-	}
-	projectRoot, err := w.projectRoot(project)
-	if err != nil {
-		return nil, err
-	}
-	return filterProjectWorktrees(records, projectRoot, project), nil
 }
 
 // Restore re-attaches to an existing worktree for the session if one is still
@@ -220,7 +200,7 @@ func (w *Workspace) addWorktree(ctx context.Context, repo, path, branch string) 
 		return err
 	}
 	if localBranch {
-		if _, err := w.run(ctx, w.binary, chooseWorktreeAddArgs(repo, path, branch, "", true)...); err != nil {
+		if _, err := w.run(ctx, w.binary, worktreeAddBranchArgs(repo, path, branch)...); err != nil {
 			return fmt.Errorf("gitworktree: worktree add existing branch %q: %w", branch, err)
 		}
 		return nil
@@ -229,7 +209,7 @@ func (w *Workspace) addWorktree(ctx context.Context, repo, path, branch string) 
 	if err != nil {
 		return err
 	}
-	if _, err := w.run(ctx, w.binary, chooseWorktreeAddArgs(repo, path, branch, baseRef, false)...); err != nil {
+	if _, err := w.run(ctx, w.binary, worktreeAddNewBranchArgs(repo, branch, path, baseRef)...); err != nil {
 		return fmt.Errorf("gitworktree: worktree add branch %q from %q: %w", branch, baseRef, err)
 	}
 	return nil
@@ -358,11 +338,6 @@ func (w *Workspace) managedPath(project domain.ProjectID, session domain.Session
 	return w.validateManagedPath(path)
 }
 
-func (w *Workspace) projectRoot(project domain.ProjectID) (string, error) {
-	path := filepath.Join(w.managedRoot, string(project))
-	return w.validateManagedPath(path)
-}
-
 func (w *Workspace) validateManagedPath(path string) (string, error) {
 	if path == "" {
 		return "", fmt.Errorf("%w: empty path", ErrUnsafePath)
@@ -395,29 +370,6 @@ func pathWithin(root, path string) (bool, error) {
 		return false, fmt.Errorf("gitworktree: compare paths: %w", err)
 	}
 	return rel == "." || (rel != "" && rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator))), nil
-}
-
-func filterProjectWorktrees(records []worktreeRecord, projectRoot string, project domain.ProjectID) []ports.WorkspaceInfo {
-	out := make([]ports.WorkspaceInfo, 0, len(records))
-	for _, rec := range records {
-		path := filepath.Clean(rec.Path)
-		inside, err := pathWithin(projectRoot, path)
-		if err != nil || !inside || path == projectRoot {
-			continue
-		}
-		out = append(out, ports.WorkspaceInfo{
-			Path:      path,
-			Branch:    rec.Branch,
-			SessionID: domain.SessionID(filepath.Base(path)),
-			ProjectID: project,
-		})
-	}
-	return out
-}
-
-func worktreeRegistered(records []worktreeRecord, path string) bool {
-	_, ok := findWorktree(records, path)
-	return ok
 }
 
 func findWorktree(records []worktreeRecord, path string) (worktreeRecord, bool) {

@@ -1,8 +1,7 @@
-// Package lifecycle implements ports.LifecycleManager: the synchronous
-// observe -> decide -> persist reducer. Every Apply*/On* entrypoint loads the
-// session, runs the pure decider, and persists the full row under a single write
-// lock. The DB triggers emit the CDC; the engine never writes the change log.
-// After a transition it fires the mapped reaction (see reactions.go).
+// Package lifecycle implements the synchronous reducer that writes durable
+// session lifecycle facts. It deliberately keeps the session model small:
+// activity_state plus an is_terminated bit are the only persisted status-like
+// facts on the session row.
 package lifecycle
 
 import (
@@ -12,206 +11,89 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
-	"github.com/aoagents/agent-orchestrator/backend/internal/domain/decide"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-// Manager is the lifecycle engine. mu serialises the load->decide->persist
-// read-modify-write across sessions; reactions dispatch after the lock releases
-// so a slow agent send never blocks the write path.
+type sessionStore interface {
+	GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error)
+	UpdateSession(ctx context.Context, rec domain.SessionRecord) error
+}
+
+// Manager reduces runtime, activity, spawn, and termination observations into durable session facts.
+// It also owns agent nudges caused by PR observations, including merge-conflict, CI-failure, and review-feedback prompts.
 type Manager struct {
-	store     ports.SessionStore
-	pr        ports.PRWriter
-	notifier  ports.Notifier
+	store     sessionStore
 	messenger ports.AgentMessenger
 
 	mu     sync.Mutex
 	window time.Duration
 	clock  func() time.Time
-
-	// in-memory ACT state (policy, not canonical truth — reset on restart).
-	react reactionState
+	react  reactionState
 }
 
-var _ ports.LifecycleManager = (*Manager)(nil)
-
-// New builds a Lifecycle Manager over its collaborators: the session store it
-// is the sole writer of, the PR-facts writer, the notifier, and the messenger
-// used to nudge running agents.
-func New(store ports.SessionStore, pr ports.PRWriter, notifier ports.Notifier, messenger ports.AgentMessenger) *Manager {
-	return &Manager{
-		store:     store,
-		pr:        pr,
-		notifier:  notifier,
-		messenger: messenger,
-		window:    defaultRecentActivityWindow,
-		clock:     time.Now,
-		react:     newReactionState(),
-	}
+// New builds a Lifecycle Manager over the session store it writes and the messenger it uses for agent nudges.
+func New(store sessionStore, messenger ports.AgentMessenger) *Manager {
+	return &Manager{store: store, messenger: messenger, window: defaultRecentActivityWindow, clock: time.Now, react: newReactionState()}
 }
 
-// mutate runs the shared pipeline: load -> decideFn -> persist (only if changed).
-// It returns whether a write happened. A stray observation for an unknown session
-// is a clean no-op.
-func (m *Manager) mutate(
-	ctx context.Context,
-	id domain.SessionID,
-	fn func(cur domain.CanonicalSessionLifecycle) (domain.CanonicalSessionLifecycle, bool),
-) (bool, error) {
+func (m *Manager) mutate(ctx context.Context, id domain.SessionID, fn func(domain.SessionRecord, time.Time) (domain.SessionRecord, bool)) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	rec, ok, err := m.store.GetSession(ctx, id)
 	if err != nil || !ok {
-		return false, err
-	}
-	next, changed := fn(rec.Lifecycle)
-	if !changed {
-		return false, nil
-	}
-	next.Version = domain.LifecycleVersion
-	rec.Lifecycle = next
-	rec.UpdatedAt = m.clock()
-	if err := m.store.UpdateSession(ctx, rec); err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
-// ---- OBSERVE entrypoints ----
-
-// ApplyRuntimeObservation feeds the probe decider. is_alive always tracks the
-// verdict; the session state follows the runtime-write rule; a non-detecting
-// verdict clears stale detecting memory.
-func (m *Manager) ApplyRuntimeObservation(ctx context.Context, id domain.SessionID, f ports.RuntimeFacts) error {
-	changed, err := m.mutate(ctx, id, func(cur domain.CanonicalSessionLifecycle) (domain.CanonicalSessionLifecycle, bool) {
-		d := decide.ResolveProbeDecision(probeInput(f, cur, m.window))
-		next := cur
-		ch := false
-		if next.IsAlive != d.IsAlive {
-			next.IsAlive, ch = d.IsAlive, true
-		}
-		if !isTerminal(cur.Session.State) {
-			if writeRuntimeSession(d, cur) {
-				ch = setSessionState(&next, d.SessionState, d.TerminationReason) || ch
-			}
-			ch = setDetecting(&next, d.Detecting) || ch
-		}
-		return next, ch
-	})
-	if err != nil || !changed {
 		return err
 	}
-	return m.runReactions(ctx, id, reactionContent{})
+	now := m.clock()
+	next, changed := fn(rec, now)
+	if !changed {
+		return nil
+	}
+	next.UpdatedAt = now
+	if err := m.store.UpdateSession(ctx, next); err != nil {
+		return err
+	}
+	return nil
 }
 
-// ApplyActivitySignal updates the activity axis. Only a valid signal is
-// authoritative, and it is proof of life: it may resolve a detecting session and
-// move the session out of any non-terminal state.
+// ApplyRuntimeObservation only writes when runtime liveness is unambiguous. A
+// failed probe or liveness disagreement is ignored; no transient lifecycle state is stored.
+func (m *Manager) ApplyRuntimeObservation(ctx context.Context, id domain.SessionID, f ports.RuntimeFacts) error {
+	return m.mutate(ctx, id, func(cur domain.SessionRecord, now time.Time) (domain.SessionRecord, bool) {
+		if cur.IsTerminated || !runtimeClearlyDead(f, cur.Activity, now, m.window) {
+			return cur, false
+		}
+		next := cur
+		next.IsTerminated = true
+		next.Activity = domain.Activity{State: domain.ActivityExited, LastActivityAt: timeOr(f.ObservedAt, now)}
+		return next, true
+	})
+}
+
+// ApplyActivitySignal records an authoritative agent activity signal.
 func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, s ports.ActivitySignal) error {
 	if !s.Valid {
 		return nil
 	}
-	changed, err := m.mutate(ctx, id, func(cur domain.CanonicalSessionLifecycle) (domain.CanonicalSessionLifecycle, bool) {
-		if isTerminal(cur.Session.State) {
+	return m.mutate(ctx, id, func(cur domain.SessionRecord, now time.Time) (domain.SessionRecord, bool) {
+		if cur.IsTerminated {
 			return cur, false
 		}
 		next := cur
-		ch := false
-		act := domain.ActivitySubstate{State: s.State, LastActivityAt: nowOr(s.Timestamp), Source: s.Source}
-		if !sameActivity(cur.Activity, act) {
-			next.Activity, ch = act, true
+		act := domain.Activity{State: s.State, LastActivityAt: timeOr(s.Timestamp, now)}
+		if sameActivity(cur.Activity, act) {
+			return cur, false
 		}
-		if st, ok := activityToSession(s.State); ok {
-			ch = setSessionState(&next, st, domain.TermNone) || ch
-			if next.Detecting != nil {
-				next.Detecting, ch = nil, true
-			}
+		next.Activity = act
+		if s.State == domain.ActivityExited {
+			next.IsTerminated = true
 		}
-		if s.State != domain.ActivityExited && !next.IsAlive {
-			next.IsAlive, ch = true, true
-		}
-		return next, ch
+		return next, true
 	})
-	if err != nil || !changed {
-		return err
-	}
-	return m.runReactions(ctx, id, reactionContent{})
 }
 
-// ApplyPRObservation records the observed PR facts in the pr tables, terminates
-// the session on a merge, and fires the PR-driven reactions. A failed fetch is
-// dropped (failed probe != "PR closed").
-func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o ports.PRObservation) error {
-	if !o.Fetched {
-		return nil
-	}
-	rec, ok, err := m.store.GetSession(ctx, id)
-	if err != nil || !ok {
-		return err
-	}
-	if err := m.writePR(ctx, id, o); err != nil {
-		return err
-	}
-
-	if o.Merged {
-		changed, err := m.mutate(ctx, id, func(cur domain.CanonicalSessionLifecycle) (domain.CanonicalSessionLifecycle, bool) {
-			if isTerminal(cur.Session.State) {
-				return cur, false
-			}
-			next := cur
-			next.Session.State = domain.SessionTerminated
-			next.TerminationReason = domain.TermPRMerged
-			next.IsAlive = false
-			next.Detecting = nil
-			return next, true
-		})
-		if err != nil {
-			return err
-		}
-		if changed {
-			m.clearReactions(id)
-			return m.fireNotify(ctx, id, rec.ProjectID, rxMerged, reactions[rxMerged])
-		}
-		return nil
-	}
-
-	return m.runReactions(ctx, id, prContent(o))
-}
-
-// writePR persists the observation's scalar facts, check runs, and comment set
-// in one atomic store call. PR-table CDC is emitted by the DB triggers.
-func (m *Manager) writePR(ctx context.Context, id domain.SessionID, o ports.PRObservation) error {
-	now := m.clock()
-	row := domain.PRRow{
-		URL: o.URL, SessionID: string(id), Number: o.Number,
-		Draft: o.Draft, Merged: o.Merged, Closed: o.Closed,
-		CI: o.CI, Review: o.Review, Mergeability: o.Mergeability, UpdatedAt: now,
-	}
-	checks := make([]domain.PRCheckRow, len(o.Checks))
-	for i, c := range o.Checks {
-		c.PRURL = o.URL
-		if c.CreatedAt.IsZero() {
-			c.CreatedAt = now
-		}
-		checks[i] = c
-	}
-	comments := make([]domain.PRComment, len(o.Comments))
-	for i, c := range o.Comments {
-		if c.CreatedAt.IsZero() {
-			c.CreatedAt = now
-		}
-		comments[i] = c
-	}
-	return m.pr.WritePR(ctx, row, checks, comments)
-}
-
-// ---- mutation commands from the Session Manager ----
-
-// OnSpawnCompleted marks a session live and folds in its handles. It serves a
-// fresh spawn (not_started -> live) and a restore (terminal -> reopened): both
-// land at not_started + is_alive, with the agent acknowledging via first activity.
-func (m *Manager) OnSpawnCompleted(ctx context.Context, id domain.SessionID, o ports.SpawnOutcome) error {
+// MarkSpawned marks a newly spawned or restored session live and stores runtime/workspace handles.
+func (m *Manager) MarkSpawned(ctx context.Context, id domain.SessionID, metadata domain.SessionMetadata) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	rec, ok, err := m.store.GetSession(ctx, id)
@@ -219,115 +101,32 @@ func (m *Manager) OnSpawnCompleted(ctx context.Context, id domain.SessionID, o p
 		return err
 	}
 	if !ok {
-		return fmt.Errorf("lifecycle: OnSpawnCompleted for unknown session %q", id)
+		return fmt.Errorf("lifecycle: MarkSpawned for unknown session %q", id)
 	}
-	rec.Lifecycle.Version = domain.LifecycleVersion
-	rec.Lifecycle.Session.State = domain.SessionNotStarted
-	rec.Lifecycle.TerminationReason = domain.TermNone
-	rec.Lifecycle.IsAlive = true
-	rec.Lifecycle.Detecting = nil
-	rec.Metadata = mergeMetadata(rec.Metadata, spawnMetadata(o))
-	rec.UpdatedAt = m.clock()
+	now := m.clock()
+	rec.IsTerminated = false
+	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}
+	rec.Metadata = mergeMetadata(rec.Metadata, metadata)
+	rec.UpdatedAt = now
 	return m.store.UpdateSession(ctx, rec)
 }
 
-// OnKillRequested is the explicit terminal-write path (the one terminal that does
-// not go through the inferred-death decider). It fires no reaction — an explicit
-// kill is a human action — but drops the session's ACT state.
-func (m *Manager) OnKillRequested(ctx context.Context, id domain.SessionID, reason domain.TerminationReason) error {
-	_, err := m.mutate(ctx, id, func(cur domain.CanonicalSessionLifecycle) (domain.CanonicalSessionLifecycle, bool) {
-		if isTerminal(cur.Session.State) {
+// MarkTerminated marks a session terminated without tearing down external resources.
+func (m *Manager) MarkTerminated(ctx context.Context, id domain.SessionID) error {
+	return m.mutate(ctx, id, func(cur domain.SessionRecord, now time.Time) (domain.SessionRecord, bool) {
+		if cur.IsTerminated {
 			return cur, false
 		}
-		if reason == domain.TermNone {
-			reason = domain.TermManuallyKilled
-		}
-		next := cur
-		next.Session.State = domain.SessionTerminated
-		next.TerminationReason = reason
-		next.IsAlive = false
-		next.Detecting = nil
-		return next, true
+		cur.IsTerminated = true
+		cur.Activity = domain.Activity{State: domain.ActivityExited, LastActivityAt: now}
+		return cur, true
 	})
-	m.clearReactions(id)
-	return err
 }
 
-// RunningSessions snapshots every non-terminal session for the reaper to probe.
-// Detecting sessions are included — a fresh probe is the only fact that recovers
-// or escalates them.
-func (m *Manager) RunningSessions(ctx context.Context) ([]domain.SessionRecord, error) {
-	all, err := m.store.ListAllSessions(ctx)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]domain.SessionRecord, 0, len(all))
-	for _, rec := range all {
-		if !isTerminal(rec.Lifecycle.Session.State) {
-			out = append(out, rec)
-		}
-	}
-	return out, nil
+func sameActivity(a, b domain.Activity) bool {
+	return a.State == b.State && a.LastActivityAt.Equal(b.LastActivityAt)
 }
 
-// ---- diff + metadata helpers ----
-
-// setSessionState sets the state (and, for a terminal state, the reason) when it
-// differs. An empty state means "decider doesn't address the session axis".
-func setSessionState(next *domain.CanonicalSessionLifecycle, st domain.SessionState, reason domain.TerminationReason) bool {
-	if st == "" {
-		return false
-	}
-	changed := false
-	if next.Session.State != st {
-		next.Session.State, changed = st, true
-	}
-	want := domain.TermNone
-	if st == domain.SessionTerminated {
-		want = reason
-	}
-	if next.TerminationReason != want {
-		next.TerminationReason, changed = want, true
-	}
-	return changed
-}
-
-func setDetecting(next *domain.CanonicalSessionLifecycle, d *domain.DetectingState) bool {
-	if d != nil {
-		if next.Detecting != nil && *next.Detecting == *d {
-			return false
-		}
-		dc := *d
-		next.Detecting = &dc
-		return true
-	}
-	if next.Detecting != nil {
-		next.Detecting = nil
-		return true
-	}
-	return false
-}
-
-// sameActivity compares with time-aware equality (== on time.Time is
-// monotonic-clock sensitive and would spuriously report changes).
-func sameActivity(a, b domain.ActivitySubstate) bool {
-	return a.State == b.State && a.Source == b.Source && a.LastActivityAt.Equal(b.LastActivityAt)
-}
-
-func spawnMetadata(o ports.SpawnOutcome) domain.SessionMetadata {
-	return domain.SessionMetadata{
-		Branch:          o.Branch,
-		WorkspacePath:   o.WorkspacePath,
-		RuntimeHandleID: o.RuntimeHandle.ID,
-		RuntimeName:     o.RuntimeHandle.RuntimeName,
-		AgentSessionID:  o.AgentSessionID,
-		Prompt:          o.Prompt,
-	}
-}
-
-// mergeMetadata overlays set fields of in onto base without clobbering an
-// existing value with an empty one (a partial spawn write keeps the branch set
-// at creation).
 func mergeMetadata(base, in domain.SessionMetadata) domain.SessionMetadata {
 	set := func(dst *string, v string) {
 		if v != "" {
@@ -337,7 +136,6 @@ func mergeMetadata(base, in domain.SessionMetadata) domain.SessionMetadata {
 	set(&base.Branch, in.Branch)
 	set(&base.WorkspacePath, in.WorkspacePath)
 	set(&base.RuntimeHandleID, in.RuntimeHandleID)
-	set(&base.RuntimeName, in.RuntimeName)
 	set(&base.AgentSessionID, in.AgentSessionID)
 	set(&base.Prompt, in.Prompt)
 	return base

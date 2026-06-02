@@ -1,31 +1,45 @@
+//go:build !windows
+
 package terminal
 
 import (
 	"context"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/tmux"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/zellij"
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-// TestSessionStreamsRealTmuxPane attaches a real PTY to a real tmux session and
+// TestSessionStreamsRealZellijPane attaches a real PTY to a real Zellij session and
 // asserts output streams back, then that killing the pane stops the session
-// without a re-attach storm. Skipped when tmux is unavailable.
-func TestSessionStreamsRealTmuxPane(t *testing.T) {
-	tmuxBin, err := exec.LookPath("tmux")
+// without a re-attach storm. Skipped when Zellij is unavailable.
+func TestSessionStreamsRealZellijPane(t *testing.T) {
+	zellijBin, err := exec.LookPath("zellij")
 	if err != nil {
-		t.Skip("tmux unavailable")
+		t.Skip("zellij unavailable")
 	}
 
 	name := "ao-term-it-" + strings.ReplaceAll(t.Name(), "/", "-")
-	mustRun(t, tmuxBin, "new-session", "-d", "-s", name, "/bin/sh")
-	t.Cleanup(func() { _ = exec.Command(tmuxBin, "kill-session", "-t", "="+name).Run() })
-
-	rt := tmux.New(tmux.Options{Binary: tmuxBin})
-	handle := ports.RuntimeHandle{ID: name}
+	socketDir := filepath.Join(os.TempDir(), name+"-socket")
+	if err := os.MkdirAll(socketDir, 0o755); err != nil {
+		t.Fatalf("mkdir socket dir: %v", err)
+	}
+	rt := zellij.New(zellij.Options{Binary: zellijBin, SocketDir: socketDir, ConfigDir: t.TempDir(), Timeout: 5 * time.Second})
+	handle, err := rt.Create(context.Background(), ports.RuntimeConfig{
+		SessionID:     domain.SessionID(name),
+		WorkspacePath: t.TempDir(),
+		Argv:          []string{"printf", "AO_READY\\n"},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	t.Cleanup(func() { _ = rt.Destroy(context.Background(), handle) })
 
 	s := newSession(name, handle, rt, defaultSpawn, testLogger())
 	ctx, cancel := context.WithCancel(context.Background())
@@ -39,14 +53,9 @@ func TestSessionStreamsRealTmuxPane(t *testing.T) {
 	eventually(t, 3*time.Second, func() bool { return s.write([]byte("echo AO_MARKER_42\n")) == nil })
 	eventually(t, 5*time.Second, func() bool { return strings.Contains(got.string(), "AO_MARKER_42") })
 
-	// Kill the pane: the session must observe it as gone and not re-attach.
-	mustRun(t, tmuxBin, "kill-session", "-t", "="+name)
-	eventually(t, 5*time.Second, func() bool { return s.isExited() })
-}
-
-func mustRun(t *testing.T, name string, args ...string) {
-	t.Helper()
-	if out, err := exec.Command(name, args...).CombinedOutput(); err != nil {
-		t.Fatalf("%s %s: %v\n%s", name, strings.Join(args, " "), err, out)
+	// Kill the session: the terminal session must observe it as gone and not re-attach.
+	if err := rt.Destroy(context.Background(), handle); err != nil {
+		t.Fatalf("Destroy: %v", err)
 	}
+	eventually(t, 5*time.Second, func() bool { return s.isExited() })
 }

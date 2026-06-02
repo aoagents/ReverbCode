@@ -14,43 +14,30 @@ CREATE TABLE projects (
     archived_at     TIMESTAMP
 );
 
--- sessions is the canonical record. id is "{project_id}-{num}" (e.g. mer-1) — a
--- single string key, so every inbound FK is single-column. num is the per-project
--- counter (computed at insert under the write mutex). Operational metadata is
--- folded in (no separate table). is_alive replaces the old runtime axis; there is
--- no revision column — the per-session write mutex serializes and change_log.seq
--- orders. The display status is derived on read (from this + the pr row), never
--- stored.
+-- sessions is the durable session fact row. id is "{project_id}-{num}"
+-- (e.g. mer-1), so every inbound FK is single-column. num is the per-project
+-- counter. The only persisted status-like facts are activity_state and
+-- is_terminated; display status is derived on read from this row plus PR facts.
 CREATE TABLE sessions (
     id                      TEXT PRIMARY KEY,
     project_id              TEXT NOT NULL REFERENCES projects (id),
     num                     INTEGER NOT NULL,
     issue_id                TEXT NOT NULL DEFAULT '',
-    kind                    TEXT NOT NULL DEFAULT 'worker',
+    kind                    TEXT NOT NULL DEFAULT 'worker'
+        CHECK (kind IN ('worker', 'orchestrator')),
     harness                 TEXT NOT NULL DEFAULT ''
         CHECK (harness IN ('', 'claude-code', 'codex', 'aider', 'opencode')),
 
-    session_state           TEXT NOT NULL
-        CHECK (session_state IN ('not_started', 'working', 'idle', 'needs_input', 'stuck', 'detecting', 'done', 'terminated')),
-    -- only terminal sessions carry a reason; '' otherwise.
-    termination_reason      TEXT NOT NULL DEFAULT ''
-        CHECK (termination_reason IN ('', 'manually_killed', 'runtime_lost', 'agent_process_exited', 'probe_failure', 'error_in_process', 'auto_cleanup', 'pr_merged')),
-    is_alive                INTEGER NOT NULL DEFAULT 0,
-
-    activity_state          TEXT NOT NULL DEFAULT 'idle',
+    activity_state          TEXT NOT NULL DEFAULT 'idle'
+        CHECK (activity_state IN ('active', 'idle', 'waiting_input', 'blocked', 'exited')),
     activity_last_at        TIMESTAMP NOT NULL,
-    activity_source         TEXT NOT NULL DEFAULT 'none',
+    activity_source         TEXT NOT NULL DEFAULT 'none'
+        CHECK (activity_source IN ('native', 'terminal', 'hook', 'runtime', 'none')),
+    is_terminated           BOOLEAN NOT NULL DEFAULT FALSE,
 
-    -- detecting quarantine memory; NULL when the session is not in detecting.
-    detecting_attempts      INTEGER,
-    detecting_started_at    TIMESTAMP,
-    detecting_evidence_hash TEXT,
-
-    -- folded-in operational handles (was the session_metadata table)
     branch                  TEXT NOT NULL DEFAULT '',
     workspace_path          TEXT NOT NULL DEFAULT '',
     runtime_handle_id       TEXT NOT NULL DEFAULT '',
-    runtime_name            TEXT NOT NULL DEFAULT '',
     agent_session_id        TEXT NOT NULL DEFAULT '',
     prompt                  TEXT NOT NULL DEFAULT '',
 
@@ -80,9 +67,8 @@ CREATE TABLE pr (
 );
 CREATE INDEX idx_pr_session ON pr (session_id);
 
--- pr_checks is CI run history: one row per (PR, check, commit). The CI-fix-loop
--- brake is a LIMIT 3 query over it ("last 3 runs of this check all failed?") — no
--- counter is stored. Re-polling the same commit upserts the same row.
+-- pr_checks is CI run history: one row per (PR, check, commit). Re-polling the
+-- same commit upserts the same row.
 CREATE TABLE pr_checks (
     pr_url      TEXT NOT NULL REFERENCES pr (url) ON DELETE CASCADE,
     name        TEXT NOT NULL,
@@ -120,8 +106,9 @@ CREATE TABLE change_log (
     seq        INTEGER PRIMARY KEY AUTOINCREMENT,
     project_id TEXT NOT NULL REFERENCES projects (id),
     session_id TEXT REFERENCES sessions (id),
-    event_type TEXT NOT NULL,
-    payload    TEXT NOT NULL,
+    event_type TEXT NOT NULL
+        CHECK (event_type IN ('session_created', 'session_updated', 'pr_created', 'pr_updated', 'pr_check_recorded')),
+    payload    TEXT NOT NULL CHECK (json_valid(payload)),
     created_at TIMESTAMP NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX idx_change_log_project ON change_log (project_id, seq);
@@ -138,8 +125,7 @@ AFTER INSERT ON sessions
 BEGIN
     INSERT INTO change_log (project_id, session_id, event_type, payload, created_at)
     VALUES (NEW.project_id, NEW.id, 'session_created',
-        json_object('id', NEW.id, 'state', NEW.session_state, 'terminationReason', NEW.termination_reason,
-                    'isAlive', NEW.is_alive, 'activity', NEW.activity_state),
+        json_object('id', NEW.id, 'activity', NEW.activity_state, 'isTerminated', json(CASE WHEN NEW.is_terminated THEN 'true' ELSE 'false' END)),
         NEW.updated_at);
 END;
 -- +goose StatementEnd
@@ -147,15 +133,12 @@ END;
 -- +goose StatementBegin
 CREATE TRIGGER sessions_cdc_update
 AFTER UPDATE ON sessions
-WHEN OLD.session_state <> NEW.session_state
-    OR OLD.termination_reason <> NEW.termination_reason
-    OR OLD.is_alive <> NEW.is_alive
-    OR OLD.activity_state <> NEW.activity_state
+WHEN OLD.activity_state <> NEW.activity_state
+    OR OLD.is_terminated <> NEW.is_terminated
 BEGIN
     INSERT INTO change_log (project_id, session_id, event_type, payload, created_at)
     VALUES (NEW.project_id, NEW.id, 'session_updated',
-        json_object('id', NEW.id, 'state', NEW.session_state, 'terminationReason', NEW.termination_reason,
-                    'isAlive', NEW.is_alive, 'activity', NEW.activity_state),
+        json_object('id', NEW.id, 'activity', NEW.activity_state, 'isTerminated', json(CASE WHEN NEW.is_terminated THEN 'true' ELSE 'false' END)),
         NEW.updated_at);
 END;
 -- +goose StatementEnd
@@ -217,7 +200,7 @@ BEGIN
         (SELECT session_id FROM pr WHERE url = NEW.pr_url),
         'pr_check_recorded',
         json_object('pr', NEW.pr_url, 'name', NEW.name, 'commit', NEW.commit_hash, 'status', NEW.status),
-        NEW.created_at);
+        datetime('now'));
 END;
 -- +goose StatementEnd
 

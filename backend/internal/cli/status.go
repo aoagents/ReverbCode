@@ -20,17 +20,27 @@ type statusOptions struct {
 	json bool
 }
 
+type daemonState string
+
+const (
+	stateReady     daemonState = "ready"
+	stateStopped   daemonState = "stopped"
+	stateStale     daemonState = "stale"
+	stateUnhealthy daemonState = "unhealthy"
+	stateNotReady  daemonState = "not_ready"
+)
+
 type daemonStatus struct {
-	State     string     `json:"state"`
-	PID       int        `json:"pid,omitempty"`
-	Port      int        `json:"port,omitempty"`
-	StartedAt *time.Time `json:"startedAt,omitempty"`
-	Uptime    string     `json:"uptime,omitempty"`
-	RunFile   string     `json:"runFile"`
-	DataDir   string     `json:"dataDir"`
-	Health    string     `json:"health,omitempty"`
-	Ready     string     `json:"ready,omitempty"`
-	Error     string     `json:"error,omitempty"`
+	State     daemonState `json:"state"`
+	PID       int         `json:"pid,omitempty"`
+	Port      int         `json:"port,omitempty"`
+	StartedAt *time.Time  `json:"startedAt,omitempty"`
+	Uptime    string      `json:"uptime,omitempty"`
+	RunFile   string      `json:"runFile"`
+	DataDir   string      `json:"dataDir"`
+	Health    string      `json:"health,omitempty"`
+	Ready     string      `json:"ready,omitempty"`
+	Error     string      `json:"error,omitempty"`
 	owned     bool
 }
 
@@ -45,6 +55,7 @@ func newStatusCommand(ctx *commandContext) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "Show AO daemon status",
+		Args:  noArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			st, err := ctx.inspectDaemon(cmd.Context())
 			if err != nil {
@@ -65,7 +76,7 @@ func (c *commandContext) inspectDaemon(ctx context.Context) (daemonStatus, error
 	if err != nil {
 		return daemonStatus{}, err
 	}
-	st := daemonStatus{State: "stopped", RunFile: cfg.RunFilePath, DataDir: cfg.DataDir}
+	st := daemonStatus{State: stateStopped, RunFile: cfg.RunFilePath, DataDir: cfg.DataDir}
 
 	info, err := runfile.Read(cfg.RunFilePath)
 	if err != nil {
@@ -82,47 +93,47 @@ func (c *commandContext) inspectDaemon(ctx context.Context) (daemonStatus, error
 	st.Uptime = formatUptime(c.deps.Now().Sub(info.StartedAt))
 
 	if !c.deps.ProcessAlive(info.PID) {
-		st.State = "stale"
+		st.State = stateStale
 		st.Error = "run-file points to a dead process"
 		return st, nil
 	}
 
 	health, err := c.readProbe(ctx, info.Port, "healthz")
 	if err != nil {
-		st.State = "unhealthy"
+		st.State = stateUnhealthy
 		st.Error = err.Error()
 		return st, nil
 	}
 	if err := verifyProbeOwner(health, info.PID, "healthz"); err != nil {
-		st.State = "stale"
+		st.State = stateStale
 		st.Error = err.Error()
 		return st, nil
 	}
 	st.owned = true
 	st.Health = health.Status
 	if health.Status != "ok" {
-		st.State = "unhealthy"
+		st.State = stateUnhealthy
 		return st, nil
 	}
 
 	ready, err := c.readProbe(ctx, info.Port, "readyz")
 	if err != nil {
-		st.State = "not_ready"
+		st.State = stateNotReady
 		st.Error = err.Error()
 		return st, nil
 	}
 	if err := verifyProbeOwner(ready, info.PID, "readyz"); err != nil {
-		st.State = "stale"
+		st.State = stateStale
 		st.owned = false
 		st.Error = err.Error()
 		return st, nil
 	}
 	st.Ready = ready.Status
-	if ready.Status == "ready" {
-		st.State = "ready"
+	if ready.Status == string(stateReady) {
+		st.State = stateReady
 		return st, nil
 	}
-	st.State = "not_ready"
+	st.State = stateNotReady
 	return st, nil
 }
 

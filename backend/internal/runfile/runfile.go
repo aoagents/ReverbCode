@@ -12,6 +12,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/processalive"
 )
 
 // Info is the on-disk handshake payload.
@@ -86,6 +88,20 @@ func Remove(path string) error {
 	return nil
 }
 
+// RemoveIfOwned deletes running.json only if it still belongs to ownerPID. This
+// prevents a shutting-down daemon from removing a successor's freshly written
+// handshake after an overlapping restart.
+func RemoveIfOwned(path string, ownerPID int) error {
+	info, err := Read(path)
+	if err != nil {
+		return err
+	}
+	if info == nil || info.PID != ownerPID {
+		return nil
+	}
+	return Remove(path)
+}
+
 // CheckStale inspects an existing run-file before the new daemon binds. It
 // returns:
 //
@@ -104,7 +120,7 @@ func CheckStale(path string) (*Info, error) {
 	if info == nil || info.PID <= 0 {
 		return nil, nil
 	}
-	if processAlive(info.PID) {
+	if processalive.Alive(info.PID) {
 		return info, nil
 	}
 	return nil, nil

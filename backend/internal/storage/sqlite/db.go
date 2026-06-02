@@ -1,6 +1,6 @@
-// Package sqlite is the durable persistence adapter: the goose-managed schema,
-// typed CRUD over sqlc-generated queries, and the read side of the
-// trigger-driven CDC (it reads change_log; the DB triggers write it).
+// Package sqlite owns SQLite connection setup and goose-managed schema
+// migrations. Typed CRUD lives in the store subpackage; this package keeps the
+// public Open entrypoint and compatibility aliases for callers.
 package sqlite
 
 import (
@@ -12,11 +12,17 @@ import (
 	"sync"
 
 	"github.com/pressly/goose/v3"
+
+	sqlitestore "github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/store"
+
 	// modernc.org/sqlite is the pure-Go (CGO-free) SQLite driver — chosen so the
 	// daemon cross-compiles and ships as a static binary with no libsqlite/CGO
 	// toolchain dependency, at the cost of some raw throughput vs a C-backed driver.
 	_ "modernc.org/sqlite"
 )
+
+// Store is the SQLite-backed persistence layer.
+type Store = sqlitestore.Store
 
 //go:embed migrations/*.sql
 var migrationsFS embed.FS
@@ -68,7 +74,7 @@ func Open(dataDir string) (*Store, error) {
 	readDB.SetMaxOpenConns(maxReaders)
 	readDB.SetMaxIdleConns(maxReaders)
 
-	return NewStore(writeDB, readDB), nil
+	return sqlitestore.NewStore(writeDB, readDB), nil
 }
 
 // gooseMu serialises calls into goose. goose v3 keeps its baseFS / logger /

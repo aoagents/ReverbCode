@@ -45,11 +45,17 @@ func TestSessionReplaysRingBufferOnSubscribe(t *testing.T) {
 	go s.run(ctx)
 
 	pty.push([]byte("scrollback"))
-	eventually(t, time.Second, func() bool { return len(s.ring.snapshot()) == len("scrollback") })
+	eventually(t, time.Second, func() bool { return ringLen(s) == len("scrollback") })
 
 	var late safeBytes
 	s.subscribe(late.add, nil)
 	eventually(t, time.Second, func() bool { return late.string() == "scrollback" })
+}
+
+func ringLen(s *session) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.ring.snapshot())
 }
 
 func TestSessionWriteAndResizeReachPTY(t *testing.T) {
@@ -75,7 +81,7 @@ func TestSessionWriteAndResizeReachPTY(t *testing.T) {
 }
 
 func TestSessionSkipsReattachOnCleanExit(t *testing.T) {
-	src := &fakeSource{alive: false} // tmux session gone -> no re-attach
+	src := &fakeSource{alive: false} // Zellij session gone -> no re-attach
 	pty := newFakePTY()
 	sp := &fakeSpawner{ptys: []*fakePTY{pty}}
 	s := newTestSession(src, sp.spawn)
@@ -91,7 +97,7 @@ func TestSessionSkipsReattachOnCleanExit(t *testing.T) {
 	select {
 	case <-exited:
 	case <-time.After(time.Second):
-		t.Fatal("expected exit notification after clean pane exit")
+		t.Fatal("expected exit callback after clean pane exit")
 	}
 	if got := sp.calls(); got != 1 {
 		t.Fatalf("expected exactly one attach, got %d", got)

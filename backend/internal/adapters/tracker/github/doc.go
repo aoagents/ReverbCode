@@ -36,7 +36,7 @@
 //   - No List pagination beyond a single page (callers requesting more than
 //     100 results need to wait for the observer/polling work in issue #35).
 //   - No webhook receiver, no polling goroutine, no fact projection into
-//     LCM (issue #35).
+//     the PR service (issue #35).
 //   - No richer per-provider metadata on Issue (milestones, project boards,
 //     reactions); the port only carries fields all v1 providers can fill.
 package github

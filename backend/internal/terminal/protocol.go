@@ -4,9 +4,9 @@ package terminal
 // ("ch"), mirroring the legacy Node mux server so the existing xterm client can
 // connect unchanged. One socket carries every logical stream:
 //
-//	ch "terminal" — per-pane byte stream, keyed by an opaque client-chosen id
+//	ch "terminal" — per-pane byte stream, keyed by an opaque runtime handle id
 //	ch "subscribe" — the client opts into the session-state channel
-//	ch "sessions"  — server-pushed session-state notifications (CDC-fed)
+//	ch "sessions"  — server-pushed session-state messages (CDC-fed)
 //	ch "system"    — liveness; ws-level ping/pong also runs underneath
 //
 // Terminal payloads are base64 in the Data field: PTY output is arbitrary bytes

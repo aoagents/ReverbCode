@@ -1,5 +1,7 @@
 package gitworktree
 
+import "strings"
+
 func checkRefFormatBranchArgs(repo, branch string) []string {
 	return []string{"-C", repo, "check-ref-format", "--branch", branch}
 }
@@ -34,12 +36,11 @@ func worktreeListPorcelainArgs(repo string) []string {
 }
 
 func baseRefCandidates(branch, defaultBranch string) []string {
-	return []string{"origin/" + branch, "origin/" + defaultBranch, branch}
-}
-
-func chooseWorktreeAddArgs(repo, path, branch, baseRef string, localBranchExists bool) []string {
-	if localBranchExists {
-		return worktreeAddBranchArgs(repo, path, branch)
+	candidates := []string{"origin/" + branch}
+	if strings.Contains(defaultBranch, "/") {
+		candidates = append(candidates, defaultBranch)
+	} else {
+		candidates = append(candidates, "origin/"+defaultBranch)
 	}
-	return worktreeAddNewBranchArgs(repo, branch, path, baseRef)
+	return append(candidates, branch)
 }

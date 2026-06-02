@@ -1,23 +1,13 @@
 package domain
 
 // TrackerProvider identifies an issue-tracker provider implementation.
-// Provider differences (label-driven vs state-machine vs close-reason) are
-// absorbed inside each adapter; the rest of the system only sees
-// NormalizedIssueState.
 type TrackerProvider string
 
-// Supported tracker providers.
-const (
-	TrackerProviderGitHub TrackerProvider = "github"
-	TrackerProviderGitLab TrackerProvider = "gitlab"
-	TrackerProviderLinear TrackerProvider = "linear"
-)
+// TrackerProviderGitHub is the only supported issue-tracker provider.
+const TrackerProviderGitHub TrackerProvider = "github"
 
-// TrackerID identifies a single issue across providers. Native is the
-// provider's own canonical form ("owner/repo#123" for GitHub,
-// "group/project#456" for GitLab, "ABC-789" for Linear) and is parsed by the
-// adapter. Provider is the discriminator the Session Manager uses to pick an
-// adapter.
+// TrackerID identifies one issue. Native is the provider's own canonical form
+// ("owner/repo#123" for GitHub) and is parsed by the adapter.
 type TrackerID struct {
 	Provider TrackerProvider `json:"provider"`
 	Native   string          `json:"native"`
@@ -37,9 +27,8 @@ const (
 	IssueCancelled  NormalizedIssueState = "cancelled"
 )
 
-// Issue is the minimum projection every tracker can produce. Fields are
-// added only when all v1 providers (GitHub, GitLab, Linear) can populate
-// them faithfully; richer metadata stays inside provider-specific code paths.
+// Issue is the minimum projection every tracker can produce. Provider-specific
+// metadata stays inside provider-specific code paths.
 type Issue struct {
 	ID        TrackerID            `json:"id"`
 	Title     string               `json:"title"`
@@ -50,11 +39,9 @@ type Issue struct {
 	Assignees []string             `json:"assignees,omitempty"`
 }
 
-// TrackerRepo identifies a repository (or its provider-equivalent) for
-// cross-issue queries like Tracker.List. Native is the provider's canonical
-// owner/project form: "owner/repo" for GitHub, "group/project" for GitLab.
-// Linear has no native repo concept; adapters may use a team or workspace
-// identifier in Native when this port reaches Linear.
+// TrackerRepo identifies a repository for cross-issue queries like Tracker.List.
+// Native is the provider's canonical owner/project form, e.g. "owner/repo" for
+// GitHub.
 type TrackerRepo struct {
 	Provider TrackerProvider `json:"provider"`
 	Native   string          `json:"native"`
@@ -77,12 +64,8 @@ const (
 // ListFilter is the query the Session Manager passes to Tracker.List.
 // Empty / zero values mean "no filter on this dimension".
 //
-// Limit is the requested page size. The adapter applies its own default
-// when zero and SILENTLY CAPS at the provider's per-page maximum — a
-// caller asking for more than the cap gets exactly cap items back with no
-// error and no indication of truncation. v1 has no auto-pagination;
-// callers needing more results need to wait for the observer/polling work
-// in issue #35.
+// Limit is the requested page size. The adapter applies its own default when
+// zero and caps at the provider's per-page maximum.
 type ListFilter struct {
 	State    ListStateFilter `json:"state,omitempty"`
 	Labels   []string        `json:"labels,omitempty"`

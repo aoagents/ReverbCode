@@ -12,30 +12,6 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 )
 
-// storeSource adapts sqlite.Store to cdc.Source — the same glue the daemon wires.
-type storeSource struct{ s *sqlite.Store }
-
-func (a storeSource) EventsAfter(ctx context.Context, after int64, limit int) ([]cdc.Event, error) {
-	rows, err := a.s.ReadChangeLogAfter(ctx, after, limit)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]cdc.Event, len(rows))
-	for i, r := range rows {
-		out[i] = cdc.Event{
-			Seq:       r.Seq,
-			ProjectID: r.ProjectID,
-			SessionID: r.SessionID,
-			Type:      cdc.EventType(r.EventType),
-			Payload:   json.RawMessage(r.Payload),
-			CreatedAt: r.CreatedAt,
-		}
-	}
-	return out, nil
-}
-
-func (a storeSource) LatestSeq(ctx context.Context) (int64, error) { return a.s.MaxChangeLogSeq(ctx) }
-
 func newStore(t *testing.T) *sqlite.Store {
 	t.Helper()
 	s, err := sqlite.Open(t.TempDir())
@@ -50,15 +26,12 @@ func seedSession(t *testing.T, s *sqlite.Store) domain.SessionRecord {
 	t.Helper()
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
-	if err := s.UpsertProject(ctx, sqlite.ProjectRow{ID: "mer", Path: "/m", RegisteredAt: now}); err != nil {
+	if err := s.UpsertProject(ctx, domain.ProjectRecord{ID: "mer", Path: "/m", RegisteredAt: now}); err != nil {
 		t.Fatal(err)
 	}
 	r, err := s.CreateSession(ctx, domain.SessionRecord{
 		ProjectID: "mer", Kind: domain.KindWorker,
-		Lifecycle: domain.CanonicalSessionLifecycle{
-			Session:  domain.SessionSubstate{State: domain.SessionWorking},
-			Activity: domain.ActivitySubstate{State: domain.ActivityActive, LastActivityAt: now, Source: domain.SourceNative},
-		},
+		Activity:  domain.Activity{State: domain.ActivityActive, LastActivityAt: now},
 		CreatedAt: now, UpdatedAt: now,
 	})
 	if err != nil {
@@ -74,18 +47,18 @@ func TestE2E_StoreWriteToBroadcast(t *testing.T) {
 	s := newStore(t)
 	r := seedSession(t, s) // -> session_created (seq 1)
 
-	r.Lifecycle.Session.State = domain.SessionIdle
+	r.Activity.State = domain.ActivityIdle
 	if err := s.UpdateSession(ctx, r); err != nil { // -> session_updated (seq 2)
 		t.Fatal(err)
 	}
-	if err := s.UpsertPR(ctx, domain.PRRow{URL: "pr1", SessionID: string(r.ID), UpdatedAt: r.UpdatedAt}); err != nil { // -> pr_created (seq 3)
+	if err := s.WritePR(ctx, domain.PullRequest{URL: "pr1", SessionID: r.ID, UpdatedAt: r.UpdatedAt}, nil, nil); err != nil { // -> pr_created (seq 3)
 		t.Fatal(err)
 	}
 
 	var got []cdc.Event
 	bc := cdc.NewBroadcaster()
 	bc.Subscribe(func(e cdc.Event) { got = append(got, e) })
-	p := cdc.NewPoller(storeSource{s}, bc, cdc.PollerConfig{}) // StartSeq 0: read from the top
+	p := cdc.NewPoller(s, bc, cdc.PollerConfig{}) // StartSeq 0: read from the top
 	if err := p.Poll(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +82,7 @@ func TestE2E_StoreWriteToBroadcast(t *testing.T) {
 	if err := json.Unmarshal(got[0].Payload, &payload); err != nil {
 		t.Fatalf("payload not JSON: %v", err)
 	}
-	if payload["id"] != string(r.ID) || payload["state"] != "working" {
+	if payload["id"] != string(r.ID) || payload["activity"] != "active" {
 		t.Fatalf("payload = %v", payload)
 	}
 
@@ -135,17 +108,21 @@ func TestE2E_ConcurrentPollerLiveDelivery(t *testing.T) {
 	bc := cdc.NewBroadcaster()
 	bc.Subscribe(func(e cdc.Event) { mu.Lock(); got = append(got, e); mu.Unlock() })
 
-	p := cdc.NewPoller(storeSource{s}, bc, cdc.PollerConfig{}) // from the top
+	p := cdc.NewPoller(s, bc, cdc.PollerConfig{}) // from the top
 	done := p.Start(ctx)
 
 	const n = 6
 	for i := 0; i < n; i++ {
-		r.Lifecycle.IsAlive = i%2 == 0 // toggles is_alive -> sessions_cdc_update fires
+		if i%2 == 0 {
+			r.Activity.State = domain.ActivityActive
+		} else {
+			r.Activity.State = domain.ActivityIdle
+		}
 		if err := s.UpdateSession(ctx, r); err != nil {
 			t.Fatal(err)
 		}
 	}
-	want := 1 + n // session_created + n updates
+	want := n // session_created + n-1 activity updates; first write is unchanged
 
 	deadline := time.Now().Add(5 * time.Second)
 	for {

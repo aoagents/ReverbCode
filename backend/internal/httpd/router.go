@@ -1,7 +1,5 @@
-// Package httpd builds and runs the daemon's HTTP surface. Phase 1a is the
-// skeleton: the middleware stack, liveness/readiness probes, and a graceful
-// run loop. Route registration (/api/v1, /events, /mux, /) lands in later
-// phases on top of the router this package builds.
+// Package httpd builds and runs the daemon's HTTP surface: middleware, health
+// probes, daemon control, REST APIs, and terminal WebSocket routing.
 package httpd
 
 import (
@@ -15,6 +13,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/daemonmeta"
+	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
 	"github.com/aoagents/agent-orchestrator/backend/internal/terminal"
 )
 
@@ -28,11 +27,8 @@ import (
 //	requestLogger  → slog-backed access log, stderr, carries the request id
 //	RealIP         → normalise client IP (loopback proxy from the dev server)
 //
-// The per-request Timeout from the decision table is deliberately NOT applied
-// globally: it must wrap only the /api/v1 REST surface, never the long-lived
-// SSE (/events) or WebSocket (/mux) surfaces, nor the always-must-answer health
-// probes. It is therefore applied per-surface when those subrouters are mounted
-// in Phase 1b; cfg.RequestTimeout carries the value through to that point.
+// The per-request timeout is deliberately not global: it wraps only bounded
+// REST routes, never long-lived terminal streams or health probes.
 func NewRouter(cfg config.Config, log *slog.Logger, termMgr *terminal.Manager) chi.Router {
 	return NewRouterWithAPI(cfg, log, termMgr, APIDeps{})
 }
@@ -43,9 +39,8 @@ type ControlDeps struct {
 	RequestShutdown func()
 }
 
-// NewRouterWithAPI is the dependency-injected variant. main.go calls it with
-// real Managers when they exist; tests/dev wiring inject mocks explicitly.
-// Missing Managers intentionally keep the route-shell 501 behavior.
+// NewRouterWithAPI is the dependency-injected variant. Missing Managers keep
+// routes registered but return OpenAPI-backed 501 responses.
 func NewRouterWithAPI(cfg config.Config, log *slog.Logger, termMgr *terminal.Manager, deps APIDeps) chi.Router {
 	return NewRouterWithControl(cfg, log, termMgr, deps, ControlDeps{})
 }
@@ -53,6 +48,7 @@ func NewRouterWithAPI(cfg config.Config, log *slog.Logger, termMgr *terminal.Man
 // NewRouterWithControl is NewRouterWithAPI plus daemon-control hooks: it mounts
 // the same API surface and additionally wires the ControlDeps callbacks.
 func NewRouterWithControl(cfg config.Config, log *slog.Logger, termMgr *terminal.Manager, deps APIDeps, control ControlDeps) chi.Router {
+	log = loggerOrDefault(log)
 	r := chi.NewRouter()
 
 	r.Use(middleware.Recoverer)
@@ -67,7 +63,7 @@ func NewRouterWithControl(cfg config.Config, log *slog.Logger, termMgr *terminal
 	r.MethodNotAllowed(methodNotAllowedJSON)
 
 	mountHealth(r)
-	mountMux(r, termMgr, log)
+	mountTerminalMux(r, termMgr, log)
 	mountControl(r, control)
 	NewAPI(cfg, deps).Register(r)
 
@@ -91,13 +87,13 @@ func mountControl(r chi.Router, deps ControlDeps) {
 	}
 	r.Post("/shutdown", func(w http.ResponseWriter, req *http.Request) {
 		if !localControlRequest(req) {
-			writeJSON(w, http.StatusForbidden, map[string]any{
+			envelope.WriteJSON(w, http.StatusForbidden, map[string]any{
 				"status":  "forbidden",
 				"service": daemonmeta.ServiceName,
 			})
 			return
 		}
-		writeJSON(w, http.StatusAccepted, map[string]any{
+		envelope.WriteJSON(w, http.StatusAccepted, map[string]any{
 			"status":  "shutting_down",
 			"service": daemonmeta.ServiceName,
 			"pid":     os.Getpid(),
@@ -132,18 +128,17 @@ func localControlRequest(r *http.Request) bool {
 // handleHealthz is the liveness probe: it answers 200 as long as the process is
 // up and serving. It does no dependency checks by design.
 func handleHealthz(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{
+	envelope.WriteJSON(w, http.StatusOK, map[string]any{
 		"status":  "ok",
 		"service": daemonmeta.ServiceName,
 		"pid":     os.Getpid(),
 	})
 }
 
-// handleReadyz is the readiness probe. In the 1a skeleton the daemon is ready
-// as soon as it is listening; later phases will gate this on dependency
-// initialisation (e.g. store/event-bus warm-up).
+// handleReadyz is the readiness probe. Dependency initialization happens before
+// the server is constructed, so a listening daemon is ready to answer requests.
 func handleReadyz(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{
+	envelope.WriteJSON(w, http.StatusOK, map[string]any{
 		"status":  "ready",
 		"service": daemonmeta.ServiceName,
 		"pid":     os.Getpid(),

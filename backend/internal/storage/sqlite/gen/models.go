@@ -7,100 +7,76 @@ package gen
 import (
 	"database/sql"
 	"time"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/cdc"
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
 type ChangeLog struct {
 	Seq       int64
-	ProjectID string
-	SessionID sql.NullString
-	EventType string
+	ProjectID domain.ProjectID
+	SessionID *domain.SessionID
+	EventType cdc.EventType
 	Payload   string
 	CreatedAt time.Time
 }
 
-type Notification struct {
-	Seq          int64
-	ID           string
-	ProjectID    string
-	SessionID    string
-	Source       string
-	EventType    string
-	SemanticType string
-	Priority     string
-	Message      string
-	PayloadJson  string
-	ActionsJson  string
-	DedupeKey    string
-	CauseKey     string
-	ReadAt       sql.NullTime
-	ArchivedAt   sql.NullTime
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
-}
-
-type Pr struct {
-	Url            string
-	SessionID      string
+type PR struct {
+	URL            string
+	SessionID      domain.SessionID
 	Number         int64
-	PrState        string
-	ReviewDecision string
-	CiState        string
-	Mergeability   string
+	PRState        domain.PRState
+	ReviewDecision domain.ReviewDecision
+	CIState        domain.CIState
+	Mergeability   domain.Mergeability
 	UpdatedAt      time.Time
 }
 
-type PrCheck struct {
-	PrUrl      string
+type PRCheck struct {
+	PRURL      string
 	Name       string
 	CommitHash string
-	Status     string
-	Url        string
+	Status     domain.PRCheckStatus
+	URL        string
 	LogTail    string
 	CreatedAt  time.Time
 }
 
-type PrComment struct {
-	PrUrl     string
+type PRComment struct {
+	PRURL     string
 	CommentID string
 	Author    string
 	File      string
 	Line      int64
 	Body      string
-	Resolved  int64
+	Resolved  bool
 	CreatedAt time.Time
 }
 
 type Project struct {
-	ID            string
+	ID            domain.ProjectID
 	Path          string
-	RepoOriginUrl string
+	RepoOriginURL string
 	DisplayName   string
 	RegisteredAt  time.Time
 	ArchivedAt    sql.NullTime
 }
 
 type Session struct {
-	ID                    string
-	ProjectID             string
-	Num                   int64
-	IssueID               string
-	Kind                  string
-	Harness               string
-	SessionState          string
-	TerminationReason     string
-	IsAlive               int64
-	ActivityState         string
-	ActivityLastAt        time.Time
-	ActivitySource        string
-	DetectingAttempts     sql.NullInt64
-	DetectingStartedAt    sql.NullTime
-	DetectingEvidenceHash sql.NullString
-	Branch                string
-	WorkspacePath         string
-	RuntimeHandleID       string
-	RuntimeName           string
-	AgentSessionID        string
-	Prompt                string
-	CreatedAt             time.Time
-	UpdatedAt             time.Time
+	ID              domain.SessionID
+	ProjectID       domain.ProjectID
+	Num             int64
+	IssueID         domain.IssueID
+	Kind            domain.SessionKind
+	Harness         domain.AgentHarness
+	ActivityState   domain.ActivityState
+	ActivityLastAt  time.Time
+	IsTerminated    bool
+	Branch          string
+	WorkspacePath   string
+	RuntimeHandleID string
+	AgentSessionID  string
+	Prompt          string
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }

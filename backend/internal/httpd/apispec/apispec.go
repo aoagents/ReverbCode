@@ -16,7 +16,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	yaml "gopkg.in/yaml.v3"
 )
@@ -28,7 +27,8 @@ var openapiYAML []byte
 // preserves the YAML shape verbatim so the JSON we emit on 501 responses
 // matches the on-disk source.
 type Spec struct {
-	doc map[string]any
+	doc     map[string]any
+	rawYAML []byte
 }
 
 var (
@@ -62,12 +62,13 @@ func New(yamlBytes []byte) (*Spec, error) {
 	if doc == nil {
 		return nil, fmt.Errorf("parse openapi: empty document")
 	}
-	return &Spec{doc: doc}, nil
+	return &Spec{doc: doc, rawYAML: yamlBytes}, nil
 }
 
-// YAML returns the raw embedded document bytes. Used by the /openapi.yaml
-// handler.
-func (s *Spec) YAML() []byte { return openapiYAML }
+// YAML returns the raw YAML bytes this spec was built from.
+func (s *Spec) YAML() []byte {
+	return s.rawYAML
+}
 
 // Operation returns the spec slice for a single (method, path) pair, ready
 // to be JSON-serialised. The slice is the OpenAPI Operation object (the
@@ -119,9 +120,7 @@ type notImplementedResponse struct {
 }
 
 // NotImplemented writes the locked 501 envelope, embedding the OpenAPI
-// Operation slice that documents what this route WILL do. Replaces the
-// throwaway PlannedRoute literals that the first cut of the route shell
-// duplicated in controller code.
+// Operation slice for the capability that is currently unavailable.
 func NotImplemented(w http.ResponseWriter, r *http.Request, method, path string) {
 	op := Default().Operation(method, path)
 	if op == nil {
@@ -130,7 +129,7 @@ func NotImplemented(w http.ResponseWriter, r *http.Request, method, path string)
 	body := notImplementedResponse{
 		Error:     "not_implemented",
 		Code:      "NOT_IMPLEMENTED",
-		Message:   method + " " + path + " is registered but not yet implemented",
+		Message:   method + " " + path + " is unavailable in this daemon",
 		RequestID: middleware.GetReqID(r.Context()),
 		Spec:      op,
 	}
@@ -140,18 +139,9 @@ func NotImplemented(w http.ResponseWriter, r *http.Request, method, path string)
 	_ = json.NewEncoder(w).Encode(body)
 }
 
-// ServeYAML serves the embedded openapi.yaml document. Mounted at
-// /api/v1/openapi.yaml so spec-consuming tooling (#19's validator,
-// SDK generators, the dashboard's developer tools) can fetch the
-// whole document in one request.
+// ServeYAML serves the embedded OpenAPI document for SDK generators, tests, and
+// developer tooling.
 func ServeYAML(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/yaml; charset=utf-8")
 	_, _ = w.Write(openapiYAML)
-}
-
-// RegisterServe mounts ServeYAML on the supplied router. Kept as a
-// helper so the router code only references one symbol from apispec
-// for the static serve path.
-func RegisterServe(r chi.Router, path string) {
-	r.Get(path, ServeYAML)
 }

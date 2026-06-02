@@ -1,17 +1,13 @@
 package terminal
 
-import "sync"
-
 // defaultRingMax caps per-terminal replay history. A late subscriber gets at
 // most this many bytes of recent output so it can paint a usable screen without
 // the whole session backlog. Matches the legacy 50KB ring.
 const defaultRingMax = 50 * 1024
 
 // ringBuffer is a byte ring holding the most recent output of one terminal. It
-// keeps a contiguous tail capped at max bytes; snapshot returns a copy for
-// replay-on-subscribe.
+// is owned by session and accessed under session.mu.
 type ringBuffer struct {
-	mu  sync.Mutex
 	buf []byte
 	max int
 }
@@ -26,8 +22,6 @@ func newRingBuffer(maxBytes int) *ringBuffer {
 // append adds p and drops the oldest bytes beyond max. A single write larger
 // than max is truncated to its last max bytes.
 func (r *ringBuffer) append(p []byte) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
 	if len(p) >= r.max {
 		r.buf = append(r.buf[:0], p[len(p)-r.max:]...)
 		return
@@ -40,8 +34,6 @@ func (r *ringBuffer) append(p []byte) {
 
 // snapshot returns a copy of the current contents (oldest first).
 func (r *ringBuffer) snapshot() []byte {
-	r.mu.Lock()
-	defer r.mu.Unlock()
 	out := make([]byte, len(r.buf))
 	copy(out, r.buf)
 	return out

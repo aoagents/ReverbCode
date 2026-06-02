@@ -1,7 +1,8 @@
 // Package cdc is the change-data-capture delivery layer. Change events are
 // captured durably by SQLite triggers into the change_log table (see the storage
 // migrations); this package POLLS that log and fans new events out, in order, to
-// in-process subscribers (the WS/SSE transport, wired in the frontend task).
+// in-process subscribers such as terminal session-state fan-out. Future SSE/event
+// endpoints can subscribe here too.
 //
 // There is no durable outbox/JSONL/janitor machinery: the change_log table IS
 // the durable, ordered source of truth, and clients catch up by reading it from
@@ -19,13 +20,11 @@ type EventType string
 
 // Event types, one per row-change the DB triggers emit into change_log.
 const (
-	EventSessionCreated      EventType = "session_created"
-	EventSessionUpdated      EventType = "session_updated"
-	EventPRCreated           EventType = "pr_created"
-	EventPRUpdated           EventType = "pr_updated"
-	EventPRCheckRecorded     EventType = "pr_check_recorded"
-	EventNotificationCreated EventType = "notification_created"
-	EventNotificationUpdated EventType = "notification_updated"
+	EventSessionCreated  EventType = "session_created"
+	EventSessionUpdated  EventType = "session_updated"
+	EventPRCreated       EventType = "pr_created"
+	EventPRUpdated       EventType = "pr_updated"
+	EventPRCheckRecorded EventType = "pr_check_recorded"
 )
 
 // Event is one CDC change read from change_log. Seq is the monotonic ordering +

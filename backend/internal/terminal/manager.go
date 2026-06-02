@@ -63,8 +63,11 @@ func WithSpawn(fn spawnFunc) Option { return func(m *Manager) { m.spawn = fn } }
 func WithHeartbeat(d time.Duration) Option { return func(m *Manager) { m.heartbeat = d } }
 
 // NewManager builds a Manager. src attaches PTYs; events feeds the session
-// channel (may be nil to disable it); log is required.
+// channel (may be nil to disable it). A nil logger falls back to slog.Default.
 func NewManager(src PTYSource, events EventSource, log *slog.Logger, opts ...Option) *Manager {
+	if log == nil {
+		log = slog.Default()
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	m := &Manager{
 		src:       src,
@@ -105,7 +108,7 @@ func (m *Manager) Close() {
 }
 
 // openSession returns the live session for id, starting it on first open. The id
-// is the runtime handle id (tmux target).
+// is the runtime handle id (Zellij handle).
 func (m *Manager) openSession(id string) (*session, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -156,7 +159,7 @@ func (m *Manager) Serve(ctx context.Context, conn wsConn) {
 		if ctx.Err() != nil {
 			return
 		}
-		c.handle(ctx, msg)
+		c.handle(msg)
 	}
 }
 
@@ -173,12 +176,12 @@ type connState struct {
 	closed    bool
 }
 
-func (c *connState) handle(ctx context.Context, msg clientMsg) {
+func (c *connState) handle(msg clientMsg) {
 	switch msg.Ch {
 	case chTerminal:
-		c.handleTerminal(ctx, msg)
+		c.handleTerminal(msg)
 	case chSubscribe:
-		c.handleSubscribe()
+		c.handleSubscribe(msg)
 	case chSystem:
 		if msg.Type == msgPing {
 			c.enqueue(serverMsg{Ch: chSystem, Type: msgPong})
@@ -186,10 +189,10 @@ func (c *connState) handle(ctx context.Context, msg clientMsg) {
 	}
 }
 
-func (c *connState) handleTerminal(ctx context.Context, msg clientMsg) {
+func (c *connState) handleTerminal(msg clientMsg) {
 	switch msg.Type {
 	case msgOpen:
-		c.openTerminal(ctx, msg.ID)
+		c.openTerminal(msg.ID)
 	case msgData:
 		raw, err := base64.StdEncoding.DecodeString(msg.Data)
 		if err != nil {
@@ -207,7 +210,7 @@ func (c *connState) handleTerminal(ctx context.Context, msg clientMsg) {
 	}
 }
 
-func (c *connState) openTerminal(_ context.Context, id string) {
+func (c *connState) openTerminal(id string) {
 	if id == "" {
 		c.enqueue(serverMsg{Ch: chTerminal, Type: msgError, Error: "missing terminal id"})
 		return
@@ -300,8 +303,8 @@ func (c *connState) lookup(id string) *session {
 	return s
 }
 
-func (c *connState) handleSubscribe() {
-	if c.mgr.events == nil {
+func (c *connState) handleSubscribe(msg clientMsg) {
+	if msg.Type != msgSubscribe || c.mgr.events == nil {
 		return
 	}
 	c.mu.Lock()

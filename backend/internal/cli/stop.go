@@ -24,6 +24,7 @@ func newStopCommand(ctx *commandContext) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "stop",
 		Short: "Stop the AO daemon",
+		Args:  noArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			st, err := ctx.stopDaemon(cmd.Context(), opts)
 			if err != nil {
@@ -32,7 +33,7 @@ func newStopCommand(ctx *commandContext) *cobra.Command {
 			if opts.json {
 				return writeJSON(cmd.OutOrStdout(), st)
 			}
-			if st.State == "stopped" {
+			if st.State == stateStopped {
 				_, err = fmt.Fprintln(cmd.OutOrStdout(), "AO daemon stopped")
 				return err
 			}
@@ -54,13 +55,13 @@ func (c *commandContext) stopDaemon(ctx context.Context, opts stopOptions) (daem
 		return daemonStatus{}, err
 	}
 	switch st.State {
-	case "stopped":
+	case stateStopped:
 		return st, nil
-	case "stale":
+	case stateStale:
 		if err := runfile.Remove(cfg.RunFilePath); err != nil {
 			return daemonStatus{}, err
 		}
-		return daemonStatus{State: "stopped", RunFile: cfg.RunFilePath, DataDir: cfg.DataDir}, nil
+		return daemonStatus{State: stateStopped, RunFile: cfg.RunFilePath, DataDir: cfg.DataDir}, nil
 	}
 	if !st.owned {
 		if st.Error != "" {
@@ -112,7 +113,7 @@ func (c *commandContext) waitForStopped(ctx context.Context, pid int, runFilePat
 		}
 		alive := c.deps.ProcessAlive(pid)
 		if info == nil {
-			return daemonStatus{State: "stopped", RunFile: runFilePath, DataDir: dataDir}, nil
+			return daemonStatus{State: stateStopped, RunFile: runFilePath, DataDir: dataDir}, nil
 		}
 		if !alive {
 			// Only remove the run-file if it still belongs to the process we
@@ -124,7 +125,7 @@ func (c *commandContext) waitForStopped(ctx context.Context, pid int, runFilePat
 					return daemonStatus{}, err
 				}
 			}
-			return daemonStatus{State: "stopped", RunFile: runFilePath, DataDir: dataDir}, nil
+			return daemonStatus{State: stateStopped, RunFile: runFilePath, DataDir: dataDir}, nil
 		}
 		if !c.deps.Now().Before(deadline) {
 			return daemonStatus{}, fmt.Errorf("daemon pid %d did not stop within %s", pid, timeout)

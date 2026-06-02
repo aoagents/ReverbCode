@@ -1,10 +1,10 @@
 # agent-orchestrator
 
 Rewrite of the agent-orchestrator: a long-running Go backend daemon (`backend/`)
-paired with an Electron + TypeScript frontend (`frontend/`).
+paired with a placeholder Electron + TypeScript frontend shell (`frontend/`).
 
 See [`docs/`](docs/README.md) for architecture and status — start with the
-Lifecycle Manager + Session Manager lane in [`docs/architecture.md`](docs/architecture.md).
+Lifecycle Manager + Session Service lane in [`docs/architecture.md`](docs/architecture.md).
 
 ## Backend daemon
 
@@ -31,8 +31,8 @@ AO_PORT=3019 go run ./cmd/ao start # override per invocation
 Health check:
 
 ```bash
-curl localhost:3001/healthz       # {"status":"ok"}
-curl localhost:3001/readyz        # {"status":"ready"}
+curl localhost:3001/healthz       # includes status/service/pid
+curl localhost:3001/readyz        # includes status/service/pid
 ```
 
 ### Configuration (env only)
@@ -47,10 +47,12 @@ is intentionally not env-configurable.
 | `AO_REQUEST_TIMEOUT` | `60s` | per-request timeout (Go duration) |
 | `AO_SHUTDOWN_TIMEOUT` | `10s` | graceful-shutdown hard cap |
 | `AO_RUN_FILE` | `<UserConfigDir>/agent-orchestrator/running.json` | PID + port handshake path |
+| `AO_DATA_DIR` | `<UserConfigDir>/agent-orchestrator/data` | SQLite DB, WAL files, and managed state |
 
 ### Test
 
 ```bash
-cd backend
-goimports -local github.com/aoagents/agent-orchestrator -l . && go build ./... && go vet ./... && go test -race ./...
+npm run lint
+# optional deeper backend pass:
+cd backend && go test -race ./...
 ```

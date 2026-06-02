@@ -24,11 +24,11 @@ RUN cd backend && CGO_ENABLED=0 go build -trimpath -o /out/ao ./cmd/ao
 # ---- stage 2: a clean machine with NO Go toolchain, just like an end user ----
 FROM debian:bookworm-slim AS run
 
-# Runtime deps a fresh user would need: git is required by `ao doctor`; tmux is
-# the optional runtime it probes for; curl drives the HTTP-level guard checks;
-# ca-certificates for good measure.
+# Runtime deps a fresh user would need: git is required by `ao doctor`; curl
+# drives the HTTP-level guard checks; ca-certificates for good measure. Zellij is
+# optional for this smoke test, so doctor reports a WARN if it is absent.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends git tmux curl ca-certificates \
+ && apt-get install -y --no-install-recommends git curl ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
 # "Install" the CLI the way a user would: drop the binary on PATH.

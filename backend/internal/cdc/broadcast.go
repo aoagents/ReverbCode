@@ -5,11 +5,11 @@ import (
 	"sync"
 )
 
-// Broadcaster is the in-process fan-out the poller feeds. Subscribers (the
-// WS/SSE transport, wired in the frontend task) register a callback; every
-// polled Event is delivered to all current subscribers. It is the single seam
-// between the CDC poller and live delivery, so the transport can be built and
-// swapped without touching the poller.
+// Broadcaster is the in-process fan-out the poller feeds. Subscribers such as
+// terminal session-state fan-out register a callback; every polled Event is
+// delivered to all current subscribers. It is the single seam between the CDC
+// poller and live delivery, so transports can be built and swapped without
+// touching the poller.
 type Broadcaster struct {
 	mu     sync.RWMutex
 	nextID int

@@ -230,10 +230,10 @@ func mapStateFromGitHub(state, reason string, labels []string) domain.Normalized
 	}
 	var hasProgress, hasReview bool
 	for _, l := range labels {
-		switch l {
-		case labelInProgress:
+		switch {
+		case strings.EqualFold(l, labelInProgress):
 			hasProgress = true
-		case labelInReview:
+		case strings.EqualFold(l, labelInReview):
 			hasReview = true
 		}
 	}
@@ -376,7 +376,10 @@ func (t *Tracker) do(ctx context.Context, method, path string, body any) ([]byte
 		return nil, fmt.Errorf("github tracker: %s %s: %w", method, path, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	respBody, _ := io.ReadAll(resp.Body)
+	respBody, readErr := io.ReadAll(resp.Body)
+	if readErr != nil {
+		return nil, fmt.Errorf("github tracker: read response body: %w", readErr)
+	}
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return respBody, nil
 	}
@@ -473,14 +476,9 @@ func parseGitHubID(native string) (owner, repo string, number int, err error) {
 	}
 	repoPart := native[:hash]
 	numPart := native[hash+1:]
-	slash := strings.IndexByte(repoPart, '/')
-	if slash < 0 {
-		return "", "", 0, fmt.Errorf("%w: missing owner/repo separator", ErrBadID)
-	}
-	owner = repoPart[:slash]
-	repo = repoPart[slash+1:]
-	if owner == "" || repo == "" {
-		return "", "", 0, fmt.Errorf("%w: empty owner or repo", ErrBadID)
+	owner, repo, err = parseGitHubRepo(repoPart)
+	if err != nil {
+		return "", "", 0, err
 	}
 	n, parseErr := strconv.Atoi(numPart)
 	if parseErr != nil || n <= 0 {
