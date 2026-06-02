@@ -24,6 +24,8 @@ const (
 	EnvSessionID = "AO_SESSION_ID"
 	EnvProjectID = "AO_PROJECT_ID"
 	EnvIssueID   = "AO_ISSUE_ID"
+	// EnvDataDir tells a spawned agent's AO hook commands where the store lives.
+	EnvDataDir = "AO_DATA_DIR"
 )
 
 type lifecycleRecorder interface {
@@ -52,6 +54,7 @@ type Manager struct {
 	store     Store
 	messenger ports.AgentMessenger
 	lcm       lifecycleRecorder
+	dataDir   string
 	clock     func() time.Time
 }
 
@@ -63,7 +66,10 @@ type Deps struct {
 	Store     Store
 	Messenger ports.AgentMessenger
 	Lifecycle lifecycleRecorder
-	Clock     func() time.Time
+	// DataDir is exported to spawned agents as AO_DATA_DIR so their hook
+	// commands can open the same store.
+	DataDir string
+	Clock   func() time.Time
 }
 
 // New builds a Session Manager from its dependencies, defaulting the clock to
@@ -76,6 +82,7 @@ func New(d Deps) *Manager {
 		store:     d.Store,
 		messenger: d.Messenger,
 		lcm:       d.Lifecycle,
+		dataDir:   d.DataDir,
 		clock:     d.Clock,
 	}
 	if m.clock == nil {
@@ -107,6 +114,11 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		m.markSpawnFailedTerminated(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: no agent adapter for harness %q", id, cfg.Harness)
 	}
+	if err := m.prepareWorkspace(ctx, agent, id, ws.Path); err != nil {
+		_ = m.workspace.Destroy(ctx, ws)
+		m.markSpawnFailedTerminated(ctx, id)
+		return domain.SessionRecord{}, fmt.Errorf("spawn %s: %w", id, err)
+	}
 	argv, err := agent.GetLaunchCommand(ctx, ports.LaunchConfig{
 		SessionID:     string(id),
 		WorkspacePath: ws.Path,
@@ -122,7 +134,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		SessionID:     id,
 		WorkspacePath: ws.Path,
 		Argv:          argv,
-		Env:           spawnEnv(id, cfg.ProjectID, cfg.IssueID),
+		Env:           spawnEnv(id, cfg.ProjectID, cfg.IssueID, m.dataDir),
 	})
 	if err != nil {
 		_ = m.workspace.Destroy(ctx, ws)
@@ -201,6 +213,9 @@ func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.Sess
 	if !ok {
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: no agent adapter for harness %q", id, rec.Harness)
 	}
+	if err := m.prepareWorkspace(ctx, agent, id, ws.Path); err != nil {
+		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", id, err)
+	}
 	argv, err := restoreArgv(ctx, agent, id, ws.Path, meta)
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", id, err)
@@ -209,7 +224,7 @@ func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.Sess
 		SessionID:     id,
 		WorkspacePath: ws.Path,
 		Argv:          argv,
-		Env:           spawnEnv(id, rec.ProjectID, rec.IssueID),
+		Env:           spawnEnv(id, rec.ProjectID, rec.IssueID, m.dataDir),
 	})
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: runtime: %w", id, err)
@@ -295,12 +310,41 @@ func buildPrompt(cfg ports.SpawnConfig) string {
 	}
 }
 
-func spawnEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueID) map[string]string {
+func spawnEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueID, dataDir string) map[string]string {
 	return map[string]string{
 		EnvSessionID: string(id),
 		EnvProjectID: string(project),
 		EnvIssueID:   string(issue),
+		EnvDataDir:   dataDir,
 	}
+}
+
+// preLauncher is an optional Agent capability: a step the manager runs before
+// launch. Claude Code implements it to record workspace trust in ~/.claude.json
+// so its interactive "do you trust this folder?" dialog can't block the headless
+// pane. Adapters that don't need it simply omit the method.
+type preLauncher interface {
+	PreLaunch(ctx context.Context, cfg ports.LaunchConfig) error
+}
+
+// prepareWorkspace runs the per-session pre-launch steps before the runtime
+// starts the agent: installing the workspace-local activity hooks (so early
+// startup hooks can update the already-created session row), then any optional
+// PreLaunch step. Shared by Spawn and Restore.
+func (m *Manager) prepareWorkspace(ctx context.Context, agent ports.Agent, id domain.SessionID, workspacePath string) error {
+	if err := agent.GetAgentHooks(ctx, ports.WorkspaceHookConfig{
+		SessionID:     string(id),
+		WorkspacePath: workspacePath,
+		DataDir:       m.dataDir,
+	}); err != nil {
+		return fmt.Errorf("install hooks: %w", err)
+	}
+	if pl, ok := agent.(preLauncher); ok {
+		if err := pl.PreLaunch(ctx, ports.LaunchConfig{SessionID: string(id), WorkspacePath: workspacePath}); err != nil {
+			return fmt.Errorf("pre-launch: %w", err)
+		}
+	}
+	return nil
 }
 
 // restoreArgv builds the argv to relaunch a torn-down session: the agent's

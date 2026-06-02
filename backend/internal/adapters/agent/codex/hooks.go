@@ -228,10 +228,33 @@ func writeCodexHooks(hooksPath string, topLevel, rawHooks map[string]json.RawMes
 		return fmt.Errorf("encode %s: %w", hooksPath, err)
 	}
 	data = append(data, '\n')
-	if err := os.WriteFile(hooksPath, data, 0o600); err != nil {
+	if err := atomicWriteFile(hooksPath, data, 0o600); err != nil {
 		return fmt.Errorf("write %s: %w", hooksPath, err)
 	}
 	return nil
+}
+
+// atomicWriteFile writes data to path via a temp file + rename, so a crash mid-
+// write can't leave a truncated/empty file that Codex then fails to parse.
+func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".ao-tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer func() { _ = os.Remove(tmpName) }()
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(perm); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
 }
 
 // groupCodexHooksByEvent groups the managed hook specs by their Codex event so
@@ -358,7 +381,7 @@ func ensureCodexHooksFeatureEnabled(workspacePath string) error {
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o750); err != nil {
 		return fmt.Errorf("create .codex directory: %w", err)
 	}
-	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
+	if err := atomicWriteFile(configPath, []byte(content), 0o600); err != nil {
 		return fmt.Errorf("write config.toml: %w", err)
 	}
 	return nil

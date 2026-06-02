@@ -78,6 +78,7 @@ func startSession(cfg config.Config, runtime ports.Runtime, store *sqlite.Store,
 		Store:     store,
 		Messenger: noopMessenger{},
 		Lifecycle: lcm,
+		DataDir:   cfg.DataDir,
 	})
 	return sessionsvc.New(mgr, store), nil
 }

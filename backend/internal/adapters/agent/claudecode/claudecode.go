@@ -378,7 +378,15 @@ func claudeConfigPath() (string, error) {
 // rest of the entry and every other project), and writes back via a
 // temp-file + atomic rename. If the path is already trusted, it makes no
 // write at all. A missing config file is treated as an empty one.
+// claudeTrustMu serializes ensureWorkspaceTrusted within the process. Concurrent
+// spawns to different workspaces otherwise read the same ~/.claude.json snapshot
+// and the last rename drops the other's trust entry.
+var claudeTrustMu sync.Mutex
+
 func ensureWorkspaceTrusted(configPath, workspacePath string) error {
+	claudeTrustMu.Lock()
+	defer claudeTrustMu.Unlock()
+
 	root := map[string]any{}
 	data, err := os.ReadFile(configPath)
 	switch {
