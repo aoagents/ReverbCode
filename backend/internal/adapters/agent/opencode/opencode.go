@@ -5,7 +5,7 @@
 // opencode differs from Claude Code and Codex in two ways AO has to bridge:
 //   - It has no native command-hook config (no settings.local.json / hooks.json
 //     equivalent). Its only lifecycle-extensibility surface is a JS/TS plugin
-//     loaded from .opencode/plugin/, so GetAgentHooks installs an AO-owned
+//     loaded from .opencode/plugins/, so GetAgentHooks installs an AO-owned
 //     plugin file (see hooks.go) instead of merging JSON.
 //   - Its CLI exposes only one approval flag (--dangerously-skip-permissions)
 //     and no system-prompt flag, so the graduated permission modes and the

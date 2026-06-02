@@ -39,24 +39,15 @@ export const aoActivity: Plugin = async ({ directory }) => {
     return ["sh", "-c", `if ! command -v ao >/dev/null 2>&1; then exit 0; fi; exec ao hooks opencode ${hookName}`]
   }
 
-  // Async invocation: fire-and-forget for events that don't precede process exit.
-  async function callHook(hookName: string, payload: Record<string, unknown>) {
-    try {
-      const proc = Bun.spawn(hookCmd(hookName), {
-        cwd: directory,
-        stdin: new Blob([JSON.stringify(payload) + "\n"]),
-        stdout: "ignore",
-        stderr: "ignore",
-      })
-      await proc.exited
-    } catch {
-      // Best-effort: never let a reporting failure surface to opencode.
-    }
-  }
-
-  // Sync invocation: `opencode run` exits on the idle event, so an async stop
-  // hook would be killed before completing. user-prompt-submit is sync so AO
-  // sees an ACTIVE session before any fast mid-turn work.
+  // All hooks are dispatched synchronously (Bun.spawnSync), for two reasons:
+  //   1. Ordering. An async hook yields the event loop; if opencode does not
+  //      await the handler's promise, a later event (e.g. message.updated ->
+  //      user-prompt-submit) could complete before an in-flight async
+  //      session-start, so AO would see the prompt before the session is
+  //      registered. spawnSync blocks opencode's single-threaded loop until the
+  //      hook returns, so events are reported strictly in dispatch order.
+  //   2. `opencode run` exits on the idle event, so an async stop hook would be
+  //      killed before completing.
   function callHookSync(hookName: string, payload: Record<string, unknown>) {
     try {
       Bun.spawnSync(hookCmd(hookName), {
@@ -93,7 +84,7 @@ export const aoActivity: Plugin = async ({ directory }) => {
             const session = (event as any).properties?.info
             if (!session?.id) break
             if (switchedSession(session.id)) {
-              await callHook("session-start", { session_id: session.id })
+              callHookSync("session-start", { session_id: session.id })
             }
             break
           }

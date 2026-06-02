@@ -56,7 +56,7 @@ var opencodePluginSource string
 var opencodeManagedEvents = []string{"session-start", "user-prompt-submit", "stop"}
 
 // GetAgentHooks installs AO's opencode activity plugin into the worktree-local
-// .opencode/plugin/ directory. Unlike Claude Code and Codex, opencode has no
+// .opencode/plugins/ directory. Unlike Claude Code and Codex, opencode has no
 // native command-hook config to merge into; its only lifecycle-extensibility
 // surface is a JS/TS plugin. AO therefore writes a dedicated, AO-owned plugin
 // file. The write is atomic and idempotent: re-installing overwrites AO's own
@@ -80,7 +80,7 @@ func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfi
 }
 
 // UninstallHooks removes AO's opencode plugin from the workspace-local
-// .opencode/plugin/ directory. It deletes the file only when it carries the AO
+// .opencode/plugins/ directory. It deletes the file only when it carries the AO
 // sentinel, so a user file that happens to share the name is left in place. A
 // missing file is a no-op.
 func (p *Plugin) UninstallHooks(ctx context.Context, workspacePath string) error {
