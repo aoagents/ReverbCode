@@ -22,6 +22,7 @@ var ErrNoToken = errors.New("github tracker: no token configured")
 // StaticTokenSource is a literal token, typically used in tests.
 type StaticTokenSource string
 
+// Token returns the literal token, or ErrNoToken if it is blank.
 func (s StaticTokenSource) Token(context.Context) (string, error) {
 	t := strings.TrimSpace(string(s))
 	if t == "" {
@@ -39,6 +40,8 @@ type EnvTokenSource struct {
 	EnvVars []string
 }
 
+// Token returns the first non-empty configured env var (falling back to
+// GITHUB_TOKEN), or ErrNoToken if none is set.
 func (s EnvTokenSource) Token(context.Context) (string, error) {
 	for _, name := range s.EnvVars {
 		if v := strings.TrimSpace(os.Getenv(name)); v != "" {

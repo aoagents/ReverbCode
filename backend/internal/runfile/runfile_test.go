@@ -75,6 +75,32 @@ func TestRemoveIdempotent(t *testing.T) {
 	}
 }
 
+func TestRemoveIfOwnedDoesNotDeleteSuccessorRunfile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "running.json")
+	if err := Write(path, Info{PID: 1, Port: 3001}); err != nil {
+		t.Fatalf("Write predecessor: %v", err)
+	}
+	if err := Write(path, Info{PID: 2, Port: 3002}); err != nil {
+		t.Fatalf("Write successor: %v", err)
+	}
+	if err := RemoveIfOwned(path, 1); err != nil {
+		t.Fatalf("RemoveIfOwned predecessor: %v", err)
+	}
+	got, err := Read(path)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if got == nil || got.PID != 2 || got.Port != 3002 {
+		t.Fatalf("successor runfile was removed or changed: %+v", got)
+	}
+	if err := RemoveIfOwned(path, 2); err != nil {
+		t.Fatalf("RemoveIfOwned successor: %v", err)
+	}
+	if got, err := Read(path); err != nil || got != nil {
+		t.Fatalf("after owner removal got=%+v err=%v", got, err)
+	}
+}
+
 func TestCheckStaleDeadPID(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "running.json")
 	// PID 0x7FFFFFFF is effectively guaranteed not to exist.

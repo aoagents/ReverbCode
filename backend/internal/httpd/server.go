@@ -8,10 +8,12 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/runfile"
+	"github.com/aoagents/agent-orchestrator/backend/internal/terminal"
 )
 
 // Server is the daemon's HTTP server together with its lifecycle: bind the
@@ -22,27 +24,35 @@ type Server struct {
 	log    *slog.Logger
 	http   *http.Server
 	listen net.Listener
+
+	shutdownRequested chan struct{}
+	shutdownOnce      sync.Once
 }
 
-// New constructs a Server and binds the listener immediately so a port
-// conflict fails fast — before any running.json is written. The caller owns
-// the returned Server's lifecycle via Run.
-func New(cfg config.Config, log *slog.Logger) (*Server, error) {
+// NewWithDeps constructs a Server with API dependencies supplied by the daemon
+// and binds the listener immediately so a port conflict fails fast — before any
+// running.json is written. The caller owns the returned Server's lifecycle via
+// Run. termMgr may be nil, in which case the /mux terminal surface is not mounted.
+func NewWithDeps(cfg config.Config, log *slog.Logger, termMgr *terminal.Manager, deps APIDeps) (*Server, error) {
+	log = loggerOrDefault(log)
 	ln, err := net.Listen("tcp", cfg.Addr())
 	if err != nil {
 		return nil, fmt.Errorf("bind %s (is a daemon already running?): %w", cfg.Addr(), err)
 	}
 
 	srv := &Server{
-		cfg:    cfg,
-		log:    log,
-		listen: ln,
-		http: &http.Server{
-			Handler: NewRouter(cfg, log),
-			// ReadHeaderTimeout guards against slow-loris even on loopback;
-			// per-request body/handler timeouts are applied per-surface.
-			ReadHeaderTimeout: 10 * time.Second,
-		},
+		cfg:               cfg,
+		log:               log,
+		listen:            ln,
+		shutdownRequested: make(chan struct{}),
+	}
+	srv.http = &http.Server{
+		Handler: NewRouterWithControl(cfg, log, termMgr, deps, ControlDeps{
+			RequestShutdown: srv.requestShutdown,
+		}),
+		// ReadHeaderTimeout guards against slow-loris even on loopback;
+		// per-request body/handler timeouts are applied per-surface.
+		ReadHeaderTimeout: 10 * time.Second,
 	}
 	return srv, nil
 }
@@ -62,11 +72,11 @@ func (s *Server) Run(ctx context.Context) error {
 		StartedAt: time.Now().UTC(),
 	}
 	if err := runfile.Write(s.cfg.RunFilePath, info); err != nil {
-		s.listen.Close()
+		_ = s.listen.Close()
 		return fmt.Errorf("write run-file: %w", err)
 	}
 	defer func() {
-		if err := runfile.Remove(s.cfg.RunFilePath); err != nil {
+		if err := runfile.RemoveIfOwned(s.cfg.RunFilePath, info.PID); err != nil {
 			s.log.Warn("failed to remove run-file", "path", s.cfg.RunFilePath, "err", err)
 		}
 	}()
@@ -87,6 +97,8 @@ func (s *Server) Run(ctx context.Context) error {
 		// Serve died on its own (bind already happened, so this is a real
 		// runtime failure) before any shutdown signal.
 		return err
+	case <-s.shutdownRequested:
+		s.log.Info("shutdown requested over HTTP", "timeout", s.cfg.ShutdownTimeout)
 	case <-ctx.Done():
 		s.log.Info("shutdown signal received, draining connections", "timeout", s.cfg.ShutdownTimeout)
 	}
@@ -110,4 +122,10 @@ func (s *Server) boundPort() int {
 		return tcp.Port
 	}
 	return s.cfg.Port
+}
+
+func (s *Server) requestShutdown() {
+	s.shutdownOnce.Do(func() {
+		close(s.shutdownRequested)
+	})
 }

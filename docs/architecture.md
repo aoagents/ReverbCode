@@ -1,187 +1,96 @@
-# LCM + Session Manager — architecture
+# Agent Orchestrator backend architecture
 
-This is the deterministic core of the backend daemon. It supervises agent
-sessions and keeps exactly one true status per session.
+The backend is a long-running Go daemon that supervises coding-agent sessions.
+The current model is intentionally small: session rows persist only durable facts,
+and display status is derived at read time.
 
-## 1. Mental model: OBSERVE → DECIDE → ACT
-
-The backend owns no agent state. git/GitHub own PR/CI/review truth; the agent's
-own files own its activity. The job, per session, is one loop:
+## Mental model
 
 ```
-OBSERVE            →   DECIDE              →   ACT
-(impure, external)     (pure, total)           (impure)
-raw facts              one canonical status    persist + react
+OBSERVE external facts → UPDATE durable facts → DERIVE display status / ACT
 ```
 
-In the rewrite the **OBSERVE** step lives *outside* the LCM (separate owners),
-and the LCM is a **synchronous reducer** invoked with facts:
+The durable session facts are:
+
+- `activity_state` — what the agent last reported or what the runtime observer
+  can safely conclude (`active`, `idle`, `waiting_input`, `exited`).
+- `is_terminated` — whether the session should be treated as over.
+- PR facts in the `pr`, `pr_checks`, and `pr_comment` tables.
+
+The UI status is not stored. `service.Session` computes it from the session
+record plus PR facts while assembling controller-facing read models.
+
+## Package layout
 
 ```
-SCM poller     ─ ApplySCMObservation ──┐
-reaper         ─ ApplyRuntimeObservation┤
-activity hooks ─ ApplyActivitySignal ───┼─▶ LCM:  load canonical
-Session Mgr    ─ OnSpawnCompleted ──────┘         → pure DECIDE
-               ─ OnKillRequested                  → diff → persist (merge-patch)
-reaper tick    ─ TickEscalations                  → if transition: react (ACT)
+backend/internal/domain       shared vocabulary and API status value types
+backend/internal/ports        inbound/outbound interfaces
+backend/internal/service       controller-facing services and read-model assembly
+backend/internal/session_manager internal session command manager
+backend/internal/lifecycle    runtime/activity/spawn/termination session fact reducer
+backend/internal/pr           PR observation ingestion
+backend/internal/storage      SQLite persistence and DB-triggered CDC
+backend/internal/cdc          change-log poller and broadcaster
+backend/internal/httpd        daemon HTTP surface
+backend/internal/terminal     WebSocket terminal multiplexer
+backend/internal/adapters     Zellij/git-worktree/GitHub adapters
 ```
 
-The LCM **never polls**. The reaper (a timer, owned elsewhere) drives liveness
-sampling and duration-based escalation by calling in.
+## Status derivation
 
-## 2. Canonical state model — the crown jewel
+`service.Session` selects the display PR from all PR snapshots for a session, then
+applies this rough precedence:
 
-The **only** thing persisted per session is `CanonicalSessionLifecycle`
-(`backend/internal/domain/lifecycle.go`). The single-word display status is
-**derived on read and never stored** — this is the most important invariant; it
-prevents canonical truth and display from drifting.
+1. `is_terminated` → `terminated`, except merged PRs display `merged`.
+2. `activity_state=waiting_input` → `needs_input`.
+3. Open PR facts drive PR pipeline statuses: `ci_failed`, `draft`,
+   `changes_requested`, `mergeable`, `approved`, `review_pending`, `pr_open`.
+4. `activity_state=active` → `working`.
+5. Everything else → `idle`.
 
-```
-CanonicalSessionLifecycle
-  Version    schema version of the record shape
-  Revision   monotonic write counter (optimistic-concurrency token)
-  Session    (state, reason)   working/idle/needs_input/stuck/detecting/done/terminated
-  PR         (state, reason)   none/open/merged/closed
-  Runtime    (state, reason)   unknown/alive/exited/missing/probe_failed
-  Activity   last-known agent activity (+ timestamp, source)   ← decider input
-  Detecting  anti-flap quarantine memory (nil unless quarantined) ← decider input
-```
+## Lifecycle manager
 
-`DeriveLegacyStatus` (`domain/status.go`) is the **sole producer** of the
-display `SessionStatus`. Precedence: terminal/hard session states map directly
-(they outrank PR facts) → a merged PR wins → an open PR maps by reason → else the
-soft session state. So an idle worker with a CI-failing open PR displays
-`ci_failed`, but a `needs_input` session shows `needs_input` regardless of the PR.
+`lifecycle.Manager` is the write path for session lifecycle facts and lifecycle-owned agent nudges:
 
-`Session` (`domain/session.go`) is the read-model: a `SessionRecord`
-(persistence shape, identity + lifecycle + metadata) plus the derived `Status`.
-The **Session Manager is the single producer of `Status`** — it attaches it on
-read; the store and API never recompute or persist it.
+- runtime observations can mark a session terminated only when runtime and
+  process are both clearly dead and recent activity does not contradict that;
+  failed/unknown probes do not persist a special state.
+- activity signals update `activity_state`; `exited` also marks the session
+  terminated.
+- PR observations do not write PR rows here, but after the PR service persists
+  them lifecycle sends actionable agent nudges for CI failures, review feedback,
+  and merge conflicts.
 
-## 3. Package layout (`backend/internal/`)
+## PR manager
 
-```
-domain/                 the vocabulary (imports only the std lib → no cycles)
-  lifecycle.go          CanonicalSessionLifecycle + all sub-states/enums
-  status.go             SessionStatus + DeriveLegacyStatus (sole display producer)
-  session.go            SessionRecord (persisted) + Session (read-model) + id types
-  decide/               the PURE core — total, deterministic, zero I/O
-    types.go            LifecycleDecision + Probe/OpenPR/Detecting inputs + tuning consts
-    decide.go           the deciders + the anti-flap quarantine + HashEvidence
-ports/                  the boundaries (interfaces + DTOs)
-  inbound.go            LifecycleManager, SessionManager (we implement)
-  outbound.go           LifecycleStore, Notifier, AgentMessenger, Runtime/Agent/Workspace
-  facts.go              SCMFacts, RuntimeFacts, ActivitySignal, SpawnOutcome, KillReason
-lifecycle/              the LCM implementation (DECIDE + ACT)
-  manager.go            the Apply* pipeline, per-session lock, patch diffing
-  decide_bridge.go      fact→decide-input translation + the composition rules
-  reactions.go          the reaction table + escalation engine + TickEscalations
-session/                the SM implementation (explicit mutations)
-  manager.go            Spawn/Kill/Restore/Cleanup/List/Get/Send + rollback
-```
+`pr.Manager` records SCM observations into the PR/check/comment tables, then
+forwards the observation to lifecycle for agent nudges. A merged PR marks the
+owning session terminated through the lifecycle manager; other PR facts are
+consumed at read time for display status.
 
-`domain` + `ports` are the committed, stabilized **integration boundary**.
-Everything else implements behind it.
+## Session manager
 
-## 4. The pure DECIDE core (`domain/decide`)
+`session_manager.Manager` performs internal session mutations:
 
-Total, deterministic, side-effect-free functions — the highest-value test
-surface (table-tested to 100%). Key ones:
+- `Spawn` creates a row, creates workspace/runtime resources, and reports the
+  handles to the lifecycle manager.
+- `Kill` marks the row terminated, then tears down runtime/workspace resources.
+- `Restore` relaunches a terminated session and clears `is_terminated` via the
+  spawn-completed path.
 
-- `ResolveProbeDecision` — runtime/process liveness. An explicit kill
-  short-circuits to terminal; a **failed probe is never read as death** (routes
-  to `detecting`), as does any probe disagreement; only runtime-dead +
-  process-dead + no-recent-activity reaches `killed`.
-- `ResolveOpenPRDecision` — the PR ladder: `ci_failing` → `changes_requested` →
-  `mergeable` → `approved` → `review_pending` → idle-beyond → else `pr_open`.
-- `ResolveTerminalPRStateDecision` — merged → `merged` (park idle awaiting a
-  human decision); closed → `idle`.
-- `CreateDetectingDecision` — the **anti-flap quarantine**. Counts attempts and
-  hashes the *timestamp-stripped* evidence; escalates to `stuck` only after 3
-  consecutive unchanged-evidence ticks **or** 5 minutes since first entering
-  detecting (`StartedAt` is preserved across the whole episode). Changing
-  evidence resets the counter.
+`service.Session` is the controller-facing boundary. It delegates commands to
+`session_manager.Manager` and attaches derived display status on read paths.
 
-## 5. The LCM (`lifecycle`)
+## Persistence and CDC
 
-Implements `ports.LifecycleManager`. Every `Apply*`/`On*` entrypoint runs the
-same pipeline (`manager.go`):
+SQLite is the durable store. User-visible table changes are captured by database
+triggers into `change_log`; the Go store does not manually emit CDC events. A
+poller tails `change_log` and publishes live events to in-process subscribers.
 
-```
-withLock(session):                       ← per-session serialization
-  load canonical → decideFn (build sparse patch) → if changed: persist → load after
-return transition (before, after)
-```
-then, **after the lock releases**, `react()` fires the mapped reaction.
+## Load-bearing rules
 
-- **Per-session serialization** — `keyedMutex` hands out one lock per session id
-  (parallel across sessions, serial within one). Entries are reference-counted
-  and evicted when the last holder releases, so the map stays bounded.
-- **Composition rules** (`decide_bridge.go`) — two observers must not fight over
-  the session axis. Liveness (runtime probes) owns the runtime + death/detecting
-  axis; activity owns working/idle/waiting. `isLivenessOwned` decides when a
-  healthy probe may *recover* a state (e.g. `detecting → working`) vs. when it
-  must not clobber an activity-owned `needs_input`/`blocked`. A high-confidence
-  activity signal may resolve a `detecting` session; an open PR writes only the
-  PR axis and lets `DeriveLegacyStatus` surface it.
-- **Detecting-memory lifecycle** — a decision with `Detecting == nil` clears the
-  persisted quarantine memory (`LifecyclePatch.ClearDetecting`) so a stale prior
-  can't leak into a later episode.
-- **ACT — reactions + escalation** (`reactions.go`) — on a genuine status
-  transition, `react()` maps it to a reaction (`send-to-agent` / `notify`;
-  `auto-merge` exists but is off by default) and dispatches it. A
-  per-`(session,reaction)` escalation tracker counts attempts; it escalates
-  (notifies a human and silences further auto-dispatch) when a numeric cap or a
-  duration is exceeded. The `ci-failed` budget is persistent across CI
-  oscillation within an open PR and re-arms on genuine recovery. `TickEscalations`
-  (called by the reaper) fires the duration-based escalations the synchronous
-  LCM can't wake itself for; it notifies outside the lock.
-
-## 6. The Session Manager (`session`)
-
-Implements `ports.SessionManager` — the explicit-mutation plumbing. It never
-derives/observes lifecycle state; it routes outcomes to the LCM.
-
-- **Spawn** — `Workspace.Create` → build prompt → `Runtime.Create` (env
-  `AO_SESSION_ID`/`AO_PROJECT_ID`/`AO_ISSUE_ID`) → **seed** the initial record
-  (`not_started`/`spawn_requested`) via the store → `LCM.OnSpawnCompleted`.
-  Eager rollback unwinds prior steps on failure; an `OnSpawnCompleted` failure
-  routes the seeded orphan to terminal-errored (the store has no delete; a later
-  `Cleanup` reclaims it).
-- **Kill** — `LCM.OnKillRequested` → `Runtime.Destroy` → `Workspace.Destroy`,
-  honoring the **worktree-remove safety**: after `git worktree prune`, a still-
-  registered path is never `rm -rf`'d (it may hold the agent's uncommitted work)
-  — the refusal is surfaced, not forced.
-- **Restore** — reopen via `PatchLifecycle` (not re-seed): session →
-  `not_started`, PR → `cleared_on_restore`; relaunch with the agent's resume
-  command; runtime is rolled back on a post-create failure.
-- **List/Get** — read records and attach the derived `Status`. **Send** — via
-  `AgentMessenger`. **Cleanup** — tear down terminal/stale sessions, skipping
-  paths with uncommitted work.
-
-## 7. Load-bearing invariants
-
-1. **Persist canonical; derive display.** Never store the display status.
-2. **One authority for death.** Only the DECIDE pipeline (via `detecting`) writes
-   inferred terminal states; the SM's explicit-kill path goes through
-   `OnKillRequested`. Everything else that notices a dead runtime persists
-   `detecting`, never `terminated`.
-3. **Failed probe ≠ dead.** Timed-out/errored probes route to `detecting`.
-4. **Evidence-hash debounce** prevents flapping signals from terminating live
-   work; the 5-minute cap is a whole-episode wall-clock safety net.
-5. **PR facts dominate** the soft session states once a PR exists.
-6. **Merge-patch persistence** — writes touch only changed keys; the store is the
-   single disk writer (atomic write + lock + CDC).
-7. **Sticky activity states** (`waiting_input`/`blocked`) do not decay by clock.
-8. **Worktree-remove safety** on teardown.
-
-## 8. Concurrency & testing
-
-- Within a session, the per-session lock serializes the load→decide→persist
-  read-modify-write. `react()` runs *outside* the lock (so a busy-waiting
-  send-to-agent never holds the session mutex) — see `status.md` for the
-  integration-time follow-up this implies.
-- Tests use **in-memory fakes** for every outbound port, so the LCM and SM are
-  fully testable with no real adapters. The SM tests drive the **real**
-  `lifecycle.Manager` for spawn/kill round-trips, so the SM↔LCM contract is
-  genuinely exercised. The `decide` package is table-tested in isolation.
+- Do not store display status.
+- Keep session status facts small: `activity_state`, `is_terminated`, and PR
+  facts are the durable inputs.
+- Do not treat failed probes as death.
+- Do not force-delete registered dirty worktrees.

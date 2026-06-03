@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -25,8 +24,8 @@ func TestCommandArgs(t *testing.T) {
 	}{
 		{"check ref", checkRefFormatBranchArgs(repo, branch), []string{"-C", repo, "check-ref-format", "--branch", branch}},
 		{"rev parse", revParseVerifyArgs(repo, "origin/main"), []string{"-C", repo, "rev-parse", "--verify", "--quiet", "origin/main"}},
-		{"add existing", chooseWorktreeAddArgs(repo, path, branch, "", true), []string{"-C", repo, "worktree", "add", path, branch}},
-		{"add new", chooseWorktreeAddArgs(repo, path, branch, "origin/main", false), []string{"-C", repo, "worktree", "add", "-b", branch, path, "origin/main"}},
+		{"add existing", worktreeAddBranchArgs(repo, path, branch), []string{"-C", repo, "worktree", "add", path, branch}},
+		{"add new", worktreeAddNewBranchArgs(repo, branch, path, "origin/main"), []string{"-C", repo, "worktree", "add", "-b", branch, path, "origin/main"}},
 		// No --force: a dirty worktree must cause `git worktree remove` to fail so
 		// the post-prune safety check surfaces the refusal instead of deleting
 		// uncommitted agent work (review item RA).
@@ -48,6 +47,12 @@ func TestBaseRefCandidates(t *testing.T) {
 	want := []string{"origin/feature/test", "origin/main", "feature/test"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("candidates = %#v, want %#v", got, want)
+	}
+
+	got = baseRefCandidates("feature/test", "upstream/main")
+	want = []string{"origin/feature/test", "upstream/main", "feature/test"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("qualified candidates = %#v, want %#v", got, want)
 	}
 }
 
@@ -85,26 +90,6 @@ func TestParseWorktreePorcelain(t *testing.T) {
 	}
 	if !recs[3].Bare {
 		t.Fatalf("bare record = %#v", recs[3])
-	}
-}
-
-func TestFilterProjectWorktrees(t *testing.T) {
-	root := filepath.Clean("/managed/proj")
-	recs := []worktreeRecord{
-		{Path: "/repo", Branch: "main"},
-		{Path: "/managed/proj/s1", Branch: "feature/one"},
-		{Path: "/managed/proj/s2", Branch: ""},
-		{Path: "/managed/other/s3", Branch: "feature/three"},
-	}
-	got := filterProjectWorktrees(recs, root, domain.ProjectID("proj"))
-	if len(got) != 2 {
-		t.Fatalf("len = %d, want 2: %#v", len(got), got)
-	}
-	if got[0].SessionID != "s1" || got[0].Branch != "feature/one" || got[0].ProjectID != "proj" {
-		t.Fatalf("first = %#v", got[0])
-	}
-	if got[1].SessionID != "s2" || got[1].Branch != "" {
-		t.Fatalf("second = %#v", got[1])
 	}
 }
 

@@ -25,12 +25,12 @@ func TestRuntimeIntegration(t *testing.T) {
 	}
 	configDir := t.TempDir()
 	r := New(Options{Timeout: 5 * time.Second, SocketDir: socketDir, ConfigDir: configDir})
-	_ = r.Destroy(ctx, ports.RuntimeHandle{ID: id, RuntimeName: runtimeName})
+	_ = r.Destroy(ctx, ports.RuntimeHandle{ID: id})
 
 	h, err := r.Create(ctx, ports.RuntimeConfig{
 		SessionID:     "ao_itest_zj",
 		WorkspacePath: t.TempDir(),
-		LaunchCommand: "printf ready-$AO_SESSION_ID\\n",
+		Argv:          []string{"sh", "-c", "printf ready-$AO_SESSION_ID\\n"},
 		Env:           map[string]string{"AO_SESSION_ID": id},
 	})
 	if err != nil {
@@ -90,20 +90,20 @@ func TestRuntimeIntegrationUsesExactSessionParsing(t *testing.T) {
 	r := New(Options{Timeout: 5 * time.Second, SocketDir: socketDir, ConfigDir: t.TempDir()})
 	longID := "ao_zj_exact_long"
 	prefixID := "ao_zj_exact"
-	_ = r.Destroy(ctx, ports.RuntimeHandle{ID: longID, RuntimeName: runtimeName})
-	_ = r.Destroy(ctx, ports.RuntimeHandle{ID: prefixID, RuntimeName: runtimeName})
+	_ = r.Destroy(ctx, ports.RuntimeHandle{ID: longID})
+	_ = r.Destroy(ctx, ports.RuntimeHandle{ID: prefixID})
 
 	h, err := r.Create(ctx, ports.RuntimeConfig{
 		SessionID:     "ao_zj_exact_long",
 		WorkspacePath: t.TempDir(),
-		LaunchCommand: "printf ready\\n",
+		Argv:          []string{"printf", "ready\\n"},
 	})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	defer r.Destroy(ctx, h)
 
-	alive, err := r.IsAlive(ctx, ports.RuntimeHandle{ID: prefixID, RuntimeName: runtimeName})
+	alive, err := r.IsAlive(ctx, ports.RuntimeHandle{ID: prefixID})
 	if err != nil {
 		t.Fatalf("IsAlive prefix: %v", err)
 	}

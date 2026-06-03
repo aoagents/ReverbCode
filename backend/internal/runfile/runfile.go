@@ -12,6 +12,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/processalive"
 )
 
 // Info is the on-disk handshake payload.
@@ -31,7 +33,7 @@ type Info struct {
 // partial file and a stale running.json from a crashed predecessor is
 // overwritten without an intermediate "no file" window.
 func Write(path string, info Info) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return fmt.Errorf("create run-file dir: %w", err)
 	}
 	data, err := json.MarshalIndent(info, "", "  ")
@@ -45,10 +47,10 @@ func Write(path string, info Info) error {
 		return fmt.Errorf("create temp run-file: %w", err)
 	}
 	tmpName := tmp.Name()
-	defer os.Remove(tmpName) // no-op once the rename succeeds
+	defer func() { _ = os.Remove(tmpName) }() // no-op once the rename succeeds
 
 	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return fmt.Errorf("write temp run-file: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
@@ -86,6 +88,20 @@ func Remove(path string) error {
 	return nil
 }
 
+// RemoveIfOwned deletes running.json only if it still belongs to ownerPID. This
+// prevents a shutting-down daemon from removing a successor's freshly written
+// handshake after an overlapping restart.
+func RemoveIfOwned(path string, ownerPID int) error {
+	info, err := Read(path)
+	if err != nil {
+		return err
+	}
+	if info == nil || info.PID != ownerPID {
+		return nil
+	}
+	return Remove(path)
+}
+
 // CheckStale inspects an existing run-file before the new daemon binds. It
 // returns:
 //
@@ -104,7 +120,7 @@ func CheckStale(path string) (*Info, error) {
 	if info == nil || info.PID <= 0 {
 		return nil, nil
 	}
-	if processAlive(info.PID) {
+	if processalive.Alive(info.PID) {
 		return info, nil
 	}
 	return nil, nil

@@ -115,6 +115,8 @@ func TestParseID(t *testing.T) {
 		{"missing slash", "octocat#42", "", "", 0, true},
 		{"empty owner", "/repo#1", "", "", 0, true},
 		{"empty repo", "owner/#1", "", "", 0, true},
+		{"embedded slash", "o/r/x#1", "", "", 0, true},
+		{"space", "o/r space#1", "", "", 0, true},
 		{"non-numeric", "o/r#abc", "", "", 0, true},
 		{"zero", "o/r#0", "", "", 0, true},
 		{"negative", "o/r#-1", "", "", 0, true},
@@ -184,7 +186,7 @@ func TestGet_StateMappingFromGitHubFields(t *testing.T) {
 		wantState domain.NormalizedIssueState
 	}{
 		{"plain open", "open", "", nil, domain.IssueOpen},
-		{"open with in-progress label", "open", "", []string{"in-progress"}, domain.IssueInProgress},
+		{"open with in-progress label", "open", "", []string{"In-Progress"}, domain.IssueInProgress},
 		{"open with in-review label", "open", "", []string{"in-review"}, domain.IssueInReview},
 		{"review wins over progress when both present", "open", "", []string{"in-progress", "in-review"}, domain.IssueInReview},
 		{"closed completed", "closed", "completed", nil, domain.IssueDone},
@@ -288,7 +290,7 @@ func TestGet_SecondaryRateLimit(t *testing.T) {
 func TestGet_RejectsWrongProvider(t *testing.T) {
 	f := newFakeGH(t)
 	tr := newTrackerForTest(t, f)
-	_, err := tr.Get(ctx(), domain.TrackerID{Provider: domain.TrackerProviderGitLab, Native: "g/p#1"})
+	_, err := tr.Get(ctx(), domain.TrackerID{Provider: domain.TrackerProvider("gitlab"), Native: "g/p#1"})
 	if !errors.Is(err, ErrWrongProvider) {
 		t.Fatalf("err = %v, want ErrWrongProvider", err)
 	}
@@ -518,7 +520,7 @@ func TestList_QueryEncoding(t *testing.T) {
 func TestList_RejectsWrongProvider(t *testing.T) {
 	f := newFakeGH(t)
 	tr := newTrackerForTest(t, f)
-	_, err := tr.List(ctx(), domain.TrackerRepo{Provider: domain.TrackerProviderGitLab, Native: "g/p"}, domain.ListFilter{})
+	_, err := tr.List(ctx(), domain.TrackerRepo{Provider: domain.TrackerProvider("gitlab"), Native: "g/p"}, domain.ListFilter{})
 	if !errors.Is(err, ErrWrongProvider) {
 		t.Fatalf("err = %v, want ErrWrongProvider", err)
 	}

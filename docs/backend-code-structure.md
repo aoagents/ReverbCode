@@ -1,274 +1,382 @@
-# Backend code structure
+# Backend Code Structure
 
-This document describes the target package structure for the Go backend and the
-rules for deciding where new code belongs. It is intentionally about package
-ownership and maintainability; see `architecture.md` for lifecycle behavior and
-state-machine invariants.
+This document describes package ownership for the Go backend. It is about where
+code belongs. See [architecture.md](architecture.md) for lifecycle behavior,
+status derivation, persistence, CDC, and invariants.
 
 ## Goal
 
-The backend coordinates long-running AI coding sessions. It needs to keep the
-lifecycle core strict while still giving product resources, adapters, and API
-surfaces obvious homes.
+The backend is a local daemon that supervises coding-agent sessions. The code
+needs clear homes for product workflows, protocol surfaces, persistence, and
+replaceable external systems without turning any single package into a catch-all.
 
-The target structure is a hybrid:
+The current structure is a layered hybrid:
 
-- a small shared `domain` package for stable product vocabulary,
-- feature-owned application packages for product workflows,
-- focused capability packages for replaceable external systems,
-- protocol packages for HTTP/CLI transport concerns.
+- `domain` holds shared product vocabulary and durable fact records.
+- `service/*` owns controller-facing product use cases and read models.
+- `session_manager` owns internal session mutations and resource orchestration.
+- `lifecycle` owns the durable session fact reducer.
+- `ports` defines narrow capability interfaces consumed by core code.
+- `adapters/*` implements those capabilities with real external systems.
+- `storage/sqlite` and `cdc` own persistence and change delivery.
+- `httpd` and `cli` own protocol concerns.
+- `daemon` wires the production graph together.
 
-This avoids two failure modes:
-
-- a central `ports` package becoming a catch-all for unrelated DTOs,
-  interfaces, and adapter contracts;
-- a pure feature-folder layout that weakens the lifecycle/session invariants by
-  scattering shared state vocabulary.
-
-## Package roles
+## Package Roles
 
 ### `internal/domain`
 
-`domain` is AO's shared product language. It should stay small, stable, and
-free of infrastructure imports.
+`domain` is AO's shared product language. Keep it stable and free of
+infrastructure imports.
 
 Belongs here:
 
-- shared IDs: `ProjectID`, `SessionID`, `IssueID`, tracker IDs;
-- canonical lifecycle/session state;
-- pure derived status logic;
-- normalized cross-provider vocabulary that many packages must agree on.
+- shared IDs such as `ProjectID`, `SessionID`, and `IssueID`;
+- shared enums and status vocabulary;
+- durable fact records that multiple packages must agree on;
+- PR, tracker, project, and session vocabulary that is not transport-specific.
 
 Does not belong here:
 
 - HTTP request/response DTOs;
-- OpenAPI wrapper shapes;
-- SQLite rows or sqlc generated types;
-- GitHub/tmux/zellij-specific payloads;
-- feature-specific config patches and repair results.
+- CLI output shapes;
+- OpenAPI wrapper/envelope types;
+- sqlc generated rows;
+- GitHub, Zellij, Claude, Codex, or OpenCode payloads;
+- one-resource controller helper types.
 
-Rule of thumb: if AO would still use the concept after replacing HTTP, GitHub,
-tmux/zellij, and SQLite, and more than one feature needs the exact vocabulary,
-it may belong in `domain`.
+Rule of thumb: if AO would still use the concept after replacing HTTP, the CLI,
+SQLite, GitHub, Zellij, and every agent adapter, and more than one package needs
+the exact vocabulary, it may belong in `domain`.
 
-### Feature packages
+### `internal/service/*`
 
-Feature packages own product workflows and feature-specific types.
+`service` packages are the controller-facing application boundary.
 
-Examples:
-
-```txt
-internal/project
-internal/session
-internal/lifecycle
-internal/scm
-```
-
-A feature package may contain:
-
-- feature entities and read models;
-- application command/result types;
-- the feature manager/service implementation;
-- feature-specific validation and errors;
-- small interfaces the feature consumes.
-
-Example: `ProjectID` is shared vocabulary and belongs in `domain`; `Project`,
-`Summary`, `Degraded`, `TrackerConfig`, `SCMConfig`, and `ReactionConfig` are
-project-owned concepts and belong in `internal/project`.
-
-### Capability packages and adapters
-
-A capability is something AO needs from an external system. An adapter is a
-concrete implementation.
-
-Recommended long-term shape:
+Current examples:
 
 ```txt
-internal/runtime/
-  runtime.go
-  tmux/
-  zellij/
-
-internal/workspace/
-  workspace.go
-  gitworktree/
-
-internal/storage/
-  store.go
-  sqlite/
-
-internal/tracker/
-  tracker.go
-  github/
-
-internal/notify/
-  notifier.go
-  desktop/
-  slack/
-
-internal/agent/
-  agent.go
-  codex/
-  claude/
-  opencode/
+internal/service/project
+internal/service/session
+internal/service/pr
 ```
 
-The current tree still uses `internal/ports` for several of these seams. That is
-acceptable during integration, but new code should avoid adding unrelated
-resource DTOs or single-resource inbound interfaces to `ports`.
+Belongs here:
 
-Adapters should be leaves in the import graph. They translate external details
-into AO concepts; they should not own product workflows.
+- resource use cases called by HTTP controllers and CLI-backed API flows;
+- resource read models and command/result types;
+- display-model assembly, such as session status derived from session and PR
+  facts;
+- resource-specific validation and user-facing errors;
+- small store interfaces consumed by the service.
+
+Does not belong here:
+
+- low-level runtime/workspace/agent process control;
+- raw sqlc generated rows as public service results;
+- HTTP routing, path parsing, status-code decisions, or OpenAPI generation;
+- concrete external adapter details.
+
+For example, project API concepts live in `internal/service/project`, not in
+`domain` and not in a top-level `internal/project` package.
+
+### `internal/session_manager`
+
+`session_manager` owns internal session commands: spawn, restore, kill, cleanup,
+and send-related orchestration over runtime, workspace, agent, storage,
+messenger, and lifecycle dependencies.
+
+Belongs here:
+
+- multi-step session mutations;
+- rollback/cleanup sequencing when spawn partially succeeds;
+- resource teardown safety;
+- internal errors such as not found, terminated, or not restorable.
+
+Does not belong here:
+
+- HTTP request decoding;
+- CLI formatting;
+- controller-facing list/get read-model assembly;
+- terminal WebSocket framing.
+
+The split is intentional: `service/session` is the product/API boundary;
+`session_manager` is the internal command engine.
+
+### `internal/lifecycle`
+
+`lifecycle` is the canonical write path for durable session lifecycle facts. It
+reduces runtime observations, activity signals, spawn completion, termination,
+and PR observations into small persisted facts.
+
+Belongs here:
+
+- updates to lifecycle-owned session facts;
+- guardrails around runtime/activity observations;
+- lifecycle-triggered agent nudges for actionable PR facts.
+
+Does not belong here:
+
+- display status persistence;
+- HTTP/CLI DTOs;
+- direct adapter implementation details;
+- PR row persistence.
+
+The UI status is derived at read time by service code. Do not store display
+status in lifecycle or SQLite.
+
+### `internal/ports`
+
+`ports` contains narrow capability interfaces and shared adapter-facing structs.
+It connects core code to replaceable systems.
+
+Current capability examples:
+
+- `Runtime`
+- `Workspace`
+- `Agent`
+- `AgentResolver`
+- `AgentMessenger`
+- `PRWriter`
+
+Belongs here:
+
+- interfaces consumed by core packages and implemented by adapters;
+- capability structs such as `RuntimeConfig`, `WorkspaceConfig`, and
+  `SpawnConfig`;
+- vocabulary needed at the boundary between core orchestration and adapters.
+
+Does not belong here:
+
+- resource read models like project/session API responses;
+- HTTP request/response DTOs;
+- sqlc rows;
+- concrete adapter options;
+- one-off interfaces that only a single package needs internally.
+
+Keep `ports` capability-oriented. It should not become the dumping ground for
+every manager, DTO, and resource contract.
+
+### `internal/adapters/*`
+
+Adapters are concrete implementations of external systems.
+
+Current examples:
+
+```txt
+internal/adapters/agent/claudecode
+internal/adapters/agent/codex
+internal/adapters/agent/opencode
+internal/adapters/runtime/zellij
+internal/adapters/workspace/gitworktree
+internal/adapters/scm/github
+internal/adapters/tracker/github
+```
+
+Adapters should be leaves in the import graph. They translate external behavior
+into AO ports and domain concepts; they should not own product workflows.
 
 Good:
 
 ```txt
-session -> runtime
-runtime/tmux -> runtime + domain
-workspace/gitworktree -> workspace + domain
-storage/sqlite -> storage + domain
+session_manager -> ports.Runtime
+adapters/runtime/zellij -> ports + domain
+adapters/workspace/gitworktree -> ports + domain
+daemon -> adapters + services + storage
 ```
 
 Avoid:
 
 ```txt
-domain -> httpd
-domain -> adapters/tracker/github
-session -> adapters/runtime/tmux
-httpd -> storage/sqlite
+domain -> adapters
+service/session -> adapters/runtime/zellij
+httpd/controllers -> storage/sqlite/store
+adapters/* -> httpd
 ```
+
+### `internal/storage/sqlite`
+
+`storage/sqlite` owns SQLite setup, migrations, sqlc generated code, and store
+implementations.
+
+Belongs here:
+
+- connection setup and PRAGMAs;
+- goose migrations;
+- sqlc queries and generated code;
+- table-specific store methods;
+- transactions and CDC-triggered persistence behavior.
+
+Does not belong here:
+
+- HTTP response types;
+- CLI output formatting;
+- product display status rules;
+- external adapter logic.
+
+Generated sqlc types should stay behind store methods. Services and lifecycle
+code should work with domain records or service read models, not generated rows.
+
+### `internal/cdc`
+
+`cdc` owns `change_log` polling and event broadcasting. SQLite triggers append
+durable events to `change_log`; the poller tails that table and fans events out
+to subscribers.
+
+Belongs here:
+
+- event type definitions for the CDC stream;
+- poller and broadcaster logic;
+- subscriber fan-out behavior.
+
+Does not belong here:
+
+- terminal byte streams;
+- product workflow decisions;
+- database schema ownership.
+
+### `internal/terminal`
+
+`terminal` owns the terminal session protocol and PTY/session management used by
+the HTTP mux.
+
+Belongs here:
+
+- terminal session lifecycle;
+- input/output framing independent of HTTP;
+- PTY-backed session handling;
+- ring buffers and terminal protocol tests.
+
+`httpd` adapts WebSocket connections to terminal interfaces; `terminal` should
+not import `httpd`.
 
 ### `internal/httpd`
 
-`httpd` is the HTTP protocol adapter. It owns:
+`httpd` is the HTTP protocol adapter.
+
+Belongs here:
 
 - routing and middleware;
-- request decoding;
+- HTTP request decoding and response encoding;
 - path/query parameter handling;
-- HTTP status codes;
-- JSON response encoding;
+- status-code mapping;
 - API error envelopes;
-- OpenAPI serving and validation.
+- OpenAPI generation and serving;
+- WebSocket upgrade handling for terminal mux.
 
-It should call feature managers and translate their results/errors into HTTP
-responses. It should not reach directly into runtime, workspace, storage, or
-provider adapters.
+Controllers call service managers and translate service results/errors into HTTP
+responses. Controllers should not reach directly into concrete adapters or the
+SQLite store.
 
-HTTP-only request/response wrappers belong in `httpd`. Application commands
-shared by HTTP and CLI can live in the owning feature package.
+HTTP-only request/response wrappers belong in `httpd` or
+`httpd/controllers`. Application read models shared by controller and CLI flows
+belong in the owning `service/*` package.
 
-## Interface placement
+### `internal/cli`
 
-Prefer interfaces near their consumers.
+`cli` owns the user-facing `ao` command. It should stay thin:
 
-- If only one package consumes an abstraction, define the interface there.
-- If HTTP and CLI both need the same application workflow, define the manager in
-  the feature package, e.g. `project.Manager`.
-- If many implementations satisfy the same external capability, define that
-  interface in a focused capability package, e.g. `runtime.Runtime`.
-- Avoid adding new resource-specific inbound managers to central `ports`.
+- discover the local daemon;
+- call the daemon's loopback HTTP API;
+- format command output;
+- start/stop/status/doctor process control.
 
-Return concrete types from constructors unless callers genuinely need an
-interface.
+The CLI should not duplicate daemon business logic. If a command needs product
+behavior, put the behavior in the daemon service/API path and have the CLI call
+that path.
 
-## Target tree
+### `internal/daemon`
 
-This is the direction to migrate toward:
+`daemon` is the production composition root. It wires config, logging, SQLite,
+CDC, lifecycle, reaper, runtime, terminal manager, services, HTTP, and shutdown.
+
+Belongs here:
+
+- production dependency construction;
+- adapter registration;
+- startup/shutdown sequencing;
+- cross-component wiring.
+
+Does not belong here:
+
+- business logic that should be testable in service, lifecycle, or manager
+  packages;
+- adapter implementation details.
+
+## Interface Placement
+
+Prefer interfaces near their consumers, except for shared capabilities.
+
+- If only one package consumes an abstraction, define the smallest interface in
+  that package.
+- If multiple core packages consume a replaceable capability, define it in
+  `ports`.
+- If HTTP controllers need a resource service, use the owning `service/*`
+  manager interface.
+- Return concrete types from constructors unless callers genuinely need an
+  interface.
+
+## Current Tree
+
+The current main-line shape is:
 
 ```txt
 backend/
-  main.go                         # composition root for now
+  cmd/ao/                       # CLI entrypoint
+  main.go                       # daemon entrypoint compatibility
+  sqlc.yaml
 
-  internal/domain/
-    lifecycle.go
-    session.go
-    status.go
-    tracker.go
-    decide/
-
-  internal/lifecycle/
-    manager.go
-    decide_bridge.go
-    reactions.go
-
-  internal/session/
-    manager.go
-    types.go                      # eventually owns Spawn/Kill/Cleanup inputs
-
-  internal/project/
-    manager.go
-    types.go
-    dto.go
-
-  internal/httpd/
-    router.go
-    server.go
-    errors.go
-    json.go
-    apispec/
-    controllers/                  # or resource route files while small
-
-  internal/observe/
-    reaper/
-    scm/
-
-  internal/runtime/
-    runtime.go
-    tmux/
-    zellij/
-
-  internal/workspace/
-    workspace.go
-    gitworktree/
-
-  internal/storage/
-    store.go
-    sqlite/
-      migrations/
-      queries/
-      sqlc/
-
-  internal/tracker/
-    tracker.go
-    github/
-
-  internal/notify/
-    notifier.go
+  internal/domain/              # shared product vocabulary and durable facts
+  internal/ports/               # capability interfaces
+  internal/service/
+    project/                    # project API/use-case boundary
+    session/                    # session API/use-case boundary
+    pr/                         # PR observation/action service
+  internal/session_manager/     # internal session command engine
+  internal/lifecycle/           # durable lifecycle fact reducer
+  internal/observe/reaper/      # runtime observation loop
+  internal/storage/sqlite/      # DB, migrations, queries, generated sqlc, stores
+  internal/cdc/                 # change_log poller and broadcaster
+  internal/terminal/            # terminal session protocol and PTY handling
+  internal/httpd/               # HTTP API, controllers, OpenAPI, terminal mux
+  internal/cli/                 # user-facing ao command
+  internal/daemon/              # production wiring and shutdown
+  internal/config/              # daemon env/default config
+  internal/adapters/            # concrete agent/runtime/workspace/SCM/tracker adapters
 ```
 
-## Migration guidance
+## Adding New Code
 
-Do not perform a large package reshuffle for its own sake. Use this structure as
-the target when touching code for real feature work.
+Use these defaults:
 
-Recommended sequence:
+- New HTTP route: add controller/API code in `httpd`, call a `service/*`
+  package, and update OpenAPI generation/spec tests.
+- New product resource: put shared IDs/vocabulary in `domain`, use cases and
+  read models in `service/<resource>`, storage in `storage/sqlite`, and external
+  system seams in `ports`.
+- New adapter: implement a `ports` interface under `adapters/<capability>/<impl>`
+  and wire it in `daemon`.
+- New persisted fact: add a migration, sqlc query, store method, domain record or
+  event vocabulary, and CDC behavior when the UI/API must observe it.
+- New CLI command: keep command parsing/formatting in `cli`; call the daemon API
+  rather than reimplementing daemon behavior.
 
-1. Keep `domain` small. Move only shared vocabulary there.
-2. Let new resources create feature packages (`project`, later `scm`, etc.).
-3. Stop adding unrelated DTOs and one-off managers to `ports`.
-4. Split `ports` gradually into focused capability packages as implementations
-   land or need multiple adapters.
-5. Keep HTTP transport DTOs in `httpd` unless they are intentionally shared
-   application command/result types.
-6. Preserve the LCM writer contract: observers, HTTP, CLI, and session workflows
-   report facts/commands to the LCM; they do not write canonical lifecycle state
-   directly.
+## Project Routes Example
 
-## Applying this to project routes
+Project-owned concepts live in `internal/service/project`:
 
-`internal/project` is the right home for project-owned concepts:
+- project read models;
+- project add/remove command types;
+- project validation and user-facing errors;
+- the `Manager` contract consumed by HTTP controllers.
 
-- project entities/read models;
-- project-specific behavior config;
-- project add/update/remove/repair/reload command/result types;
-- a `Manager` contract if both HTTP and CLI will call it.
-
-`internal/httpd` remains responsible for:
+`internal/httpd/controllers` remains responsible for:
 
 - route registration;
-- OpenAPI;
-- JSON request/response wrappers when they differ from application types;
-- mapping project errors to HTTP status codes and API error envelopes.
+- JSON decoding/encoding;
+- HTTP status codes and error envelopes;
+- mapping service errors to responses.
 
-When a type is ambiguous, ask whether it is a product command or an HTTP wire
-shape. Product commands belong in `project`; HTTP wire shapes belong in `httpd`.
+When a type is ambiguous, ask whether it is a product use-case/read model or an
+HTTP wire wrapper. Product use-case/read models belong in `service/project`;
+HTTP wire wrappers belong in `httpd`.

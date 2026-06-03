@@ -10,7 +10,6 @@ import (
 )
 
 const (
-	runtimeName       = "zellij"
 	agentPaneName     = "agent"
 	defaultChunkBytes = 16 * 1024
 )
@@ -99,7 +98,7 @@ func layoutString(workspacePath, shellPath string, shellArgs []string, shellComm
 
 func shellLaunchCommand(cfg ports.RuntimeConfig, shellPath string, spec shellLaunchSpec) string {
 	if len(spec.args) > 0 && spec.args[0] == "-NoLogo" {
-		return wrapLaunchCommandPowerShell(cfg, shellPath)
+		return wrapLaunchCommandPowerShell(cfg)
 	}
 	if len(spec.args) > 0 && spec.args[0] == "/D" {
 		return wrapLaunchCommandCmd(cfg)
@@ -129,14 +128,14 @@ func wrapLaunchCommandUnix(cfg ports.RuntimeConfig, shellPath string) string {
 		b.WriteString(shellQuote(path))
 		b.WriteString("; ")
 	}
-	b.WriteString(cfg.LaunchCommand)
+	b.WriteString(quoteArgvUnix(cfg.Argv))
 	b.WriteString("; exec ")
 	b.WriteString(shellQuote(shellPath))
 	b.WriteString(" -i")
 	return b.String()
 }
 
-func wrapLaunchCommandPowerShell(cfg ports.RuntimeConfig, shellPath string) string {
+func wrapLaunchCommandPowerShell(cfg ports.RuntimeConfig) string {
 	path := cfg.Env["PATH"]
 	if path == "" {
 		path = getenv("PATH")
@@ -158,7 +157,7 @@ func wrapLaunchCommandPowerShell(cfg ports.RuntimeConfig, shellPath string) stri
 		b.WriteString(psQuote(path))
 		b.WriteString("; ")
 	}
-	b.WriteString(cfg.LaunchCommand)
+	b.WriteString(quoteArgvPowerShell(cfg.Argv))
 	return b.String()
 }
 
@@ -184,8 +183,33 @@ func wrapLaunchCommandCmd(cfg ports.RuntimeConfig) string {
 		b.WriteString(cmdQuote(path))
 		b.WriteString("\" && ")
 	}
-	b.WriteString(cfg.LaunchCommand)
+	b.WriteString(quoteArgvCmd(cfg.Argv))
 	return b.String()
+}
+
+func validateEnvKeys(env map[string]string) error {
+	for key := range env {
+		if !validEnvKey(key) {
+			return fmt.Errorf("zellij runtime: invalid env key %q", key)
+		}
+	}
+	return nil
+}
+
+func validEnvKey(key string) bool {
+	if key == "" {
+		return false
+	}
+	for i, r := range key {
+		if r == '_' || (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') {
+			continue
+		}
+		if i > 0 && r >= '0' && r <= '9' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func sortedKeys(m map[string]string) []string {
@@ -207,6 +231,40 @@ func psQuote(s string) string {
 
 func cmdQuote(s string) string {
 	return strings.ReplaceAll(s, "\"", "\"\"")
+}
+
+// quoteArgvUnix renders argv as a POSIX-shell command, single-quoting each
+// argument so a value with spaces stays one word under `sh -lc`.
+func quoteArgvUnix(argv []string) string {
+	parts := make([]string, len(argv))
+	for i, a := range argv {
+		parts[i] = shellQuote(a)
+	}
+	return strings.Join(parts, " ")
+}
+
+// quoteArgvPowerShell renders argv for `powershell -Command`. The call operator
+// `&` is required so a quoted first token is invoked as a command rather than
+// echoed as a string literal.
+func quoteArgvPowerShell(argv []string) string {
+	if len(argv) == 0 {
+		return ""
+	}
+	parts := make([]string, len(argv))
+	for i, a := range argv {
+		parts[i] = psQuote(a)
+	}
+	return "& " + strings.Join(parts, " ")
+}
+
+// quoteArgvCmd renders argv for cmd.exe, wrapping each argument in double quotes
+// (doubling any embedded quote) so spaces don't split a single argument.
+func quoteArgvCmd(argv []string) string {
+	parts := make([]string, len(argv))
+	for i, a := range argv {
+		parts[i] = "\"" + strings.ReplaceAll(a, "\"", "\"\"") + "\""
+	}
+	return strings.Join(parts, " ")
 }
 
 func kdlQuote(s string) string {

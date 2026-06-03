@@ -16,21 +16,21 @@ import (
 const (
 	// LoopbackHost is the only host the daemon ever binds. There is deliberately
 	// no AO_HOST env var: the daemon has no auth/CORS/TLS and a stray
-	// AO_HOST=0.0.0.0 would turn it into a public no-auth service. The legacy
-	// TS server bound all-interfaces by accident and docs/CROSS_PLATFORM.md
-	// already calls that out as a bug; the Go rewrite fixes it by removing the
-	// knob entirely. If a non-default loopback (e.g. ::1, 127.0.0.2) is ever
-	// needed, add it back with an IsLoopback() validator — not a raw env read.
+	// AO_HOST=0.0.0.0 would turn it into a public no-auth service. If a
+	// non-default loopback (e.g. ::1, 127.0.0.2) is ever needed, add it back with
+	// an IsLoopback() validator — not a raw env read.
 	LoopbackHost = "127.0.0.1"
-	// DefaultPort is the single port the whole surface (REST, SSE, WS, static)
-	// is served from. Single-port keeps it same-origin: no CORS, one lifecycle.
+	// DefaultPort is the single port for REST, terminal mux, health, and control.
 	DefaultPort = 3001
-	// DefaultRequestTimeout bounds a single request. Long-lived surfaces (SSE,
-	// WS) are mounted outside this timeout; it guards the REST surface only.
+	// DefaultRequestTimeout bounds a single REST request. Long-lived terminal mux
+	// connections are mounted outside this timeout.
 	DefaultRequestTimeout = 60 * time.Second
 	// DefaultShutdownTimeout is the hard cap on graceful shutdown. After this
 	// the process exits even if connections are still draining.
 	DefaultShutdownTimeout = 10 * time.Second
+	// DefaultAgent is the agent adapter id the daemon wires when AO_AGENT is
+	// unset. It matches the claude-code adapter's manifest id.
+	DefaultAgent = "claude-code"
 )
 
 // Config is the fully-resolved daemon configuration. It is immutable once
@@ -47,6 +47,13 @@ type Config struct {
 	// RunFilePath is where the PID + port handshake file (running.json) is
 	// written so the Electron supervisor can discover and reap the daemon.
 	RunFilePath string
+	// DataDir is the directory holding durable SQLite state: DB and WAL files.
+	// It is created on first use by the storage layer.
+	DataDir string
+	// Agent is the id of the agent adapter the daemon wires into the Session
+	// Manager (see DefaultAgent). Selected by AO_AGENT; startSession fails fast
+	// if no adapter with this id is registered.
+	Agent string
 }
 
 // Addr returns the host:port the HTTP server binds. It uses net.JoinHostPort so
@@ -65,6 +72,8 @@ func (c Config) Addr() string {
 //	AO_REQUEST_TIMEOUT   per-request timeout (Go duration > 0, default 60s)
 //	AO_SHUTDOWN_TIMEOUT  shutdown deadline   (Go duration > 0, default 10s)
 //	AO_RUN_FILE          running.json path   (default <state-dir>/running.json)
+//	AO_DATA_DIR          durable state dir   (default <state-dir>/data)
+//	AO_AGENT             agent adapter id    (default claude-code)
 //
 // The bind host is not configurable: the daemon is loopback-only by design.
 func Load() (Config, error) {
@@ -73,6 +82,7 @@ func Load() (Config, error) {
 		Port:            DefaultPort,
 		RequestTimeout:  DefaultRequestTimeout,
 		ShutdownTimeout: DefaultShutdownTimeout,
+		Agent:           DefaultAgent,
 	}
 
 	if raw := os.Getenv("AO_PORT"); raw != "" {
@@ -102,11 +112,21 @@ func Load() (Config, error) {
 		cfg.ShutdownTimeout = d
 	}
 
+	if raw := os.Getenv("AO_AGENT"); raw != "" {
+		cfg.Agent = raw
+	}
+
 	runFile, err := resolveRunFilePath()
 	if err != nil {
 		return Config{}, err
 	}
 	cfg.RunFilePath = runFile
+
+	dataDir, err := resolveDataDir()
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.DataDir = dataDir
 
 	return cfg, nil
 }
@@ -126,7 +146,7 @@ func parsePositiveDuration(name, raw string) (time.Duration, error) {
 }
 
 // resolveRunFilePath picks where running.json lives. An explicit AO_RUN_FILE
-// wins; otherwise it sits under the per-user state directory so multiple repos
+// wins; otherwise it sits under the per-user config directory so multiple repos
 // share one supervisor handshake location.
 func resolveRunFilePath() (string, error) {
 	if p, ok := os.LookupEnv("AO_RUN_FILE"); ok && p != "" {
@@ -137,4 +157,18 @@ func resolveRunFilePath() (string, error) {
 		return "", fmt.Errorf("resolve state dir: %w", err)
 	}
 	return filepath.Join(dir, "agent-orchestrator", "running.json"), nil
+}
+
+// resolveDataDir picks where durable state (the SQLite DB) lives. An explicit
+// AO_DATA_DIR wins; otherwise it sits under the per-user config directory
+// alongside running.json.
+func resolveDataDir() (string, error) {
+	if p, ok := os.LookupEnv("AO_DATA_DIR"); ok && p != "" {
+		return p, nil
+	}
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve state dir: %w", err)
+	}
+	return filepath.Join(dir, "agent-orchestrator", "data"), nil
 }

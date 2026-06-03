@@ -29,10 +29,12 @@ const (
 )
 
 var sessionIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
-var paneIDPattern = regexp.MustCompile(`^terminal_[0-9]+$`)
+var paneIDPattern = regexp.MustCompile(`^terminal_\d+$`)
 
 var getenv = os.Getenv
 
+// Options configures a zellij Runtime; every field has a sensible default
+// (see New), so the zero value is usable.
 type Options struct {
 	Binary    string
 	Timeout   time.Duration
@@ -42,6 +44,8 @@ type Options struct {
 	ChunkSize int
 }
 
+// Runtime runs agent sessions inside zellij sessions, driving them via the
+// zellij CLI. It implements ports.Runtime.
 type Runtime struct {
 	binary    string
 	timeout   time.Duration
@@ -53,6 +57,19 @@ type Runtime struct {
 }
 
 var _ ports.Runtime = (*Runtime)(nil)
+
+// DefaultSocketDir returns a short, stable ZELLIJ_SOCKET_DIR for AO's daemon.
+// zellij's own default lives under $TMPDIR (long on macOS), which leaves almost
+// none of the ~103-byte unix-socket-path budget for the session name — a long
+// session id then fails with "session name must be less than 0 characters". A
+// short dir restores ample budget. Empty on Windows, where zellij is not used.
+// Pure: callers that run zellij should MkdirAll the result.
+func DefaultSocketDir() string {
+	if runtime.GOOS == "windows" {
+		return ""
+	}
+	return "/tmp/ao-zellij-" + strconv.Itoa(os.Getuid())
+}
 
 type runner interface {
 	Run(ctx context.Context, env []string, name string, args ...string) ([]byte, error)
@@ -68,6 +85,9 @@ func (execRunner) Run(ctx context.Context, env []string, name string, args ...st
 	return cmd.CombinedOutput()
 }
 
+// New builds a zellij Runtime, filling unset Options with defaults: binary
+// "zellij", shell from $SHELL (else /bin/sh, or powershell.exe on Windows), and
+// the default timeout and output chunk size.
 func New(opts Options) *Runtime {
 	binary := opts.Binary
 	if binary == "" {
@@ -95,6 +115,8 @@ func New(opts Options) *Runtime {
 	return &Runtime{binary: binary, timeout: timeout, shell: shellPath, socketDir: opts.SocketDir, configDir: opts.ConfigDir, chunkSize: chunkSize, runner: execRunner{}}
 }
 
+// Create starts a new zellij session in the workspace, running the agent's
+// launch command, and returns a handle to it.
 func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
 	id, err := zellijSessionName(cfg.SessionID)
 	if err != nil {
@@ -103,8 +125,11 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 	if cfg.WorkspacePath == "" {
 		return ports.RuntimeHandle{}, errors.New("zellij runtime: workspace path is required")
 	}
-	if cfg.LaunchCommand == "" {
+	if len(cfg.Argv) == 0 {
 		return ports.RuntimeHandle{}, errors.New("zellij runtime: launch command is required")
+	}
+	if err := validateEnvKeys(cfg.Env); err != nil {
+		return ports.RuntimeHandle{}, err
 	}
 	if err := r.ensureSupportedVersion(ctx); err != nil {
 		return ports.RuntimeHandle{}, err
@@ -114,19 +139,21 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 	if err != nil {
 		return ports.RuntimeHandle{}, err
 	}
-	defer os.Remove(layoutPath)
+	defer func() { _ = os.Remove(layoutPath) }()
 
 	if _, err := r.run(ctx, createSessionArgs(id, layoutPath)...); err != nil {
 		return ports.RuntimeHandle{}, fmt.Errorf("zellij runtime: create session %s: %w", id, err)
 	}
 	paneID, err := r.findAgentPane(ctx, id)
 	if err != nil {
-		_ = r.Destroy(context.Background(), ports.RuntimeHandle{ID: id, RuntimeName: runtimeName})
+		_ = r.Destroy(context.Background(), ports.RuntimeHandle{ID: id})
 		return ports.RuntimeHandle{}, err
 	}
-	return ports.RuntimeHandle{ID: handleIDValue(id, paneID), RuntimeName: runtimeName}, nil
+	return ports.RuntimeHandle{ID: handleIDValue(id, paneID)}, nil
 }
 
+// Destroy kills the handle's zellij session. An already-gone session is treated
+// as success.
 func (r *Runtime) Destroy(ctx context.Context, handle ports.RuntimeHandle) error {
 	id, _, err := handleID(handle)
 	if err != nil {
@@ -142,6 +169,8 @@ func (r *Runtime) Destroy(ctx context.Context, handle ports.RuntimeHandle) error
 	return nil
 }
 
+// SendMessage pastes a message into the session's pane (chunked) and presses
+// Enter to submit it.
 func (r *Runtime) SendMessage(ctx context.Context, handle ports.RuntimeHandle, message string) error {
 	id, paneID, err := handleID(handle)
 	if err != nil {
@@ -158,6 +187,7 @@ func (r *Runtime) SendMessage(ctx context.Context, handle ports.RuntimeHandle, m
 	return nil
 }
 
+// GetOutput returns the last `lines` lines of the session pane's screen dump.
 func (r *Runtime) GetOutput(ctx context.Context, handle ports.RuntimeHandle, lines int) (string, error) {
 	id, paneID, err := handleID(handle)
 	if err != nil {
@@ -173,6 +203,8 @@ func (r *Runtime) GetOutput(ctx context.Context, handle ports.RuntimeHandle, lin
 	return tailLines(string(out), lines), nil
 }
 
+// IsAlive reports whether the handle's session still appears in `zellij
+// list-sessions`.
 func (r *Runtime) IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool, error) {
 	id, _, err := handleID(handle)
 	if err != nil {
@@ -189,6 +221,8 @@ func (r *Runtime) IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool
 	return sessionListedAlive(string(out), id), nil
 }
 
+// AttachCommand returns the argv a human runs to attach their terminal to the
+// session.
 func (r *Runtime) AttachCommand(handle ports.RuntimeHandle) ([]string, error) {
 	id, _, err := handleID(handle)
 	if err != nil {
@@ -207,12 +241,8 @@ func (r *Runtime) ensureSupportedVersion(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("zellij runtime: check version: %w", err)
 	}
-	version, err := parseVersion(string(out))
-	if err != nil {
+	if _, err := CheckVersionOutput(string(out)); err != nil {
 		return fmt.Errorf("zellij runtime: check version: %w", err)
-	}
-	if compareVersion(version, semver{minMajor, minMinor, minPatch}) < 0 {
-		return fmt.Errorf("zellij runtime: unsupported zellij version %s; require >= %d.%d.%d", version, minMajor, minMinor, minPatch)
 	}
 	return nil
 }
@@ -313,10 +343,18 @@ func zellijSessionName(id domain.SessionID) (string, error) {
 	if raw == "" {
 		return "", errors.New("zellij runtime: session id is required")
 	}
-	if sessionIDPattern.MatchString(raw) && len(raw) <= 48 {
-		return raw, nil
+	return SessionName(raw), nil
+}
+
+// SessionName returns the zellij session name the runtime registers for a given
+// session id — applying the same sanitisation Create does. Callers that print an
+// attach hint (e.g. `ao spawn`) must use this rather than the raw id, since a
+// long or non-conforming id maps to a different, sanitised session name.
+func SessionName(id string) string {
+	if sessionIDPattern.MatchString(id) && len(id) <= 48 {
+		return id
 	}
-	return sanitizedSessionName(raw), nil
+	return sanitizedSessionName(id)
 }
 
 func sanitizedSessionName(raw string) string {
@@ -366,9 +404,6 @@ func validatePaneID(id string) error {
 }
 
 func handleID(handle ports.RuntimeHandle) (string, string, error) {
-	if handle.RuntimeName != "" && handle.RuntimeName != runtimeName {
-		return "", "", fmt.Errorf("zellij runtime: wrong runtime %q", handle.RuntimeName)
-	}
 	parts := strings.Split(handle.ID, "/")
 	if len(parts) == 1 {
 		if err := validateSessionID(parts[0]); err != nil {
@@ -420,7 +455,7 @@ func chunks(s string, maxBytes int) []string {
 		return []string{s}
 	}
 	parts := []string{}
-	for len(s) > 0 {
+	for s != "" {
 		if len(s) <= maxBytes {
 			parts = append(parts, s)
 			break
@@ -452,6 +487,25 @@ func tailLines(s string, n int) string {
 	}
 	return strings.Join(lines[len(lines)-n:], "")
 }
+
+// RequiredVersion returns the minimum Zellij version AO's runtime adapter
+// supports.
+func RequiredVersion() string { return minSupportedVersion().String() }
+
+// CheckVersionOutput parses `zellij --version` output, returning the parsed
+// version when it satisfies AO's minimum runtime requirement.
+func CheckVersionOutput(out string) (string, error) {
+	version, err := parseVersion(out)
+	if err != nil {
+		return "", err
+	}
+	if compareVersion(version, minSupportedVersion()) < 0 {
+		return version.String(), fmt.Errorf("unsupported zellij version %s; require >= %s", version, RequiredVersion())
+	}
+	return version.String(), nil
+}
+
+func minSupportedVersion() semver { return semver{minMajor, minMinor, minPatch} }
 
 type semver struct {
 	major int
