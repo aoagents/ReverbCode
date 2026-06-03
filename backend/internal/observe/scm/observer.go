@@ -233,10 +233,11 @@ func (o *Observer) Poll(ctx context.Context) error {
 	if len(subjects) == 0 {
 		return nil
 	}
-	if err := o.checkCredentials(ctx); err != nil {
+	proceed, err := o.checkCredentials(ctx)
+	if err != nil {
 		return err
 	}
-	if o.disabled {
+	if !proceed || o.disabled {
 		return nil
 	}
 
@@ -396,29 +397,30 @@ func (o *Observer) Poll(ctx context.Context) error {
 	return nil
 }
 
-func (o *Observer) checkCredentials(ctx context.Context) error {
+func (o *Observer) checkCredentials(ctx context.Context) (bool, error) {
 	if o.credentialsChecked {
-		return nil
+		return true, nil
 	}
 	if err := ctx.Err(); err != nil {
-		return err
+		return false, err
 	}
-	o.credentialsChecked = true
 	checker, ok := o.provider.(credentialChecker)
 	if !ok {
-		return nil
+		o.credentialsChecked = true
+		return true, nil
 	}
 	available, err := checker.SCMCredentialsAvailable(ctx)
 	if err != nil {
-		o.disabled = true
-		o.logger.Warn("scm observer disabled: provider credentials unavailable", "err", err)
-		return nil
+		o.logger.Warn("scm observer credentials check failed; will retry", "err", err)
+		return false, nil
 	}
+	o.credentialsChecked = true
 	if !available {
 		o.disabled = true
 		o.logger.Warn("scm observer disabled: provider credentials unavailable")
+		return false, nil
 	}
-	return nil
+	return true, nil
 }
 
 func (o *Observer) discoverSubjects(ctx context.Context) (map[string]*subject, error) {

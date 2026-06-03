@@ -265,6 +265,40 @@ func TestPoll_DisablesOnceWhenCredentialsUnavailable(t *testing.T) {
 	}
 }
 
+func TestPoll_RetriesTransientCredentialErrors(t *testing.T) {
+	store := testStoreWithSession()
+	provider := &fakeProvider{
+		credentialGate: true,
+		credentialErr:  errors.New("gh auth token failed transiently"),
+		repoGuards:     map[string]ports.SCMGuardResult{prKey(testRepo, 0): {ETag: "v1"}},
+		observations:   map[string]ports.SCMObservation{},
+	}
+	obs := newTestObserver(store, provider, &fakeLifecycle{}, time.Unix(1, 0).UTC())
+	if err := obs.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if obs.credentialsChecked || obs.disabled {
+		t.Fatalf("transient credential error should not commit checked/disabled: checked=%v disabled=%v", obs.credentialsChecked, obs.disabled)
+	}
+	if provider.credentialChecks != 1 || provider.repoGuardCalls != 0 {
+		t.Fatalf("first poll should check credentials only: checks=%d repoGuards=%d", provider.credentialChecks, provider.repoGuardCalls)
+	}
+
+	provider.mu.Lock()
+	provider.credentialErr = nil
+	provider.credentialOK = true
+	provider.mu.Unlock()
+	if err := obs.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !obs.credentialsChecked || obs.disabled {
+		t.Fatalf("successful retry should commit checked without disabling: checked=%v disabled=%v", obs.credentialsChecked, obs.disabled)
+	}
+	if provider.credentialChecks != 2 || provider.repoGuardCalls != 1 {
+		t.Fatalf("second poll should retry credentials and continue: checks=%d repoGuards=%d", provider.credentialChecks, provider.repoGuardCalls)
+	}
+}
+
 func TestPoll_RepoETag304SkipsDetectPR(t *testing.T) {
 	store := testStoreWithSession()
 	provider := &fakeProvider{repoGuards: map[string]ports.SCMGuardResult{prKey(testRepo, 0): {ETag: "v1", NotModified: true}}, observations: map[string]ports.SCMObservation{}}
