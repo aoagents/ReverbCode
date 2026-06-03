@@ -80,13 +80,16 @@ func (e env) environ(portOverride string) []string {
 		if strings.HasPrefix(kv, "AO_") {
 			continue
 		}
+		if strings.HasPrefix(kv, "GITHUB_TOKEN=") || strings.HasPrefix(kv, "GH_TOKEN=") || strings.HasPrefix(kv, "GH_CONFIG_DIR=") {
+			continue
+		}
 		out = append(out, kv)
 	}
 	port := fmt.Sprintf("%d", e.port)
 	if portOverride != "" {
 		port = portOverride
 	}
-	return append(out, "AO_RUN_FILE="+e.runFile, "AO_DATA_DIR="+e.dataDir, "AO_PORT="+port)
+	return append(out, "AO_RUN_FILE="+e.runFile, "AO_DATA_DIR="+e.dataDir, "AO_PORT="+port, "GH_CONFIG_DIR="+filepath.Join(e.dataDir, "gh-config"))
 }
 
 func freePort(t *testing.T) int {
