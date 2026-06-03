@@ -2,9 +2,11 @@ package session
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	apierr "github.com/aoagents/agent-orchestrator/backend/internal/httpd/errors"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
 )
@@ -42,7 +44,7 @@ func New(manager *sessionmanager.Manager, store Store) *Service {
 func (s *Service) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Session, error) {
 	rec, err := s.manager.Spawn(ctx, cfg)
 	if err != nil {
-		return domain.Session{}, err
+		return domain.Session{}, toAPIError(err)
 	}
 	return s.toSession(ctx, rec)
 }
@@ -71,19 +73,20 @@ func (s *Service) SpawnOrchestrator(ctx context.Context, projectID domain.Projec
 func (s *Service) Restore(ctx context.Context, id domain.SessionID) (domain.Session, error) {
 	rec, err := s.manager.Restore(ctx, id)
 	if err != nil {
-		return domain.Session{}, err
+		return domain.Session{}, toAPIError(err)
 	}
 	return s.toSession(ctx, rec)
 }
 
 // Kill delegates terminal intent and teardown to the internal manager.
 func (s *Service) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
-	return s.manager.Kill(ctx, id)
+	freed, err := s.manager.Kill(ctx, id)
+	return freed, toAPIError(err)
 }
 
 // Send delegates agent messaging to the internal manager.
 func (s *Service) Send(ctx context.Context, id domain.SessionID, message string) error {
-	return s.manager.Send(ctx, id, message)
+	return toAPIError(s.manager.Send(ctx, id, message))
 }
 
 // Cleanup delegates terminal workspace cleanup to the internal manager.
@@ -139,16 +142,41 @@ func matchesSessionFilter(rec domain.SessionRecord, filter ListFilter) bool {
 	return true
 }
 
-// Get returns one session as an enriched display model, or sessionmanager.ErrNotFound if it is absent.
+// Get returns one session as an enriched display model, or an apierr.NotFound
+// (SESSION_NOT_FOUND) if it is absent.
 func (s *Service) Get(ctx context.Context, id domain.SessionID) (domain.Session, error) {
 	rec, ok, err := s.store.GetSession(ctx, id)
 	if err != nil {
 		return domain.Session{}, fmt.Errorf("get %s: %w", id, err)
 	}
 	if !ok {
-		return domain.Session{}, fmt.Errorf("get %s: %w", id, sessionmanager.ErrNotFound)
+		return domain.Session{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
 	}
 	return s.toSession(ctx, rec)
+}
+
+// toAPIError maps the internal session engine's sentinel errors into the REST
+// API error vocabulary. It is the single boundary where engine errors become
+// API errors, so the session_manager never depends on the API error package and
+// controllers never import the engine. Unrecognized errors pass through and
+// surface as a 500.
+func toAPIError(err error) error {
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, sessionmanager.ErrNotFound):
+		return apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	case errors.Is(err, sessionmanager.ErrNotRestorable):
+		return apierr.Conflict("SESSION_NOT_RESTORABLE", "Session is not restorable", nil)
+	case errors.Is(err, sessionmanager.ErrTerminated):
+		return apierr.Conflict("SESSION_TERMINATED", "Session is terminated", nil)
+	case errors.Is(err, sessionmanager.ErrIncompleteHandle):
+		return apierr.Conflict("SESSION_INCOMPLETE_HANDLE", "Session is missing runtime or workspace handles", nil)
+	case errors.Is(err, sessionmanager.ErrProjectNotResolvable):
+		return apierr.Invalid("PROJECT_NOT_RESOLVABLE", "Project is not registered or has no repo — register it with `ao project add`", nil)
+	default:
+		return err
+	}
 }
 
 func (s *Service) toSession(ctx context.Context, rec domain.SessionRecord) (domain.Session, error) {
