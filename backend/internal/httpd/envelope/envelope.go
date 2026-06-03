@@ -2,9 +2,12 @@ package envelope
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/go-chi/chi/v5/middleware"
+
+	apierr "github.com/aoagents/agent-orchestrator/backend/internal/httpd/errors"
 )
 
 // APIError is the locked wire shape for every non-2xx response.
@@ -32,4 +35,32 @@ func WriteAPIError(w http.ResponseWriter, r *http.Request, status int, kind, cod
 		RequestID: middleware.GetReqID(r.Context()),
 		Details:   details,
 	})
+}
+
+// WriteError is the single path from any service error to the wire envelope. It
+// renders an *apierr.Error (anywhere in the chain) using its Kind, and falls
+// back to a 500 for any other error so internal details never leak. This is the
+// only place an apierr.Kind is translated into an HTTP status and wire word.
+func WriteError(w http.ResponseWriter, r *http.Request, err error) {
+	var e *apierr.Error
+	if errors.As(err, &e) {
+		status, kind := httpStatus(e.Kind)
+		WriteAPIError(w, r, status, kind, e.Code, e.Message, e.Details)
+		return
+	}
+	WriteAPIError(w, r, http.StatusInternalServerError, "internal", "INTERNAL_ERROR", "Internal server error", nil)
+}
+
+// httpStatus maps a semantic failure Kind to its HTTP status and wire word.
+func httpStatus(k apierr.Kind) (int, string) {
+	switch k {
+	case apierr.KindInvalid:
+		return http.StatusBadRequest, "bad_request"
+	case apierr.KindNotFound:
+		return http.StatusNotFound, "not_found"
+	case apierr.KindConflict:
+		return http.StatusConflict, "conflict"
+	default:
+		return http.StatusInternalServerError, "internal"
+	}
 }

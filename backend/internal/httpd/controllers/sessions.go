@@ -63,7 +63,7 @@ func (c *SessionsController) list(w http.ResponseWriter, r *http.Request) {
 	}
 	sessions, err := c.Svc.List(r.Context(), filter)
 	if err != nil {
-		writeSessionError(w, r, err)
+		envelope.WriteError(w, r, err)
 		return
 	}
 	envelope.WriteJSON(w, http.StatusOK, ListSessionsResponse{Sessions: sessions})
@@ -92,7 +92,7 @@ func (c *SessionsController) spawn(w http.ResponseWriter, r *http.Request) {
 	}
 	sess, err := c.Svc.Spawn(r.Context(), ports.SpawnConfig{ProjectID: in.ProjectID, IssueID: in.IssueID, Kind: in.Kind, Harness: in.Harness, Branch: in.Branch, Prompt: in.Prompt, AgentRules: in.AgentRules})
 	if err != nil {
-		writeSessionError(w, r, err)
+		envelope.WriteError(w, r, err)
 		return
 	}
 	envelope.WriteJSON(w, http.StatusCreated, SessionResponse{Session: sess})
@@ -105,7 +105,7 @@ func (c *SessionsController) get(w http.ResponseWriter, r *http.Request) {
 	}
 	sess, err := c.Svc.Get(r.Context(), sessionID(r))
 	if err != nil {
-		writeSessionError(w, r, err)
+		envelope.WriteError(w, r, err)
 		return
 	}
 	envelope.WriteJSON(w, http.StatusOK, SessionResponse{Session: sess})
@@ -122,7 +122,7 @@ func (c *SessionsController) restore(w http.ResponseWriter, r *http.Request) {
 	}
 	sess, err := c.Svc.Restore(r.Context(), sessionID(r))
 	if err != nil {
-		writeSessionError(w, r, err)
+		envelope.WriteError(w, r, err)
 		return
 	}
 	envelope.WriteJSON(w, http.StatusOK, RestoreSessionResponse{OK: true, SessionID: sessionID(r), Session: sess})
@@ -135,7 +135,7 @@ func (c *SessionsController) kill(w http.ResponseWriter, r *http.Request) {
 	}
 	freed, err := c.Svc.Kill(r.Context(), sessionID(r))
 	if err != nil {
-		writeSessionError(w, r, err)
+		envelope.WriteError(w, r, err)
 		return
 	}
 	envelope.WriteJSON(w, http.StatusOK, KillSessionResponse{OK: true, SessionID: sessionID(r), Freed: freed})
@@ -161,7 +161,7 @@ func (c *SessionsController) send(w http.ResponseWriter, r *http.Request) {
 	}
 	message := stripUnsafeControlChars(in.Message)
 	if err := c.Svc.Send(r.Context(), sessionID(r), message); err != nil {
-		writeSessionError(w, r, err)
+		envelope.WriteError(w, r, err)
 		return
 	}
 	envelope.WriteJSON(w, http.StatusOK, SendSessionMessageResponse{OK: true, SessionID: sessionID(r), Message: message})
@@ -183,7 +183,7 @@ func (c *SessionsController) spawnOrchestrator(w http.ResponseWriter, r *http.Re
 	}
 	sess, err := c.Svc.SpawnOrchestrator(r.Context(), in.ProjectID, in.Clean)
 	if err != nil {
-		writeSessionError(w, r, err)
+		envelope.WriteError(w, r, err)
 		return
 	}
 	envelope.WriteJSON(w, http.StatusCreated, SpawnOrchestratorResponse{
@@ -229,8 +229,4 @@ func stripUnsafeControlChars(message string) string {
 		}
 		return r
 	}, message)
-}
-
-func writeSessionError(w http.ResponseWriter, r *http.Request, err error) {
-	writeServiceError(w, r, err)
 }

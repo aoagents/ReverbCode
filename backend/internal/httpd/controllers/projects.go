@@ -6,7 +6,6 @@ package controllers
 
 import (
 	"encoding/json"
-	"errors"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -38,7 +37,7 @@ func (c *ProjectsController) list(w http.ResponseWriter, r *http.Request) {
 	}
 	projects, err := c.Mgr.List(r.Context())
 	if err != nil {
-		writeProjectError(w, r, err)
+		envelope.WriteError(w, r, err)
 		return
 	}
 	if projects == nil {
@@ -59,7 +58,7 @@ func (c *ProjectsController) add(w http.ResponseWriter, r *http.Request) {
 	}
 	p, err := c.Mgr.Add(r.Context(), in)
 	if err != nil {
-		writeProjectError(w, r, err)
+		envelope.WriteError(w, r, err)
 		return
 	}
 	envelope.WriteJSON(w, http.StatusCreated, ProjectResponse{Project: p})
@@ -72,7 +71,7 @@ func (c *ProjectsController) get(w http.ResponseWriter, r *http.Request) {
 	}
 	got, err := c.Mgr.Get(r.Context(), projectID(r))
 	if err != nil {
-		writeProjectError(w, r, err)
+		envelope.WriteError(w, r, err)
 		return
 	}
 	resp, err := newGetProjectResponse(got)
@@ -90,7 +89,7 @@ func (c *ProjectsController) remove(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := c.Mgr.Remove(r.Context(), projectID(r))
 	if err != nil {
-		writeProjectError(w, r, err)
+		envelope.WriteError(w, r, err)
 		return
 	}
 	envelope.WriteJSON(w, http.StatusOK, result)
@@ -102,34 +101,4 @@ func projectID(r *http.Request) domain.ProjectID {
 
 func decodeJSON(r *http.Request, out any) error {
 	return json.NewDecoder(r.Body).Decode(out)
-}
-
-func writeProjectError(w http.ResponseWriter, r *http.Request, err error) {
-	writeServiceError(w, r, err)
-}
-
-// writeServiceError maps any *domain.ServiceError to its HTTP status, falling
-// back to 500 for an unrecognized kind or a non-ServiceError. It is the single
-// translator every controller uses, so services never need a per-resource
-// sentinel switch in the HTTP layer.
-func writeServiceError(w http.ResponseWriter, r *http.Request, err error) {
-	var se *domain.ServiceError
-	if errors.As(err, &se) {
-		status := http.StatusInternalServerError
-		switch se.Kind {
-		case domain.KindBadRequest:
-			status = http.StatusBadRequest
-		case domain.KindNotFound:
-			status = http.StatusNotFound
-		case domain.KindConflict:
-			status = http.StatusConflict
-		case domain.KindNotImplemented:
-			status = http.StatusNotImplemented
-		case domain.KindInternal:
-			status = http.StatusInternalServerError
-		}
-		envelope.WriteAPIError(w, r, status, se.Kind, se.Code, se.Message, se.Details)
-		return
-	}
-	envelope.WriteAPIError(w, r, http.StatusInternalServerError, "internal", "INTERNAL_ERROR", "Internal server error", nil)
 }

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	apierr "github.com/aoagents/agent-orchestrator/backend/internal/httpd/errors"
 	"github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 )
@@ -35,12 +36,12 @@ func gitRepo(t *testing.T) string {
 
 func ptr(s string) *string { return &s }
 
-// wantCode asserts err is a *project.Error carrying the given machine code.
+// wantCode asserts err is an *apierr.Error carrying the given machine code.
 func wantCode(t *testing.T, err error, code string) {
 	t.Helper()
-	var e *project.Error
+	var e *apierr.Error
 	if !errors.As(err, &e) {
-		t.Fatalf("error = %v, want *project.Error", err)
+		t.Fatalf("error = %v, want *apierr.Error", err)
 	}
 	if e.Code != code {
 		t.Fatalf("code = %q, want %q", e.Code, code)

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	apierr "github.com/aoagents/agent-orchestrator/backend/internal/httpd/errors"
 )
 
 // Manager is the controller-facing contract for the /api/v1/projects surface.
@@ -53,7 +54,7 @@ func NewWithGitChecker(store Store, git GitChecker) *Service {
 func (m *Service) List(ctx context.Context) ([]Summary, error) {
 	projects, err := m.store.ListProjects(ctx)
 	if err != nil {
-		return nil, internal("PROJECTS_LIST_FAILED", "Failed to load projects")
+		return nil, apierr.Internal("PROJECTS_LIST_FAILED", "Failed to load projects")
 	}
 	out := make([]Summary, 0, len(projects))
 	for _, row := range projects {
@@ -73,10 +74,10 @@ func (m *Service) Get(ctx context.Context, id domain.ProjectID) (GetResult, erro
 	}
 	row, ok, err := m.store.GetProject(ctx, string(id))
 	if err != nil {
-		return GetResult{}, internal("PROJECT_LOAD_FAILED", "Failed to load project")
+		return GetResult{}, apierr.Internal("PROJECT_LOAD_FAILED", "Failed to load project")
 	}
 	if !ok || !row.ArchivedAt.IsZero() {
-		return GetResult{}, notFound("PROJECT_NOT_FOUND", "Unknown project")
+		return GetResult{}, apierr.NotFound("PROJECT_NOT_FOUND", "Unknown project")
 	}
 	p := projectFromRow(row)
 	return GetResult{Status: "ok", Project: &p}, nil
@@ -89,7 +90,7 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 		return Project{}, err
 	}
 	if !m.git.IsRepo(path) {
-		return Project{}, badRequest("NOT_A_GIT_REPO", "Repository path must point to a git repository", nil)
+		return Project{}, apierr.Invalid("NOT_A_GIT_REPO", "Repository path must point to a git repository", nil)
 	}
 
 	id := defaultProjectID(path)
@@ -109,17 +110,17 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 	}
 
 	if existing, ok, err := m.store.FindProjectByPath(ctx, path); err != nil {
-		return Project{}, internal("PROJECT_LOAD_FAILED", "Failed to load project")
+		return Project{}, apierr.Internal("PROJECT_LOAD_FAILED", "Failed to load project")
 	} else if ok {
-		return Project{}, conflict("PATH_ALREADY_REGISTERED", "A project at this path is already registered", map[string]any{
+		return Project{}, apierr.Conflict("PATH_ALREADY_REGISTERED", "A project at this path is already registered", map[string]any{
 			"existingProjectId":  existing.ID,
 			"suggestedProjectId": string(m.suggestID(ctx, id)),
 		})
 	}
 	if existing, ok, err := m.store.GetProject(ctx, string(id)); err != nil {
-		return Project{}, internal("PROJECT_LOAD_FAILED", "Failed to load project")
+		return Project{}, apierr.Internal("PROJECT_LOAD_FAILED", "Failed to load project")
 	} else if ok && existing.ArchivedAt.IsZero() && existing.Path != path {
-		return Project{}, conflict("ID_ALREADY_REGISTERED", "A project with this id is already registered for a different path", map[string]any{
+		return Project{}, apierr.Conflict("ID_ALREADY_REGISTERED", "A project with this id is already registered for a different path", map[string]any{
 			"existingProjectId":  existing.ID,
 			"suggestedProjectId": string(m.suggestID(ctx, id)),
 		})
@@ -144,10 +145,10 @@ func (m *Service) Remove(ctx context.Context, id domain.ProjectID) (RemoveResult
 	}
 	ok, err := m.store.ArchiveProject(ctx, string(id), time.Now())
 	if err != nil {
-		return RemoveResult{}, internal("PROJECT_REMOVE_FAILED", "Failed to remove project")
+		return RemoveResult{}, apierr.Internal("PROJECT_REMOVE_FAILED", "Failed to remove project")
 	}
 	if !ok {
-		return RemoveResult{}, notFound("PROJECT_NOT_FOUND", "Unknown project")
+		return RemoveResult{}, apierr.NotFound("PROJECT_NOT_FOUND", "Unknown project")
 	}
 	return RemoveResult{ProjectID: id, RemovedStorageDir: false}, nil
 }
@@ -181,12 +182,12 @@ func displayName(row domain.ProjectRecord) string {
 func normalizePath(raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return "", badRequest("PATH_REQUIRED", "Repository path is required", nil)
+		return "", apierr.Invalid("PATH_REQUIRED", "Repository path is required", nil)
 	}
 	if strings.HasPrefix(raw, "~") {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			return "", badRequest("INVALID_PATH", "Repository path could not be expanded", nil)
+			return "", apierr.Invalid("INVALID_PATH", "Repository path could not be expanded", nil)
 		}
 		if raw == "~" {
 			raw = home
@@ -196,7 +197,7 @@ func normalizePath(raw string) (string, error) {
 	}
 	abs, err := filepath.Abs(raw)
 	if err != nil {
-		return "", badRequest("INVALID_PATH", "Repository path is invalid", nil)
+		return "", apierr.Invalid("INVALID_PATH", "Repository path is invalid", nil)
 	}
 	return filepath.Clean(abs), nil
 }
@@ -216,7 +217,7 @@ func validateProjectID(id domain.ProjectID) error {
 	// (e.g. "a..b") passes it yet yields a branch like "ao/a..b-1" that git's
 	// check-ref-format rejects — surfacing as an opaque 500 at spawn time.
 	if raw == "" || raw == "." || strings.Contains(raw, "..") || strings.ContainsAny(raw, `/\`) || !projectIDPattern.MatchString(raw) {
-		return badRequest("INVALID_PROJECT_ID", "Project id failed storage-path validation", nil)
+		return apierr.Invalid("INVALID_PROJECT_ID", "Project id failed storage-path validation", nil)
 	}
 	return nil
 }
