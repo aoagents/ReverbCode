@@ -105,6 +105,11 @@ type ListSessionsQuery struct {
 	Fresh            *bool  `query:"fresh,omitempty" description:"When true, return only fresh non-terminated sessions."`
 }
 
+// CleanupSessionsQuery is the query string accepted by POST /api/v1/sessions/cleanup.
+type CleanupSessionsQuery struct {
+	Project string `query:"project,omitempty" description:"Project id filter. When omitted, clean terminated sessions across all projects."`
+}
+
 // ListSessionsResponse is the body of GET /api/v1/sessions.
 type ListSessionsResponse struct {
 	Sessions []domain.Session `json:"sessions"`
@@ -131,6 +136,13 @@ type RenameSessionRequest struct {
 	DisplayName string `json:"displayName" minLength:"1"`
 }
 
+// RenameSessionResponse is the body of PATCH /api/v1/sessions/{sessionId}.
+type RenameSessionResponse struct {
+	OK          bool             `json:"ok"`
+	SessionID   domain.SessionID `json:"sessionId"`
+	DisplayName string           `json:"displayName"`
+}
+
 // RestoreSessionResponse is the body of POST /api/v1/sessions/{sessionId}/restore.
 type RestoreSessionResponse struct {
 	OK        bool             `json:"ok"`
@@ -145,6 +157,12 @@ type KillSessionResponse struct {
 	Freed     bool             `json:"freed,omitempty"`
 }
 
+// CleanupSessionsResponse is the body of POST /api/v1/sessions/cleanup.
+type CleanupSessionsResponse struct {
+	OK      bool               `json:"ok"`
+	Cleaned []domain.SessionID `json:"cleaned"`
+}
+
 // SendSessionMessageRequest is the body of POST /api/v1/sessions/{sessionId}/send.
 type SendSessionMessageRequest struct {
 	Message string `json:"message" minLength:"1" maxLength:"4096"`
@@ -155,6 +173,11 @@ type SendSessionMessageResponse struct {
 	OK        bool             `json:"ok"`
 	SessionID domain.SessionID `json:"sessionId"`
 	Message   string           `json:"message"`
+}
+
+// OrchestratorIDParam is the {id} path parameter for orchestrator routes.
+type OrchestratorIDParam struct {
+	ID string `path:"id" description:"Orchestrator session identifier, e.g. project-orchestrator."`
 }
 
 // SpawnOrchestratorRequest is the body of POST /api/v1/orchestrators.

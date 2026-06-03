@@ -15,7 +15,7 @@ import (
 const getSession = `-- name: GetSession :one
 SELECT id, project_id, num, issue_id, kind, harness,
     activity_state, activity_last_at, is_terminated, branch, workspace_path,
-    runtime_handle_id, agent_session_id, prompt, created_at, updated_at
+    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name
 FROM sessions WHERE id = ?
 `
 
@@ -39,17 +39,18 @@ func (q *Queries) GetSession(ctx context.Context, id domain.SessionID) (Session,
 		&i.Prompt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.DisplayName,
 	)
 	return i, err
 }
 
 const insertSession = `-- name: InsertSession :exec
 INSERT INTO sessions (
-    id, project_id, num, issue_id, kind, harness,
+    id, project_id, num, issue_id, kind, harness, display_name,
     activity_state, activity_last_at, is_terminated,
     branch, workspace_path, runtime_handle_id, agent_session_id, prompt,
     created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertSessionParams struct {
@@ -59,6 +60,7 @@ type InsertSessionParams struct {
 	IssueID         domain.IssueID
 	Kind            domain.SessionKind
 	Harness         domain.AgentHarness
+	DisplayName     string
 	ActivityState   domain.ActivityState
 	ActivityLastAt  time.Time
 	IsTerminated    bool
@@ -79,6 +81,7 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) er
 		arg.IssueID,
 		arg.Kind,
 		arg.Harness,
+		arg.DisplayName,
 		arg.ActivityState,
 		arg.ActivityLastAt,
 		arg.IsTerminated,
@@ -96,7 +99,7 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) er
 const listAllSessions = `-- name: ListAllSessions :many
 SELECT id, project_id, num, issue_id, kind, harness,
     activity_state, activity_last_at, is_terminated, branch, workspace_path,
-    runtime_handle_id, agent_session_id, prompt, created_at, updated_at
+    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name
 FROM sessions ORDER BY project_id, num
 `
 
@@ -126,6 +129,7 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]Session, error) {
 			&i.Prompt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.DisplayName,
 		); err != nil {
 			return nil, err
 		}
@@ -143,7 +147,7 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]Session, error) {
 const listSessionsByProject = `-- name: ListSessionsByProject :many
 SELECT id, project_id, num, issue_id, kind, harness,
     activity_state, activity_last_at, is_terminated, branch, workspace_path,
-    runtime_handle_id, agent_session_id, prompt, created_at, updated_at
+    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name
 FROM sessions WHERE project_id = ? ORDER BY num
 `
 
@@ -173,6 +177,7 @@ func (q *Queries) ListSessionsByProject(ctx context.Context, projectID domain.Pr
 			&i.Prompt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.DisplayName,
 		); err != nil {
 			return nil, err
 		}
@@ -198,9 +203,27 @@ func (q *Queries) NextSessionNum(ctx context.Context, projectID domain.ProjectID
 	return next, err
 }
 
+const renameSession = `-- name: RenameSession :execrows
+UPDATE sessions SET display_name = ?, updated_at = ? WHERE id = ?
+`
+
+type RenameSessionParams struct {
+	DisplayName string
+	UpdatedAt   time.Time
+	ID          domain.SessionID
+}
+
+func (q *Queries) RenameSession(ctx context.Context, arg RenameSessionParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, renameSession, arg.DisplayName, arg.UpdatedAt, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const updateSession = `-- name: UpdateSession :exec
 UPDATE sessions SET
-    issue_id = ?, kind = ?, harness = ?,
+    issue_id = ?, kind = ?, harness = ?, display_name = ?,
     activity_state = ?, activity_last_at = ?, is_terminated = ?,
     branch = ?, workspace_path = ?, runtime_handle_id = ?, agent_session_id = ?, prompt = ?,
     updated_at = ?
@@ -211,6 +234,7 @@ type UpdateSessionParams struct {
 	IssueID         domain.IssueID
 	Kind            domain.SessionKind
 	Harness         domain.AgentHarness
+	DisplayName     string
 	ActivityState   domain.ActivityState
 	ActivityLastAt  time.Time
 	IsTerminated    bool
@@ -228,6 +252,7 @@ func (q *Queries) UpdateSession(ctx context.Context, arg UpdateSessionParams) er
 		arg.IssueID,
 		arg.Kind,
 		arg.Harness,
+		arg.DisplayName,
 		arg.ActivityState,
 		arg.ActivityLastAt,
 		arg.IsTerminated,

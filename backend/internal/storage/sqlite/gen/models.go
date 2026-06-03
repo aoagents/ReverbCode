@@ -79,4 +79,5 @@ type Session struct {
 	Prompt          string
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
+	DisplayName     string
 }

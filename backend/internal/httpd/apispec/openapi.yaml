@@ -9,6 +9,30 @@ servers:
   url: http://127.0.0.1:3001
 paths:
   /api/v1/orchestrators:
+    get:
+      operationId: listOrchestrators
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListSessionsResponse'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: List orchestrator sessions across projects
+      tags:
+      - sessions
     post:
       operationId: spawnOrchestrator
       requestBody:
@@ -49,6 +73,45 @@ paths:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
       summary: Spawn an orchestrator session
+      tags:
+      - sessions
+  /api/v1/orchestrators/{id}:
+    get:
+      operationId: getOrchestrator
+      parameters:
+      - description: Orchestrator session identifier, e.g. project-orchestrator.
+        in: path
+        name: id
+        required: true
+        schema:
+          description: Orchestrator session identifier, e.g. project-orchestrator.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Fetch one orchestrator session
       tags:
       - sessions
   /api/v1/projects:
@@ -409,7 +472,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SessionResponse'
+                $ref: '#/components/schemas/RenameSessionResponse'
           description: OK
         "400":
           content:
@@ -423,6 +486,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
         "501":
           content:
             application/json:
@@ -555,6 +624,40 @@ paths:
       summary: Send a message to a running session's agent
       tags:
       - sessions
+  /api/v1/sessions/cleanup:
+    post:
+      operationId: cleanupSessions
+      parameters:
+      - description: Project id filter. When omitted, clean terminated sessions across
+          all projects.
+        in: query
+        name: project
+        schema:
+          description: Project id filter. When omitted, clean terminated sessions
+            across all projects.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleanupSessionsResponse'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Clean up terminated session workspaces
+      tags:
+      - sessions
 components:
   schemas:
     APIError:
@@ -589,6 +692,18 @@ components:
           - string
       required:
       - path
+      type: object
+    CleanupSessionsResponse:
+      properties:
+        cleaned:
+          items:
+            type: string
+          type: array
+        ok:
+          type: boolean
+      required:
+      - ok
+      - cleaned
       type: object
     DegradedProject:
       properties:
@@ -755,6 +870,19 @@ components:
       required:
       - displayName
       type: object
+    RenameSessionResponse:
+      properties:
+        displayName:
+          type: string
+        ok:
+          type: boolean
+        sessionId:
+          type: string
+      required:
+      - ok
+      - sessionId
+      - displayName
+      type: object
     ResolveCommentsResponse:
       properties:
         ok:
@@ -836,6 +964,8 @@ components:
           $ref: '#/components/schemas/DomainActivity'
         createdAt:
           format: date-time
+          type: string
+        displayName:
           type: string
         harness:
           type: string

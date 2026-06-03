@@ -90,6 +90,9 @@ func TestManager_AddListGetRemove(t *testing.T) {
 	}
 	_, err = m.Get(ctx, "ao")
 	wantCode(t, err, "PROJECT_NOT_FOUND")
+
+	_, err = m.Remove(ctx, "ao")
+	wantCode(t, err, "PROJECT_NOT_FOUND")
 }
 
 func TestManager_ReaddAfterRemove(t *testing.T) {

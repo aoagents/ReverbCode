@@ -48,6 +48,7 @@ type Store interface {
 	CreateSession(ctx context.Context, rec domain.SessionRecord) (domain.SessionRecord, error)
 	GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error)
 	ListSessions(ctx context.Context, project domain.ProjectID) ([]domain.SessionRecord, error)
+	ListAllSessions(ctx context.Context) ([]domain.SessionRecord, error)
 }
 
 // Manager coordinates internal session spawn, restore, kill, and cleanup over
@@ -275,7 +276,7 @@ func (m *Manager) Send(ctx context.Context, id domain.SessionID, message string)
 // Cleanup reclaims the workspaces of terminal sessions in a project. A workspace
 // whose teardown is refused (uncommitted work) is skipped, never forced.
 func (m *Manager) Cleanup(ctx context.Context, project domain.ProjectID) ([]domain.SessionID, error) {
-	recs, err := m.store.ListSessions(ctx, project)
+	recs, err := m.cleanupRecords(ctx, project)
 	if err != nil {
 		return nil, fmt.Errorf("cleanup %s: %w", project, err)
 	}
@@ -297,6 +298,13 @@ func (m *Manager) Cleanup(ctx context.Context, project domain.ProjectID) ([]doma
 		cleaned = append(cleaned, rec.ID)
 	}
 	return cleaned, nil
+}
+
+func (m *Manager) cleanupRecords(ctx context.Context, project domain.ProjectID) ([]domain.SessionRecord, error) {
+	if project == "" {
+		return m.store.ListAllSessions(ctx)
+	}
+	return m.store.ListSessions(ctx, project)
 }
 
 // ---- helpers ----

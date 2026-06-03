@@ -30,6 +30,8 @@ type SessionService interface {
 	Get(ctx context.Context, id domain.SessionID) (domain.Session, error)
 	Restore(ctx context.Context, id domain.SessionID) (domain.Session, error)
 	Kill(ctx context.Context, id domain.SessionID) (bool, error)
+	Cleanup(ctx context.Context, project domain.ProjectID) ([]domain.SessionID, error)
+	Rename(ctx context.Context, id domain.SessionID, displayName string) error
 	Send(ctx context.Context, id domain.SessionID, message string) error
 }
 
@@ -43,12 +45,15 @@ type SessionsController struct {
 func (c *SessionsController) Register(r chi.Router) {
 	r.Get("/sessions", c.list)
 	r.Post("/sessions", c.spawn)
+	r.Post("/sessions/cleanup", c.cleanup)
 	r.Get("/sessions/{sessionId}", c.get)
 	r.Patch("/sessions/{sessionId}", c.rename)
 	r.Post("/sessions/{sessionId}/restore", c.restore)
 	r.Post("/sessions/{sessionId}/kill", c.kill)
 	r.Post("/sessions/{sessionId}/send", c.send)
+	r.Get("/orchestrators", c.listOrchestrators)
 	r.Post("/orchestrators", c.spawnOrchestrator)
+	r.Get("/orchestrators/{id}", c.getOrchestrator)
 }
 
 func (c *SessionsController) list(w http.ResponseWriter, r *http.Request) {
@@ -112,7 +117,25 @@ func (c *SessionsController) get(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *SessionsController) rename(w http.ResponseWriter, r *http.Request) {
-	apispec.NotImplemented(w, r, "PATCH", "/api/v1/sessions/{sessionId}")
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "PATCH", "/api/v1/sessions/{sessionId}")
+		return
+	}
+	var in RenameSessionRequest
+	if err := decodeJSON(r, &in); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+		return
+	}
+	displayName := strings.TrimSpace(in.DisplayName)
+	if displayName == "" {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "DISPLAY_NAME_REQUIRED", "displayName is required", nil)
+		return
+	}
+	if err := c.Svc.Rename(r.Context(), sessionID(r), displayName); err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, RenameSessionResponse{OK: true, SessionID: sessionID(r), DisplayName: displayName})
 }
 
 func (c *SessionsController) restore(w http.ResponseWriter, r *http.Request) {
@@ -139,6 +162,19 @@ func (c *SessionsController) kill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	envelope.WriteJSON(w, http.StatusOK, KillSessionResponse{OK: true, SessionID: sessionID(r), Freed: freed})
+}
+
+func (c *SessionsController) cleanup(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/cleanup")
+		return
+	}
+	cleaned, err := c.Svc.Cleanup(r.Context(), domain.ProjectID(r.URL.Query().Get("project")))
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, CleanupSessionsResponse{OK: true, Cleaned: cleaned})
 }
 
 func (c *SessionsController) send(w http.ResponseWriter, r *http.Request) {
@@ -191,8 +227,42 @@ func (c *SessionsController) spawnOrchestrator(w http.ResponseWriter, r *http.Re
 	})
 }
 
+func (c *SessionsController) listOrchestrators(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "GET", "/api/v1/orchestrators")
+		return
+	}
+	sessions, err := c.Svc.List(r.Context(), sessionsvc.ListFilter{OrchestratorOnly: true})
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, ListSessionsResponse{Sessions: sessions})
+}
+
+func (c *SessionsController) getOrchestrator(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "GET", "/api/v1/orchestrators/{id}")
+		return
+	}
+	sess, err := c.Svc.Get(r.Context(), orchestratorID(r))
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	if sess.Kind != domain.KindOrchestrator {
+		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "SESSION_NOT_FOUND", "Unknown session", nil)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, SessionResponse{Session: sess})
+}
+
 func sessionID(r *http.Request) domain.SessionID {
 	return domain.SessionID(chi.URLParam(r, "sessionId"))
+}
+
+func orchestratorID(r *http.Request) domain.SessionID {
+	return domain.SessionID(chi.URLParam(r, "id"))
 }
 
 func parseSessionListFilter(r *http.Request) (sessionsvc.ListFilter, error) {

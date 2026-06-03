@@ -101,6 +101,31 @@ func TestSessionCreateAssignsPerProjectID(t *testing.T) {
 	}
 }
 
+func TestSessionRenameUpdatesDisplayName(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	r, _ := s.CreateSession(ctx, sampleRecord("mer"))
+
+	renamedAt := r.UpdatedAt.Add(time.Minute)
+	ok, err := s.RenameSession(ctx, r.ID, "Fix flaky tests", renamedAt)
+	if err != nil || !ok {
+		t.Fatalf("rename: ok=%v err=%v", ok, err)
+	}
+	got, _, _ := s.GetSession(ctx, r.ID)
+	if got.DisplayName != "Fix flaky tests" || !got.UpdatedAt.Equal(renamedAt) {
+		t.Fatalf("rename not persisted: %+v", got)
+	}
+
+	ok, err = s.RenameSession(ctx, "mer-missing", "Missing", renamedAt)
+	if err != nil {
+		t.Fatalf("rename missing: %v", err)
+	}
+	if ok {
+		t.Fatal("rename missing ok=true, want false")
+	}
+}
+
 func TestSessionUpdateActivityAndTermination(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

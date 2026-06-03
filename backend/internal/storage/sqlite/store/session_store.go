@@ -40,6 +40,22 @@ func (s *Store) UpdateSession(ctx context.Context, rec domain.SessionRecord) err
 	return s.qw.UpdateSession(ctx, recordToUpdate(rec))
 }
 
+// RenameSession updates only the user-facing display name for an existing
+// session. It returns ok=false when the session id does not exist.
+func (s *Store) RenameSession(ctx context.Context, id domain.SessionID, displayName string, updatedAt time.Time) (bool, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	rows, err := s.qw.RenameSession(ctx, gen.RenameSessionParams{
+		ID:          id,
+		DisplayName: displayName,
+		UpdatedAt:   updatedAt,
+	})
+	if err != nil {
+		return false, fmt.Errorf("rename session %s: %w", id, err)
+	}
+	return rows > 0, nil
+}
+
 // GetSession returns the full record for a session, or ok=false if absent.
 func (s *Store) GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error) {
 	row, err := s.qr.GetSession(ctx, id)
@@ -80,11 +96,12 @@ func mapSessionRows(rows []gen.Session) []domain.SessionRecord {
 
 func rowToRecord(row gen.Session) domain.SessionRecord {
 	return domain.SessionRecord{
-		ID:        row.ID,
-		ProjectID: row.ProjectID,
-		IssueID:   row.IssueID,
-		Kind:      row.Kind,
-		Harness:   row.Harness,
+		ID:          row.ID,
+		ProjectID:   row.ProjectID,
+		IssueID:     row.IssueID,
+		Kind:        row.Kind,
+		Harness:     row.Harness,
+		DisplayName: row.DisplayName,
 		Activity: domain.Activity{
 			State:          row.ActivityState,
 			LastActivityAt: row.ActivityLastAt,
@@ -111,6 +128,7 @@ func recordToInsert(rec domain.SessionRecord, num int64) gen.InsertSessionParams
 		IssueID:         rec.IssueID,
 		Kind:            rec.Kind,
 		Harness:         rec.Harness,
+		DisplayName:     rec.DisplayName,
 		ActivityState:   activity.State,
 		ActivityLastAt:  activity.LastActivityAt,
 		IsTerminated:    rec.IsTerminated,
@@ -131,6 +149,7 @@ func recordToUpdate(rec domain.SessionRecord) gen.UpdateSessionParams {
 		IssueID:         rec.IssueID,
 		Kind:            rec.Kind,
 		Harness:         rec.Harness,
+		DisplayName:     rec.DisplayName,
 		ActivityState:   activity.State,
 		ActivityLastAt:  activity.LastActivityAt,
 		IsTerminated:    rec.IsTerminated,

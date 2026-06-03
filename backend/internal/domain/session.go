@@ -41,6 +41,7 @@ type SessionRecord struct {
 	IssueID      IssueID         `json:"issueId,omitempty"`
 	Kind         SessionKind     `json:"kind"`
 	Harness      AgentHarness    `json:"harness,omitempty"`
+	DisplayName  string          `json:"displayName,omitempty"`
 	Activity     Activity        `json:"activity"`
 	IsTerminated bool            `json:"isTerminated"`
 	Metadata     SessionMetadata `json:"-"`

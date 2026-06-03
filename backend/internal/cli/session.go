@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -23,12 +24,22 @@ type sessionListOptions struct {
 	includeTerminated bool
 }
 
+type sessionCleanupOptions struct {
+	project string
+	yes     bool
+}
+
+type sessionRenameRequest struct {
+	DisplayName string `json:"displayName"`
+}
+
 type sessionDTO struct {
 	ID           string          `json:"id"`
 	ProjectID    string          `json:"projectId"`
 	IssueID      string          `json:"issueId,omitempty"`
 	Kind         string          `json:"kind"`
 	Harness      string          `json:"harness,omitempty"`
+	DisplayName  string          `json:"displayName,omitempty"`
 	Activity     sessionActivity `json:"activity"`
 	IsTerminated bool            `json:"isTerminated"`
 	CreatedAt    time.Time       `json:"createdAt"`
@@ -56,6 +67,15 @@ type killSessionResponse struct {
 type restoreSessionResponse struct {
 	SessionID string     `json:"sessionId"`
 	Session   sessionDTO `json:"session"`
+}
+
+type renameSessionResponse struct {
+	SessionID   string `json:"sessionId"`
+	DisplayName string `json:"displayName"`
+}
+
+type cleanupSessionsResponse struct {
+	Cleaned []string `json:"cleaned"`
 }
 
 type sessionListEntry struct {
@@ -87,6 +107,8 @@ func newSessionCommand(ctx *commandContext) *cobra.Command {
 	cmd.AddCommand(newSessionGetCommand(ctx))
 	cmd.AddCommand(newSessionKillCommand(ctx))
 	cmd.AddCommand(newSessionRestoreCommand(ctx))
+	cmd.AddCommand(newSessionRenameCommand(ctx))
+	cmd.AddCommand(newSessionCleanupCommand(ctx))
 	return cmd
 }
 
@@ -164,6 +186,40 @@ func newSessionRestoreCommand(ctx *commandContext) *cobra.Command {
 	return cmd
 }
 
+func newSessionRenameCommand(ctx *commandContext) *cobra.Command {
+	var opts sessionOptions
+	cmd := &cobra.Command{
+		Use:   "rename <id> <name>",
+		Short: "Rename a session",
+		Args:  sessionRenameArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id, err := normalizeSessionID(args[0])
+			if err != nil {
+				return err
+			}
+			return ctx.renameSession(cmd.Context(), cmd, id, args[1], opts)
+		},
+	}
+	addSessionProjectFlag(cmd.Flags(), &opts.project, "Project id to scope the lookup")
+	return cmd
+}
+
+func newSessionCleanupCommand(ctx *commandContext) *cobra.Command {
+	var opts sessionCleanupOptions
+	cmd := &cobra.Command{
+		Use:   "cleanup",
+		Short: "Clean up terminated sessions",
+		Long:  "Clean up terminated sessions by reclaiming eligible workspaces. Dirty worktrees are skipped by the daemon.",
+		Args:  noArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return ctx.cleanupSessions(cmd.Context(), cmd, opts)
+		},
+	}
+	addSessionProjectFlag(cmd.Flags(), &opts.project, "Filter by project ID")
+	cmd.Flags().BoolVarP(&opts.yes, "yes", "y", false, "Skip confirmation prompt")
+	return cmd
+}
+
 func addSessionProjectFlag(flags interface {
 	StringVarP(*string, string, string, string, string)
 }, target *string, usage string) {
@@ -176,6 +232,19 @@ func oneSessionIDArg(cmd *cobra.Command, args []string) error {
 	}
 	if _, err := normalizeSessionID(args[0]); err != nil {
 		return err
+	}
+	return nil
+}
+
+func sessionRenameArgs(cmd *cobra.Command, args []string) error {
+	if err := cobra.ExactArgs(2)(cmd, args); err != nil {
+		return usageError{err}
+	}
+	if _, err := normalizeSessionID(args[0]); err != nil {
+		return err
+	}
+	if strings.TrimSpace(args[1]) == "" {
+		return usageError{errors.New("session name is required")}
 	}
 	return nil
 }
@@ -269,6 +338,96 @@ func (c *commandContext) restoreSession(ctx context.Context, cmd *cobra.Command,
 	return nil
 }
 
+func (c *commandContext) renameSession(ctx context.Context, cmd *cobra.Command, id, displayName string, opts sessionOptions) error {
+	if opts.project != "" {
+		if _, err := c.fetchScopedSession(ctx, id, opts.project); err != nil {
+			return err
+		}
+	}
+	name := strings.TrimSpace(displayName)
+	var res renameSessionResponse
+	if err := c.patchJSON(ctx, "sessions/"+url.PathEscape(id), sessionRenameRequest{DisplayName: name}, &res); err != nil {
+		return err
+	}
+	sessionID := res.SessionID
+	if sessionID == "" {
+		sessionID = id
+	}
+	if res.DisplayName != "" {
+		name = res.DisplayName
+	}
+	_, err := fmt.Fprintf(cmd.OutOrStdout(), "session %s renamed to %q\n", sessionID, name)
+	return err
+}
+
+func (c *commandContext) cleanupSessions(ctx context.Context, cmd *cobra.Command, opts sessionCleanupOptions) error {
+	candidates, err := c.previewCleanupSessions(ctx, opts.project)
+	if err != nil {
+		return err
+	}
+	out := cmd.OutOrStdout()
+	if _, err := fmt.Fprintln(out, "Checking for completed sessions..."); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(out); err != nil {
+		return err
+	}
+	if len(candidates) == 0 {
+		_, err := fmt.Fprintln(out, "  No sessions to clean up.")
+		return err
+	}
+	labels := cleanupLabels(candidates, opts.project)
+	for _, label := range labels {
+		if _, err := fmt.Fprintf(out, "  Would clean %s\n", label); err != nil {
+			return err
+		}
+	}
+	if !opts.yes {
+		confirmed, err := confirmSessionCleanup(cmd, len(candidates), opts.project)
+		if err != nil {
+			return err
+		}
+		if !confirmed {
+			_, err := fmt.Fprintln(out, "aborted")
+			return err
+		}
+	}
+	params := url.Values{}
+	if opts.project != "" {
+		params.Set("project", opts.project)
+	}
+	var res cleanupSessionsResponse
+	if err := c.postJSON(ctx, apiPath("sessions/cleanup", params), struct{}{}, &res); err != nil {
+		return err
+	}
+	cleaned := res.Cleaned
+	labelByID := cleanupLabelByID(candidates, opts.project)
+	for _, id := range cleaned {
+		label := id
+		if mapped := labelByID[id]; mapped != "" {
+			label = mapped
+		}
+		if _, err := fmt.Fprintf(out, "  Cleaned: %s\n", label); err != nil {
+			return err
+		}
+	}
+	_, err = fmt.Fprintf(out, "\nCleanup complete. %d session%s cleaned.\n", len(cleaned), pluralS(len(cleaned)))
+	return err
+}
+
+func (c *commandContext) previewCleanupSessions(ctx context.Context, project string) ([]sessionDTO, error) {
+	params := url.Values{}
+	params.Set("active", "false")
+	if project != "" {
+		params.Set("project", project)
+	}
+	var res sessionListResponse
+	if err := c.getJSON(ctx, apiPath("sessions", params), &res); err != nil {
+		return nil, err
+	}
+	return filterAndSortSessions(res.Sessions, true), nil
+}
+
 func (c *commandContext) fetchScopedSession(ctx context.Context, id, project string) (sessionDTO, error) {
 	var res sessionResponse
 	if err := c.getJSON(ctx, "sessions/"+url.PathEscape(id), &res); err != nil {
@@ -319,6 +478,29 @@ func sessionListEntries(sessions []sessionDTO) []sessionListEntry {
 		})
 	}
 	return entries
+}
+
+func cleanupLabels(sessions []sessionDTO, scopedProject string) []string {
+	labels := make([]string, 0, len(sessions))
+	for _, sess := range sessions {
+		labels = append(labels, cleanupLabel(sess, scopedProject))
+	}
+	return labels
+}
+
+func cleanupLabelByID(sessions []sessionDTO, scopedProject string) map[string]string {
+	labels := make(map[string]string, len(sessions))
+	for _, sess := range sessions {
+		labels[sess.ID] = cleanupLabel(sess, scopedProject)
+	}
+	return labels
+}
+
+func cleanupLabel(sess sessionDTO, scopedProject string) string {
+	if scopedProject == "" && sess.ProjectID != "" {
+		return sess.ProjectID + ":" + sess.ID
+	}
+	return sess.ID
 }
 
 func writeSessionList(cmd *cobra.Command, sessions []sessionDTO, hiddenTerminatedCount int) error {
@@ -384,6 +566,7 @@ func writeSessionDetails(cmd *cobra.Command, sess sessionDTO) error {
 	fields := [][2]string{
 		{"id", sess.ID},
 		{"project", sess.ProjectID},
+		{"name", sess.DisplayName},
 		{"role", sessionRole(sess)},
 		{"status", sess.Status},
 		{"activity", sess.Activity.State},
@@ -455,4 +638,20 @@ func normalizeSessionID(id string) (string, error) {
 		return "", usageError{errors.New("session id is required")}
 	}
 	return trimmed, nil
+}
+
+func confirmSessionCleanup(cmd *cobra.Command, count int, project string) (bool, error) {
+	scope := " across all projects"
+	if project != "" {
+		scope = fmt.Sprintf(" in project %q", project)
+	}
+	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Clean %d terminated session%s%s? Type yes to confirm: ", count, pluralS(count), scope); err != nil {
+		return false, err
+	}
+	reader := bufio.NewReader(cmd.InOrStdin())
+	line, err := reader.ReadString('\n')
+	if err != nil && line == "" {
+		return false, err
+	}
+	return strings.EqualFold(strings.TrimSpace(line), "yes"), nil
 }

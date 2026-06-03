@@ -12,13 +12,16 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd"
+	apierr "github.com/aoagents/agent-orchestrator/backend/internal/httpd/errors"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
 )
 
 type fakeSessionService struct {
-	sessions map[domain.SessionID]domain.Session
-	sent     string
+	sessions        map[domain.SessionID]domain.Session
+	sent            string
+	cleanupProjects []domain.ProjectID
+	cleanupResult   []domain.SessionID
 }
 
 func newFakeSessionService() *fakeSessionService {
@@ -85,6 +88,24 @@ func (f *fakeSessionService) Kill(_ context.Context, id domain.SessionID) (bool,
 	s.Status = domain.StatusTerminated
 	f.sessions[id] = s
 	return true, nil
+}
+
+func (f *fakeSessionService) Cleanup(_ context.Context, project domain.ProjectID) ([]domain.SessionID, error) {
+	f.cleanupProjects = append(f.cleanupProjects, project)
+	if f.cleanupResult != nil {
+		return f.cleanupResult, nil
+	}
+	return []domain.SessionID{"ao-1"}, nil
+}
+
+func (f *fakeSessionService) Rename(_ context.Context, id domain.SessionID, displayName string) error {
+	s, ok := f.sessions[id]
+	if !ok {
+		return apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	s.DisplayName = displayName
+	f.sessions[id] = s
+	return nil
 }
 
 func (f *fakeSessionService) Send(_ context.Context, _ domain.SessionID, message string) error {
@@ -167,11 +188,92 @@ func TestSessionsAPI_ListSpawnGetAndActions(t *testing.T) {
 	}
 
 	body, status, _ = doRequest(t, srv, "PATCH", "/api/v1/sessions/ao-2", `{"displayName":"Renamed"}`)
-	assertErrorCode(t, body, status, http.StatusNotImplemented, "NOT_IMPLEMENTED")
+	if status != http.StatusOK {
+		t.Fatalf("rename = %d, want 200; body=%s", status, body)
+	}
+	var renamed struct {
+		OK          bool   `json:"ok"`
+		SessionID   string `json:"sessionId"`
+		DisplayName string `json:"displayName"`
+	}
+	mustJSON(t, body, &renamed)
+	if !renamed.OK || renamed.SessionID != "ao-2" || renamed.DisplayName != "Renamed" {
+		t.Fatalf("rename response = %#v", renamed)
+	}
+	if svc.sessions["ao-2"].DisplayName != "Renamed" {
+		t.Fatalf("session displayName not updated: %+v", svc.sessions["ao-2"])
+	}
 
 	body, status, _ = doRequest(t, srv, "POST", "/api/v1/orchestrators", `{"projectId":"ao"}`)
 	if status != http.StatusCreated {
 		t.Fatalf("orchestrator = %d, want 201; body=%s", status, body)
+	}
+}
+
+func TestSessionsAPI_RenameNotFound(t *testing.T) {
+	srv := newSessionTestServer(t, newFakeSessionService())
+
+	body, status, _ := doRequest(t, srv, "PATCH", "/api/v1/sessions/missing-1", `{"displayName":"Renamed"}`)
+	assertErrorCode(t, body, status, http.StatusNotFound, "SESSION_NOT_FOUND")
+}
+
+func TestSessionsAPI_RenameValidation(t *testing.T) {
+	srv := newSessionTestServer(t, newFakeSessionService())
+
+	body, status, _ := doRequest(t, srv, "PATCH", "/api/v1/sessions/ao-1", `{"displayName":"  "}`)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "DISPLAY_NAME_REQUIRED")
+
+	body, status, _ = doRequest(t, srv, "PATCH", "/api/v1/sessions/ao-1", `{`)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_JSON")
+}
+
+func TestSessionsAPI_ListOrchestratorsOnly(t *testing.T) {
+	svc := newFakeSessionService()
+	now := time.Now().UTC()
+	svc.sessions["ao-orch"] = domain.Session{
+		SessionRecord: domain.SessionRecord{
+			ID:        "ao-orch",
+			ProjectID: "ao",
+			Kind:      domain.KindOrchestrator,
+			Activity:  domain.Activity{State: domain.ActivityIdle, LastActivityAt: now},
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		Status: domain.StatusIdle,
+	}
+	svc.sessions["other-orch"] = domain.Session{
+		SessionRecord: domain.SessionRecord{
+			ID:        "other-orch",
+			ProjectID: "other",
+			Kind:      domain.KindOrchestrator,
+			Activity:  domain.Activity{State: domain.ActivityIdle, LastActivityAt: now},
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		Status: domain.StatusIdle,
+	}
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "GET", "/api/v1/orchestrators", "")
+	if status != http.StatusOK {
+		t.Fatalf("GET orchestrators = %d, want 200; body=%s", status, body)
+	}
+	var list struct {
+		Sessions []sessionBody `json:"sessions"`
+	}
+	mustJSON(t, body, &list)
+	if len(list.Sessions) != 2 {
+		t.Fatalf("len(orchestrators) = %d, want 2; body=%s", len(list.Sessions), body)
+	}
+	got := map[string]string{}
+	for _, sess := range list.Sessions {
+		got[sess.ID] = sess.Kind
+	}
+	if got["ao-orch"] != string(domain.KindOrchestrator) || got["other-orch"] != string(domain.KindOrchestrator) {
+		t.Fatalf("missing orchestrators: %#v", got)
+	}
+	if _, ok := got["ao-1"]; ok {
+		t.Fatalf("worker session leaked into orchestrator list: %#v", got)
 	}
 }
 
@@ -182,9 +284,55 @@ func TestSessionsAPI_SendValidation(t *testing.T) {
 	assertErrorCode(t, body, status, http.StatusBadRequest, "MESSAGE_REQUIRED")
 }
 
+func TestSessionsAPI_CleanupWithProjectFilter(t *testing.T) {
+	svc := newFakeSessionService()
+	svc.cleanupResult = []domain.SessionID{"ao-1"}
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/cleanup?project=ao", "")
+	if status != http.StatusOK {
+		t.Fatalf("cleanup = %d, want 200; body=%s", status, body)
+	}
+	var got struct {
+		OK      bool     `json:"ok"`
+		Cleaned []string `json:"cleaned"`
+	}
+	mustJSON(t, body, &got)
+	if !got.OK || len(got.Cleaned) != 1 || got.Cleaned[0] != "ao-1" {
+		t.Fatalf("cleanup response = %#v", got)
+	}
+	if len(svc.cleanupProjects) != 1 || svc.cleanupProjects[0] != "ao" {
+		t.Fatalf("cleanupProjects = %#v, want [ao]", svc.cleanupProjects)
+	}
+}
+
+func TestSessionsAPI_CleanupWithoutProjectFilter(t *testing.T) {
+	svc := newFakeSessionService()
+	svc.cleanupResult = []domain.SessionID{"ao-1", "other-1"}
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/cleanup", "")
+	if status != http.StatusOK {
+		t.Fatalf("cleanup = %d, want 200; body=%s", status, body)
+	}
+	var got struct {
+		Cleaned []string `json:"cleaned"`
+	}
+	mustJSON(t, body, &got)
+	if len(got.Cleaned) != 2 || got.Cleaned[0] != "ao-1" || got.Cleaned[1] != "other-1" {
+		t.Fatalf("cleanup response = %#v", got)
+	}
+	if len(svc.cleanupProjects) != 1 || svc.cleanupProjects[0] != "" {
+		t.Fatalf("cleanupProjects = %#v, want empty project filter", svc.cleanupProjects)
+	}
+}
+
 type sessionBody struct {
-	ID      string `json:"id"`
-	IssueID string `json:"issueId"`
-	Harness string `json:"harness"`
-	Status  string `json:"status"`
+	ID          string `json:"id"`
+	ProjectID   string `json:"projectId"`
+	IssueID     string `json:"issueId"`
+	Kind        string `json:"kind"`
+	Harness     string `json:"harness"`
+	DisplayName string `json:"displayName"`
+	Status      string `json:"status"`
 }

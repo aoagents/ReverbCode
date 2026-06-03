@@ -56,24 +56,28 @@ type Deps struct {
 	ProcessAlive  func(pid int) bool
 	LookPath      func(file string) (string, error)
 	CommandOutput func(ctx context.Context, name string, args ...string) ([]byte, error)
-	Now           func() time.Time
-	Sleep         func(time.Duration)
+	// DoctorGitHubRESTBase lets tests point the doctor GitHub token probe at
+	// httptest without mutating package-global state.
+	DoctorGitHubRESTBase string
+	Now                  func() time.Time
+	Sleep                func(time.Duration)
 }
 
 // DefaultDeps returns production dependencies.
 func DefaultDeps() Deps {
 	return Deps{
-		In:            os.Stdin,
-		Out:           os.Stdout,
-		Err:           os.Stderr,
-		HTTPClient:    &http.Client{Timeout: 2 * time.Second},
-		Executable:    os.Executable,
-		StartProcess:  startProcess,
-		ProcessAlive:  processalive.Alive,
-		LookPath:      exec.LookPath,
-		CommandOutput: commandOutput,
-		Now:           time.Now,
-		Sleep:         time.Sleep,
+		In:                   os.Stdin,
+		Out:                  os.Stdout,
+		Err:                  os.Stderr,
+		HTTPClient:           &http.Client{Timeout: 2 * time.Second},
+		Executable:           os.Executable,
+		StartProcess:         startProcess,
+		ProcessAlive:         processalive.Alive,
+		LookPath:             exec.LookPath,
+		CommandOutput:        commandOutput,
+		DoctorGitHubRESTBase: defaultDoctorGitHubRESTBase,
+		Now:                  time.Now,
+		Sleep:                time.Sleep,
 	}
 }
 
@@ -109,6 +113,9 @@ func (d Deps) withDefaults() Deps {
 	}
 	if d.CommandOutput == nil {
 		d.CommandOutput = def.CommandOutput
+	}
+	if d.DoctorGitHubRESTBase == "" {
+		d.DoctorGitHubRESTBase = def.DoctorGitHubRESTBase
 	}
 	if d.Now == nil {
 		d.Now = def.Now
@@ -151,6 +158,7 @@ func NewRootCommand(deps Deps) *cobra.Command {
 	root.AddCommand(newSendCommand(ctx))
 	root.AddCommand(newProjectCommand(ctx))
 	root.AddCommand(newSessionCommand(ctx))
+	root.AddCommand(newOrchestratorCommand(ctx))
 	root.AddCommand(newCompletionCommand())
 	root.AddCommand(newVersionCommand())
 

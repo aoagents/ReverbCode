@@ -78,6 +78,14 @@ func (f *fakeSessionService) Kill(context.Context, domain.SessionID) (bool, erro
 	return false, nil
 }
 
+func (f *fakeSessionService) Cleanup(context.Context, domain.ProjectID) ([]domain.SessionID, error) {
+	return nil, nil
+}
+
+func (f *fakeSessionService) Rename(context.Context, domain.SessionID, string) error {
+	return nil
+}
+
 func (f *fakeSessionService) Send(context.Context, domain.SessionID, string) error {
 	return nil
 }
