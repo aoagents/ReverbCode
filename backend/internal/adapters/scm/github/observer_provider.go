@@ -205,7 +205,6 @@ type restListPull struct {
 	} `json:"base"`
 	User struct {
 		Login string `json:"login"`
-		Type  string `json:"type"`
 	} `json:"user"`
 	CreatedAt string `json:"created_at"`
 	UpdatedAt string `json:"updated_at"`
@@ -251,7 +250,7 @@ func scmPRFields() string {
 number url state isDraft merged closed title additions deletions changedFiles
 mergeable mergeStateStatus reviewDecision headRefName headRefOid baseRefName baseRefOid
 createdAt updatedAt mergedAt closedAt
-author{ login __typename }
+author{ login }
 mergeCommit{ oid }
 commits(last:1){ nodes{ commit{ oid statusCheckRollup{ state contexts(first:CONTEXT_LIMIT){ nodes{
   __typename
@@ -340,10 +339,6 @@ func scmObservationFromGraphQL(ref ports.SCMPRRef, pr map[string]any) ports.SCMO
 	failed := failedSCMChecks(checks)
 	ci := string(ciSummaryFromRollupState(pr))
 	prURL := firstNonEmpty(str(pr["url"]), ref.URL)
-	if ci == string(domain.CIFailing) && len(failed) == 0 && scmContextsPaginated(pr) {
-		failed = []ports.SCMCheckObservation{paginatedFailureSCMCheck(prURL)}
-		checks = append(checks, failed[0])
-	}
 	review := string(reviewDecisionFromGraphQL(pr))
 	providerMergeable := str(pr["mergeable"])
 	providerMergeState := str(pr["mergeStateStatus"])
@@ -404,17 +399,6 @@ func ciSummaryFromRollupState(pr map[string]any) domain.CIState {
 
 func scmContextsPaginated(pr map[string]any) bool {
 	return pageInfoHasMore(statusContexts(pr))
-}
-
-func paginatedFailureSCMCheck(prURL string) ports.SCMCheckObservation {
-	const msg = "GitHub reports failing CI, but the failing context is outside AO's current GraphQL check-context page. Open the PR checks tab for the hidden failing job."
-	return ports.SCMCheckObservation{
-		Name:       "GitHub statusCheckRollup",
-		Status:     string(domain.PRCheckFailed),
-		Conclusion: "failure",
-		URL:        prURL,
-		LogTail:    msg,
-	}
 }
 
 func scmChecksFromGraphQL(pr map[string]any) []ports.SCMCheckObservation {

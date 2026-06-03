@@ -82,8 +82,6 @@ type ObserverCache struct {
 	RepoPRListETag map[string]string
 	// CommitChecksETag maps repo+commit keys to the last check-runs ETag.
 	CommitChecksETag map[string]string
-	// ReviewETag is reserved for provider review-thread ETags when supported.
-	ReviewETag map[string]string
 	// LastReviewPollAt maps PR keys to the last review-thread fetch timestamp.
 	LastReviewPollAt map[string]time.Time
 	// ReviewRefreshFailed marks PRs whose review-thread refresh failed; the
@@ -108,7 +106,6 @@ func newCache(maxEntries int) ObserverCache {
 	return ObserverCache{
 		RepoPRListETag:      map[string]string{},
 		CommitChecksETag:    map[string]string{},
-		ReviewETag:          map[string]string{},
 		LastReviewPollAt:    map[string]time.Time{},
 		ReviewRefreshFailed: map[string]bool{},
 		max:                 maxEntries,
@@ -187,13 +184,11 @@ func (o *Observer) loop(ctx context.Context, done chan<- struct{}) {
 }
 
 type subject struct {
-	session       domain.SessionRecord
-	project       domain.ProjectRecord
-	repo          ports.SCMRepo
-	branch        string
-	known         domain.PullRequest
-	hasPR         bool
-	newlyDetected bool
+	session domain.SessionRecord
+	repo    ports.SCMRepo
+	branch  string
+	known   domain.PullRequest
+	hasPR   bool
 }
 
 type repoGuardState struct {
@@ -347,8 +342,7 @@ func (o *Observer) Poll(ctx context.Context) error {
 		// changed hashes at their local values until lifecycle succeeds; if the
 		// daemon restarts after a lifecycle failure, the stale hashes force the
 		// same observation to be fetched and delivered again.
-		holdHashes := o.lifecycle != nil
-		if holdHashes {
+		if o.lifecycle != nil {
 			pendingOpts := opts
 			if prepared.Changed.Metadata {
 				pendingOpts.preserveLocalMetadataHash = true
@@ -372,12 +366,10 @@ func (o *Observer) Poll(ctx context.Context) error {
 				markRepoRefreshFailed(subj.repo)
 				continue
 			}
-			if holdHashes {
-				if err := o.store.WriteSCMObservation(ctx, finalPR, finalChecks, finalThreads, finalComments, reviewMode); err != nil {
-					o.logger.Error("scm observer: DB lifecycle acknowledgement failed", "session", subj.session.ID, "pr", finalPR.URL, "err", err)
-					markRepoRefreshFailed(subj.repo)
-					continue
-				}
+			if err := o.store.WriteSCMObservation(ctx, finalPR, finalChecks, finalThreads, finalComments, reviewMode); err != nil {
+				o.logger.Error("scm observer: DB lifecycle acknowledgement failed", "session", subj.session.ID, "pr", finalPR.URL, "err", err)
+				markRepoRefreshFailed(subj.repo)
+				continue
 			}
 		}
 		prRefreshOK[key] = true
@@ -466,7 +458,7 @@ func (o *Observer) discoverSubjects(ctx context.Context) (map[string]*subject, e
 			return nil, err
 		}
 		known, hasPR := chooseKnownPR(prs)
-		s := &subject{session: sess, project: proj, repo: repo, branch: branch, known: known, hasPR: hasPR}
+		s := &subject{session: sess, repo: repo, branch: branch, known: known, hasPR: hasPR}
 		if hasPR && known.Number > 0 {
 			key := prKey(repo, known.Number)
 			if existing, ok := out[key]; ok {
@@ -557,7 +549,6 @@ func (o *Observer) detectMissingPRs(ctx context.Context, subjects map[string]*su
 		}
 		s.known = domain.PullRequest{URL: pr.URL, SessionID: s.session.ID, Number: pr.Number, SourceBranch: pr.SourceBranch, TargetBranch: pr.TargetBranch, HeadSHA: pr.HeadSHA, Provider: s.repo.Provider, Host: s.repo.Host, Repo: repoFullName(s.repo), UpdatedAt: now}
 		s.hasPR = true
-		s.newlyDetected = true
 		delete(subjects, oldKey)
 		subjects[newKey] = s
 	}
@@ -569,14 +560,13 @@ func (o *Observer) selectRefreshCandidates(ctx context.Context, subjects map[str
 		commitETags:   map[string]pendingCacheString{},
 		candidateKeys: map[string]bool{},
 	}
-	seen := map[string]bool{}
 	for _, s := range subjects {
 		if !s.hasPR || s.known.Number <= 0 {
 			continue
 		}
 		key := prKey(s.repo, s.known.Number)
 		selection.subjectsByPR[key] = s
-		candidate := s.newlyDetected || missingLocalState(s.known)
+		candidate := missingLocalState(s.known)
 		g := guards[prKey(s.repo, 0)]
 		if g.err == nil && !g.result.NotModified {
 			candidate = true
@@ -597,10 +587,9 @@ func (o *Observer) selectRefreshCandidates(ctx context.Context, subjects map[str
 				}
 			}
 		}
-		if candidate && !seen[key] {
+		if candidate {
 			selection.refs = append(selection.refs, ports.SCMPRRef{Repo: s.repo, Number: s.known.Number, URL: s.known.URL})
 			selection.candidateKeys[key] = true
-			seen[key] = true
 		}
 	}
 	return selection

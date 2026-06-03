@@ -1163,12 +1163,6 @@ func TestSCMObservationUsesRollupStateWhenContextsPaginated(t *testing.T) {
 	if obs.CI.Summary != string(domain.CIFailing) {
 		t.Fatalf("observer CI summary = %q, want failing from aggregate rollup state", obs.CI.Summary)
 	}
-	if len(obs.CI.FailedChecks) != 1 {
-		t.Fatalf("failed checks should include a synthetic paginated failure, got %#v", obs.CI.FailedChecks)
-	}
-	if obs.CI.FailedChecks[0].Name != "GitHub statusCheckRollup" || !strings.Contains(obs.CI.FailedChecks[0].LogTail, "outside AO's current GraphQL check-context page") {
-		t.Fatalf("synthetic paginated failure missing actionable details: %#v", obs.CI.FailedChecks[0])
-	}
 }
 
 func TestSCMMergeabilityBlocksReviewRequiredAndDraft(t *testing.T) {

@@ -38,7 +38,6 @@ type fakeStore struct {
 type fakeWrite struct {
 	pr         domain.PullRequest
 	checks     []domain.PullRequestCheck
-	threads    []domain.PullRequestReviewThread
 	comments   []domain.PullRequestComment
 	reviewMode ports.ReviewWriteMode
 }
@@ -88,7 +87,7 @@ func (s *fakeStore) WriteSCMObservation(_ context.Context, pr domain.PullRequest
 	if s.writeErr != nil {
 		return s.writeErr
 	}
-	s.writes = append(s.writes, fakeWrite{pr: pr, checks: append([]domain.PullRequestCheck(nil), checks...), threads: append([]domain.PullRequestReviewThread(nil), threads...), comments: append([]domain.PullRequestComment(nil), comments...), reviewMode: reviewMode})
+	s.writes = append(s.writes, fakeWrite{pr: pr, checks: append([]domain.PullRequestCheck(nil), checks...), comments: append([]domain.PullRequestComment(nil), comments...), reviewMode: reviewMode})
 	return nil
 }
 
