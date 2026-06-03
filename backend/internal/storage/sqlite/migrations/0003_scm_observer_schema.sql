@@ -54,8 +54,96 @@ CREATE TABLE pr_review_threads (
 CREATE INDEX idx_pr_review_threads_lookup ON pr_review_threads (pr_url, updated_at);
 -- +goose StatementEnd
 
+-- +goose StatementBegin
+-- Widen change_log.event_type CHECK to include the new pr_review_thread_* events.
+-- SQLite cannot ALTER an in-place CHECK constraint; this drop/recreate is safe
+-- because change_log is append-only and the SSE broadcaster re-seeks to head on
+-- restart (no consumer durably stores a change_log offset across this migration).
+DROP INDEX IF EXISTS idx_change_log_project;
+DROP TABLE change_log;
+CREATE TABLE change_log (
+    seq        INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id TEXT NOT NULL REFERENCES projects (id),
+    session_id TEXT REFERENCES sessions (id),
+    event_type TEXT NOT NULL
+        CHECK (event_type IN (
+            'session_created',
+            'session_updated',
+            'pr_created',
+            'pr_updated',
+            'pr_check_recorded',
+            'pr_review_thread_added',
+            'pr_review_thread_resolved'
+        )),
+    payload    TEXT NOT NULL CHECK (json_valid(payload)),
+    created_at TIMESTAMP NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX idx_change_log_project ON change_log (project_id, seq);
+-- +goose StatementEnd
+
+-- +goose StatementBegin
+-- Emit on every new review thread the SCM observer persists, so the broadcaster
+-- can stream per-thread additions instead of waiting for a rolled-up review_decision flip.
+CREATE TRIGGER pr_review_threads_cdc_insert
+AFTER INSERT ON pr_review_threads
+BEGIN
+    INSERT INTO change_log (project_id, session_id, event_type, payload, created_at)
+    VALUES (
+        (SELECT s.project_id FROM pr p JOIN sessions s ON s.id = p.session_id WHERE p.url = NEW.pr_url),
+        (SELECT session_id FROM pr WHERE url = NEW.pr_url),
+        'pr_review_thread_added',
+        json_object(
+            'pr', NEW.pr_url,
+            'thread', NEW.thread_id,
+            'path', NEW.path,
+            'line', NEW.line,
+            'resolved', json(CASE WHEN NEW.resolved THEN 'true' ELSE 'false' END),
+            'isBot', json(CASE WHEN NEW.is_bot THEN 'true' ELSE 'false' END)
+        ),
+        NEW.updated_at);
+END;
+-- +goose StatementEnd
+
+-- +goose StatementBegin
+-- Emit only on resolved <-> unresolved transitions. Other thread mutations
+-- (semantic_hash refresh, line shifts) are captured by the slower review-decision
+-- rollup so we don't flood CDC with no-op semantic-hash updates.
+CREATE TRIGGER pr_review_threads_cdc_update
+AFTER UPDATE ON pr_review_threads
+WHEN OLD.resolved <> NEW.resolved
+BEGIN
+    INSERT INTO change_log (project_id, session_id, event_type, payload, created_at)
+    VALUES (
+        (SELECT s.project_id FROM pr p JOIN sessions s ON s.id = p.session_id WHERE p.url = NEW.pr_url),
+        (SELECT session_id FROM pr WHERE url = NEW.pr_url),
+        'pr_review_thread_resolved',
+        json_object(
+            'pr', NEW.pr_url,
+            'thread', NEW.thread_id,
+            'path', NEW.path,
+            'line', NEW.line,
+            'resolved', json(CASE WHEN NEW.resolved THEN 'true' ELSE 'false' END)
+        ),
+        NEW.updated_at);
+END;
+-- +goose StatementEnd
+
 -- +goose Down
 -- +goose StatementBegin
+DROP TRIGGER IF EXISTS pr_review_threads_cdc_update;
+DROP TRIGGER IF EXISTS pr_review_threads_cdc_insert;
+DROP INDEX IF EXISTS idx_change_log_project;
+DROP TABLE change_log;
+CREATE TABLE change_log (
+    seq        INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id TEXT NOT NULL REFERENCES projects (id),
+    session_id TEXT REFERENCES sessions (id),
+    event_type TEXT NOT NULL
+        CHECK (event_type IN ('session_created', 'session_updated', 'pr_created', 'pr_updated', 'pr_check_recorded')),
+    payload    TEXT NOT NULL CHECK (json_valid(payload)),
+    created_at TIMESTAMP NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX idx_change_log_project ON change_log (project_id, seq);
 DROP TABLE pr_review_threads;
 ALTER TABLE pr_comment DROP COLUMN is_bot;
 ALTER TABLE pr_comment DROP COLUMN url;

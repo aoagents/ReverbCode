@@ -2,12 +2,14 @@ package store_test
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/cdc"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 // A check can change status on the same commit (in_progress -> failed) via
@@ -47,6 +49,69 @@ func TestPRChecksCDC_EmitsOnInsertAndStatusUpdate(t *testing.T) {
 	}
 	if !strings.Contains(string(checkEvents[1].Payload), `"status":"failed"`) {
 		t.Fatalf("the update event should carry the new status, got %q", checkEvents[1].Payload)
+	}
+}
+
+func TestPRReviewThreadsCDC_EmitsOnInsertAndResolvedTransition(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	rec, err := s.CreateSession(ctx, sampleRecord("mer"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	pr := domain.PullRequest{URL: "https://example/pr/9", SessionID: rec.ID, Number: 9, UpdatedAt: now}
+
+	if err := s.WriteSCMObservation(ctx, pr, nil, []domain.PullRequestReviewThread{{
+		ThreadID: "t1", Path: "main.go", Line: 7, IsBot: true, SemanticHash: "v1", UpdatedAt: now,
+	}}, nil, ports.ReviewWriteReplace); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WriteSCMObservation(ctx, pr, nil, []domain.PullRequestReviewThread{{
+		ThreadID: "t1", Path: "main.go", Line: 8, Resolved: true, IsBot: true, SemanticHash: "v2", UpdatedAt: now.Add(time.Second),
+	}}, nil, ports.ReviewWriteMerge); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WriteSCMObservation(ctx, pr, nil, []domain.PullRequestReviewThread{{
+		ThreadID: "t1", Path: "main.go", Line: 9, Resolved: true, IsBot: true, SemanticHash: "v3", UpdatedAt: now.Add(2 * time.Second),
+	}}, nil, ports.ReviewWriteMerge); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := s.EventsAfter(ctx, 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var added, resolved []cdc.Event
+	for _, r := range rows {
+		switch r.Type {
+		case cdc.EventPRReviewThreadAdded:
+			added = append(added, r)
+		case cdc.EventPRReviewThreadResolved:
+			resolved = append(resolved, r)
+		}
+	}
+	if len(added) != 1 {
+		t.Fatalf("want 1 review-thread added CDC event, got %d", len(added))
+	}
+	if len(resolved) != 1 {
+		t.Fatalf("want 1 review-thread resolved CDC event (resolved transition only), got %d", len(resolved))
+	}
+
+	var addPayload map[string]any
+	if err := json.Unmarshal(added[0].Payload, &addPayload); err != nil {
+		t.Fatalf("added payload JSON: %v", err)
+	}
+	if addPayload["thread"] != "t1" || addPayload["isBot"] != true || addPayload["resolved"] != false {
+		t.Fatalf("added payload = %#v", addPayload)
+	}
+	var resolvedPayload map[string]any
+	if err := json.Unmarshal(resolved[0].Payload, &resolvedPayload); err != nil {
+		t.Fatalf("resolved payload JSON: %v", err)
+	}
+	if resolvedPayload["thread"] != "t1" || resolvedPayload["line"] != float64(8) || resolvedPayload["resolved"] != true {
+		t.Fatalf("resolved payload = %#v", resolvedPayload)
 	}
 }
 
