@@ -12,10 +12,8 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-// Sentinel errors returned by the Session Manager. They are plain engine-level
-// sentinels: the session_manager is the internal command engine and must not
-// know about the REST API's error vocabulary. The service/session facade maps
-// them to API errors at its boundary.
+// Sentinel errors returned by the Session Manager; callers match them with
+// errors.Is.
 var (
 	ErrNotFound         = errors.New("session: not found")
 	ErrNotRestorable    = errors.New("session: not restorable (not terminal)")

@@ -155,11 +155,8 @@ func (s *Service) Get(ctx context.Context, id domain.SessionID) (domain.Session,
 	return s.toSession(ctx, rec)
 }
 
-// toAPIError maps the internal session engine's sentinel errors into the REST
-// API error vocabulary. It is the single boundary where engine errors become
-// API errors, so the session_manager never depends on the API error package and
-// controllers never import the engine. Unrecognized errors pass through and
-// surface as a 500.
+// toAPIError maps the session engine's sentinel errors to their REST API
+// equivalents; an unrecognized error passes through and surfaces as a 500.
 func toAPIError(err error) error {
 	switch {
 	case err == nil:
