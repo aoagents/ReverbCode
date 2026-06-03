@@ -1144,6 +1144,39 @@ func TestSCMChecksFromGraphQL_StatusContextUsesState(t *testing.T) {
 	}
 }
 
+func TestSCMThreadFromGraphQLMarksThreadBotOnlyWhenAllCommentsAreBots(t *testing.T) {
+	mixed := scmThreadFromGraphQL(map[string]any{
+		"id":         "T-mixed",
+		"path":       "main.go",
+		"line":       float64(12),
+		"isResolved": false,
+		"comments": map[string]any{"nodes": []any{
+			map[string]any{"id": "C-human", "body": "please fix", "author": map[string]any{"login": "alice", "__typename": "User"}},
+			map[string]any{"id": "C-bot", "body": "automated note", "author": map[string]any{"login": "review-bot", "__typename": "Bot"}},
+		}},
+	})
+	if mixed.IsBot {
+		t.Fatalf("mixed human+bot thread marked as bot: %+v", mixed)
+	}
+	if len(mixed.Comments) != 2 || mixed.Comments[0].IsBot || !mixed.Comments[1].IsBot {
+		t.Fatalf("comment bot flags not preserved on mixed thread: %+v", mixed.Comments)
+	}
+
+	allBot := scmThreadFromGraphQL(map[string]any{
+		"id":         "T-bot",
+		"path":       "main.go",
+		"line":       float64(12),
+		"isResolved": false,
+		"comments": map[string]any{"nodes": []any{
+			map[string]any{"id": "C-bot-1", "body": "automated note", "author": map[string]any{"login": "review-bot", "__typename": "Bot"}},
+			map[string]any{"id": "C-bot-2", "body": "more automation", "author": map[string]any{"login": "other-bot", "__typename": "Bot"}},
+		}},
+	})
+	if !allBot.IsBot {
+		t.Fatalf("all-bot thread not marked as bot: %+v", allBot)
+	}
+}
+
 func TestSCMObservationUsesRollupStateWhenContextsPaginated(t *testing.T) {
 	fx := basePRFixture()
 	var pr map[string]any

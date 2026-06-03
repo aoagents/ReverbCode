@@ -612,7 +612,7 @@ func (o *Observer) enrichFailureLogs(ctx context.Context, obs *ports.SCMObservat
 	tails := make([]string, 0, len(obs.CI.FailedChecks))
 	for i := range obs.CI.FailedChecks {
 		tail := obs.CI.FailedChecks[i].LogTail
-		if obs.CI.FailedChecks[i].ProviderID != "" || tail == "" {
+		if tail == "" && obs.CI.FailedChecks[i].ProviderID != "" {
 			var err error
 			tail, err = o.provider.FetchFailedCheckLogTail(ctx, ports.SCMRepo{Provider: obs.Provider, Host: obs.Host, Repo: obs.Repo, Owner: ownerOf(obs.Repo), Name: nameOf(obs.Repo)}, obs.CI.FailedChecks[i])
 			if err != nil {

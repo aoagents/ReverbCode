@@ -551,11 +551,13 @@ func scmThreadFromGraphQL(th map[string]any) ports.SCMReviewThreadObservation {
 		Resolved: boolv(th["isResolved"]),
 	}
 	comments, _ := th["comments"].(map[string]any)
-	for _, cn := range nodes(comments["nodes"]) {
+	commentNodes := nodes(comments["nodes"])
+	allCommentsBot := len(commentNodes) > 0
+	for _, cn := range commentNodes {
 		author, _ := cn["author"].(map[string]any)
 		isBot := isBotAuthor(author)
-		if isBot {
-			out.IsBot = true
+		if !isBot {
+			allCommentsBot = false
 		}
 		out.Comments = append(out.Comments, ports.SCMReviewCommentObservation{
 			ID:     str(cn["id"]),
@@ -565,6 +567,7 @@ func scmThreadFromGraphQL(th map[string]any) ports.SCMReviewThreadObservation {
 			IsBot:  isBot,
 		})
 	}
+	out.IsBot = allCommentsBot
 	return out
 }
 

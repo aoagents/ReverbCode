@@ -381,6 +381,34 @@ func TestPoll_FailingCIFetchesLogTailOnlyWhenFingerprintChanged(t *testing.T) {
 	}
 }
 
+func TestEnrichFailureLogsDoesNotRefetchExistingTailOrMissingProviderID(t *testing.T) {
+	obsValue := testObs(1)
+	obsValue.CI.Summary = string(domain.CIFailing)
+	obsValue.CI.FailedFingerprint = "fp"
+	obsValue.CI.Checks = []ports.SCMCheckObservation{
+		{Name: "build", Status: string(domain.PRCheckFailed), Conclusion: "failure", ProviderID: "99", LogTail: "provider supplied tail"},
+		{Name: "lint", Status: string(domain.PRCheckFailed), Conclusion: "failure"},
+	}
+	obsValue.CI.FailedChecks = append([]ports.SCMCheckObservation(nil), obsValue.CI.Checks...)
+
+	provider := &fakeProvider{logTails: map[string]string{"build": "fetched tail", "lint": "should not fetch"}}
+	obs := newTestObserver(testStoreWithSession(), provider, &fakeLifecycle{}, time.Unix(1, 0).UTC())
+	obs.enrichFailureLogs(context.Background(), &obsValue, domain.PullRequest{})
+
+	if provider.logCalls != 0 {
+		t.Fatalf("log calls = %d, want 0 when tail already exists or provider id is missing", provider.logCalls)
+	}
+	if got := obsValue.CI.FailedChecks[0].LogTail; got != "provider supplied tail" {
+		t.Fatalf("existing tail changed: got %q", got)
+	}
+	if got := obsValue.CI.FailedChecks[1].LogTail; got != "" {
+		t.Fatalf("tail without provider id = %q, want empty", got)
+	}
+	if got := obsValue.CI.FailureLogTail; got != "provider supplied tail" {
+		t.Fatalf("FailureLogTail = %q, want only existing tail", got)
+	}
+}
+
 func TestPoll_ReviewPollingRespectsInterval(t *testing.T) {
 	store := testStoreWithSession()
 	local := knownPR(1)
