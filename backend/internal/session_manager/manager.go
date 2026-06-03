@@ -4,7 +4,6 @@ package sessionmanager
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
@@ -12,15 +11,18 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-// Sentinel errors returned by the Session Manager.
+// Sentinel errors returned by the Session Manager. They are *domain.ServiceError
+// values so they carry their own HTTP mapping (kind/code/message) and match the
+// one error pattern every service/ package uses; pointer identity keeps them
+// usable as errors.Is sentinels.
 var (
-	ErrNotFound         = errors.New("session: not found")
-	ErrNotRestorable    = errors.New("session: not restorable (not terminal)")
-	ErrTerminated       = errors.New("session: terminated")
-	ErrIncompleteHandle = errors.New("session: incomplete teardown handle")
+	ErrNotFound         = domain.NotFoundError("SESSION_NOT_FOUND", "Unknown session")
+	ErrNotRestorable    = domain.ConflictError("SESSION_NOT_RESTORABLE", "Session is not restorable", nil)
+	ErrTerminated       = domain.ConflictError("SESSION_TERMINATED", "Session is terminated", nil)
+	ErrIncompleteHandle = domain.ConflictError("SESSION_INCOMPLETE_HANDLE", "Session is missing runtime or workspace handles", nil)
 	// ErrProjectNotResolvable means the spawn's project has no usable repo
 	// (unregistered, archived, or missing a path). The API maps it to a 400.
-	ErrProjectNotResolvable = errors.New("session: project repo not resolvable")
+	ErrProjectNotResolvable = domain.BadRequestError("PROJECT_NOT_RESOLVABLE", "Project is not registered or has no repo — register it with `ao project add`", nil)
 )
 
 // Env vars a spawned process reads to learn who it is.

@@ -20,7 +20,7 @@ import (
 // spec coverage, and the spec can't describe a route that isn't served.
 func TestRouteSpecParity(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	router := httpd.NewRouter(config.Config{}, log, nil)
+	router := httpd.NewRouterWithControl(config.Config{}, log, nil, httpd.APIDeps{}, httpd.ControlDeps{})
 
 	mounted := map[string]bool{}
 	err := chi.Walk(router, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {

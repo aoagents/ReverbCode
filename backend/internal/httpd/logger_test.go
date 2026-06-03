@@ -9,7 +9,7 @@ import (
 )
 
 func TestNewRouterAllowsNilLogger(t *testing.T) {
-	router := NewRouter(config.Config{}, nil, nil)
+	router := newTestRouter(config.Config{}, nil, nil)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	router.ServeHTTP(rec, req)

@@ -15,7 +15,6 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
-	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
 )
 
 const (
@@ -27,6 +26,7 @@ const (
 type SessionService interface {
 	List(ctx context.Context, filter sessionsvc.ListFilter) ([]domain.Session, error)
 	Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Session, error)
+	SpawnOrchestrator(ctx context.Context, projectID domain.ProjectID, clean bool) (domain.Session, error)
 	Get(ctx context.Context, id domain.SessionID) (domain.Session, error)
 	Restore(ctx context.Context, id domain.SessionID) (domain.Session, error)
 	Kill(ctx context.Context, id domain.SessionID) (bool, error)
@@ -181,21 +181,7 @@ func (c *SessionsController) spawnOrchestrator(w http.ResponseWriter, r *http.Re
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "PROJECT_ID_REQUIRED", "projectId is required", nil)
 		return
 	}
-	if in.Clean {
-		active := true
-		orchestrators, err := c.Svc.List(r.Context(), sessionsvc.ListFilter{ProjectID: in.ProjectID, Active: &active, OrchestratorOnly: true})
-		if err != nil {
-			writeSessionError(w, r, err)
-			return
-		}
-		for _, existing := range orchestrators {
-			if _, err := c.Svc.Kill(r.Context(), existing.ID); err != nil {
-				writeSessionError(w, r, err)
-				return
-			}
-		}
-	}
-	sess, err := c.Svc.Spawn(r.Context(), ports.SpawnConfig{ProjectID: in.ProjectID, Kind: domain.KindOrchestrator})
+	sess, err := c.Svc.SpawnOrchestrator(r.Context(), in.ProjectID, in.Clean)
 	if err != nil {
 		writeSessionError(w, r, err)
 		return
@@ -246,18 +232,5 @@ func stripUnsafeControlChars(message string) string {
 }
 
 func writeSessionError(w http.ResponseWriter, r *http.Request, err error) {
-	switch {
-	case errors.Is(err, sessionmanager.ErrNotFound):
-		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "SESSION_NOT_FOUND", "Unknown session", nil)
-	case errors.Is(err, sessionmanager.ErrNotRestorable):
-		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict", "SESSION_NOT_RESTORABLE", "Session is not restorable", nil)
-	case errors.Is(err, sessionmanager.ErrTerminated):
-		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict", "SESSION_TERMINATED", "Session is terminated", nil)
-	case errors.Is(err, sessionmanager.ErrIncompleteHandle):
-		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict", "SESSION_INCOMPLETE_HANDLE", "Session is missing runtime or workspace handles", nil)
-	case errors.Is(err, sessionmanager.ErrProjectNotResolvable):
-		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "PROJECT_NOT_RESOLVABLE", "Project is not registered or has no repo — register it with `ao project add`", nil)
-	default:
-		envelope.WriteAPIError(w, r, http.StatusInternalServerError, "internal", "SESSION_OPERATION_FAILED", "Session operation failed", nil)
-	}
+	writeServiceError(w, r, err)
 }

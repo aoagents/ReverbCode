@@ -37,7 +37,7 @@ type terminalMuxFrame struct {
 
 func dialMux(t *testing.T, mgr *terminal.Manager) (*websocket.Conn, func()) {
 	t.Helper()
-	router := NewRouter(config.Config{}, discardLogger(), mgr)
+	router := newTestRouter(config.Config{}, discardLogger(), mgr)
 	ts := httptest.NewServer(router)
 	url := "ws" + strings.TrimPrefix(ts.URL, "http") + "/mux"
 

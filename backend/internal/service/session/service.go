@@ -47,6 +47,26 @@ func (s *Service) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	return s.toSession(ctx, rec)
 }
 
+// SpawnOrchestrator spawns an orchestrator session for a project. When clean is
+// true it first tears down any active orchestrator(s) for that project so the new
+// one is the only live coordinator — a business rule that belongs here, not in the
+// HTTP controller.
+func (s *Service) SpawnOrchestrator(ctx context.Context, projectID domain.ProjectID, clean bool) (domain.Session, error) {
+	if clean {
+		active := true
+		existing, err := s.List(ctx, ListFilter{ProjectID: projectID, Active: &active, OrchestratorOnly: true})
+		if err != nil {
+			return domain.Session{}, err
+		}
+		for _, orch := range existing {
+			if _, err := s.Kill(ctx, orch.ID); err != nil {
+				return domain.Session{}, err
+			}
+		}
+	}
+	return s.Spawn(ctx, ports.SpawnConfig{ProjectID: projectID, Kind: domain.KindOrchestrator})
+}
+
 // Restore relaunches a terminated session and returns the API-facing read model.
 func (s *Service) Restore(ctx context.Context, id domain.SessionID) (domain.Session, error) {
 	rec, err := s.manager.Restore(ctx, id)

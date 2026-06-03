@@ -31,7 +31,7 @@ func (f *fakePRService) ResolveComments(_ context.Context, _ string, _ []string)
 func newPRTestServer(t *testing.T, svc prsvc.ActionManager) *httptest.Server {
 	t.Helper()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := httptest.NewServer(httpd.NewRouterWithAPI(config.Config{}, log, nil, httpd.APIDeps{PRs: svc}))
+	srv := httptest.NewServer(httpd.NewRouterWithControl(config.Config{}, log, nil, httpd.APIDeps{PRs: svc}, httpd.ControlDeps{}))
 	t.Cleanup(srv.Close)
 	return srv
 }

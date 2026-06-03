@@ -29,15 +29,10 @@ type Server struct {
 	shutdownOnce      sync.Once
 }
 
-// New constructs a Server and binds the listener immediately so a port
-// conflict fails fast — before any running.json is written. The caller owns
-// the returned Server's lifecycle via Run. termMgr may be nil, in which case
-// the /mux terminal surface is not mounted.
-func New(cfg config.Config, log *slog.Logger, termMgr *terminal.Manager) (*Server, error) {
-	return NewWithDeps(cfg, log, termMgr, APIDeps{})
-}
-
-// NewWithDeps constructs a Server with API dependencies supplied by the daemon.
+// NewWithDeps constructs a Server with API dependencies supplied by the daemon
+// and binds the listener immediately so a port conflict fails fast — before any
+// running.json is written. The caller owns the returned Server's lifecycle via
+// Run. termMgr may be nil, in which case the /mux terminal surface is not mounted.
 func NewWithDeps(cfg config.Config, log *slog.Logger, termMgr *terminal.Manager, deps APIDeps) (*Server, error) {
 	log = loggerOrDefault(log)
 	ln, err := net.Listen("tcp", cfg.Addr())

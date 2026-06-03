@@ -104,25 +104,31 @@ func decodeJSON(r *http.Request, out any) error {
 	return json.NewDecoder(r.Body).Decode(out)
 }
 
-// writeProjectError maps a projectsvc.Error to its HTTP status, falling back to
-// 500 for an unrecognized kind or a non-projectsvc.Error.
 func writeProjectError(w http.ResponseWriter, r *http.Request, err error) {
-	var pe *projectsvc.Error
-	if errors.As(err, &pe) {
+	writeServiceError(w, r, err)
+}
+
+// writeServiceError maps any *domain.ServiceError to its HTTP status, falling
+// back to 500 for an unrecognized kind or a non-ServiceError. It is the single
+// translator every controller uses, so services never need a per-resource
+// sentinel switch in the HTTP layer.
+func writeServiceError(w http.ResponseWriter, r *http.Request, err error) {
+	var se *domain.ServiceError
+	if errors.As(err, &se) {
 		status := http.StatusInternalServerError
-		switch pe.Kind {
-		case "bad_request":
+		switch se.Kind {
+		case domain.KindBadRequest:
 			status = http.StatusBadRequest
-		case "not_found":
+		case domain.KindNotFound:
 			status = http.StatusNotFound
-		case "conflict":
+		case domain.KindConflict:
 			status = http.StatusConflict
-		case "not_implemented":
+		case domain.KindNotImplemented:
 			status = http.StatusNotImplemented
-		case "internal":
+		case domain.KindInternal:
 			status = http.StatusInternalServerError
 		}
-		envelope.WriteAPIError(w, r, status, pe.Kind, pe.Code, pe.Message, pe.Details)
+		envelope.WriteAPIError(w, r, status, se.Kind, se.Code, se.Message, se.Details)
 		return
 	}
 	envelope.WriteAPIError(w, r, http.StatusInternalServerError, "internal", "INTERNAL_ERROR", "Internal server error", nil)

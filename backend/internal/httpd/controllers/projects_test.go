@@ -58,10 +58,10 @@ func TestProjectsAPI_GetEmptyResultIs500(t *testing.T) {
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	srv := httptest.NewServer(httpd.NewRouterWithAPI(config.Config{}, log, nil, httpd.APIDeps{
+	srv := httptest.NewServer(httpd.NewRouterWithControl(config.Config{}, log, nil, httpd.APIDeps{
 
 		Projects: emptyGetManager{},
-	}))
+	}, httpd.ControlDeps{}))
 
 	t.Cleanup(srv.Close)
 
@@ -89,10 +89,10 @@ func newTestServer(t *testing.T) *httptest.Server {
 
 	t.Cleanup(func() { _ = store.Close() })
 
-	srv := httptest.NewServer(httpd.NewRouterWithAPI(config.Config{}, log, nil, httpd.APIDeps{
+	srv := httptest.NewServer(httpd.NewRouterWithControl(config.Config{}, log, nil, httpd.APIDeps{
 
 		Projects: projectsvc.New(store),
-	}))
+	}, httpd.ControlDeps{}))
 
 	t.Cleanup(srv.Close)
 
@@ -104,7 +104,7 @@ func TestProjectsRoutes_DefaultToStubsWithoutManager(t *testing.T) {
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	srv := httptest.NewServer(httpd.NewRouter(config.Config{}, log, nil))
+	srv := httptest.NewServer(httpd.NewRouterWithControl(config.Config{}, log, nil, httpd.APIDeps{}, httpd.ControlDeps{}))
 
 	t.Cleanup(srv.Close)
 

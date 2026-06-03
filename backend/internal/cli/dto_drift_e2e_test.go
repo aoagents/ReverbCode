@@ -62,6 +62,10 @@ func (f *fakeSessionService) Spawn(_ context.Context, cfg ports.SpawnConfig) (do
 	}, nil
 }
 
+func (f *fakeSessionService) SpawnOrchestrator(ctx context.Context, projectID domain.ProjectID, _ bool) (domain.Session, error) {
+	return f.Spawn(ctx, ports.SpawnConfig{ProjectID: projectID, Kind: domain.KindOrchestrator})
+}
+
 func (f *fakeSessionService) Get(context.Context, domain.SessionID) (domain.Session, error) {
 	return domain.Session{}, nil
 }
@@ -116,10 +120,10 @@ func startDriftTestDaemon(t *testing.T, sessions controllers.SessionService, pro
 	t.Helper()
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	router := httpd.NewRouterWithAPI(config.Config{}, log, nil, httpd.APIDeps{
+	router := httpd.NewRouterWithControl(config.Config{}, log, nil, httpd.APIDeps{
 		Sessions: sessions,
 		Projects: projects,
-	})
+	}, httpd.ControlDeps{})
 	srv := httptest.NewServer(router)
 	t.Cleanup(srv.Close)
 

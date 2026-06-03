@@ -17,8 +17,16 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/terminal"
 )
 
-// NewRouter builds the root router with the standard middleware stack and the
-// health probes mounted.
+// ControlDeps carries the daemon-control hooks the router exposes, such as the
+// callback that requests a graceful shutdown.
+type ControlDeps struct {
+	RequestShutdown func()
+}
+
+// NewRouterWithControl builds the root router with the standard middleware
+// stack, the API surface, and the daemon-control hooks wired from ControlDeps.
+// Missing Managers in deps keep routes registered but return OpenAPI-backed 501
+// responses.
 //
 // Middleware order (outermost first):
 //
@@ -29,24 +37,6 @@ import (
 //
 // The per-request timeout is deliberately not global: it wraps only bounded
 // REST routes, never long-lived terminal streams or health probes.
-func NewRouter(cfg config.Config, log *slog.Logger, termMgr *terminal.Manager) chi.Router {
-	return NewRouterWithAPI(cfg, log, termMgr, APIDeps{})
-}
-
-// ControlDeps carries the daemon-control hooks the router exposes, such as the
-// callback that requests a graceful shutdown.
-type ControlDeps struct {
-	RequestShutdown func()
-}
-
-// NewRouterWithAPI is the dependency-injected variant. Missing Managers keep
-// routes registered but return OpenAPI-backed 501 responses.
-func NewRouterWithAPI(cfg config.Config, log *slog.Logger, termMgr *terminal.Manager, deps APIDeps) chi.Router {
-	return NewRouterWithControl(cfg, log, termMgr, deps, ControlDeps{})
-}
-
-// NewRouterWithControl is NewRouterWithAPI plus daemon-control hooks: it mounts
-// the same API surface and additionally wires the ControlDeps callbacks.
 func NewRouterWithControl(cfg config.Config, log *slog.Logger, termMgr *terminal.Manager, deps APIDeps, control ControlDeps) chi.Router {
 	log = loggerOrDefault(log)
 	r := chi.NewRouter()

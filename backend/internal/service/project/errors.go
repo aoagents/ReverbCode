@@ -1,37 +1,24 @@
 package project
 
-// Error is the service-level error shape controllers translate into the
-// locked HTTP APIError envelope without knowing store internals.
-type Error struct {
-	Kind    string
-	Code    string
-	Message string
-	Details map[string]any
-}
+import "github.com/aoagents/agent-orchestrator/backend/internal/domain"
 
-func (e *Error) Error() string {
-	if e == nil {
-		return ""
-	}
-	return e.Message
-}
-
-func newError(kind, code, message string, details map[string]any) *Error {
-	return &Error{Kind: kind, Code: code, Message: message, Details: details}
-}
+// Error is the project service's error shape. It is an alias for the shared
+// domain.ServiceError so every service/ package speaks one error language and
+// controllers translate them all with a single errors.As.
+type Error = domain.ServiceError
 
 func badRequest(code, message string, details map[string]any) *Error {
-	return newError("bad_request", code, message, details)
+	return domain.BadRequestError(code, message, details)
 }
 
 func notFound(code, message string) *Error {
-	return newError("not_found", code, message, nil)
+	return domain.NotFoundError(code, message)
 }
 
 func conflict(code, message string, details map[string]any) *Error {
-	return newError("conflict", code, message, details)
+	return domain.ConflictError(code, message, details)
 }
 
 func internal(code, message string) *Error {
-	return newError("internal", code, message, nil)
+	return domain.InternalError(code, message)
 }
