@@ -18,16 +18,22 @@ const (
 	defaultBranch    = "main"
 )
 
+// ErrUnsafePath is returned when a resolved worktree path escapes the managed
+// root (path traversal guard).
 var (
 	ErrUnsafePath = errors.New("gitworktree: unsafe workspace path")
 )
 
+// RepoResolver maps a project to the absolute path of its source git repo.
 type RepoResolver interface {
 	RepoPath(projectID domain.ProjectID) (string, error)
 }
 
+// StaticRepoResolver is a RepoResolver backed by a fixed project→repo-path map.
 type StaticRepoResolver map[domain.ProjectID]string
 
+// RepoPath returns the configured repo path for a project, or an error if none
+// is configured.
 func (r StaticRepoResolver) RepoPath(projectID domain.ProjectID) (string, error) {
 	path := r[projectID]
 	if path == "" {
@@ -36,6 +42,8 @@ func (r StaticRepoResolver) RepoPath(projectID domain.ProjectID) (string, error)
 	return path, nil
 }
 
+// Options configures a gitworktree Workspace. ManagedRoot and RepoResolver are
+// required; Binary and DefaultBranch fall back to defaults.
 type Options struct {
 	Binary        string
 	ManagedRoot   string
@@ -43,6 +51,8 @@ type Options struct {
 	RepoResolver  RepoResolver
 }
 
+// Workspace creates per-session git worktrees under a managed root. It
+// implements ports.Workspace.
 type Workspace struct {
 	binary        string
 	managedRoot   string
@@ -55,6 +65,8 @@ type commandRunner func(ctx context.Context, binary string, args ...string) ([]b
 
 var _ ports.Workspace = (*Workspace)(nil)
 
+// New builds a gitworktree Workspace, validating that ManagedRoot and
+// RepoResolver are set and resolving the root to an absolute, symlink-free path.
 func New(opts Options) (*Workspace, error) {
 	binary := opts.Binary
 	if binary == "" {
@@ -83,6 +95,8 @@ func New(opts Options) (*Workspace, error) {
 	}, nil
 }
 
+// Create adds a git worktree for the session under the managed root, checking
+// out the requested branch, and returns where it landed.
 func (w *Workspace) Create(ctx context.Context, cfg ports.WorkspaceConfig) (ports.WorkspaceInfo, error) {
 	if err := validateConfig(cfg); err != nil {
 		return ports.WorkspaceInfo{}, err
@@ -104,6 +118,8 @@ func (w *Workspace) Create(ctx context.Context, cfg ports.WorkspaceConfig) (port
 	return ports.WorkspaceInfo{Path: path, Branch: cfg.Branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID}, nil
 }
 
+// Destroy removes the session's worktree and prunes it from the repo, refusing
+// (rather than force-deleting) if git still has the path registered afterwards.
 func (w *Workspace) Destroy(ctx context.Context, info ports.WorkspaceInfo) error {
 	if info.ProjectID == "" {
 		return errors.New("gitworktree: project id is required")
@@ -119,7 +135,7 @@ func (w *Workspace) Destroy(ctx context.Context, info ports.WorkspaceInfo) error
 	if err != nil {
 		return err
 	}
-	_, removeErr := w.run(ctx, w.binary, worktreeRemoveForceArgs(repo, path)...)
+	_, removeErr := w.run(ctx, w.binary, worktreeRemoveArgs(repo, path)...)
 	if _, err := w.run(ctx, w.binary, worktreePruneArgs(repo)...); err != nil {
 		return fmt.Errorf("gitworktree: worktree prune: %w", err)
 	}
@@ -127,7 +143,7 @@ func (w *Workspace) Destroy(ctx context.Context, info ports.WorkspaceInfo) error
 	if err != nil {
 		return err
 	}
-	if worktreeRegistered(records, path) {
+	if _, ok := findWorktree(records, path); ok {
 		if removeErr != nil {
 			return fmt.Errorf("gitworktree: refusing to remove %q: path is still registered after git worktree prune (worktree remove: %w)", path, removeErr)
 		}
@@ -139,25 +155,8 @@ func (w *Workspace) Destroy(ctx context.Context, info ports.WorkspaceInfo) error
 	return nil
 }
 
-func (w *Workspace) List(ctx context.Context, project domain.ProjectID) ([]ports.WorkspaceInfo, error) {
-	if project == "" {
-		return nil, errors.New("gitworktree: project id is required")
-	}
-	repo, err := w.repoPath(project)
-	if err != nil {
-		return nil, err
-	}
-	records, err := w.listRecords(ctx, repo)
-	if err != nil {
-		return nil, err
-	}
-	projectRoot, err := w.projectRoot(project)
-	if err != nil {
-		return nil, err
-	}
-	return filterProjectWorktrees(records, projectRoot, project), nil
-}
-
+// Restore re-attaches to an existing worktree for the session if one is still
+// present, recreating the handle without disturbing its contents.
 func (w *Workspace) Restore(ctx context.Context, cfg ports.WorkspaceConfig) (ports.WorkspaceInfo, error) {
 	if err := validateConfig(cfg); err != nil {
 		return ports.WorkspaceInfo{}, err
@@ -201,7 +200,7 @@ func (w *Workspace) addWorktree(ctx context.Context, repo, path, branch string) 
 		return err
 	}
 	if localBranch {
-		if _, err := w.run(ctx, w.binary, chooseWorktreeAddArgs(repo, path, branch, "", true)...); err != nil {
+		if _, err := w.run(ctx, w.binary, worktreeAddBranchArgs(repo, path, branch)...); err != nil {
 			return fmt.Errorf("gitworktree: worktree add existing branch %q: %w", branch, err)
 		}
 		return nil
@@ -210,7 +209,7 @@ func (w *Workspace) addWorktree(ctx context.Context, repo, path, branch string) 
 	if err != nil {
 		return err
 	}
-	if _, err := w.run(ctx, w.binary, chooseWorktreeAddArgs(repo, path, branch, baseRef, false)...); err != nil {
+	if _, err := w.run(ctx, w.binary, worktreeAddNewBranchArgs(repo, branch, path, baseRef)...); err != nil {
 		return fmt.Errorf("gitworktree: worktree add branch %q from %q: %w", branch, baseRef, err)
 	}
 	return nil
@@ -304,8 +303,14 @@ func validateConfig(cfg ports.WorkspaceConfig) error {
 	if cfg.ProjectID == "" {
 		return errors.New("gitworktree: project id is required")
 	}
+	if err := validatePathComponent("project id", string(cfg.ProjectID)); err != nil {
+		return err
+	}
 	if cfg.SessionID == "" {
 		return errors.New("gitworktree: session id is required")
+	}
+	if err := validatePathComponent("session id", string(cfg.SessionID)); err != nil {
+		return err
 	}
 	if cfg.Branch == "" {
 		return errors.New("gitworktree: branch is required")
@@ -313,13 +318,23 @@ func validateConfig(cfg ports.WorkspaceConfig) error {
 	return nil
 }
 
-func (w *Workspace) managedPath(project domain.ProjectID, session domain.SessionID) (string, error) {
-	path := filepath.Join(w.managedRoot, string(project), string(session))
-	return w.validateManagedPath(path)
+// validatePathComponent rejects id values that could escape the managed root
+// once joined into a path. filepath.Join cleans `..` before validateManagedPath
+// runs, so a session id of "../other" would otherwise resolve back inside
+// managedRoot while breaking per-project isolation. Reject any path separator
+// or the special `.`/`..` components at the source.
+func validatePathComponent(name, value string) error {
+	if strings.ContainsAny(value, `/\`) {
+		return fmt.Errorf("%w: %s %q must not contain path separators", ErrUnsafePath, name, value)
+	}
+	if value == "." || value == ".." {
+		return fmt.Errorf("%w: %s %q must not be a path-traversal component", ErrUnsafePath, name, value)
+	}
+	return nil
 }
 
-func (w *Workspace) projectRoot(project domain.ProjectID) (string, error) {
-	path := filepath.Join(w.managedRoot, string(project))
+func (w *Workspace) managedPath(project domain.ProjectID, session domain.SessionID) (string, error) {
+	path := filepath.Join(w.managedRoot, string(project), string(session))
 	return w.validateManagedPath(path)
 }
 
@@ -355,29 +370,6 @@ func pathWithin(root, path string) (bool, error) {
 		return false, fmt.Errorf("gitworktree: compare paths: %w", err)
 	}
 	return rel == "." || (rel != "" && rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator))), nil
-}
-
-func filterProjectWorktrees(records []worktreeRecord, projectRoot string, project domain.ProjectID) []ports.WorkspaceInfo {
-	out := make([]ports.WorkspaceInfo, 0, len(records))
-	for _, rec := range records {
-		path := filepath.Clean(rec.Path)
-		inside, err := pathWithin(projectRoot, path)
-		if err != nil || !inside || path == projectRoot {
-			continue
-		}
-		out = append(out, ports.WorkspaceInfo{
-			Path:      path,
-			Branch:    rec.Branch,
-			SessionID: domain.SessionID(filepath.Base(path)),
-			ProjectID: project,
-		})
-	}
-	return out
-}
-
-func worktreeRegistered(records []worktreeRecord, path string) bool {
-	_, ok := findWorktree(records, path)
-	return ok
 }
 
 func findWorktree(records []worktreeRecord, path string) (worktreeRecord, bool) {

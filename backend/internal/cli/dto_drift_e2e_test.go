@@ -1,0 +1,215 @@
+package cli
+
+// dto_drift_e2e_test.go is the DTO-drift guard for the `ao spawn` and
+// `ao project add` commands. The CLI defines its OWN request structs
+// (spawnRequest in spawn.go, addProjectRequest in project.go) that are separate
+// copies of the daemon's canonical request DTOs (controllers.SpawnSessionRequest
+// and project.AddInput). Nothing else verifies the two sides agree on JSON field
+// names — a renamed `json:"..."` tag on either side compiles fine but silently
+// breaks at runtime.
+//
+// This test stands up the REAL daemon HTTP router + REAL controllers (with fakes
+// only BELOW the controller, at the service layer) and drives the actual CLI
+// commands through the actual postJSON client over a real loopback HTTP round
+// trip. If the CLI's JSON field names diverge from what the controllers decode,
+// the captured values are wrong/empty and the subtests fail.
+//
+// (This lives in a separate file from the build-tagged e2e_test.go so it runs in
+// the normal `go test ./...` lane — it binds no extra ports beyond httptest and
+// spawns no processes.)
+
+import (
+	"bytes"
+	"context"
+	"io"
+	"log/slog"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/config"
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/httpd"
+	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/controllers"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	"github.com/aoagents/agent-orchestrator/backend/internal/runfile"
+	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
+	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
+)
+
+// fakeSessionService captures the ports.SpawnConfig the controller decodes from
+// the CLI's request body. Every other method is a no-op so it satisfies the
+// controllers.SessionService interface.
+type fakeSessionService struct {
+	spawned ports.SpawnConfig
+}
+
+var _ controllers.SessionService = (*fakeSessionService)(nil)
+
+func (f *fakeSessionService) List(context.Context, sessionsvc.ListFilter) ([]domain.Session, error) {
+	return nil, nil
+}
+
+func (f *fakeSessionService) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.Session, error) {
+	f.spawned = cfg
+	return domain.Session{
+		SessionRecord: domain.SessionRecord{ID: domain.SessionID(string(cfg.ProjectID) + "-1")},
+		Status:        domain.StatusIdle,
+	}, nil
+}
+
+func (f *fakeSessionService) Get(context.Context, domain.SessionID) (domain.Session, error) {
+	return domain.Session{}, nil
+}
+
+func (f *fakeSessionService) Restore(context.Context, domain.SessionID) (domain.Session, error) {
+	return domain.Session{}, nil
+}
+
+func (f *fakeSessionService) Kill(context.Context, domain.SessionID) (bool, error) {
+	return false, nil
+}
+
+func (f *fakeSessionService) Send(context.Context, domain.SessionID, string) error {
+	return nil
+}
+
+// fakeProjectManager captures the project.AddInput the controller decodes from
+// the CLI's request body. Every other method is a no-op so it satisfies the
+// projectsvc.Manager interface.
+type fakeProjectManager struct {
+	added projectsvc.AddInput
+}
+
+var _ projectsvc.Manager = (*fakeProjectManager)(nil)
+
+func (f *fakeProjectManager) List(context.Context) ([]projectsvc.Summary, error) {
+	return nil, nil
+}
+
+func (f *fakeProjectManager) Get(context.Context, domain.ProjectID) (projectsvc.GetResult, error) {
+	return projectsvc.GetResult{}, nil
+}
+
+func (f *fakeProjectManager) Add(_ context.Context, in projectsvc.AddInput) (projectsvc.Project, error) {
+	f.added = in
+	id := domain.ProjectID("demo")
+	if in.ProjectID != nil {
+		id = domain.ProjectID(*in.ProjectID)
+	}
+	return projectsvc.Project{ID: id, Path: in.Path}, nil
+}
+
+func (f *fakeProjectManager) Remove(context.Context, domain.ProjectID) (projectsvc.RemoveResult, error) {
+	return projectsvc.RemoveResult{}, nil
+}
+
+// startDriftTestDaemon stands up the real router+controllers backed by the
+// supplied fakes and points the CLI's run-file at it. The CLI discovers the
+// server purely via AO_RUN_FILE + the run-file port, so this is a genuine
+// loopback round trip through postJSON.
+func startDriftTestDaemon(t *testing.T, sessions controllers.SessionService, projects projectsvc.Manager) {
+	t.Helper()
+
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	router := httpd.NewRouterWithAPI(config.Config{}, log, nil, httpd.APIDeps{
+		Sessions: sessions,
+		Projects: projects,
+	})
+	srv := httptest.NewServer(router)
+	t.Cleanup(srv.Close)
+
+	port := srv.Listener.Addr().(*net.TCPAddr).Port
+
+	rfPath := filepath.Join(t.TempDir(), "running.json")
+	t.Setenv("AO_RUN_FILE", rfPath)
+	if err := runfile.Write(rfPath, runfile.Info{PID: os.Getpid(), Port: port, StartedAt: time.Now()}); err != nil {
+		t.Fatalf("write run-file: %v", err)
+	}
+}
+
+func TestE2E_SpawnAndProjectAddDTORoundTrip(t *testing.T) {
+	t.Run("spawn", func(t *testing.T) {
+		sessions := &fakeSessionService{}
+		startDriftTestDaemon(t, sessions, &fakeProjectManager{})
+
+		var out bytes.Buffer
+		root := NewRootCommand(Deps{
+			Out:          &out,
+			Err:          &out,
+			HTTPClient:   &http.Client{},
+			ProcessAlive: func(int) bool { return true },
+		})
+		root.SetArgs([]string{
+			"spawn",
+			"--project", "mer",
+			"--harness", "codex",
+			"--branch", "feat/x",
+			"--prompt", "hi",
+			"--issue", "ISS-1",
+		})
+		if err := root.Execute(); err != nil {
+			t.Fatalf("spawn execute: %v\noutput: %s", err, out.String())
+		}
+
+		got := sessions.spawned
+		if got.ProjectID != "mer" {
+			t.Errorf("ProjectID = %q, want %q (CLI json:\"projectId\" vs SpawnSessionRequest)", got.ProjectID, "mer")
+		}
+		if got.Harness != "codex" {
+			t.Errorf("Harness = %q, want %q", got.Harness, "codex")
+		}
+		if got.Branch != "feat/x" {
+			t.Errorf("Branch = %q, want %q", got.Branch, "feat/x")
+		}
+		if got.Prompt != "hi" {
+			t.Errorf("Prompt = %q, want %q", got.Prompt, "hi")
+		}
+		if got.IssueID != "ISS-1" {
+			t.Errorf("IssueID = %q, want %q", got.IssueID, "ISS-1")
+		}
+		if !bytes.Contains(out.Bytes(), []byte("spawned session")) {
+			t.Errorf("output missing %q; got: %s", "spawned session", out.String())
+		}
+	})
+
+	t.Run("project add", func(t *testing.T) {
+		projects := &fakeProjectManager{}
+		startDriftTestDaemon(t, &fakeSessionService{}, projects)
+
+		var out bytes.Buffer
+		root := NewRootCommand(Deps{
+			Out:          &out,
+			Err:          &out,
+			HTTPClient:   &http.Client{},
+			ProcessAlive: func(int) bool { return true },
+		})
+		root.SetArgs([]string{
+			"project", "add",
+			"--path", "/repo/mer",
+			"--id", "demo",
+			"--name", "Demo",
+		})
+		if err := root.Execute(); err != nil {
+			t.Fatalf("project add execute: %v\noutput: %s", err, out.String())
+		}
+
+		got := projects.added
+		if got.Path != "/repo/mer" {
+			t.Errorf("Path = %q, want %q", got.Path, "/repo/mer")
+		}
+		if got.ProjectID == nil || *got.ProjectID != "demo" {
+			t.Errorf("ProjectID = %v, want %q (CLI json:\"projectId\" vs AddInput)", got.ProjectID, "demo")
+		}
+		if got.Name == nil || *got.Name != "Demo" {
+			t.Errorf("Name = %v, want %q", got.Name, "Demo")
+		}
+		if !bytes.Contains(out.Bytes(), []byte("registered project")) {
+			t.Errorf("output missing %q; got: %s", "registered project", out.String())
+		}
+	})
+}

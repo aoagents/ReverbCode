@@ -1,0 +1,539 @@
+package claudecode
+
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"reflect"
+	"testing"
+
+	"github.com/google/uuid"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+)
+
+func TestGetLaunchCommandBypassWithPrompt(t *testing.T) {
+	p := &Plugin{resolvedBinary: "claude"}
+
+	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Permissions: ports.PermissionModeBypassPermissions,
+		Prompt:      "-add a health check",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{
+		"claude",
+		"--permission-mode", "bypassPermissions",
+		"--", "-add a health check",
+	}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
+	}
+}
+
+func TestGetLaunchCommandMapsPermissionModes(t *testing.T) {
+	tests := []struct {
+		name        string
+		permission  ports.PermissionMode
+		want        []string
+		notExpected string
+	}{
+		{"default omits flag (defers to settings.json)", ports.PermissionModeDefault, nil, "--permission-mode"},
+		{"accept-edits", ports.PermissionModeAcceptEdits, []string{"--permission-mode", "acceptEdits"}, ""},
+		{"auto", ports.PermissionModeAuto, []string{"--permission-mode", "auto"}, ""},
+		{"bypass-permissions", ports.PermissionModeBypassPermissions, []string{"--permission-mode", "bypassPermissions"}, ""},
+		{"empty omits permission flags", "", nil, "--permission-mode"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := &Plugin{resolvedBinary: "claude"}
+			cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+				Permissions: tt.permission,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(tt.want) > 0 && !containsSubsequence(cmd, tt.want) {
+				t.Fatalf("command %#v does not contain %#v", cmd, tt.want)
+			}
+			if tt.notExpected != "" && contains(cmd, tt.notExpected) {
+				t.Fatalf("command %#v unexpectedly contains %q", cmd, tt.notExpected)
+			}
+		})
+	}
+}
+
+func TestGetLaunchCommandAppendsSystemPromptFromFile(t *testing.T) {
+	dir := t.TempDir()
+	promptFile := filepath.Join(dir, "system.md")
+	if err := os.WriteFile(promptFile, []byte("You are an orchestrator.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	p := &Plugin{resolvedBinary: "claude"}
+	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		SystemPromptFile: promptFile,
+		Prompt:           "do the thing",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{
+		"claude",
+		"--append-system-prompt", "You are an orchestrator.",
+		"--", "do the thing",
+	}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
+	}
+}
+
+func TestGetLaunchCommandInlineSystemPrompt(t *testing.T) {
+	p := &Plugin{resolvedBinary: "claude"}
+	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		SystemPrompt: "inline instructions",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsSubsequence(cmd, []string{"--append-system-prompt", "inline instructions"}) {
+		t.Fatalf("command %#v does not append inline system prompt", cmd)
+	}
+}
+
+func TestGetLaunchCommandMissingSystemPromptFileErrors(t *testing.T) {
+	p := &Plugin{resolvedBinary: "claude"}
+	_, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		SystemPromptFile: filepath.Join(t.TempDir(), "does-not-exist.md"),
+	})
+	if err == nil {
+		t.Fatal("expected error for missing system prompt file")
+	}
+}
+
+func TestGetLaunchCommandInjectsSessionID(t *testing.T) {
+	p := &Plugin{resolvedBinary: "claude"}
+	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		SessionID: "e0tt49",
+		Prompt:    "do the thing",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantUUID := claudeSessionUUID("e0tt49")
+	if !containsSubsequence(cmd, []string{"--session-id", wantUUID}) {
+		t.Fatalf("command %#v missing --session-id %q", cmd, wantUUID)
+	}
+
+	// No SessionID → no --session-id flag.
+	cmd, err = p.GetLaunchCommand(context.Background(), ports.LaunchConfig{Prompt: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contains(cmd, "--session-id") {
+		t.Fatalf("command %#v unexpectedly contains --session-id", cmd)
+	}
+}
+
+func TestClaudeSessionUUIDDeterministicAndUnique(t *testing.T) {
+	a1 := claudeSessionUUID("alpha")
+	a2 := claudeSessionUUID("alpha")
+	b := claudeSessionUUID("beta")
+	if a1 != a2 {
+		t.Fatalf("derivation not deterministic: %q != %q", a1, a2)
+	}
+	if a1 == b {
+		t.Fatalf("distinct ids collided: both %q", a1)
+	}
+	if _, err := uuid.Parse(a1); err != nil {
+		t.Fatalf("derived value is not a valid UUID: %q (%v)", a1, err)
+	}
+}
+
+func TestGetAgentHooksInstallsClaudeHooks(t *testing.T) {
+	p := &Plugin{resolvedBinary: "claude"}
+	workspace := t.TempDir()
+	settingsDir := filepath.Join(workspace, ".claude")
+	if err := os.MkdirAll(settingsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	settingsPath := filepath.Join(settingsDir, "settings.local.json")
+	// Pre-seed a user's own Stop hook + an unrelated setting; both must survive.
+	existing := `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"my own stop hook","timeout":5}]}]},"permissions":{"defaultMode":"plan"}}`
+	if err := os.WriteFile(settingsPath, []byte(existing), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := ports.WorkspaceHookConfig{DataDir: t.TempDir(), SessionID: "sess-1", WorkspacePath: workspace}
+	if err := p.GetAgentHooks(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	// A second install must not duplicate AO hook commands.
+	if err := p.GetAgentHooks(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		Hooks       map[string][]claudeMatcherGroup `json:"hooks"`
+		Permissions json.RawMessage                 `json:"permissions"`
+	}
+	if err := json.Unmarshal(data, &config); err != nil {
+		t.Fatal(err)
+	}
+	if config.Hooks == nil {
+		t.Fatalf("hooks object missing: %s", data)
+	}
+
+	// Every managed command is installed exactly once under its event.
+	for _, spec := range claudeManagedHooks {
+		if got := countClaudeHookCommand(config.Hooks[spec.Event], spec.Command); got != 1 {
+			t.Fatalf("%s command %q count = %d, want 1", spec.Event, spec.Command, got)
+		}
+	}
+	// Existing user hook preserved.
+	if countClaudeHookCommand(config.Hooks["Stop"], "my own stop hook") != 1 {
+		t.Fatalf("existing Stop hook not preserved: %#v", config.Hooks["Stop"])
+	}
+	// Unrelated settings preserved.
+	if len(config.Permissions) == 0 {
+		t.Fatalf("unrelated settings clobbered: %s", data)
+	}
+	// SessionStart carries the required matcher; UserPromptSubmit omits it.
+	if m := matcherForCommand(config.Hooks["SessionStart"], "ao hooks claude-code session-start"); m == nil || *m != "startup" {
+		t.Fatalf("SessionStart matcher = %v, want startup", m)
+	}
+	if m := matcherForCommand(config.Hooks["UserPromptSubmit"], "ao hooks claude-code user-prompt-submit"); m != nil {
+		t.Fatalf("UserPromptSubmit matcher = %v, want none", m)
+	}
+}
+
+func TestUninstallHooksRemovesClaudeHooks(t *testing.T) {
+	p := &Plugin{resolvedBinary: "claude"}
+	workspace := t.TempDir()
+	settingsPath := filepath.Join(workspace, ".claude", "settings.local.json")
+
+	ctx := context.Background()
+	cfg := ports.WorkspaceHookConfig{DataDir: t.TempDir(), SessionID: "sess-1", WorkspacePath: workspace}
+
+	// Pre-seed a user's own Stop hook + an unrelated setting; both must survive.
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	existing := `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"my own stop hook","timeout":5}]}]},"permissions":{"defaultMode":"plan"}}`
+	if err := os.WriteFile(settingsPath, []byte(existing), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := p.GetAgentHooks(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if installed, err := p.AreHooksInstalled(ctx, workspace); err != nil || !installed {
+		t.Fatalf("AreHooksInstalled after install = (%v, %v), want (true, nil)", installed, err)
+	}
+
+	if err := p.UninstallHooks(ctx, workspace); err != nil {
+		t.Fatal(err)
+	}
+	if installed, err := p.AreHooksInstalled(ctx, workspace); err != nil || installed {
+		t.Fatalf("AreHooksInstalled after uninstall = (%v, %v), want (false, nil)", installed, err)
+	}
+
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		Hooks       map[string][]claudeMatcherGroup `json:"hooks"`
+		Permissions json.RawMessage                 `json:"permissions"`
+	}
+	if err := json.Unmarshal(data, &config); err != nil {
+		t.Fatal(err)
+	}
+	// No managed command survives; the SessionStart/UserPromptSubmit events,
+	// which held only AO hooks, are removed entirely.
+	for _, spec := range claudeManagedHooks {
+		if got := countClaudeHookCommand(config.Hooks[spec.Event], spec.Command); got != 0 {
+			t.Fatalf("%s command %q count = %d after uninstall, want 0", spec.Event, spec.Command, got)
+		}
+	}
+	// The user's own Stop hook and unrelated settings are preserved.
+	if countClaudeHookCommand(config.Hooks["Stop"], "my own stop hook") != 1 {
+		t.Fatalf("user Stop hook not preserved: %#v", config.Hooks["Stop"])
+	}
+	if len(config.Permissions) == 0 {
+		t.Fatalf("unrelated settings clobbered: %s", data)
+	}
+
+	// Uninstall is idempotent: a second call is a clean no-op.
+	if err := p.UninstallHooks(ctx, workspace); err != nil {
+		t.Fatalf("second uninstall: %v", err)
+	}
+}
+
+func TestUninstallHooksNoSettingsFile(t *testing.T) {
+	p := &Plugin{resolvedBinary: "claude"}
+	workspace := t.TempDir()
+	if err := p.UninstallHooks(context.Background(), workspace); err != nil {
+		t.Fatalf("uninstall with no settings file: %v", err)
+	}
+	if installed, err := p.AreHooksInstalled(context.Background(), workspace); err != nil || installed {
+		t.Fatalf("AreHooksInstalled = (%v, %v), want (false, nil)", installed, err)
+	}
+}
+
+func TestSessionInfoReadsHookMetadata(t *testing.T) {
+	info, ok, err := (&Plugin{resolvedBinary: "claude"}).SessionInfo(context.Background(), ports.SessionRef{
+		WorkspacePath: "/some/path",
+		Metadata: map[string]string{
+			ports.MetadataKeyAgentSessionID: "claude-native-1",
+			claudeTitleMetadataKey:          "Fix login redirect",
+			claudeSummaryMetadataKey:        "Updated the auth callback and tests.",
+			"ignored":                       "not returned",
+		},
+	})
+	if err != nil || !ok {
+		t.Fatalf("SessionInfo = (ok=%v, err=%v), want ok", ok, err)
+	}
+	if info.AgentSessionID != "claude-native-1" {
+		t.Fatalf("AgentSessionID = %q", info.AgentSessionID)
+	}
+	if info.Title != "Fix login redirect" {
+		t.Fatalf("Title = %q", info.Title)
+	}
+	if info.Summary != "Updated the auth callback and tests." {
+		t.Fatalf("Summary = %q", info.Summary)
+	}
+	if info.Metadata != nil {
+		t.Fatalf("Metadata = %#v, want nil for Claude", info.Metadata)
+	}
+}
+
+func TestSessionInfoFalseWhenNoHookMetadata(t *testing.T) {
+	info, ok, err := (&Plugin{resolvedBinary: "claude"}).SessionInfo(context.Background(), ports.SessionRef{
+		WorkspacePath: "/some/path",
+		Metadata:      map[string]string{},
+	})
+	if err != nil {
+		t.Fatalf("err = %v", err)
+	}
+	if ok {
+		t.Fatalf("ok = true, want false")
+	}
+	if !reflect.DeepEqual(info, ports.SessionInfo{}) {
+		t.Fatalf("info = %#v, want zero", info)
+	}
+}
+
+// countClaudeHookCommand counts how many hook entries under one event register
+// the given command — used to prove no duplicate AO hooks.
+func countClaudeHookCommand(groups []claudeMatcherGroup, command string) int {
+	count := 0
+	for _, group := range groups {
+		for _, hook := range group.Hooks {
+			if hook.Command == command {
+				count++
+			}
+		}
+	}
+	return count
+}
+
+// matcherForCommand returns the matcher on the group that registers the given
+// command (nil if the group has no matcher).
+func matcherForCommand(groups []claudeMatcherGroup, command string) *string {
+	for _, group := range groups {
+		for _, hook := range group.Hooks {
+			if hook.Command == command {
+				return group.Matcher
+			}
+		}
+	}
+	return nil
+}
+
+func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
+	cmd, ok, err := (&Plugin{resolvedBinary: "claude"}).GetRestoreCommand(context.Background(), ports.RestoreConfig{
+		Permissions: ports.PermissionModeBypassPermissions,
+		Session: ports.SessionRef{
+			ID:       "sess-r",
+			Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "claude-native-1"},
+		},
+	})
+	if err != nil || !ok {
+		t.Fatalf("restore = (ok=%v, err=%v), want ok", ok, err)
+	}
+	// The hook-captured native id wins over the derived fallback.
+	want := []string{"claude", "--permission-mode", "bypassPermissions", "--resume", "claude-native-1"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("restore cmd\nwant: %#v\n got: %#v", want, cmd)
+	}
+}
+
+func TestGetRestoreCommandFallsBackToDerivedUUID(t *testing.T) {
+	// No agentSessionId captured (pre-hook session) → derive deterministically
+	// from the AO session id, the explicit fallback.
+	cmd, ok, err := (&Plugin{resolvedBinary: "claude"}).GetRestoreCommand(context.Background(), ports.RestoreConfig{
+		Permissions: ports.PermissionModeBypassPermissions,
+		Session:     ports.SessionRef{ID: "sess-r"},
+	})
+	if err != nil || !ok {
+		t.Fatalf("restore = (ok=%v, err=%v), want ok", ok, err)
+	}
+	want := []string{"claude", "--permission-mode", "bypassPermissions", "--resume", claudeSessionUUID("sess-r")}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("restore cmd\nwant: %#v\n got: %#v", want, cmd)
+	}
+}
+
+func TestGetRestoreCommandFalseWithoutSessionID(t *testing.T) {
+	cases := []struct {
+		name string
+		ref  ports.SessionRef
+	}{
+		{"empty ref", ports.SessionRef{}},
+		{"blank agent session, no id", ports.SessionRef{Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "   "}}},
+		{"workspace path only", ports.SessionRef{WorkspacePath: "/some/path"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd, ok, err := (&Plugin{resolvedBinary: "claude"}).GetRestoreCommand(context.Background(),
+				ports.RestoreConfig{Permissions: ports.PermissionModeBypassPermissions, Session: tc.ref})
+			if err != nil || ok || cmd != nil {
+				t.Fatalf("restore = (%#v, %v, %v), want (nil,false,nil)", cmd, ok, err)
+			}
+		})
+	}
+}
+
+func TestManifestID(t *testing.T) {
+	if got := New().Manifest().ID; got != "claude-code" {
+		t.Fatalf("manifest id = %q, want claude-code", got)
+	}
+}
+
+func TestEnsureWorkspaceTrustedCreatesEntry(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, ".claude.json")
+	// Seed an existing config with another project + a top-level key, to
+	// prove we preserve unrelated state.
+	seed := `{"userID":"abc","projects":{"/existing/proj":{"hasTrustDialogAccepted":true,"lastCost":1.5}}}`
+	if err := os.WriteFile(cfgPath, []byte(seed), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	work := "/Users/me/.ao/worktrees/01ABC"
+	if err := ensureWorkspaceTrusted(cfgPath, work); err != nil {
+		t.Fatalf("ensureWorkspaceTrusted: %v", err)
+	}
+
+	root := readJSON(t, cfgPath)
+	projects := root["projects"].(map[string]any)
+
+	// New entry trusted.
+	newEntry := projects[work].(map[string]any)
+	if newEntry["hasTrustDialogAccepted"] != true {
+		t.Fatalf("new entry not trusted: %#v", newEntry)
+	}
+	// Existing project preserved (including its other fields).
+	existing := projects["/existing/proj"].(map[string]any)
+	if existing["hasTrustDialogAccepted"] != true || existing["lastCost"].(float64) != 1.5 {
+		t.Fatalf("existing project clobbered: %#v", existing)
+	}
+	// Top-level key preserved.
+	if root["userID"] != "abc" {
+		t.Fatalf("top-level key clobbered: %#v", root["userID"])
+	}
+}
+
+func TestEnsureWorkspaceTrustedIsIdempotentAndNoWriteWhenAlreadyTrusted(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, ".claude.json")
+	work := "/w"
+	if err := os.WriteFile(cfgPath, []byte(`{"projects":{"/w":{"hasTrustDialogAccepted":true}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	info1, err := os.Stat(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ensureWorkspaceTrusted(cfgPath, work); err != nil {
+		t.Fatalf("ensureWorkspaceTrusted: %v", err)
+	}
+
+	// Already trusted → no rewrite → mtime unchanged.
+	info2, err := os.Stat(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info1.ModTime().Equal(info2.ModTime()) {
+		t.Fatal("expected no rewrite when already trusted")
+	}
+}
+
+func TestEnsureWorkspaceTrustedCreatesMissingConfig(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, ".claude.json") // does not exist yet
+	work := "/fresh/worktree"
+
+	if err := ensureWorkspaceTrusted(cfgPath, work); err != nil {
+		t.Fatalf("ensureWorkspaceTrusted: %v", err)
+	}
+
+	root := readJSON(t, cfgPath)
+	projects := root["projects"].(map[string]any)
+	entry := projects[work].(map[string]any)
+	if entry["hasTrustDialogAccepted"] != true {
+		t.Fatalf("entry not trusted in freshly-created config: %#v", entry)
+	}
+}
+
+func readJSON(t *testing.T, path string) map[string]any {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatalf("parse %s: %v", path, err)
+	}
+	return m
+}
+
+func contains(values []string, needle string) bool {
+	for _, v := range values {
+		if v == needle {
+			return true
+		}
+	}
+	return false
+}
+
+func containsSubsequence(values, needle []string) bool {
+	if len(needle) == 0 {
+		return true
+	}
+	for start := 0; start+len(needle) <= len(values); start++ {
+		ok := true
+		for i, w := range needle {
+			if values[start+i] != w {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			return true
+		}
+	}
+	return false
+}

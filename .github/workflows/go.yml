@@ -22,7 +22,9 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.22"
+          # Read the version from go.mod so CI can't drift from the module
+          # (it previously pinned 1.22 while go.mod declared 1.25).
+          go-version-file: backend/go.mod
           cache: false
 
       - name: Check formatting
@@ -42,3 +44,27 @@ jobs:
 
       - name: Test
         run: go test -race ./...
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache: false
+
+      - name: golangci-lint
+        # v8 of the action drives golangci-lint v2 (the schema this config uses);
+        # the v6 action speaks v1 CLI flags and errors against a v2 binary.
+        uses: golangci/golangci-lint-action@v8
+        with:
+          # Pinned for reproducibility: bump intentionally rather than letting an
+          # upstream release change CI. Must be built with Go >= the module's
+          # (go.mod is 1.25); v2.12.2 is built with go1.25 — older v2 tags
+          # (e.g. v2.1.x) are built with go1.24 and refuse to analyze 1.25 code.
+          version: v2.12.2
+          working-directory: backend
+          # Blocking on the full ruleset: the tree is clean at zero findings, so
+          # any new issue fails CI rather than being grandfathered.

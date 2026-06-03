@@ -1,0 +1,248 @@
+package project
+
+import (
+	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+)
+
+// Manager is the controller-facing contract for the /api/v1/projects surface.
+type Manager interface {
+	// List returns every registered project, including degraded entries
+	// (those whose config failed to load but whose registry entry survives).
+	List(ctx context.Context) ([]Summary, error)
+
+	// Get returns one project, discriminating ok vs degraded via GetResult.
+	Get(ctx context.Context, id domain.ProjectID) (GetResult, error)
+
+	// Add registers a new project from a git repository path.
+	Add(ctx context.Context, in AddInput) (Project, error)
+
+	// Remove unregisters a project, stopping its sessions and reclaiming
+	// managed workspaces.
+	Remove(ctx context.Context, id domain.ProjectID) (RemoveResult, error)
+}
+
+// Service implements project registration and lookup use-cases for controllers.
+type Service struct {
+	store Store
+}
+
+var _ Manager = (*Service)(nil)
+
+// New returns a project service backed by the given durable store.
+func New(store Store) *Service {
+	return &Service{store: store}
+}
+
+// List returns every active registered project.
+func (m *Service) List(ctx context.Context) ([]Summary, error) {
+	projects, err := m.store.ListProjects(ctx)
+	if err != nil {
+		return nil, internal("PROJECTS_LIST_FAILED", "Failed to load projects")
+	}
+	out := make([]Summary, 0, len(projects))
+	for _, row := range projects {
+		out = append(out, Summary{
+			ID:            domain.ProjectID(row.ID),
+			Name:          displayName(row),
+			SessionPrefix: sessionPrefix(row.ID),
+		})
+	}
+	return out, nil
+}
+
+// Get returns one active project by id.
+func (m *Service) Get(ctx context.Context, id domain.ProjectID) (GetResult, error) {
+	if err := validateProjectID(id); err != nil {
+		return GetResult{}, err
+	}
+	row, ok, err := m.store.GetProject(ctx, string(id))
+	if err != nil {
+		return GetResult{}, internal("PROJECT_LOAD_FAILED", "Failed to load project")
+	}
+	if !ok || !row.ArchivedAt.IsZero() {
+		return GetResult{}, notFound("PROJECT_NOT_FOUND", "Unknown project")
+	}
+	p := projectFromRow(row)
+	return GetResult{Status: "ok", Project: &p}, nil
+}
+
+// Add registers a local git repository as a project.
+func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
+	path, err := normalizePath(in.Path)
+	if err != nil {
+		return Project{}, err
+	}
+	if !isGitRepo(path) {
+		return Project{}, badRequest("NOT_A_GIT_REPO", "Repository path must point to a git repository", nil)
+	}
+
+	id := defaultProjectID(path)
+	if in.ProjectID != nil {
+		id = domain.ProjectID(strings.TrimSpace(*in.ProjectID))
+	}
+	if err := validateProjectID(id); err != nil {
+		return Project{}, err
+	}
+
+	name := string(id)
+	if in.Name != nil {
+		name = strings.TrimSpace(*in.Name)
+	}
+	if name == "" {
+		name = string(id)
+	}
+
+	if existing, ok, err := m.store.FindProjectByPath(ctx, path); err != nil {
+		return Project{}, internal("PROJECT_LOAD_FAILED", "Failed to load project")
+	} else if ok {
+		return Project{}, conflict("PATH_ALREADY_REGISTERED", "A project at this path is already registered", map[string]any{
+			"existingProjectId":  existing.ID,
+			"suggestedProjectId": string(m.suggestID(ctx, id)),
+		})
+	}
+	if existing, ok, err := m.store.GetProject(ctx, string(id)); err != nil {
+		return Project{}, internal("PROJECT_LOAD_FAILED", "Failed to load project")
+	} else if ok && existing.ArchivedAt.IsZero() && existing.Path != path {
+		return Project{}, conflict("ID_ALREADY_REGISTERED", "A project with this id is already registered for a different path", map[string]any{
+			"existingProjectId":  existing.ID,
+			"suggestedProjectId": string(m.suggestID(ctx, id)),
+		})
+	}
+
+	row := domain.ProjectRecord{
+		ID:           string(id),
+		Path:         path,
+		DisplayName:  name,
+		RegisteredAt: time.Now(),
+	}
+	if err := m.store.UpsertProject(ctx, row); err != nil {
+		return Project{}, err
+	}
+	return projectFromRow(row), nil
+}
+
+// Remove archives a project registration.
+func (m *Service) Remove(ctx context.Context, id domain.ProjectID) (RemoveResult, error) {
+	if err := validateProjectID(id); err != nil {
+		return RemoveResult{}, err
+	}
+	ok, err := m.store.ArchiveProject(ctx, string(id), time.Now())
+	if err != nil {
+		return RemoveResult{}, internal("PROJECT_REMOVE_FAILED", "Failed to remove project")
+	}
+	if !ok {
+		return RemoveResult{}, notFound("PROJECT_NOT_FOUND", "Unknown project")
+	}
+	return RemoveResult{ProjectID: id, RemovedStorageDir: false}, nil
+}
+
+func (m *Service) suggestID(ctx context.Context, base domain.ProjectID) domain.ProjectID {
+	for i := 1; ; i++ {
+		candidate := domain.ProjectID(string(base) + strconv.Itoa(i))
+		if _, ok, _ := m.store.GetProject(ctx, string(candidate)); !ok {
+			return candidate
+		}
+	}
+}
+
+func projectFromRow(row domain.ProjectRecord) Project {
+	return Project{
+		ID:            domain.ProjectID(row.ID),
+		Name:          displayName(row),
+		Path:          row.Path,
+		Repo:          row.RepoOriginURL,
+		DefaultBranch: "main",
+	}
+}
+
+func displayName(row domain.ProjectRecord) string {
+	if strings.TrimSpace(row.DisplayName) != "" {
+		return row.DisplayName
+	}
+	return row.ID
+}
+
+func normalizePath(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", badRequest("PATH_REQUIRED", "Repository path is required", nil)
+	}
+	if strings.HasPrefix(raw, "~") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", badRequest("INVALID_PATH", "Repository path could not be expanded", nil)
+		}
+		if raw == "~" {
+			raw = home
+		} else if strings.HasPrefix(raw, "~/") || strings.HasPrefix(raw, `~\`) {
+			raw = filepath.Join(home, raw[2:])
+		}
+	}
+	abs, err := filepath.Abs(raw)
+	if err != nil {
+		return "", badRequest("INVALID_PATH", "Repository path is invalid", nil)
+	}
+	return filepath.Clean(abs), nil
+}
+
+func isGitRepo(path string) bool {
+	cmd := exec.Command("git", "-C", path, "rev-parse", "--show-toplevel")
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	top := filepath.Clean(strings.TrimSpace(string(out)))
+	path = filepath.Clean(path)
+	top, err = filepath.EvalSymlinks(top)
+	if err != nil {
+		return false
+	}
+	path, err = filepath.EvalSymlinks(path)
+	if err != nil {
+		return false
+	}
+
+	if strings.EqualFold(top, path) {
+		return true
+	}
+	return top == path
+}
+
+func defaultProjectID(path string) domain.ProjectID {
+	id := strings.ToLower(filepath.Base(path))
+	id = strings.TrimSpace(id)
+	id = strings.ReplaceAll(id, " ", "-")
+	return domain.ProjectID(id)
+}
+
+var projectIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
+func validateProjectID(id domain.ProjectID) error {
+	raw := string(id)
+	// Reject any "." run: a "." prefix fails the pattern, but an embedded ".."
+	// (e.g. "a..b") passes it yet yields a branch like "ao/a..b-1" that git's
+	// check-ref-format rejects — surfacing as an opaque 500 at spawn time.
+	if raw == "" || raw == "." || strings.Contains(raw, "..") || strings.ContainsAny(raw, `/\`) || !projectIDPattern.MatchString(raw) {
+		return badRequest("INVALID_PROJECT_ID", "Project id failed storage-path validation", nil)
+	}
+	return nil
+}
+
+func sessionPrefix(id string) string {
+	if id == "" {
+		return "ao"
+	}
+	if len(id) <= 12 {
+		return id
+	}
+	return id[:12]
+}

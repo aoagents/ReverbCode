@@ -1,0 +1,458 @@
+package cli
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/url"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/spf13/cobra"
+)
+
+type sessionOptions struct {
+	project string
+	json    bool
+}
+
+type sessionListOptions struct {
+	sessionOptions
+	all               bool
+	includeTerminated bool
+}
+
+type sessionDTO struct {
+	ID           string          `json:"id"`
+	ProjectID    string          `json:"projectId"`
+	IssueID      string          `json:"issueId,omitempty"`
+	Kind         string          `json:"kind"`
+	Harness      string          `json:"harness,omitempty"`
+	Activity     sessionActivity `json:"activity"`
+	IsTerminated bool            `json:"isTerminated"`
+	CreatedAt    time.Time       `json:"createdAt"`
+	UpdatedAt    time.Time       `json:"updatedAt"`
+	Status       string          `json:"status"`
+}
+
+type sessionActivity struct {
+	State          string    `json:"state"`
+	LastActivityAt time.Time `json:"lastActivityAt"`
+}
+
+type sessionListResponse struct {
+	Sessions []sessionDTO `json:"sessions"`
+}
+
+type sessionResponse struct {
+	Session sessionDTO `json:"session"`
+}
+
+type killSessionResponse struct {
+	SessionID string `json:"sessionId"`
+}
+
+type restoreSessionResponse struct {
+	SessionID string     `json:"sessionId"`
+	Session   sessionDTO `json:"session"`
+}
+
+type sessionListEntry struct {
+	ID             string     `json:"id"`
+	ProjectID      string     `json:"projectId"`
+	Role           string     `json:"role"`
+	Status         string     `json:"status,omitempty"`
+	IssueID        string     `json:"issueId,omitempty"`
+	Harness        string     `json:"harness,omitempty"`
+	IsTerminated   bool       `json:"isTerminated"`
+	LastActivityAt *time.Time `json:"lastActivityAt,omitempty"`
+	CreatedAt      time.Time  `json:"createdAt"`
+	UpdatedAt      time.Time  `json:"updatedAt"`
+}
+
+type sessionListOutput struct {
+	Data []sessionListEntry `json:"data"`
+	Meta struct {
+		HiddenTerminatedCount int `json:"hiddenTerminatedCount"`
+	} `json:"meta"`
+}
+
+func newSessionCommand(ctx *commandContext) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "session",
+		Short: "Manage agent sessions",
+	}
+	cmd.AddCommand(newSessionListCommand(ctx))
+	cmd.AddCommand(newSessionGetCommand(ctx))
+	cmd.AddCommand(newSessionKillCommand(ctx))
+	cmd.AddCommand(newSessionRestoreCommand(ctx))
+	return cmd
+}
+
+func newSessionListCommand(ctx *commandContext) *cobra.Command {
+	var opts sessionListOptions
+	cmd := &cobra.Command{
+		Use:   "ls",
+		Short: "List sessions",
+		Args:  noArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return ctx.listSessions(cmd.Context(), cmd, opts)
+		},
+	}
+	f := cmd.Flags()
+	addSessionProjectFlag(f, &opts.project, "Filter by project ID")
+	f.BoolVarP(&opts.all, "all", "a", false, "Include orchestrator sessions")
+	f.BoolVar(&opts.includeTerminated, "include-terminated", false, "Include terminated sessions")
+	f.BoolVar(&opts.json, "json", false, "Output as JSON")
+	return cmd
+}
+
+func newSessionGetCommand(ctx *commandContext) *cobra.Command {
+	var opts sessionOptions
+	cmd := &cobra.Command{
+		Use:   "get <id>",
+		Short: "Fetch one session",
+		Args:  oneSessionIDArg,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id, err := normalizeSessionID(args[0])
+			if err != nil {
+				return err
+			}
+			return ctx.getSession(cmd.Context(), cmd, id, opts)
+		},
+	}
+	f := cmd.Flags()
+	addSessionProjectFlag(f, &opts.project, "Project id to scope the lookup")
+	f.BoolVar(&opts.json, "json", false, "Output as JSON")
+	return cmd
+}
+
+func newSessionKillCommand(ctx *commandContext) *cobra.Command {
+	var opts sessionOptions
+	cmd := &cobra.Command{
+		Use:   "kill <id>",
+		Short: "Terminate a session",
+		Args:  oneSessionIDArg,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id, err := normalizeSessionID(args[0])
+			if err != nil {
+				return err
+			}
+			return ctx.killSession(cmd.Context(), cmd, id, opts)
+		},
+	}
+	addSessionProjectFlag(cmd.Flags(), &opts.project, "Project id to scope the lookup")
+	return cmd
+}
+
+func newSessionRestoreCommand(ctx *commandContext) *cobra.Command {
+	var opts sessionOptions
+	cmd := &cobra.Command{
+		Use:   "restore <id>",
+		Short: "Relaunch a terminated session",
+		Args:  oneSessionIDArg,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id, err := normalizeSessionID(args[0])
+			if err != nil {
+				return err
+			}
+			return ctx.restoreSession(cmd.Context(), cmd, id, opts)
+		},
+	}
+	addSessionProjectFlag(cmd.Flags(), &opts.project, "Project id to scope the lookup")
+	return cmd
+}
+
+func addSessionProjectFlag(flags interface {
+	StringVarP(*string, string, string, string, string)
+}, target *string, usage string) {
+	flags.StringVarP(target, "project", "p", "", usage)
+}
+
+func oneSessionIDArg(cmd *cobra.Command, args []string) error {
+	if err := cobra.ExactArgs(1)(cmd, args); err != nil {
+		return usageError{err}
+	}
+	if _, err := normalizeSessionID(args[0]); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (c *commandContext) listSessions(ctx context.Context, cmd *cobra.Command, opts sessionListOptions) error {
+	params := url.Values{}
+	if opts.project != "" {
+		params.Set("project", opts.project)
+	}
+	if !opts.includeTerminated {
+		params.Set("active", "true")
+	}
+	var res sessionListResponse
+	if err := c.getJSON(ctx, apiPath("sessions", params), &res); err != nil {
+		return err
+	}
+	sessions := filterAndSortSessions(res.Sessions, opts.all)
+	hiddenTerminatedCount := 0
+	if !opts.includeTerminated {
+		count, err := c.countHiddenTerminated(ctx, opts.project, opts.all)
+		if err != nil {
+			return err
+		}
+		hiddenTerminatedCount = count
+	}
+	if opts.json {
+		out := sessionListOutput{Data: sessionListEntries(sessions)}
+		out.Meta.HiddenTerminatedCount = hiddenTerminatedCount
+		return writeJSON(cmd.OutOrStdout(), out)
+	}
+	return writeSessionList(cmd, sessions, hiddenTerminatedCount)
+}
+
+func (c *commandContext) countHiddenTerminated(ctx context.Context, project string, includeOrchestrators bool) (int, error) {
+	params := url.Values{}
+	if project != "" {
+		params.Set("project", project)
+	}
+	params.Set("active", "false")
+	var res sessionListResponse
+	if err := c.getJSON(ctx, apiPath("sessions", params), &res); err != nil {
+		return 0, err
+	}
+	return len(filterAndSortSessions(res.Sessions, includeOrchestrators)), nil
+}
+
+func (c *commandContext) getSession(ctx context.Context, cmd *cobra.Command, id string, opts sessionOptions) error {
+	sess, err := c.fetchScopedSession(ctx, id, opts.project)
+	if err != nil {
+		return err
+	}
+	if opts.json {
+		return writeJSON(cmd.OutOrStdout(), sessionResponse{Session: sess})
+	}
+	return writeSessionDetails(cmd, sess)
+}
+
+func (c *commandContext) killSession(ctx context.Context, cmd *cobra.Command, id string, opts sessionOptions) error {
+	if opts.project != "" {
+		if _, err := c.fetchScopedSession(ctx, id, opts.project); err != nil {
+			return err
+		}
+	}
+	var res killSessionResponse
+	if err := c.postJSON(ctx, "sessions/"+url.PathEscape(id)+"/kill", struct{}{}, &res); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintf(cmd.OutOrStdout(), "session %s killed\n", res.SessionID)
+	return err
+}
+
+func (c *commandContext) restoreSession(ctx context.Context, cmd *cobra.Command, id string, opts sessionOptions) error {
+	if opts.project != "" {
+		if _, err := c.fetchScopedSession(ctx, id, opts.project); err != nil {
+			return err
+		}
+	}
+	var res restoreSessionResponse
+	if err := c.postJSON(ctx, "sessions/"+url.PathEscape(id)+"/restore", struct{}{}, &res); err != nil {
+		return err
+	}
+	out := cmd.OutOrStdout()
+	if _, err := fmt.Fprintf(out, "session %s restored\n", res.SessionID); err != nil {
+		return err
+	}
+	if res.Session.ProjectID != "" {
+		if _, err := fmt.Fprintf(out, "  project: %s\n", res.Session.ProjectID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *commandContext) fetchScopedSession(ctx context.Context, id, project string) (sessionDTO, error) {
+	var res sessionResponse
+	if err := c.getJSON(ctx, "sessions/"+url.PathEscape(id), &res); err != nil {
+		return sessionDTO{}, err
+	}
+	if project != "" && res.Session.ProjectID != project {
+		return sessionDTO{}, usageError{fmt.Errorf("session %s is not in project %s", id, project)}
+	}
+	return res.Session, nil
+}
+
+func filterAndSortSessions(sessions []sessionDTO, includeOrchestrators bool) []sessionDTO {
+	out := make([]sessionDTO, 0, len(sessions))
+	for _, sess := range sessions {
+		if !includeOrchestrators && sess.Kind == "orchestrator" {
+			continue
+		}
+		out = append(out, sess)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].ProjectID != out[j].ProjectID {
+			return out[i].ProjectID < out[j].ProjectID
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out
+}
+
+func sessionListEntries(sessions []sessionDTO) []sessionListEntry {
+	entries := make([]sessionListEntry, 0, len(sessions))
+	for _, sess := range sessions {
+		var last *time.Time
+		if !sess.Activity.LastActivityAt.IsZero() {
+			activity := sess.Activity.LastActivityAt
+			last = &activity
+		}
+		entries = append(entries, sessionListEntry{
+			ID:             sess.ID,
+			ProjectID:      sess.ProjectID,
+			Role:           sessionRole(sess),
+			Status:         sess.Status,
+			IssueID:        sess.IssueID,
+			Harness:        sess.Harness,
+			IsTerminated:   sess.IsTerminated,
+			LastActivityAt: last,
+			CreatedAt:      sess.CreatedAt,
+			UpdatedAt:      sess.UpdatedAt,
+		})
+	}
+	return entries
+}
+
+func writeSessionList(cmd *cobra.Command, sessions []sessionDTO, hiddenTerminatedCount int) error {
+	out := cmd.OutOrStdout()
+	if len(sessions) == 0 {
+		if _, err := fmt.Fprintln(out, "(no active sessions)"); err != nil {
+			return err
+		}
+	} else {
+		currentProject := ""
+		for _, sess := range sessions {
+			if sess.ProjectID != currentProject {
+				if currentProject != "" {
+					if _, err := fmt.Fprintln(out); err != nil {
+						return err
+					}
+				}
+				currentProject = sess.ProjectID
+				if _, err := fmt.Fprintf(out, "%s:\n", currentProject); err != nil {
+					return err
+				}
+			}
+			if _, err := fmt.Fprintf(out, "  %s", sess.ID); err != nil {
+				return err
+			}
+			parts := sessionLineParts(sess)
+			if len(parts) > 0 {
+				if _, err := fmt.Fprintf(out, "  %s", strings.Join(parts, "  ")); err != nil {
+					return err
+				}
+			}
+			if _, err := fmt.Fprintln(out); err != nil {
+				return err
+			}
+		}
+	}
+	if hiddenTerminatedCount > 0 {
+		_, err := fmt.Fprintf(out, "%d terminated session%s hidden. Use --include-terminated to show.\n", hiddenTerminatedCount, pluralS(hiddenTerminatedCount))
+		return err
+	}
+	return nil
+}
+
+func sessionLineParts(sess sessionDTO) []string {
+	parts := []string{}
+	if !sess.Activity.LastActivityAt.IsZero() {
+		parts = append(parts, "("+formatSessionAge(time.Since(sess.Activity.LastActivityAt))+")")
+	}
+	if sess.Status != "" {
+		parts = append(parts, "["+sess.Status+"]")
+	}
+	if sess.Kind != "" {
+		parts = append(parts, sess.Kind)
+	}
+	if sess.IssueID != "" {
+		parts = append(parts, sess.IssueID)
+	}
+	return parts
+}
+
+func writeSessionDetails(cmd *cobra.Command, sess sessionDTO) error {
+	out := cmd.OutOrStdout()
+	fields := [][2]string{
+		{"id", sess.ID},
+		{"project", sess.ProjectID},
+		{"role", sessionRole(sess)},
+		{"status", sess.Status},
+		{"activity", sess.Activity.State},
+		{"harness", sess.Harness},
+		{"issue", sess.IssueID},
+		{"terminated", fmt.Sprintf("%t", sess.IsTerminated)},
+	}
+	for _, field := range fields {
+		if field[1] == "" {
+			continue
+		}
+		if _, err := fmt.Fprintf(out, "%s: %s\n", field[0], field[1]); err != nil {
+			return err
+		}
+	}
+	if !sess.CreatedAt.IsZero() {
+		if _, err := fmt.Fprintf(out, "created: %s\n", sess.CreatedAt.Format(time.RFC3339)); err != nil {
+			return err
+		}
+	}
+	if !sess.UpdatedAt.IsZero() {
+		if _, err := fmt.Fprintf(out, "updated: %s\n", sess.UpdatedAt.Format(time.RFC3339)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func sessionRole(sess sessionDTO) string {
+	if sess.Kind == "orchestrator" {
+		return "orchestrator"
+	}
+	return "worker"
+}
+
+func formatSessionAge(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	if d < time.Minute {
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	}
+	if d < 24*time.Hour {
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	}
+	return fmt.Sprintf("%dd", int(d.Hours()/24))
+}
+
+func pluralS(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
+}
+
+func apiPath(path string, params url.Values) string {
+	if len(params) == 0 {
+		return path
+	}
+	return path + "?" + params.Encode()
+}
+
+func normalizeSessionID(id string) (string, error) {
+	trimmed := strings.TrimSpace(id)
+	if trimmed == "" {
+		return "", usageError{errors.New("session id is required")}
+	}
+	return trimmed, nil
+}

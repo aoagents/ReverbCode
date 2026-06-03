@@ -20,36 +20,37 @@ invariants.
 
 | Area | Decision | Status | Rationale |
 |------|----------|--------|-----------|
-| Backend language | Go 1.22 | Implemented | Small daemon, strong stdlib, easy local distribution. |
+| Backend language | Go 1.25.7 | Implemented | Matches `backend/go.mod`; small daemon, strong stdlib, easy local distribution. |
 | Backend core | Go stdlib | Implemented | Domain, lifecycle, session, and adapter contracts should stay dependency-light. |
 | Frontend shell | Electron + TypeScript | Implemented | Local desktop control plane paired with the daemon. |
-| Runtime adapters | `tmux` and `zellij` CLIs via `os/exec` | Implemented | Terminal multiplexers fit long-running sessions, attach/debug workflows, and adapter isolation. |
+| Runtime adapter | `zellij` CLI via `os/exec` | Implemented | Terminal multiplexing fits long-running sessions, attach/debug workflows, and adapter isolation. |
+| Terminal PTY | `github.com/creack/pty` | Implemented | PTY-backed terminal sessions with resize/input/output control. |
 | Git/worktrees | `git` CLI via `os/exec` | Implemented | Uses real repo behavior, credentials, hooks, LFS, submodules, and user config. |
-| HTTP API | `net/http` + `github.com/go-chi/chi/v5` | Planned / branch work exists | Lightweight, idiomatic router without committing AO to a large web framework. |
-| WebSocket | `github.com/coder/websocket` | Planned | Modern small WebSocket library for event and terminal streaming. |
-| Storage | SQLite in WAL mode | Planned | Local daemon, single writer, many dashboard/API reads, no external DB setup. |
-| SQL access | `database/sql` + `sqlc` | Planned | Hand-written SQL with generated typed methods. |
-| Migrations | `goose` | Planned | Simple SQL migrations for an embedded/local database. |
-| Config | `github.com/spf13/viper` | Planned | Standard pairing with Cobra/pflag for CLI, env, and file-based configuration. |
-| CLI | `cobra` | Planned | Standard command structure for daemon startup, diagnostics, and admin commands. |
-| Logging | `log/slog` | Planned | Stdlib structured logging before adding another logging dependency. |
+| HTTP API | `net/http` + `github.com/go-chi/chi/v5` | Implemented | Lightweight, idiomatic router without committing AO to a large web framework. |
+| WebSocket | `github.com/coder/websocket` | Implemented | Small WebSocket library for terminal streaming. |
+| Storage | SQLite in WAL mode via `database/sql` | Implemented | Local daemon, single writer, many dashboard/API reads, no external DB setup. |
+| SQLite driver | `modernc.org/sqlite` | Implemented | Current pure-Go driver in `backend/internal/storage/sqlite`; keep it swappable behind `database/sql`. |
+| SQL generation | `github.com/sqlc-dev/sqlc` | Implemented | Hand-written SQL with generated typed methods from `backend/sqlc.yaml`. |
+| Migrations | `github.com/pressly/goose/v3` | Implemented | Simple SQL migrations for the embedded/local database. |
+| CLI | `github.com/spf13/cobra` | Implemented | Standard command structure for daemon startup, diagnostics, and admin commands. |
+| Config | stdlib environment loading + SQLite-backed state/config | Implemented / evolving | `internal/config` handles daemon env/defaults; durable product config belongs in SQLite, so no config framework is selected for V1. |
+| Logging | `log/slog` | Implemented | Stdlib structured logging before adding another logging dependency. |
+| OpenAPI generation | `github.com/swaggest/openapi-go`, `github.com/swaggest/jsonschema-go`, `gopkg.in/yaml.v3` | Implemented | Generated OpenAPI keeps route contracts close to Go DTOs. |
 | Testing | stdlib `testing` | Implemented | Keep pure domain logic and adapter contracts easy to test. |
-| Test assertions | `testify/require` | Planned | Concise assertions for higher-level adapter and integration tests. |
-| Packaging | `goreleaser` | Planned | Cross-platform release automation, checksums, and future Homebrew support. |
+| Test assertions | `github.com/stretchr/testify/require` | Planned if needed | Concise assertions for higher-level adapter and integration tests; do not add unless tests benefit. |
+| Packaging | `github.com/goreleaser/goreleaser` | Planned | Cross-platform release automation, checksums, and future Homebrew support. |
 
 ## Pending decisions
 
-### SQLite driver
+### SQLite driver validation
 
-Use `github.com/ncruces/go-sqlite3/driver` first.
-
-| Driver | When to choose it | Tradeoff |
-|--------|-------------------|----------|
-| `github.com/ncruces/go-sqlite3/driver` | Default V1 choice. | `database/sql` driver with an easier no-CGO distribution story; validate against AO's WAL/outbox workload. |
-| `github.com/mattn/go-sqlite3` | Fallback if compatibility or performance requires it. | Mature and widely used, but cross-compilation and toolchain setup are harder. |
+Current main uses `modernc.org/sqlite`. Before release packaging is locked,
+validate `github.com/ncruces/go-sqlite3/driver` against AO's WAL, migration,
+and `change_log`/CDC workload. It is the preferred no-CGO candidate if it passes
+compatibility and performance checks.
 
 Keep the driver behind `database/sql` so the persistence layer can switch
-drivers if validation exposes compatibility or performance issues.
+drivers without changing store interfaces.
 
 Required SQLite setup:
 
@@ -60,39 +61,42 @@ PRAGMA foreign_keys = ON;
 PRAGMA synchronous = NORMAL;
 ```
 
-### Process runtime
+### Config model
 
-The default V1 runtime is a terminal-multiplexer adapter (`tmux` or `zellij`).
-A direct PTY runtime using `github.com/creack/pty` is a later option behind the
-existing runtime port, not the default V1 runtime.
+Current daemon config is stdlib env/default loading. Project and product config
+should be persisted in SQLite when it needs durability or user editing. Do not
+add `github.com/spf13/viper` or `github.com/knadh/koanf` unless a real file-based
+config surface appears.
 
 ## Explicitly avoided for V1
 
 | Avoid | Reason |
 |-------|--------|
-| GORM | AO needs explicit transactional SQL and outbox writes. |
+| GORM | AO needs explicit transactional SQL and CDC-triggered writes. |
 | Gin/Fiber | `net/http` + `chi` is enough for a local daemon API. |
 | `go-git` as the primary Git engine | AO should match installed Git behavior, credentials, hooks, LFS, submodules, and user config. |
-| Temporal / NATS / Kafka / Redis | V1 is a local daemon with SQLite and JSONL delivery, not a distributed control plane. |
+| `github.com/spf13/viper` / `github.com/knadh/koanf` by default | Env/default loading plus SQLite-backed config is enough for V1. |
+| Temporal / NATS / Kafka / Redis | V1 is a local daemon with SQLite and CDC, not a distributed control plane. |
 | Full plugin framework | Keep adapter interfaces narrow until product needs justify a plugin runtime. |
-| Multi-sink outbox | Start with one durable local delivery path; add fan-out later if needed. |
+| Multi-sink CDC fan-out | Start with one durable local delivery path; add fan-out later if needed. |
 
-## Architecture mapping
+## Current stack mapping
 
 ```txt
 Go daemon
-  net/http + chi
-  coder/websocket
-  tmux/zellij runtime adapters via os/exec
+  net/http + github.com/go-chi/chi/v5
+  github.com/coder/websocket
+  github.com/creack/pty
+  zellij runtime adapter via os/exec
   git worktree adapter via git CLI
-  SQLite via database/sql
-  sqlc
-  goose
-  slog
-  cobra CLI
-  JSONL files for terminal logs and delivery streams
+  SQLite via database/sql + modernc.org/sqlite
+  github.com/sqlc-dev/sqlc generated queries
+  github.com/pressly/goose/v3 migrations
+  log/slog
+  github.com/spf13/cobra CLI
+  SQLite change_log + CDC poller
 ```
 
-This stack supports the current architecture: one LCM writer, SQLite current
-state, change log and outbox, JSONL delivery streams, terminal sessions, and
-real Git worktrees.
+This stack supports the current architecture: durable session/PR/project facts,
+derived display status, SQLite `change_log` CDC, terminal sessions, and real Git
+worktrees.

@@ -1,0 +1,933 @@
+openapi: 3.1.0
+info:
+  description: Loopback-only HTTP surface served by the Go daemon. Generated from
+    Go (code-first) — do not edit by hand; run `go generate ./...`.
+  title: Agent Orchestrator HTTP daemon
+  version: 0.1.0-route-shell
+servers:
+- description: Local daemon (loopback only)
+  url: http://127.0.0.1:3001
+paths:
+  /api/v1/orchestrators:
+    post:
+      operationId: spawnOrchestrator
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SpawnOrchestratorRequest'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SpawnOrchestratorResponse'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Spawn an orchestrator session
+      tags:
+      - sessions
+  /api/v1/projects:
+    get:
+      operationId: listProjects
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListProjectsResponse'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: List all registered projects (active + degraded)
+      tags:
+      - projects
+    post:
+      operationId: addProject
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddProjectInput'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectResponse'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Register a new project from a git repository path
+      tags:
+      - projects
+  /api/v1/projects/{id}:
+    delete:
+      operationId: removeProject
+      parameters:
+      - description: Project identifier (registry key).
+        in: path
+        name: id
+        required: true
+        schema:
+          description: Project identifier (registry key).
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RemoveProjectResult'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Remove a project; stops sessions, cleans workspaces, unregisters
+      tags:
+      - projects
+    get:
+      operationId: getProject
+      parameters:
+      - description: Project identifier (registry key).
+        in: path
+        name: id
+        required: true
+        schema:
+          description: Project identifier (registry key).
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectGetResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Fetch one project; discriminates ok vs degraded
+      tags:
+      - projects
+  /api/v1/prs/{id}/merge:
+    post:
+      operationId: mergePR
+      parameters:
+      - description: PR number.
+        in: path
+        name: id
+        required: true
+        schema:
+          description: PR number.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MergePRResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Unprocessable Entity
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Squash-merge a pull request
+      tags:
+      - prs
+  /api/v1/prs/{id}/resolve-comments:
+    post:
+      operationId: resolveComments
+      parameters:
+      - description: PR number.
+        in: path
+        name: id
+        required: true
+        schema:
+          description: PR number.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResolveCommentsResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Unprocessable Entity
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Resolve review threads on a pull request
+      tags:
+      - prs
+  /api/v1/sessions:
+    get:
+      operationId: listSessions
+      parameters:
+      - description: Project id filter.
+        in: query
+        name: project
+        schema:
+          description: Project id filter.
+          type: string
+      - description: When true, return non-terminated sessions; when false, return
+          terminated sessions.
+        in: query
+        name: active
+        schema:
+          description: When true, return non-terminated sessions; when false, return
+            terminated sessions.
+          type:
+          - "null"
+          - boolean
+      - description: When true, return only orchestrator sessions.
+        in: query
+        name: orchestratorOnly
+        schema:
+          description: When true, return only orchestrator sessions.
+          type:
+          - "null"
+          - boolean
+      - description: When true, return only fresh non-terminated sessions.
+        in: query
+        name: fresh
+        schema:
+          description: When true, return only fresh non-terminated sessions.
+          type:
+          - "null"
+          - boolean
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListSessionsResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: List sessions
+      tags:
+      - sessions
+    post:
+      operationId: spawnSession
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SpawnSessionRequest'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionResponse'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Spawn a new agent session
+      tags:
+      - sessions
+  /api/v1/sessions/{sessionId}:
+    get:
+      operationId: getSession
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Fetch one session
+      tags:
+      - sessions
+    patch:
+      operationId: renameSession
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RenameSessionRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Rename a session display name
+      tags:
+      - sessions
+  /api/v1/sessions/{sessionId}/kill:
+    post:
+      operationId: killSession
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KillSessionResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Mark a session terminated and tear down runtime/workspace resources
+      tags:
+      - sessions
+  /api/v1/sessions/{sessionId}/restore:
+    post:
+      operationId: restoreSession
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RestoreSessionResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Restore a terminated session
+      tags:
+      - sessions
+  /api/v1/sessions/{sessionId}/send:
+    post:
+      operationId: sendSessionMessage
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendSessionMessageRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SendSessionMessageResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Send a message to a running session's agent
+      tags:
+      - sessions
+components:
+  schemas:
+    APIError:
+      properties:
+        code:
+          type: string
+        details:
+          additionalProperties: {}
+          type: object
+        error:
+          type: string
+        message:
+          type: string
+        requestId:
+          type: string
+      required:
+      - error
+      - code
+      - message
+      type: object
+    AddProjectInput:
+      properties:
+        name:
+          type:
+          - "null"
+          - string
+        path:
+          type: string
+        projectId:
+          type:
+          - "null"
+          - string
+      required:
+      - path
+      type: object
+    DegradedProject:
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        path:
+          type: string
+        resolveError:
+          type: string
+      required:
+      - id
+      - name
+      - path
+      - resolveError
+      type: object
+    DomainActivity:
+      properties:
+        lastActivityAt:
+          format: date-time
+          type: string
+        state:
+          type: string
+      required:
+      - state
+      - lastActivityAt
+      type: object
+    KillSessionResponse:
+      properties:
+        freed:
+          type: boolean
+        ok:
+          type: boolean
+        sessionId:
+          type: string
+      required:
+      - ok
+      - sessionId
+      type: object
+    ListProjectsResponse:
+      properties:
+        projects:
+          items:
+            $ref: '#/components/schemas/ProjectSummary'
+          type: array
+      required:
+      - projects
+      type: object
+    ListSessionsResponse:
+      properties:
+        sessions:
+          items:
+            $ref: '#/components/schemas/Session'
+          type: array
+      required:
+      - sessions
+      type: object
+    MergePRResponse:
+      properties:
+        method:
+          type: string
+        ok:
+          type: boolean
+        prNumber:
+          type: integer
+      required:
+      - ok
+      - prNumber
+      - method
+      type: object
+    OrchestratorResponse:
+      properties:
+        id:
+          type: string
+        projectId:
+          type: string
+        projectName:
+          type: string
+      required:
+      - id
+      - projectId
+      type: object
+    Project:
+      properties:
+        agent:
+          type: string
+        defaultBranch:
+          type: string
+        id:
+          type: string
+        name:
+          type: string
+        path:
+          type: string
+        repo:
+          type: string
+        scm:
+          $ref: '#/components/schemas/SCMConfig'
+        tracker:
+          $ref: '#/components/schemas/TrackerConfig'
+      required:
+      - id
+      - name
+      - path
+      - repo
+      - defaultBranch
+      type: object
+    ProjectGetResponse:
+      properties:
+        project:
+          $ref: '#/components/schemas/ProjectOrDegraded'
+        status:
+          enum:
+          - ok
+          - degraded
+          type: string
+      required:
+      - status
+      - project
+      type: object
+    ProjectOrDegraded:
+      oneOf:
+      - $ref: '#/components/schemas/Project'
+      - $ref: '#/components/schemas/DegradedProject'
+      type: object
+    ProjectResponse:
+      properties:
+        project:
+          $ref: '#/components/schemas/Project'
+      required:
+      - project
+      type: object
+    ProjectSummary:
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        resolveError:
+          type: string
+        sessionPrefix:
+          type: string
+      required:
+      - id
+      - name
+      - sessionPrefix
+      type: object
+    RemoveProjectResult:
+      properties:
+        projectId:
+          type: string
+        removedStorageDir:
+          type: boolean
+      required:
+      - projectId
+      - removedStorageDir
+      type: object
+    RenameSessionRequest:
+      properties:
+        displayName:
+          minLength: 1
+          type: string
+      required:
+      - displayName
+      type: object
+    ResolveCommentsResponse:
+      properties:
+        ok:
+          type: boolean
+        resolved:
+          type: integer
+      required:
+      - ok
+      - resolved
+      type: object
+    RestoreSessionResponse:
+      properties:
+        ok:
+          type: boolean
+        session:
+          $ref: '#/components/schemas/Session'
+        sessionId:
+          type: string
+      required:
+      - ok
+      - sessionId
+      - session
+      type: object
+    SCMConfig:
+      properties:
+        package:
+          type: string
+        path:
+          type: string
+        plugin:
+          type: string
+        webhook:
+          $ref: '#/components/schemas/SCMWebhookConfig'
+      type: object
+    SCMWebhookConfig:
+      properties:
+        deliveryHeader:
+          type: string
+        enabled:
+          type:
+          - "null"
+          - boolean
+        eventHeader:
+          type: string
+        maxBodyBytes:
+          type: integer
+        path:
+          type: string
+        secretEnvVar:
+          type: string
+        signatureHeader:
+          type: string
+      type: object
+    SendSessionMessageRequest:
+      properties:
+        message:
+          maxLength: 4096
+          minLength: 1
+          type: string
+      required:
+      - message
+      type: object
+    SendSessionMessageResponse:
+      properties:
+        message:
+          type: string
+        ok:
+          type: boolean
+        sessionId:
+          type: string
+      required:
+      - ok
+      - sessionId
+      - message
+      type: object
+    Session:
+      properties:
+        activity:
+          $ref: '#/components/schemas/DomainActivity'
+        createdAt:
+          format: date-time
+          type: string
+        harness:
+          type: string
+        id:
+          type: string
+        isTerminated:
+          type: boolean
+        issueId:
+          type: string
+        kind:
+          type: string
+        projectId:
+          type: string
+        status:
+          type: string
+        updatedAt:
+          format: date-time
+          type: string
+      required:
+      - id
+      - projectId
+      - kind
+      - activity
+      - isTerminated
+      - createdAt
+      - updatedAt
+      - status
+      type: object
+    SessionResponse:
+      properties:
+        session:
+          $ref: '#/components/schemas/Session'
+      required:
+      - session
+      type: object
+    SpawnOrchestratorRequest:
+      properties:
+        clean:
+          type: boolean
+        projectId:
+          type: string
+      required:
+      - projectId
+      type: object
+    SpawnOrchestratorResponse:
+      properties:
+        orchestrator:
+          $ref: '#/components/schemas/OrchestratorResponse'
+      required:
+      - orchestrator
+      type: object
+    SpawnSessionRequest:
+      properties:
+        agentRules:
+          type: string
+        branch:
+          type: string
+        harness:
+          enum:
+          - claude-code
+          - codex
+          - aider
+          - opencode
+          type: string
+        issueId:
+          type: string
+        kind:
+          enum:
+          - worker
+          - orchestrator
+          type: string
+        projectId:
+          type: string
+        prompt:
+          maxLength: 4096
+          type: string
+      required:
+      - projectId
+      type: object
+    TrackerConfig:
+      properties:
+        package:
+          type: string
+        path:
+          type: string
+        plugin:
+          type: string
+      type: object
+tags:
+- description: Project registry, configuration, and lifecycle administration
+  name: projects
+- description: Agent session lifecycle and messaging
+  name: sessions
+- description: Pull-request actions (SCM lane)
+  name: prs

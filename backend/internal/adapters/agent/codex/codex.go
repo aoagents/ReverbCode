@@ -1,0 +1,258 @@
+// Package codex implements the Codex agent adapter: launching new sessions,
+// resuming hook-tracked sessions, installing workspace-local hooks, and reading
+// hook-derived session info.
+//
+// AO-managed sessions derive native session identity and display
+// metadata from Codex hooks instead of transcript/cache scans.
+package codex
+
+import (
+	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"sync"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+)
+
+const (
+	codexTitleMetadataKey   = "title"
+	codexSummaryMetadataKey = "summary"
+)
+
+// Plugin is the Codex agent adapter. It is safe for concurrent use; the binary
+// path is resolved once and cached under binaryMu.
+type Plugin struct {
+	binaryMu       sync.Mutex
+	resolvedBinary string
+}
+
+// New returns a ready-to-register Codex adapter.
+func New() *Plugin {
+	return &Plugin{}
+}
+
+var _ adapters.Adapter = (*Plugin)(nil)
+var _ ports.Agent = (*Plugin)(nil)
+
+// Manifest returns the adapter's static self-description.
+func (p *Plugin) Manifest() adapters.Manifest {
+	return adapters.Manifest{
+		ID:          "codex",
+		Name:        "Codex",
+		Description: "Run Codex worker sessions.",
+		Version:     "0.0.1",
+		Capabilities: []adapters.Capability{
+			adapters.CapabilityAgent,
+		},
+	}
+}
+
+// GetConfigSpec reports the agent-specific config keys. Codex exposes none yet.
+func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
+	if err := ctx.Err(); err != nil {
+		return ports.ConfigSpec{}, err
+	}
+	return ports.ConfigSpec{}, nil
+}
+
+// GetLaunchCommand builds the argv to start a new Codex session, applying the
+// no-update-check and approval flags, optional system-prompt instructions, and
+// the initial prompt (passed after `--` so a leading "-" is not read as a flag).
+func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (cmd []string, err error) {
+	binary, err := p.codexBinary(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	cmd = []string{binary}
+	appendNoUpdateCheckFlag(&cmd)
+	appendApprovalFlags(&cmd, cfg.Permissions)
+
+	if cfg.SystemPromptFile != "" {
+		cmd = append(cmd, "-c", "model_instructions_file="+cfg.SystemPromptFile)
+	} else if cfg.SystemPrompt != "" {
+		cmd = append(cmd, "-c", "developer_instructions="+cfg.SystemPrompt)
+	}
+
+	if cfg.Prompt != "" {
+		cmd = append(cmd, "--", cfg.Prompt)
+	}
+
+	return cmd, nil
+}
+
+// GetPromptDeliveryStrategy reports that Codex receives its prompt in the
+// launch command itself.
+func (p *Plugin) GetPromptDeliveryStrategy(ctx context.Context, cfg ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	return ports.PromptDeliveryInCommand, nil
+}
+
+// GetRestoreCommand rebuilds the argv that continues an existing Codex
+// session: `codex resume <agentSessionId>`. ok is false when the hook-derived
+// native session id has not landed yet, so callers can fall back to fresh
+// launch behavior.
+func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig) (cmd []string, ok bool, err error) {
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
+	agentSessionID := strings.TrimSpace(cfg.Session.Metadata[ports.MetadataKeyAgentSessionID])
+	if agentSessionID == "" {
+		return nil, false, nil
+	}
+
+	binary, err := p.codexBinary(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+
+	cmd = make([]string, 0, 8)
+	cmd = append(cmd, binary, "resume")
+	appendNoUpdateCheckFlag(&cmd)
+	appendApprovalFlags(&cmd, cfg.Permissions)
+	cmd = append(cmd, agentSessionID)
+	return cmd, true, nil
+}
+
+// SessionInfo surfaces Codex hook-derived metadata. Metadata is intentionally
+// nil for Codex: callers get the normalized fields directly.
+func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (ports.SessionInfo, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return ports.SessionInfo{}, false, err
+	}
+	info := ports.SessionInfo{
+		AgentSessionID: session.Metadata[ports.MetadataKeyAgentSessionID],
+		Title:          session.Metadata[codexTitleMetadataKey],
+		Summary:        session.Metadata[codexSummaryMetadataKey],
+	}
+	if info.AgentSessionID == "" && info.Title == "" && info.Summary == "" {
+		return ports.SessionInfo{}, false, nil
+	}
+	return info, true, nil
+}
+
+// ResolveCodexBinary returns the path to the codex binary on this machine,
+// searching PATH then a handful of well-known install locations
+// (Homebrew, Cargo, npm global). Returns "codex" as a last-ditch fallback
+// so callers see a clear "command not found" rather than an empty argv.
+func ResolveCodexBinary(ctx context.Context) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+
+	if runtime.GOOS == "windows" {
+		for _, name := range []string{"codex.cmd", "codex.exe", "codex"} {
+			path, err := exec.LookPath(name)
+			if err == nil && path != "" {
+				return path, nil
+			}
+			if err := ctx.Err(); err != nil {
+				return "", err
+			}
+		}
+
+		candidates := []string{}
+		if appData := os.Getenv("APPDATA"); appData != "" {
+			candidates = append(candidates,
+				filepath.Join(appData, "npm", "codex.cmd"),
+				filepath.Join(appData, "npm", "codex.exe"),
+			)
+		}
+		if home, err := os.UserHomeDir(); err == nil {
+			candidates = append(candidates, filepath.Join(home, ".cargo", "bin", "codex.exe"))
+		}
+		for _, candidate := range candidates {
+			if fileExists(candidate) {
+				return candidate, nil
+			}
+			if err := ctx.Err(); err != nil {
+				return "", err
+			}
+		}
+
+		return "codex", nil
+	}
+
+	if path, err := exec.LookPath("codex"); err == nil && path != "" {
+		return path, nil
+	}
+
+	candidates := []string{
+		"/usr/local/bin/codex",
+		"/opt/homebrew/bin/codex",
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		candidates = append(candidates,
+			filepath.Join(home, ".cargo", "bin", "codex"),
+			filepath.Join(home, ".npm", "bin", "codex"),
+		)
+	}
+
+	for _, candidate := range candidates {
+		if fileExists(candidate) {
+			return candidate, nil
+		}
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+	}
+
+	return "codex", nil
+}
+
+func (p *Plugin) codexBinary(ctx context.Context) (string, error) {
+	p.binaryMu.Lock()
+	defer p.binaryMu.Unlock()
+
+	if p.resolvedBinary != "" {
+		return p.resolvedBinary, nil
+	}
+
+	binary, err := ResolveCodexBinary(ctx)
+	if err != nil {
+		return "", err
+	}
+	p.resolvedBinary = binary
+	return binary, nil
+}
+
+func appendNoUpdateCheckFlag(cmd *[]string) {
+	*cmd = append(*cmd, "-c", "check_for_update_on_startup=false")
+}
+
+func appendApprovalFlags(cmd *[]string, permissions ports.PermissionMode) {
+	switch normalizePermissionMode(permissions) {
+	case ports.PermissionModeDefault:
+		// No flag: defer to the user's Codex config/default behavior.
+	case ports.PermissionModeAcceptEdits:
+		*cmd = append(*cmd, "--ask-for-approval", "on-request")
+	case ports.PermissionModeAuto:
+		*cmd = append(*cmd, "--ask-for-approval", "on-request", "-c", `approvals_reviewer="auto_review"`)
+	case ports.PermissionModeBypassPermissions:
+		*cmd = append(*cmd, "--dangerously-bypass-approvals-and-sandbox")
+	}
+}
+
+func normalizePermissionMode(mode ports.PermissionMode) ports.PermissionMode {
+	switch mode {
+	case ports.PermissionModeDefault,
+		ports.PermissionModeAcceptEdits,
+		ports.PermissionModeAuto,
+		ports.PermissionModeBypassPermissions:
+		return mode
+	default:
+		return ports.PermissionModeDefault
+	}
+}
+
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
+}

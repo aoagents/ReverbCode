@@ -12,7 +12,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-func TestWorkspaceIntegrationCreateListRestoreDestroy(t *testing.T) {
+func TestWorkspaceIntegrationCreateRestoreDestroy(t *testing.T) {
 	git := requireGit(t)
 	tmp := t.TempDir()
 	repo := setupOriginClone(t, git, tmp)
@@ -33,14 +33,6 @@ func TestWorkspaceIntegrationCreateListRestoreDestroy(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(info.Path, "README.md")); err != nil {
 		t.Fatalf("created worktree missing seed file: %v", err)
-	}
-
-	listed, err := ws.List(ctx, "proj")
-	if err != nil {
-		t.Fatalf("list: %v", err)
-	}
-	if len(listed) != 1 || listed[0].Path != info.Path || listed[0].Branch != cfg.Branch || listed[0].SessionID != cfg.SessionID {
-		t.Fatalf("listed = %#v", listed)
 	}
 
 	restored, err := ws.Restore(ctx, cfg)

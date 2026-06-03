@@ -1,5 +1,6 @@
 # Node / Electron
 node_modules/
+.pnpm/
 dist/
 out/
 build/
@@ -9,6 +10,7 @@ yarn-debug.log*
 yarn-error.log*
 
 # Go
+.go/
 bin/
 *.test
 *.out
@@ -17,7 +19,20 @@ vendor/
 /backend/backend
 agent-orchestrator.yaml
 
+# Backend runtime data artifacts (SQLite store + WAL, CDC event log).
+# Created at AO_DATA_DIR (outside the repo by default); ignored here so a
+# data dir pointed at the tree never gets committed.
+*.db
+*.db-shm
+*.db-wal
+session-events.jsonl
+session-events.jsonl.*
+
+# Agent Orchestrator local session state
+.ao/
+
 # Environment
+.direnv/
 .env
 .env.*
 !.env.example

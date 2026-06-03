@@ -1,5 +1,7 @@
 package gitworktree
 
+import "strings"
+
 func checkRefFormatBranchArgs(repo, branch string) []string {
 	return []string{"-C", repo, "check-ref-format", "--branch", branch}
 }
@@ -16,8 +18,13 @@ func worktreeAddNewBranchArgs(repo, branch, path, baseRef string) []string {
 	return []string{"-C", repo, "worktree", "add", "-b", branch, path, baseRef}
 }
 
-func worktreeRemoveForceArgs(repo, path string) []string {
-	return []string{"-C", repo, "worktree", "remove", "--force", path}
+// worktreeRemoveArgs intentionally omits --force: a dirty worktree (uncommitted
+// agent work) MUST cause `git worktree remove` to fail, so the post-prune
+// "still registered" check in Destroy surfaces the refusal to the Session
+// Manager's Cleanup, which routes the session to Skipped rather than deleting
+// the agent's in-progress changes.
+func worktreeRemoveArgs(repo, path string) []string {
+	return []string{"-C", repo, "worktree", "remove", path}
 }
 
 func worktreePruneArgs(repo string) []string {
@@ -29,12 +36,11 @@ func worktreeListPorcelainArgs(repo string) []string {
 }
 
 func baseRefCandidates(branch, defaultBranch string) []string {
-	return []string{"origin/" + branch, "origin/" + defaultBranch, branch}
-}
-
-func chooseWorktreeAddArgs(repo, path, branch, baseRef string, localBranchExists bool) []string {
-	if localBranchExists {
-		return worktreeAddBranchArgs(repo, path, branch)
+	candidates := []string{"origin/" + branch}
+	if strings.Contains(defaultBranch, "/") {
+		candidates = append(candidates, defaultBranch)
+	} else {
+		candidates = append(candidates, "origin/"+defaultBranch)
 	}
-	return worktreeAddNewBranchArgs(repo, branch, path, baseRef)
+	return append(candidates, branch)
 }
