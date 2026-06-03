@@ -126,11 +126,11 @@ export const aoActivity: Plugin = async ({ directory, client }) => {
             if (msg.sessionID && switchedSession(msg.sessionID)) {
               callHookSync("session-start", { session_id: msg.sessionID })
             }
-            messageStore.set(msg.id, msg)
             if (msg.role === "assistant" && msg.modelID) currentModel = msg.modelID
             // Fallback: some `opencode run` flows never deliver message.part.updated
             // for the prompt, so start the turn from the user message itself.
             if (msg.role === "user") {
+              messageStore.set(msg.id, msg)
               const sessionID = msg.sessionID ?? currentSessionID
               if (sessionID) reportUserPrompt(sessionID, msg.id, "")
             }
@@ -143,7 +143,9 @@ export const aoActivity: Plugin = async ({ directory, client }) => {
             const msg = messageStore.get(part.messageID)
             if (msg?.role === "user" && part.type === "text") {
               const sessionID = msg.sessionID ?? currentSessionID
-              if (sessionID) reportUserPrompt(sessionID, msg.id, part.text ?? "")
+              const prompt = part.text ?? ""
+              if (sessionID) reportUserPrompt(sessionID, msg.id, prompt)
+              if (prompt.length > 0) messageStore.delete(part.messageID)
             }
             break
           }
@@ -151,6 +153,9 @@ export const aoActivity: Plugin = async ({ directory, client }) => {
           case "session.status": {
             // session.status fires in both TUI and `opencode run`; session.idle
             // is deprecated and not reliably emitted in run mode.
+            // AO's "stop" hook means "the current turn is idle/finished", not
+            // "the whole native session has terminated", so multi-turn TUI
+            // sessions intentionally emit one stop per idle transition.
             const props = (event as any).properties
             if (props?.status?.type !== "idle") break
             const sessionID = props?.sessionID ?? currentSessionID
