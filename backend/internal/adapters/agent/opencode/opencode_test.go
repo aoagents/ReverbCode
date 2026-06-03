@@ -150,6 +150,11 @@ func TestGetAgentHooksInstallsPlugin(t *testing.T) {
 	if strings.Contains(body, `"session.idle"`) {
 		t.Fatalf("plugin subscribes to deprecated session.idle; use session.status(idle):\n%s", body)
 	}
+	// A hung `ao hooks` call must not block opencode forever, so each spawn is
+	// time-boxed (parity with the claude/codex 30s hook timeout).
+	if !strings.Contains(body, "timeout:") {
+		t.Fatalf("plugin spawn has no timeout; a hung hook would block opencode:\n%s", body)
+	}
 
 	// The user's plugin is untouched.
 	got, err := os.ReadFile(userPlugin)
@@ -158,6 +163,34 @@ func TestGetAgentHooksInstallsPlugin(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, userBody) {
 		t.Fatalf("user plugin modified by install: %q", got)
+	}
+}
+
+func TestGetAgentHooksRefusesToClobberForeignFile(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "opencode"}
+	workspace := t.TempDir()
+	ctx := context.Background()
+
+	// A non-AO file occupying AO's exact path must NOT be silently overwritten.
+	pluginPath := opencodePluginPath(workspace)
+	if err := os.MkdirAll(filepath.Dir(pluginPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	foreign := []byte("export const notOurs = async () => ({})\n")
+	if err := os.WriteFile(pluginPath, foreign, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := plugin.GetAgentHooks(ctx, ports.WorkspaceHookConfig{WorkspacePath: workspace})
+	if err == nil {
+		t.Fatal("GetAgentHooks overwrote a non-AO file; want a loud error")
+	}
+	got, readErr := os.ReadFile(pluginPath)
+	if readErr != nil {
+		t.Fatalf("foreign file removed by refused install: %v", readErr)
+	}
+	if !reflect.DeepEqual(got, foreign) {
+		t.Fatalf("foreign file modified by refused install: %q", got)
 	}
 }
 

@@ -1,13 +1,7 @@
 // agent-orchestrator: managed opencode activity plugin (do not edit)
 //
-// opencode has no native command-hook config (unlike Claude Code's
-// settings.local.json or Codex's hooks.json), so AO installs this plugin into
-// .opencode/plugins/ to report session lifecycle into AO's store for activity
-// detection. The file is owned and overwritten by AO on every hook install;
-// user-authored plugins live in their own files and are never touched.
-//
 // It maps opencode's native lifecycle events onto AO's three normalized
-// activity events (matching the claude-code and codex adapters):
+// activity events:
 //   session.created                       -> `ao hooks opencode session-start`
 //   message.updated / message.part.updated -> `ao hooks opencode user-prompt-submit`
 //   session.status (status.type == idle)   -> `ao hooks opencode stop`
@@ -25,9 +19,13 @@
 import type { Plugin } from "@opencode-ai/plugin"
 
 export const aoActivity: Plugin = async ({ directory, client }) => {
-  // Fire user-prompt-submit only once per user message (it can surface on both
-  // message.updated and message.part.updated).
-  const seenUserMessages = new Set<string>()
+  // ao hooks must never be able to hang opencode: cap each invocation, matching
+  // the 30s timeout the claude-code and codex hook entries use.
+  const HOOK_TIMEOUT_MS = 30_000
+  // A user message is reported at most twice (see reportUserPrompt): an optional
+  // early empty report, then an upgrade carrying the prompt text. Maps a message
+  // id to whether the report we already sent included the prompt text.
+  const promptReports = new Map<string, boolean>()
   // message.* events don't carry the session id, so track it from events that do.
   let currentSessionID: string | null = null
   // The model of the most recent assistant message, forwarded for context.
@@ -73,6 +71,7 @@ export const aoActivity: Plugin = async ({ directory, client }) => {
         stdin: new TextEncoder().encode(JSON.stringify(payload) + "\n"),
         stdout: "ignore",
         stderr: "pipe",
+        timeout: HOOK_TIMEOUT_MS,
       })
       if (!result.success) {
         const stderr = result.stderr ? new TextDecoder().decode(result.stderr).trim() : ""
@@ -86,16 +85,25 @@ export const aoActivity: Plugin = async ({ directory, client }) => {
 
   function switchedSession(sessionID: string): boolean {
     if (currentSessionID === sessionID) return false
-    seenUserMessages.clear()
+    promptReports.clear()
     messageStore.clear()
     currentModel = null
     currentSessionID = sessionID
     return true
   }
 
+  // Report a user prompt, preferring the one that carries the prompt text.
+  // message.updated can arrive before message.part.updated with no text, so an
+  // early empty report must NOT dedup away the later text report — otherwise the
+  // prompt never reaches AO and title-from-prompt metadata breaks. Therefore: an
+  // empty report fires at most once (so run-mode flows that omit the text part
+  // still mark the session active), and a text report fires once and is terminal.
   function reportUserPrompt(sessionID: string, messageID: string, prompt: string) {
-    if (seenUserMessages.has(messageID)) return
-    seenUserMessages.add(messageID)
+    const hasText = prompt.length > 0
+    const reportedWithText = promptReports.get(messageID)
+    if (reportedWithText) return // already reported with text — terminal
+    if (reportedWithText === false && !hasText) return // already reported empty; no new info
+    promptReports.set(messageID, hasText)
     callHookSync("user-prompt-submit", { session_id: sessionID, prompt, model: currentModel ?? "" })
   }
 

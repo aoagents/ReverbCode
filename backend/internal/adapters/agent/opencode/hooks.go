@@ -60,7 +60,9 @@ var opencodeManagedEvents = []string{"session-start", "user-prompt-submit", "sto
 // native command-hook config to merge into; its only lifecycle-extensibility
 // surface is a JS/TS plugin. AO therefore writes a dedicated, AO-owned plugin
 // file. The write is atomic and idempotent: re-installing overwrites AO's own
-// file with identical content and never touches user-authored plugins.
+// file with identical content. It refuses to overwrite a file that is NOT
+// AO-managed (no sentinel), so a user plugin that happens to occupy our path is
+// never silently destroyed — install fails loudly instead.
 func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfig) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -70,6 +72,21 @@ func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfi
 	}
 
 	pluginPath := opencodePluginPath(cfg.WorkspacePath)
+	// Guard against clobbering a user file at our path: overwrite only when the
+	// target is absent or already AO-managed. A foreign file is a loud error,
+	// not silent data loss (uninstall is sentinel-guarded the same way).
+	if _, err := os.Stat(pluginPath); err == nil {
+		managed, err := isAOManagedPlugin(pluginPath)
+		if err != nil {
+			return fmt.Errorf("opencode.GetAgentHooks: %w", err)
+		}
+		if !managed {
+			return fmt.Errorf("opencode.GetAgentHooks: refusing to overwrite non-AO file at %s — move it so AO can install its plugin", pluginPath)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("opencode.GetAgentHooks: stat plugin: %w", err)
+	}
+
 	if err := os.MkdirAll(filepath.Dir(pluginPath), 0o750); err != nil {
 		return fmt.Errorf("opencode.GetAgentHooks: create plugin dir: %w", err)
 	}
