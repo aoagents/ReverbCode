@@ -7,7 +7,7 @@ import (
 
 	"github.com/go-chi/chi/v5/middleware"
 
-	apierr "github.com/aoagents/agent-orchestrator/backend/internal/httpd/errors"
+	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 )
 
 // APIError is the locked wire shape for every non-2xx response.

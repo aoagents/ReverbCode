@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
-	apierr "github.com/aoagents/agent-orchestrator/backend/internal/httpd/errors"
+	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 )
 
 // Manager is the controller-facing contract for the /api/v1/projects surface.
@@ -126,7 +126,7 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 		RegisteredAt: time.Now(),
 	}
 	if err := m.store.UpsertProject(ctx, row); err != nil {
-		return Project{}, err
+		return Project{}, apierr.Internal("PROJECT_ADD_FAILED", "Failed to register project")
 	}
 	return projectFromRow(row), nil
 }

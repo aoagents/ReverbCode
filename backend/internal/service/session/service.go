@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
-	apierr "github.com/aoagents/agent-orchestrator/backend/internal/httpd/errors"
+	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
 )
@@ -30,11 +30,21 @@ type ListFilter struct {
 	Fresh            bool
 }
 
+// commander is the command-side surface Service delegates to: the
+// *sessionmanager.Manager in production, a fake in tests.
+type commander interface {
+	Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.SessionRecord, error)
+	Restore(ctx context.Context, id domain.SessionID) (domain.SessionRecord, error)
+	Kill(ctx context.Context, id domain.SessionID) (bool, error)
+	Send(ctx context.Context, id domain.SessionID, message string) error
+	Cleanup(ctx context.Context, project domain.ProjectID) ([]domain.SessionID, error)
+}
+
 // Service is the controller-facing session service. It delegates command-side
 // session operations to the internal sessionmanager.Manager and owns read-model
 // assembly, including user-facing display status derivation.
 type Service struct {
-	manager *sessionmanager.Manager
+	manager commander
 	store   Store
 }
 

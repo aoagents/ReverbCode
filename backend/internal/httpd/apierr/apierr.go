@@ -1,19 +1,18 @@
-// Package errors defines the REST API's error vocabulary: a single structured
+// Package apierr defines the REST API's error vocabulary: a single structured
 // error type every service returns and the controllers render into the locked
 // APIError envelope with one errors.As. It is deliberately scoped to the HTTP
 // API tree — these services exist to serve the daemon's REST surface — and
 // imports nothing, so any layer may depend on it without an import cycle.
-//
-// Because the package is named "errors", importers that also need the standard
-// library "errors" (for As/Is) should alias this one, conventionally as apierr.
-package errors
+package apierr
 
 // Kind is a semantic failure category. It is not an HTTP status or word: the
 // envelope layer is the only place a Kind is translated into one.
 type Kind int
 
 const (
-	// KindInternal is an unexpected failure; it maps to 500.
+	// KindInternal is an unexpected failure; it maps to 500. As iota's zero
+	// value it is also the Kind of a zero-value Error, so an Error built without
+	// a Kind safely defaults to a 500.
 	KindInternal Kind = iota
 	// KindInvalid is malformed or rejected input; it maps to 400.
 	KindInvalid

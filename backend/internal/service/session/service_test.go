@@ -8,7 +8,8 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
-	apierr "github.com/aoagents/agent-orchestrator/backend/internal/httpd/errors"
+	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 type fakeStore struct {
@@ -101,5 +102,69 @@ func TestSessionRenameMissingSessionReturnsNotFound(t *testing.T) {
 	var e *apierr.Error
 	if !errors.As(err, &e) || e.Kind != apierr.KindNotFound || e.Code != "SESSION_NOT_FOUND" {
 		t.Fatalf("err = %v, want apierr NotFound SESSION_NOT_FOUND", err)
+	}
+}
+
+// fakeCommander records Kill/Spawn calls so a test can assert the
+// clean-orchestrator ordering without wiring a real session engine.
+type fakeCommander struct {
+	killed       []domain.SessionID
+	spawned      bool
+	killsAtSpawn int
+}
+
+func (f *fakeCommander) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.SessionRecord, error) {
+	f.spawned = true
+	f.killsAtSpawn = len(f.killed)
+	return domain.SessionRecord{ID: "mer-9", ProjectID: cfg.ProjectID, Kind: cfg.Kind}, nil
+}
+func (f *fakeCommander) Restore(context.Context, domain.SessionID) (domain.SessionRecord, error) {
+	return domain.SessionRecord{}, nil
+}
+func (f *fakeCommander) Kill(_ context.Context, id domain.SessionID) (bool, error) {
+	f.killed = append(f.killed, id)
+	return true, nil
+}
+func (f *fakeCommander) Send(context.Context, domain.SessionID, string) error { return nil }
+func (f *fakeCommander) Cleanup(context.Context, domain.ProjectID) ([]domain.SessionID, error) {
+	return nil, nil
+}
+
+func TestSpawnOrchestratorCleanKillsActiveOrchestratorsBeforeSpawn(t *testing.T) {
+	st := newFakeStore()
+	// Two active orchestrators plus an unrelated worker and a terminated
+	// orchestrator that must be left alone.
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindOrchestrator}
+	st.sessions["mer-2"] = domain.SessionRecord{ID: "mer-2", ProjectID: "mer", Kind: domain.KindOrchestrator}
+	st.sessions["mer-3"] = domain.SessionRecord{ID: "mer-3", ProjectID: "mer", Kind: domain.KindWorker}
+	st.sessions["mer-4"] = domain.SessionRecord{ID: "mer-4", ProjectID: "mer", Kind: domain.KindOrchestrator, IsTerminated: true}
+
+	fc := &fakeCommander{}
+	svc := &Service{manager: fc, store: st}
+
+	if _, err := svc.SpawnOrchestrator(context.Background(), "mer", true); err != nil {
+		t.Fatalf("SpawnOrchestrator: %v", err)
+	}
+
+	if len(fc.killed) != 2 {
+		t.Fatalf("killed = %v, want the two active orchestrators", fc.killed)
+	}
+	if !fc.spawned || fc.killsAtSpawn != 2 {
+		t.Fatalf("spawn must run after both kills: spawned=%v killsAtSpawn=%d", fc.spawned, fc.killsAtSpawn)
+	}
+}
+
+func TestSpawnOrchestratorNoCleanSkipsKills(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindOrchestrator}
+
+	fc := &fakeCommander{}
+	svc := &Service{manager: fc, store: st}
+
+	if _, err := svc.SpawnOrchestrator(context.Background(), "mer", false); err != nil {
+		t.Fatalf("SpawnOrchestrator: %v", err)
+	}
+	if len(fc.killed) != 0 || !fc.spawned {
+		t.Fatalf("clean=false must spawn without kills: killed=%v spawned=%v", fc.killed, fc.spawned)
 	}
 }
