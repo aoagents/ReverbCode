@@ -46,3 +46,5 @@ session-events.jsonl.*
 # OS
 .DS_Store
 Thumbs.db
+.direnv
+.go
