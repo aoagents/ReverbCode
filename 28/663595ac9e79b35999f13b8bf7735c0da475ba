@@ -1,0 +1,258 @@
+frontend/components.json
+  s_f961a9dea65c95::t_5f15a3ccb276bc 1-21
+frontend/package.json
+  s_f961a9dea65c95::t_55f408533344f4 11-18
+  s_c7d2eff442b275::t_4e6fa61b8bedfa 19
+  s_f961a9dea65c95::t_aefaccc2ac7577 21-35,45-48,58,60-61
+  s_f961a9dea65c95::t_3976c7e9652c37 39-44,49-57,59,62-63
+frontend/src/main/index.ts
+  s_0a728ab720e167::t_838a9522b40cb8 1,201,220,224-227,257,266-274,278-282,326-328
+  s_c7d2eff442b275::t_53d27839c9ff07 2-6,22-49,58-60,62-63,75-77,79-97,103-112,114-131,143-150,152-154,166-169,171-199,202-212,214-219,221-223,228-237,241-256,258-265,283-311,314-319,321-325,329-339,343-357
+  s_6949b5b357cad9::t_34c1eaa8701821 7-12
+  s_0a728ab720e167::t_875404d344a3ca 13-15,17-21,50-57,61,64-74,78,113,132-142,151,155-165,170,200,213,238-240,312,320
+  s_f961a9dea65c95::t_7b4fc9741bc25a 16
+  s_021815646d7ba6::t_0209261312b76b 98-102
+  s_0a728ab720e167::t_8467080b9d9caa 275-277
+  s_f961a9dea65c95::t_39d6199389d3c3 313
+  s_021815646d7ba6::t_d458df4e9aef58 340-342
+frontend/src/renderer/main.tsx
+  s_c7d2eff442b275::t_71167a51e89cd0 1-3,6,8,12-13,17-18
+  s_f961a9dea65c95::t_debbb884877f9d 4-5,9-11,14-16
+  s_021815646d7ba6::t_9a7a02b39e38ad 7
+frontend/tests/e2e/smoke.spec.ts
+  s_f961a9dea65c95::t_0fc2756dc9ab1a 1-16
+frontend/vite.config.ts
+  s_c7d2eff442b275::t_ffac3463e66740 1-2,4-5,7,10,19-20,22-23,35-36,38-39,50-55
+  s_f961a9dea65c95::t_af8d9e43efe257 3,12-14,21
+  s_c7d2eff442b275::t_be69ed0206df24 6
+  s_c7d2eff442b275::t_bd0b1cc6bb4e17 8-9,24-27,33-34,37,40-43,49
+  s_c7d2eff442b275::t_838e32027337af 11,15-18
+  s_c7d2eff442b275::t_0d94141181964e 28-32,44-48
+frontend/src/renderer/terminal/MuxConnection.ts
+  s_f961a9dea65c95::t_648d19c2111b6b 1-27,33-46,50-51,59-96,103-111
+  s_021815646d7ba6::t_4bfd6721510d87 28-32
+  s_021815646d7ba6::t_2897f636d00f1b 47-49,52-58
+  s_021815646d7ba6::t_d29cc74ba11fd6 97-102
+frontend/src/renderer/terminal/mux.ts
+  s_021815646d7ba6::t_ffc1be17b584e2 1
+  s_021815646d7ba6::t_32dfdbc2ac801a 2-19,26-31
+  s_021815646d7ba6::t_2eb9437b1ff42e 20-25
+  s_021815646d7ba6::t_fd158d44319c2b 32-48
+frontend/src/renderer/api/queries.ts
+  s_f961a9dea65c95::t_ea3bb87866be56 1-28
+frontend/playwright.config.ts
+  s_f961a9dea65c95::t_f23ed764d80502 1-12
+frontend/src/test/setup.ts
+  s_f961a9dea65c95::t_eb67c5642bbe2c 1
+frontend/src/renderer/terminal/TerminalPane.tsx
+  s_f961a9dea65c95::t_204328d887cba3 1-49
+frontend/src/renderer/components/NewTask.tsx
+  s_021815646d7ba6::t_3832d0e6a86449 1-24,26-28,30-64,69-77,79-81,83-95,98,100-108,110-183,185-216
+  s_021815646d7ba6::t_518424fc9b8fce 25,29
+  s_021815646d7ba6::t_fe06f99698f04b 65-68
+  s_021815646d7ba6::t_2d2e7d03f2e935 78,82,96-97,99
+  s_021815646d7ba6::t_ddeb61c5369f13 109
+  s_021815646d7ba6::t_5bb75910ed88e3 184
+frontend/src/renderer/components/Workspace.tsx
+  s_021815646d7ba6::t_78e4683757031f 1-8,10-32,39-49,52-54,60-62,81-82,85-98,100,128-195
+  s_021815646d7ba6::t_ad8fcb4979b146 9,51,55-59,63-80,99,101-127
+  s_021815646d7ba6::t_3de057ac70636b 33-38
+  s_021815646d7ba6::t_7d4683995bddc5 50
+  s_021815646d7ba6::t_0707801cbc4c87 83-84
+.gitignore
+  s_021815646d7ba6::t_edf1132dd886e8 5
+  s_f961a9dea65c95::t_157e3c70448174 50
+frontend/src/main/backendClient.ts
+  s_0a728ab720e167::t_d2837dc942c03a 1-3,5-32,35-98,115-122,133-258
+  s_f961a9dea65c95::t_d23f64fc9035b0 4
+  s_0a728ab720e167::t_8467080b9d9caa 33-34
+  s_f961a9dea65c95::t_333fc5e035e846 99-114,123-132
+frontend/src/renderer/api/openapi.yaml
+  s_f961a9dea65c95::t_f21bb92ad47639 1-398
+frontend/src/renderer/lib/theme.ts
+  s_021815646d7ba6::t_83cf3ce49b8bc5 1-31
+docs/index.html
+  s_7aed9ae8994573::t_ad6b4ea38fabb7 1-55,70-71
+  s_7aed9ae8994573::t_bc1ac8deee5e5e 56-69
+frontend/src/renderer/api/provider.tsx
+  s_f961a9dea65c95::t_322e3f578f8432 1-17
+frontend/.prettierrc.json
+  s_f961a9dea65c95::t_88d406d5376b2e 1-6
+frontend/src/renderer/components/ProviderLogo.tsx
+  s_021815646d7ba6::t_c5802ab74dfb0e 1-4,7-8,10-106
+  s_021815646d7ba6::t_c89b7b12061003 5-6,9
+frontend/src/renderer/api/schema.d.ts
+  s_f961a9dea65c95::t_94df84a47b3fa7 1-541
+frontend/src/renderer/ui.css
+  s_021815646d7ba6::t_1a09a9aaf4d4ba 1-57,77-78,109,111,113-115,124,126,136-150,153,155,157-161,163-164,166-172,174,181-187,189,205-218,220-250
+  s_021815646d7ba6::t_2278e81689f9a9 58-76,79-108
+  s_021815646d7ba6::t_8b48571b57a256 110,112,116-123,128-135
+  s_021815646d7ba6::t_97689a2b5c3f82 125,127
+  s_021815646d7ba6::t_c0b301b2d2b2b1 151-152,154,156,162,165,173,175-180
+  s_021815646d7ba6::t_a9e154341a8aa0 188,190-203
+  s_021815646d7ba6::t_0db607d8cc2d97 204
+  s_021815646d7ba6::t_117a82664d4068 219
+frontend/src/preload/index.ts
+  s_c7d2eff442b275::t_bc6f4315fe4232 1-3,8-10,12-15,18-33,35-38
+  s_0a728ab720e167::t_a7feefe0450ac6 4-5,7,11
+  s_f961a9dea65c95::t_0547bcf7e454af 6
+  s_0a728ab720e167::t_18a90cb20968bf 16-17
+  s_021815646d7ba6::t_6b105a1de5c8c5 34
+docs/frontend-v1-design.html
+  s_0a728ab720e167::t_4cb834dd3f892a 1-565,576-703,706-710,712-720,732,794-807,809-811,813-844,846-849,851-885,888-909,916-923,926-938,941-998,1001-1012,1016-1056,1059-1084,1090-1125
+  s_0a728ab720e167::t_bcbb289b62adf6 566-575,721-731,733-777,781-782,786-793,910-914,999-1000
+  s_0a728ab720e167::t_75c849821388bf 704-705,711,778-780,783-785,808,812,845,850,886-887,915,924-925,939-940,1013-1015,1057-1058,1085-1089
+frontend/src/renderer/api/client.ts
+  s_f961a9dea65c95::t_9cd2aac1277a27 1-45
+frontend/.prettierignore
+  s_f961a9dea65c95::t_b99f131b543409 1-5
+frontend/src/renderer/App.tsx
+  s_021815646d7ba6::t_d025ca68a072fd 1,4
+  s_c7d2eff442b275::t_0aefbfc8d2118b 2,8-10,24-27,48-49,58-61
+  s_021815646d7ba6::t_029e3a9af9fc5e 3
+  s_021815646d7ba6::t_7c7962a0187392 5-7,11-12,14-17,20,28,30,36-39,42-44,46-47,50-57
+  s_021815646d7ba6::t_44b657f6a0a67a 13,18,21-23
+  s_021815646d7ba6::t_3b587318858c20 19,29,31-33
+  s_0a728ab720e167::t_2b4b6ae0810d37 34-35,40-41,45
+frontend/tsconfig.json
+  s_f961a9dea65c95::t_699c71c2d1ffe8 18-20
+frontend/src/renderer/index.html
+  s_c7d2eff442b275::t_d743fcc9ffa9a4 1-9,11-12
+  s_c7d2eff442b275::t_dafed7a5f58e63 10
+frontend/src/renderer/lib/utils.test.ts
+  s_f961a9dea65c95::t_6062d6489deb2d 1,3-12,30-31
+  s_021815646d7ba6::t_b1749498efda3b 2,13-29
+frontend/src/renderer/types/index.ts
+  s_6949b5b357cad9::t_bd7313e605105c 1,9
+  s_6949b5b357cad9::t_3bcb6a06dabc98 2-5,8
+  s_0a728ab720e167::t_a7feefe0450ac6 6,10-15,17,22-23,25,29
+  s_f961a9dea65c95::t_4c8a3e44b6ffe9 7,16
+  s_c7d2eff442b275::t_337ea2d050a19d 18-21,26-28,30-31,33-39,41-46
+  s_f961a9dea65c95::t_dd7c60eb8ba4de 24
+  s_0a728ab720e167::t_8d367e522f3885 32
+  s_021815646d7ba6::t_8608a3b1b340da 40
+frontend/src/renderer/api/events.ts
+  s_f961a9dea65c95::t_1732abf1c56c16 1-42
+frontend/src/shared/types.ts
+  s_6949b5b357cad9::t_87197e6ab38e73 1-6,12-39,48
+  s_0a728ab720e167::t_d2837dc942c03a 7-11,40-47
+  s_f961a9dea65c95::t_c3d83f45c26da2 49-56
+frontend/src/renderer/index.css
+  s_f961a9dea65c95::t_1dc342b8dbb6ca 1-2
+  s_c7d2eff442b275::t_0e5508d1890673 3-5,7,31-32,36,39-47,81-88,100-115,118-131
+  s_6283cdd66f4aeb::t_783abd0f1302ec 6,8-30,33-35,37-38
+  s_6283cdd66f4aeb::t_f3b3aa48aa59de 48-80
+  s_6283cdd66f4aeb::t_10501f7f70d75f 89-96
+  s_fc946d8e04747c::t_bad2eaf7d431bd 97
+  s_021815646d7ba6::t_cb8a31fd220d7e 98-99
+  s_6283cdd66f4aeb::t_e413e16faf96b5 116-117
+  s_021815646d7ba6::t_aa88f3c030df68 132-133
+docs/frontend-stack.md
+  s_f961a9dea65c95::t_949a736b0db46a 1,3-4,6-7,18,30-34,36,38-39,43,45,50-51,53-59,61,63-67,78-81,85,94,97-109,116,118,127,131,136,139,146,148,150,168,184,191-192,200,203,210-216,223-239,245,247,249,253
+  s_7aed9ae8994573::t_28757290481fdc 2,5,8-17,19-29,35,37,40-42,44,46-49,52,60,62,68-77,82-84,86-93,95-96,110-115,117,119-126,128-130,132-135,137-138,140-145,147,149,151-167,169-183,185-190,193-199,201-202,204-209,217-222,240-244,246,248,250-252
+frontend/src/renderer/store/index.ts
+  s_c7d2eff442b275::t_f791d8f72bd43f 1,3-7,9-11,14-16,18-19,23,29-30,33-35,40-42,50-52,54-55,61-62,64,95-97,136,139,142-144,149-156,159-160,210
+  s_021815646d7ba6::t_bd3075ee914087 2,12-13
+  s_0a728ab720e167::t_9681e2941a6da6 8,17,21-22,31,53,57-58,63,65-69,72,77-82,85-94,98-135,137-138,140-141
+  s_0a728ab720e167::t_c211e1f022a1a8 20,32,56,145-148
+  s_021815646d7ba6::t_ab88ba123844e2 24-28
+  s_021815646d7ba6::t_e8106ecaec259e 36
+  s_021815646d7ba6::t_42af2e49cef5b4 37-39
+  s_021815646d7ba6::t_fbb31758b771b6 43-49
+  s_021815646d7ba6::t_a3646a5cf237ec 59-60
+  s_0a728ab720e167::t_63171e0090d00d 70-71
+  s_021815646d7ba6::t_4e621458caf5ff 73-76,83-84
+  s_021815646d7ba6::t_82bad023e64d58 157-158,161,182-187,209
+  s_021815646d7ba6::t_479daa874b87b7 162-181
+  s_021815646d7ba6::t_09e47700971d82 188-208
+frontend/src/renderer/lib/utils.ts
+  s_f961a9dea65c95::t_703ef8b7d713c2 1-7
+  s_021815646d7ba6::t_9f66cd5406358a 8-21
+frontend/vitest.config.ts
+  s_f961a9dea65c95::t_ed28574decfa26 1-16
+frontend/src/renderer/store/index.test.ts
+  s_021815646d7ba6::t_e9875ec4308993 1-53,57-143,184-192
+  s_021815646d7ba6::t_74144da7f016be 54-56
+  s_021815646d7ba6::t_c008ecee42d351 144-183
+docs/frontend-test-plan.md
+  s_f961a9dea65c95::t_99c34c816ef593 1-163
+frontend/src/renderer/components/WorkspaceSidebar.tsx
+  s_021815646d7ba6::t_7726ffc8079e75 1,9,11-12,17,39,44-49,52-66,68-74,76-79,105-130,133,135,137-138,140-141,143-198,202-204,206-208,238-241,263-265
+  s_021815646d7ba6::t_e0cd3b5722d92a 2-8,10,14-15,18-20,22-29,31-38,40-43,50,81-104,131-132,134,136,139,142,242-262,266-279
+  s_021815646d7ba6::t_b6c94ed35dbcc1 13,16
+  s_021815646d7ba6::t_54350bed046ab7 21,30
+  s_6283cdd66f4aeb::t_c174e9b89107fa 51,67,75,80
+  s_021815646d7ba6::t_ff40422a3bd3cb 199-201,205,209-237
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "28663595ac9e79b35999f13b8bf7735c0da475ba",
+  "prompts": {},
+  "sessions": {
+    "s_021815646d7ba6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "00b561b9-439b-48ba-a5d0-d51c6ed90579",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    },
+    "s_0a728ab720e167": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e6ed0-ec2a-7462-9097-53b072fad913",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    },
+    "s_6283cdd66f4aeb": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e8ecb-a382-7091-aa42-8efddafe6a56",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    },
+    "s_6949b5b357cad9": {
+      "agent_id": {
+        "tool": "droid",
+        "id": "ddb651b4-e1f9-41f1-a771-63d144bcab80",
+        "model": "custom:GLM-5.1-0"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    },
+    "s_7aed9ae8994573": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cb138ff5-90e4-47e6-bba2-ea7ddab9dc65",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    },
+    "s_c7d2eff442b275": {
+      "agent_id": {
+        "tool": "droid",
+        "id": "ad301b83-b596-4dbd-97ba-1625b6d85963",
+        "model": "custom:GLM-5.1-0"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    },
+    "s_f961a9dea65c95": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8570ae99-5ce4-4784-9440-12c1bbbd5986",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    },
+    "s_fc946d8e04747c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0cdea610-0fee-473f-9272-bdfe80362c7a",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    }
+  }
+}

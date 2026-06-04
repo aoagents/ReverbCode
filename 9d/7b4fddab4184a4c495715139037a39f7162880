@@ -1,0 +1,25 @@
+docs/frontend-stack-decision.html
+  s_7aed9ae8994573::t_b160a455905482 1-200
+docs/index.html
+  s_7aed9ae8994573::t_ad6b4ea38fabb7 1-57
+.github/workflows/pages.yml
+  s_7aed9ae8994573::t_89e9638b9e3645 1-42
+docs/frontend-design.html
+  s_7aed9ae8994573::t_867d916f6cdcb2 1-363
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "9d7b4fddab4184a4c495715139037a39f7162880",
+  "prompts": {},
+  "sessions": {
+    "s_7aed9ae8994573": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cb138ff5-90e4-47e6-bba2-ea7ddab9dc65",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    }
+  }
+}
