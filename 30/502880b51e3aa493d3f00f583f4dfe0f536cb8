@@ -1,0 +1,21 @@
+frontend/eslint.config.mjs
+  s_021815646d7ba6::t_3ea7aa1f244eda 14
+frontend/tsconfig.json
+  s_021815646d7ba6::t_10229f0a9b20b7 23
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "30502880b51e3aa493d3f00f583f4dfe0f536cb8",
+  "prompts": {},
+  "sessions": {
+    "s_021815646d7ba6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "00b561b9-439b-48ba-a5d0-d51c6ed90579",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    }
+  }
+}
