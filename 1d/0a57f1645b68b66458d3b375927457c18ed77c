@@ -1,0 +1,25 @@
+backend/internal/domain/session.go
+  s_021815646d7ba6::t_732d7ee2c7788a 57-62
+backend/internal/service/session/service.go
+  s_021815646d7ba6::t_69b8f5225b2e07 213-221
+backend/internal/service/session/service_test.go
+  s_021815646d7ba6::t_9f74b4226c4c32 108-141
+backend/internal/httpd/apispec/openapi.yaml
+  s_021815646d7ba6::t_97ef75d496a46b 984-985
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "1d0a57f1645b68b66458d3b375927457c18ed77c",
+  "prompts": {},
+  "sessions": {
+    "s_021815646d7ba6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "00b561b9-439b-48ba-a5d0-d51c6ed90579",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    }
+  }
+}
