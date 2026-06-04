@@ -92,6 +92,45 @@ func TestWorkspaceIntegrationDestroyRefusesLockedWorktree(t *testing.T) {
 	}
 }
 
+func TestWorkspaceIntegrationCreateFetchesLatestRemote(t *testing.T) {
+	git := requireGit(t)
+	tmp := t.TempDir()
+	repo := setupOriginClone(t, git, tmp)
+	root := filepath.Join(tmp, "managed")
+	ws, err := New(Options{Binary: git, ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+
+	// Push a new commit to origin/main FROM a separate pusher clone, bypassing
+	// the working clone. Without fetch, the working clone wouldn't see it.
+	origin := filepath.Join(tmp, "origin.git")
+	pusher := filepath.Join(tmp, "pusher")
+	run(t, git, "clone", origin, pusher)
+	// Mirror setupOriginClone's explicit `checkout main`: on CI runners where
+	// `init.defaultBranch` is `master`, the bare `origin.git` HEAD still points
+	// at refs/heads/master after the seed pushed main, so a fresh `git clone`
+	// here checks out HEAD (master, which doesn't exist) and lands the pusher
+	// on no branch.
+	runGit(t, git, pusher, "checkout", "main")
+	runGit(t, git, pusher, "config", "user.email", "ao@example.com")
+	runGit(t, git, pusher, "config", "user.name", "Ao Agents")
+	if err := os.WriteFile(filepath.Join(pusher, "post-seed.txt"), []byte("after seed\n"), 0o644); err != nil {
+		t.Fatalf("write post-seed: %v", err)
+	}
+	runGit(t, git, pusher, "add", "post-seed.txt")
+	runGit(t, git, pusher, "commit", "-m", "post-seed")
+	runGit(t, git, pusher, "push", "origin", "main")
+
+	info, err := ws.Create(context.Background(), ports.WorkspaceConfig{ProjectID: "proj", SessionID: "sess", Branch: "feature/fetch"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(info.Path, "post-seed.txt")); err != nil {
+		t.Fatalf("expected post-seed.txt in worktree (proves fetch ran): %v", err)
+	}
+}
+
 func requireGit(t *testing.T) string {
 	t.Helper()
 	git, err := exec.LookPath("git")

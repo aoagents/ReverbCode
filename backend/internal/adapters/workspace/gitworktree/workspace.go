@@ -8,14 +8,16 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 const (
-	defaultGitBinary = "git"
-	defaultBranch    = "main"
+	defaultGitBinary      = "git"
+	defaultBranch         = "main"
+	defaultCommandTimeout = 30 * time.Second
 )
 
 // ErrUnsafePath is returned when a resolved worktree path escapes the managed
@@ -108,6 +110,11 @@ func (w *Workspace) Create(ctx context.Context, cfg ports.WorkspaceConfig) (port
 	if err := w.validateBranch(ctx, repo, cfg.Branch); err != nil {
 		return ports.WorkspaceInfo{}, err
 	}
+	// NOTE: hasOriginRemote is also called inside resolveBaseRef; consolidation
+	// deferred (see the followup issue for upstream-parity work).
+	if w.hasOriginRemote(ctx, repo) {
+		w.fetchOrigin(ctx, repo)
+	}
 	path, err := w.managedPath(cfg.ProjectID, cfg.SessionID)
 	if err != nil {
 		return ports.WorkspaceInfo{}, err
@@ -183,10 +190,23 @@ func (w *Workspace) Restore(ctx context.Context, cfg ports.WorkspaceConfig) (por
 	if nonEmpty, err := pathExistsNonEmpty(path); err != nil {
 		return ports.WorkspaceInfo{}, err
 	} else if nonEmpty {
-		return ports.WorkspaceInfo{}, fmt.Errorf("gitworktree: refusing to restore %q: path exists and is not a registered worktree", path)
+		// Path is non-empty AND not in the `git worktree list` records
+		// (findWorktree above already returned for the registered case).
+		// Safe to remove: we are NOT deleting a registered worktree — that
+		// invariant is preserved by the findWorktree shortcut above.
+		// Mirrors upstream's cleanupStaleWorkspacePath without compromising
+		// data safety.
+		if err := os.RemoveAll(path); err != nil {
+			return ports.WorkspaceInfo{}, fmt.Errorf("gitworktree: remove unregistered residue %q: %w", path, err)
+		}
 	}
 	if err := w.validateBranch(ctx, repo, cfg.Branch); err != nil {
 		return ports.WorkspaceInfo{}, err
+	}
+	// NOTE: hasOriginRemote is also called inside resolveBaseRef; consolidation
+	// deferred (see the followup issue for upstream-parity work).
+	if w.hasOriginRemote(ctx, repo) {
+		w.fetchOrigin(ctx, repo)
 	}
 	if err := w.addWorktree(ctx, repo, path, cfg.Branch); err != nil {
 		return ports.WorkspaceInfo{}, err
@@ -201,6 +221,7 @@ func (w *Workspace) addWorktree(ctx context.Context, repo, path, branch string) 
 	}
 	if localBranch {
 		if _, err := w.run(ctx, w.binary, worktreeAddBranchArgs(repo, path, branch)...); err != nil {
+			w.cleanupOrphan(ctx, repo, path)
 			return fmt.Errorf("gitworktree: worktree add existing branch %q: %w", branch, err)
 		}
 		return nil
@@ -210,9 +231,23 @@ func (w *Workspace) addWorktree(ctx context.Context, repo, path, branch string) 
 		return err
 	}
 	if _, err := w.run(ctx, w.binary, worktreeAddNewBranchArgs(repo, branch, path, baseRef)...); err != nil {
+		w.cleanupOrphan(ctx, repo, path)
 		return fmt.Errorf("gitworktree: worktree add branch %q from %q: %w", branch, baseRef, err)
 	}
 	return nil
+}
+
+// cleanupOrphan best-effort removes an orphan worktree left by a failed
+// `git worktree add`. Errors are swallowed: the caller is already returning
+// the underlying add failure, which is the actionable signal. Safe to use
+// --force here because no agent has had a chance to commit into this path.
+// A fresh background context (with its own timeout) is used so that a
+// cancelled caller context — e.g. an HTTP request aborted mid-add — does
+// not also kill the cleanup subprocess and leave the orphan behind.
+func (w *Workspace) cleanupOrphan(_ context.Context, repo, path string) {
+	ctx, cancel := context.WithTimeout(context.Background(), defaultCommandTimeout)
+	defer cancel()
+	_, _ = w.run(ctx, w.binary, worktreeRemoveForceArgs(repo, path)...)
 }
 
 func (w *Workspace) validateBranch(ctx context.Context, repo, branch string) error {
@@ -223,7 +258,7 @@ func (w *Workspace) validateBranch(ctx context.Context, repo, branch string) err
 }
 
 func (w *Workspace) resolveBaseRef(ctx context.Context, repo, branch string) (string, error) {
-	candidates := baseRefCandidates(branch, w.defaultBranch)
+	candidates := baseRefCandidates(branch, w.defaultBranch, w.hasOriginRemote(ctx, repo))
 	for _, ref := range candidates {
 		exists, err := w.refExists(ctx, repo, ref)
 		if err != nil {
@@ -234,6 +269,28 @@ func (w *Workspace) resolveBaseRef(ctx context.Context, repo, branch string) (st
 		}
 	}
 	return "", fmt.Errorf("gitworktree: no base ref found for branch %q (tried %s)", branch, strings.Join(candidates, ", "))
+}
+
+// hasOriginRemote reports whether the repo has a remote named "origin". The
+// error from git is intentionally swallowed: any failure — including "no such
+// remote", corrupt config, or transient I/O — is treated as "origin absent".
+// This is safe because the callers (resolveBaseRef, Create, Restore) fall
+// back to local refs; the worst outcome of a false negative is that
+// remote-tracking candidates are skipped, which is exactly correct for a
+// no-origin repo.
+func (w *Workspace) hasOriginRemote(ctx context.Context, repo string) bool {
+	_, err := w.run(ctx, w.binary, remoteGetURLOriginArgs(repo)...)
+	return err == nil
+}
+
+// fetchOrigin runs `git fetch origin --quiet` and swallows the error. Offline
+// flows must still succeed; the caller can only act on locally-cached refs in
+// that case. We don't surface the fetch error because there's nothing the
+// caller can do about it that we aren't already doing (proceed with cached
+// refs and let the subsequent base-ref resolve fail loudly if there's no
+// usable ref).
+func (w *Workspace) fetchOrigin(ctx context.Context, repo string) {
+	_, _ = w.run(ctx, w.binary, fetchOriginQuietArgs(repo)...)
 }
 
 func (w *Workspace) refExists(ctx context.Context, repo, ref string) (bool, error) {
@@ -393,7 +450,21 @@ func pathExistsNonEmpty(path string) (bool, error) {
 	return false, fmt.Errorf("gitworktree: inspect path %q: %w", path, err)
 }
 
+// withDefaultTimeout returns ctx unchanged when it already has a deadline, or
+// wraps it with a default per-command timeout otherwise. The caller is the
+// authority on cancellation — we only fill in a backstop so a forgotten
+// `context.Background()` can't hang on `git fetch` against an unreachable
+// remote.
+func withDefaultTimeout(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc) {
+	if _, ok := ctx.Deadline(); ok {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, d)
+}
+
 func runCommand(ctx context.Context, binary string, args ...string) ([]byte, error) {
+	ctx, cancel := withDefaultTimeout(ctx, defaultCommandTimeout)
+	defer cancel()
 	cmd := exec.CommandContext(ctx, binary, args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {

@@ -27,6 +27,16 @@ func worktreeRemoveArgs(repo, path string) []string {
 	return []string{"-C", repo, "worktree", "remove", path}
 }
 
+// worktreeRemoveForceArgs is used ONLY by Create's cleanup-on-failure path.
+// It is deliberately distinct from worktreeRemoveArgs (which omits --force
+// for Destroy) because the contexts are different: Destroy operates on
+// worktrees that may contain in-progress agent commits; Create cleanup
+// operates on an orphan from a just-attempted creation where no agent has
+// committed. NEVER use this from Destroy.
+func worktreeRemoveForceArgs(repo, path string) []string {
+	return []string{"-C", repo, "worktree", "remove", "--force", path}
+}
+
 func worktreePruneArgs(repo string) []string {
 	return []string{"-C", repo, "worktree", "prune"}
 }
@@ -35,12 +45,30 @@ func worktreeListPorcelainArgs(repo string) []string {
 	return []string{"-C", repo, "worktree", "list", "--porcelain"}
 }
 
-func baseRefCandidates(branch, defaultBranch string) []string {
-	candidates := []string{"origin/" + branch}
-	if strings.Contains(defaultBranch, "/") {
+func remoteGetURLOriginArgs(repo string) []string {
+	return []string{"-C", repo, "remote", "get-url", "origin"}
+}
+
+func fetchOriginQuietArgs(repo string) []string {
+	return []string{"-C", repo, "fetch", "origin", "--quiet"}
+}
+
+// baseRefCandidates returns the ordered list of refs to probe for a new
+// worktree's base. When hasOrigin is true we prefer remote-tracking refs;
+// when false we skip them entirely so we don't burn subprocesses on lookups
+// that can't succeed. defaultBranch may already be qualified (e.g.
+// "upstream/main"), in which case it is used as-is.
+func baseRefCandidates(branch, defaultBranch string, hasOrigin bool) []string {
+	var candidates []string
+	if hasOrigin {
+		candidates = append(candidates, "origin/"+branch)
+		if strings.Contains(defaultBranch, "/") {
+			candidates = append(candidates, defaultBranch)
+		} else {
+			candidates = append(candidates, "origin/"+defaultBranch)
+		}
+	} else if strings.Contains(defaultBranch, "/") {
 		candidates = append(candidates, defaultBranch)
-	} else {
-		candidates = append(candidates, "origin/"+defaultBranch)
 	}
 	return append(candidates, branch)
 }

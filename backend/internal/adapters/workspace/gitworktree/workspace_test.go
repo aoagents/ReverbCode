@@ -3,14 +3,41 @@ package gitworktree
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
+
+func TestWithDefaultTimeoutNoExistingDeadline(t *testing.T) {
+	ctx := context.Background()
+	wrapped, cancel := withDefaultTimeout(ctx, defaultCommandTimeout)
+	defer cancel()
+	deadline, ok := wrapped.Deadline()
+	if !ok {
+		t.Fatal("expected deadline, got none")
+	}
+	until := time.Until(deadline)
+	if until <= 0 || until > defaultCommandTimeout {
+		t.Fatalf("deadline %v not in (0, %v]", until, defaultCommandTimeout)
+	}
+}
+
+func TestWithDefaultTimeoutPreservesExistingDeadline(t *testing.T) {
+	parent, parentCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer parentCancel()
+	wrapped, cancel := withDefaultTimeout(parent, defaultCommandTimeout)
+	defer cancel()
+	if wrapped != parent {
+		t.Fatal("expected same context when deadline already set")
+	}
+}
 
 func TestCommandArgs(t *testing.T) {
 	repo := "/repo"
@@ -32,6 +59,9 @@ func TestCommandArgs(t *testing.T) {
 		{"remove", worktreeRemoveArgs(repo, path), []string{"-C", repo, "worktree", "remove", path}},
 		{"prune", worktreePruneArgs(repo), []string{"-C", repo, "worktree", "prune"}},
 		{"list", worktreeListPorcelainArgs(repo), []string{"-C", repo, "worktree", "list", "--porcelain"}},
+		{"remote get-url", remoteGetURLOriginArgs(repo), []string{"-C", repo, "remote", "get-url", "origin"}},
+		{"fetch origin quiet", fetchOriginQuietArgs(repo), []string{"-C", repo, "fetch", "origin", "--quiet"}},
+		{"remove force", worktreeRemoveForceArgs(repo, path), []string{"-C", repo, "worktree", "remove", "--force", path}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -42,17 +72,55 @@ func TestCommandArgs(t *testing.T) {
 	}
 }
 
-func TestBaseRefCandidates(t *testing.T) {
-	got := baseRefCandidates("feature/test", "main")
+func TestBaseRefCandidatesWithOrigin(t *testing.T) {
+	got := baseRefCandidates("feature/test", "main", true)
 	want := []string{"origin/feature/test", "origin/main", "feature/test"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("candidates = %#v, want %#v", got, want)
 	}
 
-	got = baseRefCandidates("feature/test", "upstream/main")
+	got = baseRefCandidates("feature/test", "upstream/main", true)
 	want = []string{"origin/feature/test", "upstream/main", "feature/test"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("qualified candidates = %#v, want %#v", got, want)
+	}
+}
+
+func TestBaseRefCandidatesWithoutOrigin(t *testing.T) {
+	got := baseRefCandidates("feature/test", "main", false)
+	want := []string{"feature/test"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("no-origin plain default = %#v, want %#v", got, want)
+	}
+
+	got = baseRefCandidates("feature/test", "upstream/main", false)
+	want = []string{"upstream/main", "feature/test"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("no-origin qualified default = %#v, want %#v", got, want)
+	}
+}
+
+func TestHasOriginRemote(t *testing.T) {
+	ws, err := New(Options{ManagedRoot: t.TempDir(), RepoResolver: StaticRepoResolver{"p": "/repo"}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	var lastArgs []string
+	ws.run = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		lastArgs = append([]string{}, args...)
+		return []byte("git@github.com:foo/bar.git\n"), nil
+	}
+	if !ws.hasOriginRemote(context.Background(), "/repo") {
+		t.Fatal("expected true when remote get-url succeeds")
+	}
+	if want := []string{"-C", "/repo", "remote", "get-url", "origin"}; !reflect.DeepEqual(lastArgs, want) {
+		t.Fatalf("args = %#v, want %#v", lastArgs, want)
+	}
+	ws.run = func(context.Context, string, ...string) ([]byte, error) {
+		return nil, errors.New("fatal: no such remote 'origin'")
+	}
+	if ws.hasOriginRemote(context.Background(), "/repo") {
+		t.Fatal("expected false when remote get-url fails")
 	}
 }
 
@@ -165,23 +233,77 @@ func TestValidateConfigAcceptsBenignIDs(t *testing.T) {
 	}
 }
 
-func TestRestoreRefusesNonEmptyUnregisteredPath(t *testing.T) {
+func TestRestoreAutoCleansUnregisteredResidueAndProceeds(t *testing.T) {
 	root := t.TempDir()
 	repo := t.TempDir()
 	ws, err := New(Options{ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
 	if err != nil {
 		t.Fatalf("new: %v", err)
 	}
-	ws.run = func(context.Context, string, ...string) ([]byte, error) {
-		return []byte("worktree " + repo + "\nbranch refs/heads/main\n"), nil
-	}
 	path := filepath.Join(ws.managedRoot, "proj", "sess")
-	if err := mkdirFile(path, "keep.txt"); err != nil {
+	if err := mkdirFile(path, "leftover.txt"); err != nil {
 		t.Fatalf("seed path: %v", err)
 	}
-	_, err = ws.Restore(context.Background(), ports.WorkspaceConfig{ProjectID: "proj", SessionID: "sess", Branch: "feature/one"})
-	if err == nil || !strings.Contains(err.Error(), "path exists and is not a registered worktree") {
-		t.Fatalf("restore error = %v", err)
+	ws.run = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.Contains(joined, "worktree list --porcelain"):
+			// Residue is NOT registered.
+			return []byte("worktree " + repo + "\nbranch refs/heads/main\n"), nil
+		case strings.Contains(joined, "check-ref-format"):
+			return nil, nil
+		case strings.Contains(joined, "remote get-url origin"):
+			return nil, errors.New("no origin")
+		case strings.Contains(joined, "rev-parse --verify --quiet refs/heads/feature/one"):
+			return nil, &exec.ExitError{ProcessState: stubExitState(1)}
+		case strings.Contains(joined, "rev-parse --verify --quiet"):
+			return []byte("abc\n"), nil
+		case strings.Contains(joined, "worktree add"):
+			return nil, nil
+		default:
+			return nil, nil
+		}
+	}
+	info, err := ws.Restore(context.Background(), ports.WorkspaceConfig{ProjectID: "proj", SessionID: "sess", Branch: "feature/one"})
+	if err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	if info.Path != path {
+		t.Fatalf("info.Path = %q, want %q", info.Path, path)
+	}
+	if _, statErr := os.Stat(filepath.Join(path, "leftover.txt")); !os.IsNotExist(statErr) {
+		t.Fatalf("expected leftover.txt to be removed, stat err = %v", statErr)
+	}
+}
+
+func TestRestoreStillRefusesRegisteredResidue(t *testing.T) {
+	// Safety invariant: even if path is non-empty, if it IS a registered
+	// worktree we MUST NOT rmSync it (would destroy registered work).
+	// The findWorktree shortcut should catch this and return the registered
+	// info, never reaching the residue branch.
+	root := t.TempDir()
+	repo := t.TempDir()
+	ws, err := New(Options{ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	path := filepath.Join(ws.managedRoot, "proj", "sess")
+	if err := mkdirFile(path, "agent-work.txt"); err != nil {
+		t.Fatalf("seed path: %v", err)
+	}
+	ws.run = func(context.Context, string, ...string) ([]byte, error) {
+		// Path IS registered — findWorktree shortcut should fire.
+		return []byte("worktree " + path + "\nbranch refs/heads/feature/one\n"), nil
+	}
+	info, err := ws.Restore(context.Background(), ports.WorkspaceConfig{ProjectID: "proj", SessionID: "sess", Branch: "feature/one"})
+	if err != nil {
+		t.Fatalf("restore registered: %v", err)
+	}
+	if info.Branch != "feature/one" {
+		t.Fatalf("info.Branch = %q, want feature/one", info.Branch)
+	}
+	if _, statErr := os.Stat(filepath.Join(path, "agent-work.txt")); statErr != nil {
+		t.Fatalf("agent-work.txt MUST be preserved (data-loss guard): %v", statErr)
 	}
 }
 
@@ -233,4 +355,309 @@ func mkdirFile(dir, name string) error {
 		return err
 	}
 	return os.WriteFile(filepath.Join(dir, name), []byte("data"), 0o644)
+}
+
+func containsArgs(calls [][]string, sub []string) bool {
+	return indexOfArgs(calls, sub) >= 0
+}
+
+func indexOfArgs(calls [][]string, sub []string) int {
+	for i, c := range calls {
+		joined := strings.Join(c, " ")
+		if strings.Contains(joined, strings.Join(sub, " ")) {
+			return i
+		}
+	}
+	return -1
+}
+
+// stubExitState spawns a tiny shell command that exits with the requested
+// code so the returned *os.ProcessState carries a real exit code — avoids
+// constructing os/exec internals. Depends on a POSIX `sh` in PATH; if/when
+// Windows CI is added this needs a platform branch.
+func stubExitState(code int) *os.ProcessState {
+	cmd := exec.Command("sh", "-c", fmt.Sprintf("exit %d", code))
+	_ = cmd.Run()
+	return cmd.ProcessState
+}
+
+func TestCreateFetchesOriginWhenPresent(t *testing.T) {
+	ws, err := New(Options{ManagedRoot: t.TempDir(), RepoResolver: StaticRepoResolver{"proj": "/repo"}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	var calls [][]string
+	ws.run = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		calls = append(calls, append([]string{}, args...))
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.Contains(joined, "check-ref-format"):
+			return nil, nil
+		case strings.Contains(joined, "remote get-url origin"):
+			return []byte("origin\n"), nil
+		case strings.Contains(joined, "fetch origin --quiet"):
+			return nil, nil
+		case strings.Contains(joined, "rev-parse --verify --quiet refs/heads/feature/one"):
+			return nil, &exec.ExitError{ProcessState: stubExitState(1)}
+		case strings.Contains(joined, "rev-parse --verify --quiet"):
+			return []byte("abc\n"), nil
+		case strings.Contains(joined, "worktree add"):
+			return nil, nil
+		default:
+			return nil, nil
+		}
+	}
+	_, err = ws.Create(context.Background(), ports.WorkspaceConfig{ProjectID: "proj", SessionID: "sess", Branch: "feature/one"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	fetchIdx := indexOfArgs(calls, []string{"fetch", "origin", "--quiet"})
+	addIdx := indexOfArgs(calls, []string{"worktree", "add"})
+	if fetchIdx < 0 {
+		t.Fatalf("expected git fetch origin --quiet call; calls=%v", calls)
+	}
+	if addIdx < 0 {
+		t.Fatalf("expected git worktree add call; calls=%v", calls)
+	}
+	if fetchIdx > addIdx {
+		t.Fatalf("expected fetch before worktree add: fetchIdx=%d addIdx=%d", fetchIdx, addIdx)
+	}
+}
+
+func TestCreateSkipsFetchWhenNoOrigin(t *testing.T) {
+	ws, err := New(Options{ManagedRoot: t.TempDir(), RepoResolver: StaticRepoResolver{"proj": "/repo"}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	var calls [][]string
+	ws.run = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		calls = append(calls, append([]string{}, args...))
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.Contains(joined, "check-ref-format"):
+			return nil, nil
+		case strings.Contains(joined, "remote get-url origin"):
+			return nil, errors.New("fatal: no such remote 'origin'")
+		case strings.Contains(joined, "rev-parse --verify --quiet refs/heads/feature/one"):
+			return nil, &exec.ExitError{ProcessState: stubExitState(1)}
+		case strings.Contains(joined, "rev-parse --verify --quiet"):
+			return []byte("abc\n"), nil
+		case strings.Contains(joined, "worktree add"):
+			return nil, nil
+		default:
+			return nil, nil
+		}
+	}
+	_, err = ws.Create(context.Background(), ports.WorkspaceConfig{ProjectID: "proj", SessionID: "sess", Branch: "feature/one"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if containsArgs(calls, []string{"fetch", "origin", "--quiet"}) {
+		t.Fatalf("expected no fetch when origin absent; calls=%v", calls)
+	}
+}
+
+func TestCreateContinuesWhenFetchFails(t *testing.T) {
+	ws, err := New(Options{ManagedRoot: t.TempDir(), RepoResolver: StaticRepoResolver{"proj": "/repo"}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	ws.run = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.Contains(joined, "check-ref-format"):
+			return nil, nil
+		case strings.Contains(joined, "remote get-url origin"):
+			return []byte("origin\n"), nil
+		case strings.Contains(joined, "fetch origin --quiet"):
+			return nil, errors.New("could not resolve host")
+		case strings.Contains(joined, "rev-parse --verify --quiet refs/heads/feature/one"):
+			return nil, &exec.ExitError{ProcessState: stubExitState(1)}
+		case strings.Contains(joined, "rev-parse --verify --quiet"):
+			return []byte("abc\n"), nil
+		case strings.Contains(joined, "worktree add"):
+			return nil, nil
+		default:
+			return nil, nil
+		}
+	}
+	if _, err := ws.Create(context.Background(), ports.WorkspaceConfig{ProjectID: "proj", SessionID: "sess", Branch: "feature/one"}); err != nil {
+		t.Fatalf("create with failing fetch: %v", err)
+	}
+}
+
+func TestCreateCleansUpOrphanWhenAddFails(t *testing.T) {
+	root := t.TempDir()
+	repo := t.TempDir()
+	ws, err := New(Options{ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	var calls [][]string
+	ws.run = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		calls = append(calls, append([]string{}, args...))
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.Contains(joined, "check-ref-format"):
+			return nil, nil
+		case strings.Contains(joined, "remote get-url origin"):
+			return nil, errors.New("no origin")
+		case strings.Contains(joined, "rev-parse --verify --quiet refs/heads/feature/one"):
+			return nil, &exec.ExitError{ProcessState: stubExitState(1)}
+		case strings.Contains(joined, "rev-parse --verify --quiet"):
+			return []byte("abc\n"), nil
+		case strings.Contains(joined, "worktree add"):
+			return nil, errors.New("fatal: <path> already exists")
+		case strings.Contains(joined, "worktree remove --force"):
+			return nil, nil
+		default:
+			return nil, nil
+		}
+	}
+	_, err = ws.Create(context.Background(), ports.WorkspaceConfig{ProjectID: "proj", SessionID: "sess", Branch: "feature/one"})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "worktree add") {
+		t.Fatalf("error should mention the add operation; got: %v", err)
+	}
+	if indexOfArgs(calls, []string{"worktree", "remove", "--force"}) < 0 {
+		t.Fatalf("expected worktree remove --force cleanup; calls=%v", calls)
+	}
+}
+
+func TestCreateCleanupSwallowsSecondaryError(t *testing.T) {
+	root := t.TempDir()
+	repo := t.TempDir()
+	ws, err := New(Options{ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	ws.run = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.Contains(joined, "check-ref-format"):
+			return nil, nil
+		case strings.Contains(joined, "remote get-url origin"):
+			return nil, errors.New("no origin")
+		case strings.Contains(joined, "rev-parse --verify --quiet refs/heads/feature/one"):
+			return nil, &exec.ExitError{ProcessState: stubExitState(1)}
+		case strings.Contains(joined, "rev-parse --verify --quiet"):
+			return []byte("abc\n"), nil
+		case strings.Contains(joined, "worktree add"):
+			return nil, errors.New("fatal: add failed")
+		case strings.Contains(joined, "worktree remove --force"):
+			return nil, errors.New("fatal: cleanup also failed")
+		default:
+			return nil, nil
+		}
+	}
+	_, err = ws.Create(context.Background(), ports.WorkspaceConfig{ProjectID: "proj", SessionID: "sess", Branch: "feature/one"})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "add failed") {
+		t.Fatalf("original add error should surface; got: %v", err)
+	}
+}
+
+func TestCreateCleanupRunsWithFreshContextWhenCallerCancelled(t *testing.T) {
+	// When the caller's ctx is cancelled mid-add (e.g. HTTP request
+	// aborted), cleanupOrphan MUST run with a fresh context. Reusing the
+	// cancelled caller ctx — directly or via withDefaultTimeout — yields
+	// an already-cancelled child, the `worktree remove --force` subprocess
+	// is killed before it runs, and the orphan that cleanupOrphan exists
+	// to prevent is left on disk.
+	root := t.TempDir()
+	repo := t.TempDir()
+	ws, err := New(Options{ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	var (
+		cleanupCalled bool
+		cleanupCtxErr error
+	)
+	ws.run = func(callerCtx context.Context, _ string, args ...string) ([]byte, error) {
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.Contains(joined, "check-ref-format"):
+			return nil, nil
+		case strings.Contains(joined, "remote get-url origin"):
+			return nil, errors.New("no origin")
+		case strings.Contains(joined, "rev-parse --verify --quiet refs/heads/feature/one"):
+			return nil, &exec.ExitError{ProcessState: stubExitState(1)}
+		case strings.Contains(joined, "rev-parse --verify --quiet"):
+			return []byte("abc\n"), nil
+		case strings.Contains(joined, "worktree add"):
+			return nil, errors.New("fatal: add failed")
+		case strings.Contains(joined, "worktree remove --force"):
+			cleanupCalled = true
+			cleanupCtxErr = callerCtx.Err()
+			return nil, nil
+		default:
+			return nil, nil
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, _ = ws.Create(ctx, ports.WorkspaceConfig{ProjectID: "proj", SessionID: "sess", Branch: "feature/one"})
+	if !cleanupCalled {
+		t.Fatal("cleanup must run even when caller ctx is cancelled")
+	}
+	if cleanupCtxErr != nil {
+		t.Fatalf("cleanup ctx must be fresh, got Err()=%v", cleanupCtxErr)
+	}
+}
+
+func TestCreateCleansUpOrphanWhenAddFailsExistingBranch(t *testing.T) {
+	// Covers the addWorktree localBranch=true path: refs/heads/<branch> exists,
+	// so we skip resolveBaseRef and call `worktree add <path> <branch>` (no -b).
+	// If that fails, cleanupOrphan must still fire.
+	root := t.TempDir()
+	repo := t.TempDir()
+	ws, err := New(Options{ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	var calls [][]string
+	ws.run = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		calls = append(calls, append([]string{}, args...))
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.Contains(joined, "check-ref-format"):
+			return nil, nil
+		case strings.Contains(joined, "remote get-url origin"):
+			return nil, errors.New("no origin")
+		case strings.Contains(joined, "rev-parse --verify --quiet refs/heads/feature/one"):
+			// Local branch DOES exist — drives addWorktree into the
+			// existing-branch path (worktree add <path> <branch>, no -b).
+			return []byte("abc\n"), nil
+		case strings.Contains(joined, "worktree add"):
+			return nil, errors.New("fatal: <path> already exists")
+		case strings.Contains(joined, "worktree remove --force"):
+			return nil, nil
+		default:
+			return nil, nil
+		}
+	}
+	_, err = ws.Create(context.Background(), ports.WorkspaceConfig{ProjectID: "proj", SessionID: "sess", Branch: "feature/one"})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "worktree add existing branch") {
+		t.Fatalf("error should mention existing-branch add; got: %v", err)
+	}
+	if indexOfArgs(calls, []string{"worktree", "remove", "--force"}) < 0 {
+		t.Fatalf("expected worktree remove --force cleanup; calls=%v", calls)
+	}
+	addIdx := indexOfArgs(calls, []string{"worktree", "add"})
+	if addIdx < 0 {
+		t.Fatal("no worktree add call recorded")
+	}
+	for _, a := range calls[addIdx] {
+		if a == "-b" {
+			t.Fatalf("localBranch=true path must not pass -b; calls[%d]=%v", addIdx, calls[addIdx])
+		}
+	}
 }
