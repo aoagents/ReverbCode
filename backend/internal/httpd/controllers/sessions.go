@@ -33,6 +33,8 @@ type SessionService interface {
 	Cleanup(ctx context.Context, project domain.ProjectID) ([]domain.SessionID, error)
 	Rename(ctx context.Context, id domain.SessionID, displayName string) error
 	Send(ctx context.Context, id domain.SessionID, message string) error
+	ListPRs(ctx context.Context, id domain.SessionID) ([]domain.PRFacts, error)
+	ClaimPR(ctx context.Context, id domain.SessionID, ref string, opts sessionsvc.ClaimPROptions) (sessionsvc.ClaimPRResult, error)
 }
 
 // SessionsController owns the session routes. Nil keeps routes registered but
@@ -47,6 +49,8 @@ func (c *SessionsController) Register(r chi.Router) {
 	r.Post("/sessions", c.spawn)
 	r.Post("/sessions/cleanup", c.cleanup)
 	r.Get("/sessions/{sessionId}", c.get)
+	r.Get("/sessions/{sessionId}/pr", c.listPRs)
+	r.Post("/sessions/{sessionId}/pr/claim", c.claimPR)
 	r.Patch("/sessions/{sessionId}", c.rename)
 	r.Post("/sessions/{sessionId}/restore", c.restore)
 	r.Post("/sessions/{sessionId}/kill", c.kill)
@@ -114,6 +118,45 @@ func (c *SessionsController) get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	envelope.WriteJSON(w, http.StatusOK, SessionResponse{Session: sess})
+}
+
+func (c *SessionsController) listPRs(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "GET", "/api/v1/sessions/{sessionId}/pr")
+		return
+	}
+	prs, err := c.Svc.ListPRs(r.Context(), sessionID(r))
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, ListSessionPRsResponse{SessionID: sessionID(r), PRs: sessionPRFacts(prs)})
+}
+
+func (c *SessionsController) claimPR(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/{sessionId}/pr/claim")
+		return
+	}
+	var in ClaimPRRequest
+	if err := decodeJSON(r, &in); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+		return
+	}
+	if strings.TrimSpace(in.PR) == "" {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "PR_REQUIRED", "pr is required", nil)
+		return
+	}
+	allowTakeover := true
+	if in.AllowTakeover != nil {
+		allowTakeover = *in.AllowTakeover
+	}
+	res, err := c.Svc.ClaimPR(r.Context(), sessionID(r), in.PR, sessionsvc.ClaimPROptions{AllowTakeover: allowTakeover})
+	if err != nil {
+		writeSessionPRError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, ClaimPRResponse{OK: true, SessionID: sessionID(r), PRs: sessionPRFacts(res.PRs), BranchChanged: res.BranchChanged, TakenOverFrom: nonNilSessionIDs(res.TakenOverFrom)})
 }
 
 func (c *SessionsController) rename(w http.ResponseWriter, r *http.Request) {
@@ -299,4 +342,56 @@ func stripUnsafeControlChars(message string) string {
 		}
 		return r
 	}, message)
+}
+
+func writeSessionPRError(w http.ResponseWriter, r *http.Request, err error) {
+	var claimed ports.PRClaimedByActiveSessionError
+	switch {
+	case errors.Is(err, sessionsvc.ErrInvalidPRRef):
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_PR_REF", "PR reference must be a github.com PR URL or a number", nil)
+	case errors.Is(err, sessionsvc.ErrPRNotFound):
+		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "PR_NOT_FOUND", "Unknown PR", nil)
+	case errors.Is(err, sessionsvc.ErrPRNotOpen):
+		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict", "PR_NOT_OPEN", "PR is not open", nil)
+	case errors.As(err, &claimed):
+		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict", "PR_CLAIMED_BY_ACTIVE_SESSION", "PR is already claimed by active session "+string(claimed.Owner)+" (omit --no-takeover to steal)", map[string]any{"ownerSessionId": string(claimed.Owner)})
+	case errors.Is(err, sessionsvc.ErrSessionNotClaimable):
+		envelope.WriteAPIError(w, r, http.StatusUnprocessableEntity, "unprocessable", "SESSION_NOT_CLAIMABLE", "Session cannot claim PRs", nil)
+	case errors.Is(err, sessionsvc.ErrSessionNoWorkspace):
+		envelope.WriteAPIError(w, r, http.StatusUnprocessableEntity, "unprocessable", "SESSION_NO_WORKSPACE", "Session has no workspace", nil)
+	case errors.Is(err, sessionsvc.ErrProjectMismatch):
+		envelope.WriteAPIError(w, r, http.StatusUnprocessableEntity, "unprocessable", "PR_PROJECT_MISMATCH", "PR does not belong to the session project", nil)
+	case errors.Is(err, sessionsvc.ErrSCMUnavailable):
+		envelope.WriteAPIError(w, r, http.StatusServiceUnavailable, "unavailable", "SCM_UNAVAILABLE", "SCM unavailable", nil)
+	default:
+		envelope.WriteError(w, r, err)
+	}
+}
+
+func sessionPRFacts(prs []domain.PRFacts) []SessionPRFacts {
+	out := make([]SessionPRFacts, 0, len(prs))
+	for _, pr := range prs {
+		out = append(out, SessionPRFacts{URL: pr.URL, Number: pr.Number, State: prState(pr), CI: pr.CI, Review: pr.Review, Mergeability: pr.Mergeability, ReviewComments: pr.ReviewComments, UpdatedAt: pr.UpdatedAt})
+	}
+	return out
+}
+
+func prState(pr domain.PRFacts) string {
+	switch {
+	case pr.Merged:
+		return string(domain.PRStateMerged)
+	case pr.Closed:
+		return string(domain.PRStateClosed)
+	case pr.Draft:
+		return string(domain.PRStateDraft)
+	default:
+		return string(domain.PRStateOpen)
+	}
+}
+
+func nonNilSessionIDs(ids []domain.SessionID) []domain.SessionID {
+	if ids == nil {
+		return []domain.SessionID{}
+	}
+	return ids
 }

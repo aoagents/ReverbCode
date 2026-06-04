@@ -29,6 +29,12 @@ type sessionCleanupOptions struct {
 	yes     bool
 }
 
+type sessionClaimPROptions struct {
+	project    string
+	json       bool
+	noTakeover bool
+}
+
 type sessionRenameRequest struct {
 	DisplayName string `json:"displayName"`
 }
@@ -78,6 +84,30 @@ type cleanupSessionsResponse struct {
 	Cleaned []string `json:"cleaned"`
 }
 
+type claimPRRequest struct {
+	PR            string `json:"pr"`
+	AllowTakeover bool   `json:"allowTakeover"`
+}
+
+type sessionPRDTO struct {
+	URL            string    `json:"url"`
+	Number         int       `json:"number"`
+	State          string    `json:"state"`
+	CI             string    `json:"ci"`
+	Review         string    `json:"review"`
+	Mergeability   string    `json:"mergeability"`
+	ReviewComments bool      `json:"reviewComments"`
+	UpdatedAt      time.Time `json:"updatedAt"`
+}
+
+type claimPRResponse struct {
+	OK            bool           `json:"ok"`
+	SessionID     string         `json:"sessionId"`
+	PRs           []sessionPRDTO `json:"prs"`
+	BranchChanged bool           `json:"branchChanged"`
+	TakenOverFrom []string       `json:"takenOverFrom"`
+}
+
 type sessionListEntry struct {
 	ID             string     `json:"id"`
 	ProjectID      string     `json:"projectId"`
@@ -109,6 +139,7 @@ func newSessionCommand(ctx *commandContext) *cobra.Command {
 	cmd.AddCommand(newSessionRestoreCommand(ctx))
 	cmd.AddCommand(newSessionRenameCommand(ctx))
 	cmd.AddCommand(newSessionCleanupCommand(ctx))
+	cmd.AddCommand(newSessionClaimPRCommand(ctx))
 	return cmd
 }
 
@@ -220,6 +251,34 @@ func newSessionCleanupCommand(ctx *commandContext) *cobra.Command {
 	return cmd
 }
 
+func newSessionClaimPRCommand(ctx *commandContext) *cobra.Command {
+	var opts sessionClaimPROptions
+	cmd := &cobra.Command{
+		Use:   "claim-pr <session-id> <pr-ref>",
+		Short: "Attach an existing PR to a session",
+		Args: func(cmd *cobra.Command, args []string) error {
+			if err := cobra.ExactArgs(2)(cmd, args); err != nil {
+				return usageError{err}
+			}
+			if _, err := normalizeSessionID(args[0]); err != nil {
+				return err
+			}
+			return nil
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id, err := normalizeSessionID(args[0])
+			if err != nil {
+				return err
+			}
+			return ctx.claimSessionPR(cmd.Context(), cmd, id, args[1], opts)
+		},
+	}
+	addSessionProjectFlag(cmd.Flags(), &opts.project, "Project id to scope the lookup")
+	cmd.Flags().BoolVar(&opts.noTakeover, "no-takeover", false, "Refuse if another active session owns the PR")
+	cmd.Flags().BoolVar(&opts.json, "json", false, "Output as JSON")
+	return cmd
+}
+
 func addSessionProjectFlag(flags interface {
 	StringVarP(*string, string, string, string, string)
 }, target *string, usage string) {
@@ -245,6 +304,66 @@ func sessionRenameArgs(cmd *cobra.Command, args []string) error {
 	}
 	if strings.TrimSpace(args[1]) == "" {
 		return usageError{errors.New("session name is required")}
+	}
+	return nil
+}
+
+func (c *commandContext) claimSessionPR(ctx context.Context, cmd *cobra.Command, id, ref string, opts sessionClaimPROptions) error {
+	sess, err := c.fetchScopedSession(ctx, id, opts.project)
+	if err != nil {
+		return err
+	}
+	project, err := c.fetchProjectDetails(ctx, sess.ProjectID)
+	if err != nil {
+		return err
+	}
+	resolvedRef, err := c.resolvePRRef(ctx, ref, project)
+	if err != nil {
+		return err
+	}
+	var res claimPRResponse
+	req := claimPRRequest{PR: resolvedRef, AllowTakeover: !opts.noTakeover}
+	if err := c.postJSON(ctx, "sessions/"+url.PathEscape(id)+"/pr/claim", req, &res); err != nil {
+		return err
+	}
+	if opts.json {
+		return writeJSON(cmd.OutOrStdout(), res)
+	}
+	return writeClaimPRResult(cmd, res)
+}
+
+func (c *commandContext) fetchProjectDetails(ctx context.Context, id string) (projectDetails, error) {
+	var res projectGetResult
+	if err := c.getJSON(ctx, "projects/"+url.PathEscape(id), &res); err != nil {
+		return projectDetails{}, err
+	}
+	return res.Project, nil
+}
+
+func writeClaimPRResult(cmd *cobra.Command, res claimPRResponse) error {
+	out := cmd.OutOrStdout()
+	if len(res.PRs) == 0 {
+		_, err := fmt.Fprintf(out, "session %s claimed PR\n", res.SessionID)
+		return err
+	}
+	pr := res.PRs[0]
+	if _, err := fmt.Fprintf(out, "session %s claimed PR #%d\n", res.SessionID, pr.Number); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(out, "  pr:       %s\n", pr.URL); err != nil {
+		return err
+	}
+	checkout := "already on PR branch"
+	if res.BranchChanged {
+		checkout = "switched to PR branch"
+	}
+	if _, err := fmt.Fprintf(out, "  checkout: %s\n", checkout); err != nil {
+		return err
+	}
+	for _, owner := range res.TakenOverFrom {
+		if _, err := fmt.Fprintf(out, "  taking over from %s\n", owner); err != nil {
+			return err
+		}
 	}
 	return nil
 }

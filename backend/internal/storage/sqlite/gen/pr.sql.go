@@ -13,6 +13,37 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
+const claimPRForSession = `-- name: ClaimPRForSession :exec
+INSERT INTO pr (url, session_id, number, pr_state, ci_state, mergeability, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT (url) DO UPDATE SET
+    session_id = excluded.session_id,
+    updated_at = excluded.updated_at
+`
+
+type ClaimPRForSessionParams struct {
+	URL          string
+	SessionID    domain.SessionID
+	Number       int64
+	PRState      domain.PRState
+	CIState      domain.CIState
+	Mergeability domain.Mergeability
+	UpdatedAt    time.Time
+}
+
+func (q *Queries) ClaimPRForSession(ctx context.Context, arg ClaimPRForSessionParams) error {
+	_, err := q.db.ExecContext(ctx, claimPRForSession,
+		arg.URL,
+		arg.SessionID,
+		arg.Number,
+		arg.PRState,
+		arg.CIState,
+		arg.Mergeability,
+		arg.UpdatedAt,
+	)
+	return err
+}
+
 const getDisplayPRFactsBySession = `-- name: GetDisplayPRFactsBySession :one
 SELECT
     pr.url,
@@ -21,6 +52,7 @@ SELECT
     pr.review_decision,
     pr.ci_state,
     pr.mergeability,
+    pr.updated_at,
     EXISTS (
         SELECT 1
         FROM pr_comment
@@ -43,6 +75,7 @@ type GetDisplayPRFactsBySessionRow struct {
 	ReviewDecision domain.ReviewDecision
 	CIState        domain.CIState
 	Mergeability   domain.Mergeability
+	UpdatedAt      time.Time
 	ReviewComments bool
 }
 
@@ -56,6 +89,7 @@ func (q *Queries) GetDisplayPRFactsBySession(ctx context.Context, sessionID doma
 		&i.ReviewDecision,
 		&i.CIState,
 		&i.Mergeability,
+		&i.UpdatedAt,
 		&i.ReviewComments,
 	)
 	return i, err
@@ -117,6 +151,27 @@ func (q *Queries) GetPR(ctx context.Context, url string) (PR, error) {
 		&i.CIObservedAt,
 		&i.ReviewObservedAt,
 	)
+	return i, err
+}
+
+const getPRClaimAndOwner = `-- name: GetPRClaimAndOwner :one
+SELECT pr.session_id, sessions.is_terminated
+FROM pr
+JOIN sessions ON sessions.id = pr.session_id
+WHERE pr.url = ?
+`
+
+type GetPRClaimAndOwnerRow struct {
+	SessionID    domain.SessionID
+	IsTerminated bool
+}
+
+// Returns the current owner of a PR URL plus whether that owner is
+// terminated. Used by the takeover guard inside the claim tx.
+func (q *Queries) GetPRClaimAndOwner(ctx context.Context, url string) (GetPRClaimAndOwnerRow, error) {
+	row := q.db.QueryRowContext(ctx, getPRClaimAndOwner, url)
+	var i GetPRClaimAndOwnerRow
+	err := row.Scan(&i.SessionID, &i.IsTerminated)
 	return i, err
 }
 

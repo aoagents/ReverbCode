@@ -108,7 +108,7 @@ func (p *Provider) Observe(ctx context.Context, prURL string) (ports.PRObservati
 		// Network/auth/rate-limit failures must surface as Fetched:false.
 		// Stable terminal states like 404 also surface that way — the PR
 		// Manager keeps the prior row rather than fabricating closed/merged.
-		return out, err
+		return out, scmObserveError(err)
 	}
 
 	out.Draft = rest.Draft
@@ -117,7 +117,7 @@ func (p *Provider) Observe(ctx context.Context, prURL string) (ports.PRObservati
 
 	gq, err := p.fetchGraphQL(ctx, owner, repo, number)
 	if err != nil {
-		return out, err
+		return out, scmObserveError(err)
 	}
 
 	out.CI = ciSummaryFromGraphQL(gq)
@@ -147,6 +147,13 @@ func (p *Provider) Observe(ctx context.Context, prURL string) (ports.PRObservati
 
 	out.Fetched = true
 	return out, nil
+}
+
+func scmObserveError(err error) error {
+	if errors.Is(err, ErrNotFound) {
+		return fmt.Errorf("%w: %w", ports.ErrSCMPRNotFound, err)
+	}
+	return err
 }
 
 // ---------------------------------------------------------------------------

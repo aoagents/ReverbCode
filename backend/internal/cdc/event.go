@@ -25,6 +25,7 @@ const (
 	EventPRCreated              EventType = "pr_created"
 	EventPRUpdated              EventType = "pr_updated"
 	EventPRCheckRecorded        EventType = "pr_check_recorded"
+	EventPRSessionChanged       EventType = "pr_session_changed"
 	EventPRReviewThreadAdded    EventType = "pr_review_thread_added"
 	EventPRReviewThreadResolved EventType = "pr_review_thread_resolved"
 )

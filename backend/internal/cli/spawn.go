@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"net/url"
 
 	"github.com/spf13/cobra"
 
@@ -9,12 +10,14 @@ import (
 )
 
 type spawnOptions struct {
-	project string
-	harness string
-	branch  string
-	prompt  string
-	issue   string
-	rules   string
+	project    string
+	harness    string
+	branch     string
+	prompt     string
+	issue      string
+	rules      string
+	claimPR    string
+	noTakeover bool
 }
 
 // spawnRequest mirrors the daemon's SpawnSessionRequest body for
@@ -48,6 +51,20 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 			if opts.project == "" {
 				return usageError{fmt.Errorf("--project is required")}
 			}
+			if opts.noTakeover && opts.claimPR == "" {
+				return usageError{fmt.Errorf("--no-takeover requires --claim-pr")}
+			}
+			claimRef := ""
+			if opts.claimPR != "" {
+				project, err := ctx.fetchProjectDetails(cmd.Context(), opts.project)
+				if err != nil {
+					return err
+				}
+				claimRef, err = ctx.resolvePRRef(cmd.Context(), opts.claimPR, project)
+				if err != nil {
+					return err
+				}
+			}
 			req := spawnRequest{
 				ProjectID:  opts.project,
 				IssueID:    opts.issue,
@@ -60,8 +77,22 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 			if err := ctx.postJSON(cmd.Context(), "sessions", req, &res); err != nil {
 				return err
 			}
+			claimed := ""
+			if opts.claimPR != "" {
+				var claim claimPRResponse
+				if err := ctx.postJSON(cmd.Context(), "sessions/"+url.PathEscape(res.Session.ID)+"/pr/claim", claimPRRequest{PR: claimRef, AllowTakeover: !opts.noTakeover}, &claim); err != nil {
+					return fmt.Errorf("session %s was created, but failed to claim PR %s: %w", res.Session.ID, opts.claimPR, err)
+				}
+				if len(claim.PRs) > 0 {
+					claimed = claim.PRs[0].URL
+				}
+			}
 			out := cmd.OutOrStdout()
-			if _, err := fmt.Fprintf(out, "spawned session %s (%s)\n", res.Session.ID, res.Session.Status); err != nil {
+			claimLabel := ""
+			if claimed != "" {
+				claimLabel = fmt.Sprintf(" (claimed %s)", claimed)
+			}
+			if _, err := fmt.Fprintf(out, "spawned session %s (%s)%s\n", res.Session.ID, res.Session.Status, claimLabel); err != nil {
 				return err
 			}
 			// The daemon runs zellij under a short, non-default socket dir (see
@@ -84,5 +115,7 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 	f.StringVar(&opts.prompt, "prompt", "", "Initial prompt for the agent")
 	f.StringVar(&opts.issue, "issue", "", "Issue id to associate with the session")
 	f.StringVar(&opts.rules, "rules", "", "Agent rules appended to the prompt")
+	f.StringVar(&opts.claimPR, "claim-pr", "", "Immediately claim an existing PR for the spawned session")
+	f.BoolVar(&opts.noTakeover, "no-takeover", false, "Refuse if another active session owns the claimed PR (requires --claim-pr)")
 	return cmd
 }

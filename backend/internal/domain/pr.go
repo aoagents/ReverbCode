@@ -16,6 +16,7 @@ type PRFacts struct {
 	Review         ReviewDecision
 	Mergeability   Mergeability
 	ReviewComments bool // has unresolved review comments (any author) to address
+	UpdatedAt      time.Time
 }
 
 // PullRequest is the app-level representation of one tracked pull request as

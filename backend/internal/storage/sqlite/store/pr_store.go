@@ -25,6 +25,7 @@ import (
 var (
 	_ ports.PRWriter  = (*Store)(nil)
 	_ ports.SCMWriter = (*Store)(nil)
+	_ ports.PRClaimer = (*Store)(nil)
 )
 
 // WritePR persists a legacy PR observation — scalar facts, check runs, and the
@@ -47,10 +48,46 @@ func (s *Store) WriteSCMObservation(ctx context.Context, pr domain.PullRequest, 
 	return s.writePR(ctx, pr, checks, threads, comments, reviewMode, false)
 }
 
+// ClaimPR moves (or creates) a PR row to pr.SessionID and applies the live SCM
+// observation in the same transaction. The session_id update is what fires the
+// pr_session_changed CDC trigger added in migration 0005.
+func (s *Store) ClaimPR(ctx context.Context, pr domain.PullRequest, checks []domain.PullRequestCheck, threads []domain.PullRequestReviewThread, comments []domain.PullRequestComment, reviewMode ports.ReviewWriteMode, allowActiveTakeover bool) (ports.ClaimOutcome, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	var outcome ports.ClaimOutcome
+	err := s.inTx(ctx, "claim pr", func(q *gen.Queries) error {
+		owner, err := q.GetPRClaimAndOwner(ctx, pr.URL)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if err == nil {
+			outcome.PreviousOwner = owner.SessionID
+			outcome.OwnerTerminated = owner.IsTerminated
+			if owner.SessionID != pr.SessionID && !owner.IsTerminated && !allowActiveTakeover {
+				return ports.PRClaimedByActiveSessionError{Owner: owner.SessionID}
+			}
+		}
+		if err := q.ClaimPRForSession(ctx, gen.ClaimPRForSessionParams{
+			URL: pr.URL, SessionID: pr.SessionID, Number: int64(pr.Number), PRState: prState(pr),
+			CIState: ciOrDefault(pr.CI), Mergeability: mergeabilityOrDefault(pr.Mergeability), UpdatedAt: pr.UpdatedAt,
+		}); err != nil {
+			return err
+		}
+		return writePRRows(ctx, q, pr, checks, threads, comments, reviewMode, false, false)
+	})
+	return outcome, err
+}
+
 func (s *Store) writePR(ctx context.Context, pr domain.PullRequest, checks []domain.PullRequestCheck, threads []domain.PullRequestReviewThread, comments []domain.PullRequestComment, reviewMode ports.ReviewWriteMode, replaceLegacyComments bool) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	return s.inTx(ctx, "write pr observation", func(q *gen.Queries) error {
+		return writePRRows(ctx, q, pr, checks, threads, comments, reviewMode, replaceLegacyComments, true)
+	})
+}
+
+func writePRRows(ctx context.Context, q *gen.Queries, pr domain.PullRequest, checks []domain.PullRequestCheck, threads []domain.PullRequestReviewThread, comments []domain.PullRequestComment, reviewMode ports.ReviewWriteMode, replaceLegacyComments, rejectReassignment bool) error {
+	if rejectReassignment {
 		existing, err := q.GetPR(ctx, pr.URL)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
@@ -58,63 +95,63 @@ func (s *Store) writePR(ctx context.Context, pr domain.PullRequest, checks []dom
 		if err == nil && existing.SessionID != pr.SessionID {
 			return fmt.Errorf("pr %s already belongs to session %s", pr.URL, existing.SessionID)
 		}
-		if replaceLegacyComments {
-			if err := q.UpsertLegacyPR(ctx, genLegacyPRParams(pr)); err != nil {
-				return err
-			}
-		} else {
-			if err := q.UpsertPR(ctx, genPRParams(pr)); err != nil {
-				return err
+	}
+	if replaceLegacyComments {
+		if err := q.UpsertLegacyPR(ctx, genLegacyPRParams(pr)); err != nil {
+			return err
+		}
+	} else {
+		if err := q.UpsertPR(ctx, genPRParams(pr)); err != nil {
+			return err
+		}
+	}
+	for _, c := range checks {
+		if err := q.UpsertPRCheck(ctx, genCheckParams(pr.URL, c)); err != nil {
+			return err
+		}
+	}
+	if reviewMode == ports.ReviewWriteReplace {
+		if err := q.DeletePRReviewThreads(ctx, pr.URL); err != nil {
+			return err
+		}
+	}
+	if reviewMode == ports.ReviewWriteReplace {
+		if err := q.DeletePRComments(ctx, pr.URL); err != nil {
+			return err
+		}
+	} else if replaceLegacyComments {
+		if err := q.DeleteLegacyPRComments(ctx, pr.URL); err != nil {
+			return err
+		}
+	}
+	if reviewMode == ports.ReviewWriteReplace || reviewMode == ports.ReviewWriteMerge {
+		for _, th := range threads {
+			if err := q.UpsertPRReviewThread(ctx, genReviewThreadParams(pr.URL, th)); err != nil {
+				return fmt.Errorf("review thread %q: %w", th.ThreadID, err)
 			}
 		}
-		for _, c := range checks {
-			if err := q.UpsertPRCheck(ctx, genCheckParams(pr.URL, c)); err != nil {
-				return err
+	}
+	if reviewMode == ports.ReviewWriteMerge {
+		for _, threadID := range reviewThreadIDs(threads, comments) {
+			if err := q.DeletePRCommentsByThread(ctx, gen.DeletePRCommentsByThreadParams{PRURL: pr.URL, ThreadID: threadID}); err != nil {
+				return fmt.Errorf("delete comments for review thread %q: %w", threadID, err)
 			}
 		}
-		if reviewMode == ports.ReviewWriteReplace {
-			if err := q.DeletePRReviewThreads(ctx, pr.URL); err != nil {
-				return err
+	}
+	if reviewMode == ports.ReviewWriteReplace || reviewMode == ports.ReviewWriteMerge {
+		for _, c := range comments {
+			if err := q.InsertPRComment(ctx, genCommentParams(pr.URL, c)); err != nil {
+				return fmt.Errorf("comment %q: %w", c.ID, err)
 			}
 		}
-		if reviewMode == ports.ReviewWriteReplace {
-			if err := q.DeletePRComments(ctx, pr.URL); err != nil {
-				return err
-			}
-		} else if replaceLegacyComments {
-			if err := q.DeleteLegacyPRComments(ctx, pr.URL); err != nil {
-				return err
+	} else if replaceLegacyComments {
+		for _, c := range comments {
+			if err := q.InsertLegacyPRComment(ctx, genLegacyCommentParams(pr.URL, c)); err != nil {
+				return fmt.Errorf("legacy comment %q: %w", c.ID, err)
 			}
 		}
-		if reviewMode == ports.ReviewWriteReplace || reviewMode == ports.ReviewWriteMerge {
-			for _, th := range threads {
-				if err := q.UpsertPRReviewThread(ctx, genReviewThreadParams(pr.URL, th)); err != nil {
-					return fmt.Errorf("review thread %q: %w", th.ThreadID, err)
-				}
-			}
-		}
-		if reviewMode == ports.ReviewWriteMerge {
-			for _, threadID := range reviewThreadIDs(threads, comments) {
-				if err := q.DeletePRCommentsByThread(ctx, gen.DeletePRCommentsByThreadParams{PRURL: pr.URL, ThreadID: threadID}); err != nil {
-					return fmt.Errorf("delete comments for review thread %q: %w", threadID, err)
-				}
-			}
-		}
-		if reviewMode == ports.ReviewWriteReplace || reviewMode == ports.ReviewWriteMerge {
-			for _, c := range comments {
-				if err := q.InsertPRComment(ctx, genCommentParams(pr.URL, c)); err != nil {
-					return fmt.Errorf("comment %q: %w", c.ID, err)
-				}
-			}
-		} else if replaceLegacyComments {
-			for _, c := range comments {
-				if err := q.InsertLegacyPRComment(ctx, genLegacyCommentParams(pr.URL, c)); err != nil {
-					return fmt.Errorf("legacy comment %q: %w", c.ID, err)
-				}
-			}
-		}
-		return nil
-	})
+	}
+	return nil
 }
 
 func reviewThreadIDs(threads []domain.PullRequestReviewThread, comments []domain.PullRequestComment) []string {

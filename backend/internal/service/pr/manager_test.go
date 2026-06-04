@@ -22,6 +22,12 @@ func (f *fakeWriter) WritePR(_ context.Context, pr domain.PullRequest, checks []
 	return nil
 }
 
+func (f *fakeWriter) ClaimPR(_ context.Context, url string, sessionID domain.SessionID, observation ports.PRObservation, _ bool) (ports.ClaimOutcome, error) {
+	pr := domain.PullRequest{URL: url, SessionID: sessionID, Number: observation.Number, Draft: observation.Draft, Merged: observation.Merged, Closed: observation.Closed, CI: observation.CI, Review: observation.Review, Mergeability: observation.Mergeability}
+	f.pr[sessionID] = pr
+	return ports.ClaimOutcome{}, nil
+}
+
 type fakeLifecycle struct {
 	observed []ports.PRObservation
 }

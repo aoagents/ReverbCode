@@ -50,12 +50,13 @@ type Deps struct {
 	Out io.Writer
 	Err io.Writer
 
-	HTTPClient    *http.Client
-	Executable    func() (string, error)
-	StartProcess  func(processStartConfig) error
-	ProcessAlive  func(pid int) bool
-	LookPath      func(file string) (string, error)
-	CommandOutput func(ctx context.Context, name string, args ...string) ([]byte, error)
+	HTTPClient         *http.Client
+	Executable         func() (string, error)
+	StartProcess       func(processStartConfig) error
+	ProcessAlive       func(pid int) bool
+	LookPath           func(file string) (string, error)
+	CommandOutput      func(ctx context.Context, name string, args ...string) ([]byte, error)
+	CommandOutputInDir func(ctx context.Context, dir, name string, args ...string) ([]byte, error)
 	// DoctorGitHubRESTBase lets tests point the doctor GitHub token probe at
 	// httptest without mutating package-global state.
 	DoctorGitHubRESTBase string
@@ -75,6 +76,7 @@ func DefaultDeps() Deps {
 		ProcessAlive:         processalive.Alive,
 		LookPath:             exec.LookPath,
 		CommandOutput:        commandOutput,
+		CommandOutputInDir:   commandOutputInDir,
 		DoctorGitHubRESTBase: defaultDoctorGitHubRESTBase,
 		Now:                  time.Now,
 		Sleep:                time.Sleep,
@@ -83,6 +85,12 @@ func DefaultDeps() Deps {
 
 func commandOutput(ctx context.Context, name string, args ...string) ([]byte, error) {
 	return exec.CommandContext(ctx, name, args...).CombinedOutput()
+}
+
+func commandOutputInDir(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Dir = dir
+	return cmd.CombinedOutput()
 }
 
 func (d Deps) withDefaults() Deps {
@@ -113,6 +121,9 @@ func (d Deps) withDefaults() Deps {
 	}
 	if d.CommandOutput == nil {
 		d.CommandOutput = def.CommandOutput
+	}
+	if d.CommandOutputInDir == nil {
+		d.CommandOutputInDir = def.CommandOutputInDir
 	}
 	if d.DoctorGitHubRESTBase == "" {
 		d.DoctorGitHubRESTBase = def.DoctorGitHubRESTBase

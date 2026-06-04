@@ -81,7 +81,11 @@ func startSession(cfg config.Config, runtime ports.Runtime, store *sqlite.Store,
 		Lifecycle: lcm,
 		DataDir:   cfg.DataDir,
 	})
-	return sessionsvc.New(mgr, store), nil
+	scmProvider, err := newGitHubSCMProvider(log)
+	if err != nil {
+		logSCMProviderDisabled(log, err)
+	}
+	return sessionsvc.NewWithDeps(sessionsvc.Deps{Manager: mgr, Store: store, PRClaimer: store, SCM: scmProvider}), nil
 }
 
 // runtimeMessageSender is the narrow part of the concrete runtime needed by

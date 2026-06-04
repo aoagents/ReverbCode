@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -146,5 +147,92 @@ func TestWritePR_PersistsScalarsChecksAndComments(t *testing.T) {
 	}
 	if comments, _ := s.ListPRComments(ctx, url); len(comments) != 1 || comments[0].Body != "use a const" {
 		t.Fatalf("comment not persisted: %+v", comments)
+	}
+}
+
+func TestClaimPR_CreatesMovesAndGuardsActiveOwner(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	first, _ := s.CreateSession(ctx, sampleRecord("mer"))
+	second, _ := s.CreateSession(ctx, sampleRecord("mer"))
+	url := "https://github.com/acme/repo/pull/42"
+	pr := domain.PullRequest{URL: url, SessionID: first.ID, Number: 42, CI: domain.CIPassing, Mergeability: domain.MergeMergeable, UpdatedAt: time.Now().UTC()}
+
+	out, err := s.ClaimPR(ctx, pr, nil, nil, nil, ports.ReviewWritePreserve, true)
+	if err != nil {
+		t.Fatalf("initial claim: %v", err)
+	}
+	if out.PreviousOwner != "" {
+		t.Fatalf("new claim previous owner = %q", out.PreviousOwner)
+	}
+	got, ok, err := s.GetPR(ctx, url)
+	if err != nil || !ok || got.SessionID != first.ID || got.Number != 42 {
+		t.Fatalf("claimed row = %+v ok=%v err=%v", got, ok, err)
+	}
+
+	pr.SessionID = second.ID
+	if _, err := s.ClaimPR(ctx, pr, nil, nil, nil, ports.ReviewWritePreserve, false); !errors.Is(err, ports.ErrPRClaimedByActiveSession) {
+		t.Fatalf("no-takeover err = %v, want ErrPRClaimedByActiveSession", err)
+	}
+	got, _, _ = s.GetPR(ctx, url)
+	if got.SessionID != first.ID {
+		t.Fatalf("active-owner refusal moved row to %s", got.SessionID)
+	}
+
+	out, err = s.ClaimPR(ctx, pr, nil, nil, nil, ports.ReviewWritePreserve, true)
+	if err != nil {
+		t.Fatalf("takeover: %v", err)
+	}
+	if out.PreviousOwner != first.ID || out.OwnerTerminated {
+		t.Fatalf("takeover outcome = %+v", out)
+	}
+	got, _, _ = s.GetPR(ctx, url)
+	if got.SessionID != second.ID {
+		t.Fatalf("takeover row owner = %s, want %s", got.SessionID, second.ID)
+	}
+}
+
+func TestClaimPR_TakesOverTerminatedOwnerAndEmitsSessionChangedCDC(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	first, _ := s.CreateSession(ctx, sampleRecord("mer"))
+	second, _ := s.CreateSession(ctx, sampleRecord("mer"))
+	url := "https://github.com/acme/repo/pull/99"
+	pr := domain.PullRequest{URL: url, SessionID: first.ID, Number: 99, CI: domain.CIPassing, UpdatedAt: time.Now().UTC()}
+	if _, err := s.ClaimPR(ctx, pr, nil, nil, nil, ports.ReviewWritePreserve, true); err != nil {
+		t.Fatal(err)
+	}
+	first.IsTerminated = true
+	first.UpdatedAt = time.Now().UTC().Truncate(time.Second)
+	if err := s.UpdateSession(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+
+	pr.SessionID = second.ID
+	out, err := s.ClaimPR(ctx, pr, nil, nil, nil, ports.ReviewWritePreserve, false)
+	if err != nil {
+		t.Fatalf("terminated takeover: %v", err)
+	}
+	if out.PreviousOwner != first.ID || !out.OwnerTerminated {
+		t.Fatalf("terminated outcome = %+v", out)
+	}
+
+	events, err := s.EventsAfter(ctx, 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var changed []cdc.Event
+	for _, ev := range events {
+		if ev.Type == "pr_session_changed" {
+			changed = append(changed, ev)
+		}
+	}
+	if len(changed) != 1 {
+		t.Fatalf("pr_session_changed events = %d, want 1; all=%v", len(changed), events)
+	}
+	if changed[0].SessionID != string(second.ID) || !strings.Contains(string(changed[0].Payload), `"fromSession":"`+string(first.ID)+`"`) || !strings.Contains(string(changed[0].Payload), `"toSession":"`+string(second.ID)+`"`) {
+		t.Fatalf("bad change event: %+v", changed[0])
 	}
 }

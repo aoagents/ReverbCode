@@ -90,6 +90,14 @@ func (f *fakeSessionService) Send(context.Context, domain.SessionID, string) err
 	return nil
 }
 
+func (f *fakeSessionService) ListPRs(context.Context, domain.SessionID) ([]domain.PRFacts, error) {
+	return nil, nil
+}
+
+func (f *fakeSessionService) ClaimPR(context.Context, domain.SessionID, string, sessionsvc.ClaimPROptions) (sessionsvc.ClaimPRResult, error) {
+	return sessionsvc.ClaimPRResult{}, nil
+}
+
 // fakeProjectManager captures the project.AddInput the controller decodes from
 // the CLI's request body. Every other method is a no-op so it satisfies the
 // projectsvc.Manager interface.

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -25,8 +26,8 @@ func TestSessionStreamsRealZellijPane(t *testing.T) {
 		t.Skip("zellij unavailable")
 	}
 
-	name := "ao-term-it-" + strings.ReplaceAll(t.Name(), "/", "-")
-	socketDir := filepath.Join(os.TempDir(), name+"-socket")
+	name := "ao-term-it-" + strconv.Itoa(os.Getpid())
+	socketDir := filepath.Join("/tmp", name+"-socket")
 	if err := os.MkdirAll(socketDir, 0o755); err != nil {
 		t.Fatalf("mkdir socket dir: %v", err)
 	}

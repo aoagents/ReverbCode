@@ -103,6 +103,7 @@ SELECT
     pr.review_decision,
     pr.ci_state,
     pr.mergeability,
+    pr.updated_at,
     EXISTS (
         SELECT 1
         FROM pr_comment
@@ -116,3 +117,18 @@ ORDER BY
     CASE WHEN pr.pr_state NOT IN ('merged', 'closed') THEN 0 ELSE 1 END,
     pr.updated_at DESC
 LIMIT 1;
+
+-- name: ClaimPRForSession :exec
+INSERT INTO pr (url, session_id, number, pr_state, ci_state, mergeability, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT (url) DO UPDATE SET
+    session_id = excluded.session_id,
+    updated_at = excluded.updated_at;
+
+-- name: GetPRClaimAndOwner :one
+-- Returns the current owner of a PR URL plus whether that owner is
+-- terminated. Used by the takeover guard inside the claim tx.
+SELECT pr.session_id, sessions.is_terminated
+FROM pr
+JOIN sessions ON sessions.id = pr.session_id
+WHERE pr.url = ?;

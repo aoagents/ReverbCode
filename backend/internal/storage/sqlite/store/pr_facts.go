@@ -36,5 +36,6 @@ func prFactsFromGen(r gen.GetDisplayPRFactsBySessionRow) domain.PRFacts {
 		Review:         r.ReviewDecision,
 		Mergeability:   r.Mergeability,
 		ReviewComments: r.ReviewComments,
+		UpdatedAt:      r.UpdatedAt,
 	}
 }

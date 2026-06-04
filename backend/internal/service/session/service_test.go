@@ -15,11 +15,12 @@ import (
 type fakeStore struct {
 	sessions map[domain.SessionID]domain.SessionRecord
 	pr       map[domain.SessionID]domain.PRFacts
+	projects map[string]domain.ProjectRecord
 	num      int
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{sessions: map[domain.SessionID]domain.SessionRecord{}, pr: map[domain.SessionID]domain.PRFacts{}}
+	return &fakeStore{sessions: map[domain.SessionID]domain.SessionRecord{}, pr: map[domain.SessionID]domain.PRFacts{}, projects: map[string]domain.ProjectRecord{}}
 }
 
 func (f *fakeStore) CreateSession(_ context.Context, rec domain.SessionRecord) (domain.SessionRecord, error) {
@@ -66,6 +67,23 @@ func (f *fakeStore) RenameSession(_ context.Context, id domain.SessionID, displa
 func (f *fakeStore) GetDisplayPRFactsForSession(_ context.Context, id domain.SessionID) (domain.PRFacts, bool, error) {
 	pr, ok := f.pr[id]
 	return pr, ok, nil
+}
+
+func (f *fakeStore) ListPRsBySession(_ context.Context, id domain.SessionID) ([]domain.PullRequest, error) {
+	pr, ok := f.pr[id]
+	if !ok {
+		return nil, nil
+	}
+	return []domain.PullRequest{{URL: pr.URL, SessionID: id, Number: pr.Number, Draft: pr.Draft, Merged: pr.Merged, Closed: pr.Closed, CI: pr.CI, Review: pr.Review, Mergeability: pr.Mergeability, UpdatedAt: pr.UpdatedAt}}, nil
+}
+
+func (f *fakeStore) ListPRComments(context.Context, string) ([]domain.PullRequestComment, error) {
+	return nil, nil
+}
+
+func (f *fakeStore) GetProject(_ context.Context, id string) (domain.ProjectRecord, bool, error) {
+	p, ok := f.projects[id]
+	return p, ok, nil
 }
 
 func TestSessionListDerivesStatusFromPRFacts(t *testing.T) {
@@ -167,4 +185,110 @@ func TestSpawnOrchestratorNoCleanSkipsKills(t *testing.T) {
 	if len(fc.killed) != 0 || !fc.spawned {
 		t.Fatalf("clean=false must spawn without kills: killed=%v spawned=%v", fc.killed, fc.spawned)
 	}
+}
+
+type fakePRClaimer struct {
+	out errorFreeClaimOutcome
+	err error
+}
+
+type errorFreeClaimOutcome struct {
+	ports.ClaimOutcome
+}
+
+func (f fakePRClaimer) ClaimPR(context.Context, domain.PullRequest, []domain.PullRequestCheck, []domain.PullRequestReviewThread, []domain.PullRequestComment, ports.ReviewWriteMode, bool) (ports.ClaimOutcome, error) {
+	return f.out.ClaimOutcome, f.err
+}
+
+type fakeSCM struct {
+	obs       ports.SCMObservation
+	review    ports.SCMReviewObservation
+	fetchErr  error
+	reviewErr error
+}
+
+func (f fakeSCM) ParseRepository(remote string) (ports.SCMRepo, bool) {
+	owner, repo, err := githubRepoFromURL(remote)
+	if err != nil {
+		return ports.SCMRepo{}, false
+	}
+	return ports.SCMRepo{Provider: "github", Host: "github.com", Owner: owner, Name: repo, Repo: owner + "/" + repo}, true
+}
+
+func (f fakeSCM) FetchPullRequests(context.Context, []ports.SCMPRRef) ([]ports.SCMObservation, error) {
+	if f.fetchErr != nil {
+		return nil, f.fetchErr
+	}
+	if !f.obs.Fetched && f.obs.PR.URL == "" && f.obs.PR.Number == 0 {
+		return nil, nil
+	}
+	return []ports.SCMObservation{f.obs}, nil
+}
+
+func (f fakeSCM) FetchReviewThreads(context.Context, ports.SCMPRRef) (ports.SCMReviewObservation, error) {
+	return f.review, f.reviewErr
+}
+
+func TestClaimPRMapsObserverAndStoreErrors(t *testing.T) {
+	st := newFakeStore()
+	now := time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC)
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker, Metadata: domain.SessionMetadata{WorkspacePath: "/ws"}}
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", RepoOriginURL: "https://github.com/acme/repo"}
+
+	cases := []struct {
+		name string
+		svc  *Service
+		want error
+	}{
+		{"missing scm", NewWithDeps(Deps{Store: st}), ErrSCMUnavailable},
+		{"not found", NewWithDeps(Deps{Store: st, PRClaimer: fakePRClaimer{}, SCM: fakeSCM{fetchErr: ports.ErrSCMNotFound}}), ErrPRNotFound},
+		{"closed", NewWithDeps(Deps{Store: st, PRClaimer: fakePRClaimer{}, SCM: fakeSCM{obs: ports.SCMObservation{Fetched: true, Provider: "github", Host: "github.com", Repo: "acme/repo", PR: ports.SCMPRObservation{URL: "https://github.com/acme/repo/pull/7", Number: 7, Closed: true}}}}), ErrPRNotOpen},
+		{"active owner", NewWithDeps(Deps{Store: st, PRClaimer: fakePRClaimer{err: ports.PRClaimedByActiveSessionError{Owner: "mer-2"}}, SCM: fakeSCM{obs: ports.SCMObservation{Fetched: true, Provider: "github", Host: "github.com", Repo: "acme/repo", PR: ports.SCMPRObservation{URL: "https://github.com/acme/repo/pull/7", Number: 7}}}}), ports.ErrPRClaimedByActiveSession},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := tc.svc.ClaimPR(context.Background(), "mer-1", "7", ClaimPROptions{AllowTakeover: false})
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("err=%v, want %v", err, tc.want)
+			}
+		})
+	}
+
+	st.pr["mer-1"] = domain.PRFacts{URL: "https://github.com/acme/repo/pull/7", Number: 7, CI: domain.CIPassing, UpdatedAt: now}
+	svc := NewWithDeps(Deps{Store: st, PRClaimer: fakePRClaimer{out: errorFreeClaimOutcome{ports.ClaimOutcome{PreviousOwner: "mer-2"}}}, SCM: fakeSCM{obs: ports.SCMObservation{Fetched: true, Provider: "github", Host: "github.com", Repo: "acme/repo", PR: ports.SCMPRObservation{URL: "https://github.com/acme/repo/pull/7", Number: 7}}}})
+	res, err := svc.ClaimPR(context.Background(), "mer-1", "7", ClaimPROptions{AllowTakeover: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.TakenOverFrom) != 1 || res.TakenOverFrom[0] != "mer-2" || len(res.PRs) != 1 || res.PRs[0].URL == "" {
+		t.Fatalf("claim result = %+v", res)
+	}
+}
+
+func TestListPRsOrdersActiveBeforeClosedThenUpdatedDesc(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker}
+	now := time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC)
+	st.pr = map[domain.SessionID]domain.PRFacts{}
+	stList := &multiPRFakeStore{fakeStore: st, prs: []domain.PullRequest{
+		{URL: "closed-new", SessionID: "mer-1", Number: 1, Closed: true, UpdatedAt: now.Add(2 * time.Hour)},
+		{URL: "open-old", SessionID: "mer-1", Number: 2, UpdatedAt: now},
+		{URL: "open-new", SessionID: "mer-1", Number: 3, UpdatedAt: now.Add(time.Hour)},
+	}}
+	got, err := (&Service{store: stList}).ListPRs(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 || got[0].URL != "open-new" || got[1].URL != "open-old" || got[2].URL != "closed-new" {
+		t.Fatalf("order = %+v", got)
+	}
+}
+
+type multiPRFakeStore struct {
+	*fakeStore
+	prs []domain.PullRequest
+}
+
+func (f *multiPRFakeStore) ListPRsBySession(context.Context, domain.SessionID) ([]domain.PullRequest, error) {
+	return f.prs, nil
 }

@@ -22,6 +22,8 @@ type fakeSessionService struct {
 	sent            string
 	cleanupProjects []domain.ProjectID
 	cleanupResult   []domain.SessionID
+	claimErr        error
+	listPRErr       error
 }
 
 func newFakeSessionService() *fakeSessionService {
@@ -111,6 +113,27 @@ func (f *fakeSessionService) Rename(_ context.Context, id domain.SessionID, disp
 func (f *fakeSessionService) Send(_ context.Context, _ domain.SessionID, message string) error {
 	f.sent = message
 	return nil
+}
+
+func (f *fakeSessionService) ListPRs(_ context.Context, id domain.SessionID) ([]domain.PRFacts, error) {
+	if f.listPRErr != nil {
+		return nil, f.listPRErr
+	}
+	if _, ok := f.sessions[id]; !ok {
+		return nil, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	return []domain.PRFacts{{URL: "https://github.com/aoagents/agent-orchestrator/pull/142", Number: 142, CI: domain.CIPassing, Review: domain.ReviewRequired, Mergeability: domain.MergeMergeable, UpdatedAt: time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC)}}, nil
+}
+
+func (f *fakeSessionService) ClaimPR(_ context.Context, id domain.SessionID, ref string, opts sessionsvc.ClaimPROptions) (sessionsvc.ClaimPRResult, error) {
+	if f.claimErr != nil {
+		return sessionsvc.ClaimPRResult{}, f.claimErr
+	}
+	if _, ok := f.sessions[id]; !ok {
+		return sessionsvc.ClaimPRResult{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	prs, _ := f.ListPRs(context.Background(), id)
+	return sessionsvc.ClaimPRResult{PRs: prs, TakenOverFrom: []domain.SessionID{}, BranchChanged: true}, nil
 }
 
 func newSessionTestServer(t *testing.T, svc *fakeSessionService) *httptest.Server {
@@ -335,4 +358,72 @@ type sessionBody struct {
 	Harness     string `json:"harness"`
 	DisplayName string `json:"displayName"`
 	Status      string `json:"status"`
+}
+
+func TestSessionsAPI_PRRoutes(t *testing.T) {
+	srv := newSessionTestServer(t, newFakeSessionService())
+
+	body, status, _ := doRequest(t, srv, "GET", "/api/v1/sessions/ao-1/pr", "")
+	if status != http.StatusOK {
+		t.Fatalf("GET PRs = %d body=%s", status, body)
+	}
+	var listed struct {
+		SessionID string `json:"sessionId"`
+		PRs       []struct {
+			URL       string `json:"url"`
+			Number    int    `json:"number"`
+			State     string `json:"state"`
+			UpdatedAt string `json:"updatedAt"`
+		} `json:"prs"`
+	}
+	mustJSON(t, body, &listed)
+	if listed.SessionID != "ao-1" || len(listed.PRs) != 1 || listed.PRs[0].State != "open" {
+		t.Fatalf("GET shape = %#v", listed)
+	}
+
+	body, status, _ = doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/pr/claim", `{"pr":"142"}`)
+	if status != http.StatusOK {
+		t.Fatalf("claim = %d body=%s", status, body)
+	}
+	var claimed struct {
+		OK            bool     `json:"ok"`
+		SessionID     string   `json:"sessionId"`
+		PRs           []any    `json:"prs"`
+		BranchChanged bool     `json:"branchChanged"`
+		TakenOverFrom []string `json:"takenOverFrom"`
+	}
+	mustJSON(t, body, &claimed)
+	if !claimed.OK || claimed.SessionID != "ao-1" || len(claimed.PRs) != 1 || !claimed.BranchChanged || len(claimed.TakenOverFrom) != 0 {
+		t.Fatalf("claim shape = %#v", claimed)
+	}
+}
+
+func TestSessionsAPI_ClaimPRErrors(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		err  error
+		code int
+		want string
+	}{
+		{"bad json", `{`, nil, http.StatusBadRequest, "INVALID_JSON"},
+		{"missing pr", `{}`, nil, http.StatusBadRequest, "PR_REQUIRED"},
+		{"invalid ref", `{"pr":"x"}`, sessionsvc.ErrInvalidPRRef, http.StatusBadRequest, "INVALID_PR_REF"},
+		{"session missing", `{"pr":"142"}`, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session"), http.StatusNotFound, "SESSION_NOT_FOUND"},
+		{"pr missing", `{"pr":"142"}`, sessionsvc.ErrPRNotFound, http.StatusNotFound, "PR_NOT_FOUND"},
+		{"not open", `{"pr":"142"}`, sessionsvc.ErrPRNotOpen, http.StatusConflict, "PR_NOT_OPEN"},
+		{"claimed", `{"pr":"142","allowTakeover":false}`, ports.PRClaimedByActiveSessionError{Owner: "ao-2"}, http.StatusConflict, "PR_CLAIMED_BY_ACTIVE_SESSION"},
+		{"not claimable", `{"pr":"142"}`, sessionsvc.ErrSessionNotClaimable, http.StatusUnprocessableEntity, "SESSION_NOT_CLAIMABLE"},
+		{"mismatch", `{"pr":"142"}`, sessionsvc.ErrProjectMismatch, http.StatusUnprocessableEntity, "PR_PROJECT_MISMATCH"},
+		{"scm", `{"pr":"142"}`, sessionsvc.ErrSCMUnavailable, http.StatusServiceUnavailable, "SCM_UNAVAILABLE"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := newFakeSessionService()
+			svc.claimErr = tc.err
+			srv := newSessionTestServer(t, svc)
+			body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/pr/claim", tc.body)
+			assertErrorCode(t, body, status, tc.code, tc.want)
+		})
+	}
 }

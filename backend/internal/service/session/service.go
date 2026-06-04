@@ -20,6 +20,9 @@ type Store interface {
 	ListAllSessions(ctx context.Context) ([]domain.SessionRecord, error)
 	RenameSession(ctx context.Context, id domain.SessionID, displayName string, updatedAt time.Time) (bool, error)
 	GetDisplayPRFactsForSession(ctx context.Context, id domain.SessionID) (domain.PRFacts, bool, error)
+	ListPRsBySession(ctx context.Context, sessionID domain.SessionID) ([]domain.PullRequest, error)
+	ListPRComments(ctx context.Context, prURL string) ([]domain.PullRequestComment, error)
+	GetProject(ctx context.Context, id string) (domain.ProjectRecord, bool, error)
 }
 
 // ListFilter captures API-facing session list query filters.
@@ -40,17 +43,51 @@ type commander interface {
 	Cleanup(ctx context.Context, project domain.ProjectID) ([]domain.SessionID, error)
 }
 
+type scmProvider interface {
+	ParseRepository(remote string) (ports.SCMRepo, bool)
+	FetchPullRequests(ctx context.Context, refs []ports.SCMPRRef) ([]ports.SCMObservation, error)
+	FetchReviewThreads(ctx context.Context, ref ports.SCMPRRef) (ports.SCMReviewObservation, error)
+}
+
 // Service is the controller-facing session service. It delegates command-side
 // session operations to the internal sessionmanager.Manager and owns read-model
 // assembly, including user-facing display status derivation.
 type Service struct {
-	manager commander
-	store   Store
+	manager   commander
+	store     Store
+	prClaimer ports.PRClaimer
+	scm       scmProvider
+	clock     func() time.Time
 }
 
 // New wires a controller-facing session service over an internal session Manager.
 func New(manager *sessionmanager.Manager, store Store) *Service {
-	return &Service{manager: manager, store: store}
+	return NewWithDeps(Deps{Manager: manager, Store: store})
+}
+
+// Deps are optional collaborators for the session service. The default New
+// path keeps existing tests and callers small; daemon wiring uses NewWithDeps
+// to supply SCM observation for PR claiming.
+type Deps struct {
+	Manager   commander
+	Store     Store
+	PRClaimer ports.PRClaimer
+	SCM       scmProvider
+	Clock     func() time.Time
+}
+
+// NewWithDeps wires a session service with optional PR-claim dependencies.
+func NewWithDeps(d Deps) *Service {
+	s := &Service{manager: d.Manager, store: d.Store, prClaimer: d.PRClaimer, scm: d.SCM, clock: d.Clock}
+	if s.prClaimer == nil {
+		if w, ok := d.Store.(ports.PRClaimer); ok {
+			s.prClaimer = w
+		}
+	}
+	if s.clock == nil {
+		s.clock = time.Now
+	}
+	return s
 }
 
 // Spawn creates a session and returns the API-facing read model.

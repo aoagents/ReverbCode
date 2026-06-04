@@ -2,6 +2,8 @@ package ports
 
 import (
 	"context"
+	"errors"
+	"fmt"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
@@ -36,6 +38,33 @@ const (
 // merged as a bounded partial window.
 type SCMWriter interface {
 	WriteSCMObservation(ctx context.Context, pr domain.PullRequest, checks []domain.PullRequestCheck, threads []domain.PullRequestReviewThread, comments []domain.PullRequestComment, reviewMode ReviewWriteMode) error
+}
+
+// PRClaimer atomically moves (or creates) a PR row for a target session and
+// persists the live SCM facts observed for that PR in the same transaction.
+type PRClaimer interface {
+	ClaimPR(ctx context.Context, pr domain.PullRequest, checks []domain.PullRequestCheck, threads []domain.PullRequestReviewThread, comments []domain.PullRequestComment, reviewMode ReviewWriteMode, allowActiveTakeover bool) (ClaimOutcome, error)
+}
+
+// ErrPRClaimedByActiveSession is returned by PRClaimer.ClaimPR when takeover is
+// explicitly disallowed and the existing owner is still alive.
+var ErrPRClaimedByActiveSession = errors.New("pr claimed by active session")
+
+// PRClaimedByActiveSessionError carries the active owner that blocked a claim.
+type PRClaimedByActiveSessionError struct {
+	Owner domain.SessionID
+}
+
+func (e PRClaimedByActiveSessionError) Error() string {
+	return fmt.Sprintf("%s: %s", ErrPRClaimedByActiveSession, e.Owner)
+}
+
+func (e PRClaimedByActiveSessionError) Unwrap() error { return ErrPRClaimedByActiveSession }
+
+// ClaimOutcome describes what owner, if any, a successful claim replaced.
+type ClaimOutcome struct {
+	PreviousOwner   domain.SessionID
+	OwnerTerminated bool
 }
 
 // AgentMessenger injects a message into a running agent.

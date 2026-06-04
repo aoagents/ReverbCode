@@ -3,6 +3,7 @@ package controllers
 import (
 	"encoding/json"
 	"errors"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
@@ -173,6 +174,39 @@ type SendSessionMessageResponse struct {
 	OK        bool             `json:"ok"`
 	SessionID domain.SessionID `json:"sessionId"`
 	Message   string           `json:"message"`
+}
+
+// SessionPRFacts is the pull-request read shape returned under session PR routes.
+type SessionPRFacts struct {
+	URL            string                `json:"url"`
+	Number         int                   `json:"number"`
+	State          string                `json:"state" enum:"draft,open,merged,closed"`
+	CI             domain.CIState        `json:"ci"`
+	Review         domain.ReviewDecision `json:"review"`
+	Mergeability   domain.Mergeability   `json:"mergeability"`
+	ReviewComments bool                  `json:"reviewComments"`
+	UpdatedAt      time.Time             `json:"updatedAt"`
+}
+
+// ListSessionPRsResponse is the body of GET /sessions/{sessionId}/pr.
+type ListSessionPRsResponse struct {
+	SessionID domain.SessionID `json:"sessionId"`
+	PRs       []SessionPRFacts `json:"prs"`
+}
+
+// ClaimPRRequest is the body of POST /sessions/{sessionId}/pr/claim.
+type ClaimPRRequest struct {
+	PR            string `json:"pr" minLength:"1"`
+	AllowTakeover *bool  `json:"allowTakeover,omitempty"`
+}
+
+// ClaimPRResponse is the body of POST /sessions/{sessionId}/pr/claim.
+type ClaimPRResponse struct {
+	OK            bool               `json:"ok"`
+	SessionID     domain.SessionID   `json:"sessionId"`
+	PRs           []SessionPRFacts   `json:"prs"`
+	BranchChanged bool               `json:"branchChanged"`
+	TakenOverFrom []domain.SessionID `json:"takenOverFrom"`
 }
 
 // OrchestratorIDParam is the {id} path parameter for orchestrator routes.

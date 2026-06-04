@@ -540,6 +540,108 @@ paths:
       summary: Mark a session terminated and tear down runtime/workspace resources
       tags:
       - sessions
+  /api/v1/sessions/{sessionId}/pr:
+    get:
+      operationId: listSessionPRs
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListSessionPRsResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: List pull requests owned by a session
+      tags:
+      - sessions
+  /api/v1/sessions/{sessionId}/pr/claim:
+    post:
+      operationId: claimSessionPR
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClaimPRRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClaimPRResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Unprocessable Entity
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Claim an existing pull request for a session
+      tags:
+      - sessions
   /api/v1/sessions/{sessionId}/restore:
     post:
       operationId: restoreSession
@@ -693,6 +795,41 @@ components:
       required:
       - path
       type: object
+    ClaimPRRequest:
+      properties:
+        allowTakeover:
+          type:
+          - "null"
+          - boolean
+        pr:
+          minLength: 1
+          type: string
+      required:
+      - pr
+      type: object
+    ClaimPRResponse:
+      properties:
+        branchChanged:
+          type: boolean
+        ok:
+          type: boolean
+        prs:
+          items:
+            $ref: '#/components/schemas/SessionPRFacts'
+          type: array
+        sessionId:
+          type: string
+        takenOverFrom:
+          items:
+            type: string
+          type: array
+      required:
+      - ok
+      - sessionId
+      - prs
+      - branchChanged
+      - takenOverFrom
+      type: object
     CleanupSessionsResponse:
       properties:
         cleaned:
@@ -752,6 +889,18 @@ components:
           type: array
       required:
       - projects
+      type: object
+    ListSessionPRsResponse:
+      properties:
+        prs:
+          items:
+            $ref: '#/components/schemas/SessionPRFacts'
+          type: array
+        sessionId:
+          type: string
+      required:
+      - sessionId
+      - prs
       type: object
     ListSessionsResponse:
       properties:
@@ -993,6 +1142,40 @@ components:
       - createdAt
       - updatedAt
       - status
+      type: object
+    SessionPRFacts:
+      properties:
+        ci:
+          type: string
+        mergeability:
+          type: string
+        number:
+          type: integer
+        review:
+          type: string
+        reviewComments:
+          type: boolean
+        state:
+          enum:
+          - draft
+          - open
+          - merged
+          - closed
+          type: string
+        updatedAt:
+          format: date-time
+          type: string
+        url:
+          type: string
+      required:
+      - url
+      - number
+      - state
+      - ci
+      - review
+      - mergeability
+      - reviewComments
+      - updatedAt
       type: object
     SessionResponse:
       properties:
