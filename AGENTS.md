@@ -103,12 +103,12 @@ npm run api          # runs api:spec then api:ts in sequence
 This is equivalent to running:
 ```bash
 npm run api:spec     # cd backend && go generate ./internal/httpd/apispec/...
-npm run api:ts       # npx openapi-typescript@7.4.4 openapi.yaml -o frontend/src/api/schema.ts
+npm run api:ts       # npx openapi-typescript@7.4.4 backend/internal/httpd/apispec/openapi.yaml -o frontend/src/api/schema.ts
 ```
 
 **Verify:**
 ```bash
-go test ./internal/httpd/...    # spec drift + route/spec parity tests
+cd backend && go test ./internal/httpd/...    # spec drift + route/spec parity tests
 ```
 
 Commit `openapi.yaml` and `frontend/src/api/schema.ts` together with the Go changes. The CLI hand-mirrored DTOs remain a deliberate manual boundary and are not generated.
