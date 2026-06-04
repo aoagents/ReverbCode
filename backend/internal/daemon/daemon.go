@@ -73,7 +73,8 @@ func Run() error {
 		}
 	}
 	runtimeAdapter := zellij.New(zellij.Options{SocketDir: zellijSocketDir})
-	termMgr := terminal.NewManager(runtimeAdapter, cdcPipe.Broadcaster, log)
+	termMgr := terminal.NewManager(runtimeAdapter, cdcPipe.Broadcaster, log,
+		terminal.WithSessionSource(&daemonSessionSource{store: store}))
 	defer termMgr.Close()
 
 	// Bring up the Lifecycle Manager and the reaper first: it makes the session

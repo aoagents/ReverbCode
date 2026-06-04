@@ -7,8 +7,27 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
+
+// fakeSessionSource is a scripted SessionSource for tests.
+type fakeSessionSource struct {
+	all []domain.Session
+}
+
+func (f *fakeSessionSource) AllSessions(_ context.Context) ([]domain.Session, error) {
+	return f.all, nil
+}
+
+func (f *fakeSessionSource) Session(_ context.Context, id domain.SessionID) (domain.Session, bool, error) {
+	for _, s := range f.all {
+		if s.ID == id {
+			return s, true, nil
+		}
+	}
+	return domain.Session{}, false, nil
+}
 
 // fakeSource is a scripted PTYSource.
 type fakeSource struct {

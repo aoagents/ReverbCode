@@ -55,17 +55,19 @@ type serverMsg struct {
 	ID   string `json:"id,omitempty"`
 	Type string `json:"type"`
 	// Data is base64-encoded PTY output for ch "terminal" / type "data".
-	Data    string         `json:"data,omitempty"`
-	Error   string         `json:"error,omitempty"`
-	Session *sessionUpdate `json:"session,omitempty"`
+	Data     string         `json:"data,omitempty"`
+	Error    string         `json:"error,omitempty"`
+	Sessions []sessionPatch `json:"sessions,omitempty"`
 }
 
-// sessionUpdate is the ch "sessions" payload: a single CDC change projected to
-// the fields a client needs to refresh its view. It deliberately omits the raw
-// change_log payload blob; the client refetches detail over the REST surface.
-type sessionUpdate struct {
-	Seq       int64  `json:"seq"`
-	ProjectID string `json:"projectId"`
-	SessionID string `json:"sessionId,omitempty"`
-	EventType string `json:"eventType"`
+// sessionPatch is the ch "sessions" payload: a session projected to the fields
+// the dashboard context provider needs to update its live view. The shape
+// matches the TS SessionPatch type in mux-protocol.ts so the existing frontend
+// can consume it without changes.
+type sessionPatch struct {
+	ID             string `json:"id"`
+	Status         string `json:"status"`
+	Activity       string `json:"activity"`
+	AttentionLevel string `json:"attentionLevel"`
+	LastActivityAt string `json:"lastActivityAt"`
 }

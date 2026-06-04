@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/cdc"
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -229,9 +230,19 @@ func TestServeRejectsOpenWithoutID(t *testing.T) {
 	}
 }
 
-func TestServeForwardsSessionChannelFromCDC(t *testing.T) {
+func TestServeSessionChannelSendsInitialSnapshot(t *testing.T) {
 	bc := cdc.NewBroadcaster()
-	mgr := NewManager(&fakeSource{}, bc, testLogger(), WithSpawn((&fakeSpawner{}).spawn), WithHeartbeat(0))
+	sess := domain.Session{
+		SessionRecord: domain.SessionRecord{
+			ID:        "s1",
+			ProjectID: "p1",
+			Activity:  domain.Activity{State: domain.ActivityActive},
+		},
+		Status: domain.StatusWorking,
+	}
+	src := &fakeSessionSource{all: []domain.Session{sess}}
+	mgr := NewManager(&fakeSource{}, bc, testLogger(),
+		WithSpawn((&fakeSpawner{}).spawn), WithHeartbeat(0), WithSessionSource(src))
 	defer mgr.Close()
 
 	conn := newFakeConn()
@@ -240,12 +251,42 @@ func TestServeForwardsSessionChannelFromCDC(t *testing.T) {
 	go mgr.Serve(ctx, conn)
 
 	conn.in <- clientMsg{Ch: chSubscribe, Type: msgSubscribe}
-	// Give the subscription time to register before publishing.
+	m := recv(t, conn, chSessions, msgSnapshot, time.Second)
+	if len(m.Sessions) != 1 || m.Sessions[0].ID != "s1" || m.Sessions[0].Status != "working" {
+		t.Fatalf("initial snapshot = %+v, want 1 session with id=s1 status=working", m.Sessions)
+	}
+}
+
+func TestServeForwardsSessionChannelFromCDC(t *testing.T) {
+	bc := cdc.NewBroadcaster()
+	sess := domain.Session{
+		SessionRecord: domain.SessionRecord{
+			ID:        "s1",
+			ProjectID: "p1",
+			Activity:  domain.Activity{State: domain.ActivityIdle},
+		},
+		Status: domain.StatusIdle,
+	}
+	src := &fakeSessionSource{all: []domain.Session{sess}}
+	mgr := NewManager(&fakeSource{}, bc, testLogger(),
+		WithSpawn((&fakeSpawner{}).spawn), WithHeartbeat(0), WithSessionSource(src))
+	defer mgr.Close()
+
+	conn := newFakeConn()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go mgr.Serve(ctx, conn)
+
+	conn.in <- clientMsg{Ch: chSubscribe, Type: msgSubscribe}
+	// Drain the initial snapshot.
+	recv(t, conn, chSessions, msgSnapshot, time.Second)
+
+	// Give the subscription time to register before publishing the CDC event.
 	eventually(t, time.Second, func() bool {
 		bc.Publish(cdc.Event{Seq: 9, ProjectID: "p1", SessionID: "s1", Type: cdc.EventSessionUpdated})
 		select {
 		case m := <-conn.out:
-			return m.Ch == chSessions && m.Session != nil && m.Session.Seq == 9
+			return m.Ch == chSessions && len(m.Sessions) == 1 && m.Sessions[0].ID == "s1"
 		default:
 			return false
 		}

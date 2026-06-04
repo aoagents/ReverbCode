@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/cdc"
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -38,11 +39,12 @@ const (
 // Sessions outlive any single connection: multiple clients can attach to the
 // same pane, and a client reconnect re-subscribes to the existing session.
 type Manager struct {
-	src       PTYSource
-	events    EventSource
-	spawn     spawnFunc
-	log       *slog.Logger
-	heartbeat time.Duration
+	src        PTYSource
+	events     EventSource
+	sessionSrc SessionSource // nil disables the session-state feed
+	spawn      spawnFunc
+	log        *slog.Logger
+	heartbeat  time.Duration
 
 	// ctx scopes every session's PTY lifetime; cancelled by Close.
 	ctx    context.Context
@@ -61,6 +63,13 @@ func WithSpawn(fn spawnFunc) Option { return func(m *Manager) { m.spawn = fn } }
 
 // WithHeartbeat overrides the ping interval.
 func WithHeartbeat(d time.Duration) Option { return func(m *Manager) { m.heartbeat = d } }
+
+// WithSessionSource wires the session-state feed: when set the manager sends a
+// full snapshot on subscribe and a per-session patch on every CDC event. Pass
+// nil (the default) to disable session-state delivery.
+func WithSessionSource(src SessionSource) Option {
+	return func(m *Manager) { m.sessionSrc = src }
+}
 
 // NewManager builds a Manager. src attaches PTYs; events feeds the session
 // channel (may be nil to disable it). A nil logger falls back to slog.Default.
@@ -140,11 +149,12 @@ func (m *Manager) Serve(ctx context.Context, conn wsConn) {
 	defer cancel()
 
 	c := &connState{
-		mgr:    m,
-		conn:   conn,
-		cancel: cancel,
-		out:    make(chan serverMsg, defaultWriteBuffer),
-		terms:  map[string]func(){},
+		mgr:           m,
+		conn:          conn,
+		cancel:        cancel,
+		out:           make(chan serverMsg, defaultWriteBuffer),
+		sessionEvents: make(chan sessionEvent, defaultWriteBuffer),
+		terms:         map[string]func(){},
 	}
 	defer c.cleanup()
 
@@ -163,12 +173,25 @@ func (m *Manager) Serve(ctx context.Context, conn wsConn) {
 	}
 }
 
+// sessionEvent is a unit of work for the session-state writer. snapshot=true
+// means "emit a full snapshot of all sessions"; otherwise id names the single
+// session to re-read and patch. Both are resolved live in the writer goroutine,
+// so whichever the client sees last reflects the freshest state.
+type sessionEvent struct {
+	snapshot bool
+	id       string
+}
+
 // connState is the per-connection mutable state.
 type connState struct {
 	mgr    *Manager
 	conn   wsConn
 	cancel context.CancelFunc
 	out    chan serverMsg
+	// sessionEvents is the single ordered queue feeding the session-state writer.
+	// The CDC callback pushes lightweight items (it runs on the poller loop and
+	// must not block); the writer goroutine does all DB reads off that hot path.
+	sessionEvents chan sessionEvent
 
 	mu        sync.Mutex
 	terms     map[string]func() // terminal id -> unsubscribe
@@ -314,21 +337,37 @@ func (c *connState) handleSubscribe(msg clientMsg) {
 	}
 	c.mu.Unlock()
 
+	// Subscribe before enqueueing the snapshot so an event that fires during
+	// setup is not lost. Both the snapshot and per-session patches flow through
+	// the one ordered sessionEvents queue and are resolved live in the writer,
+	// so the last frame the client sees for any session reflects current state
+	// regardless of interleaving. The callback runs on the poller loop and must
+	// not block, so it only forwards the SessionID.
 	unsub := c.mgr.events.Subscribe(func(e cdc.Event) {
-		c.enqueue(serverMsg{
-			Ch:   chSessions,
-			Type: msgSnapshot,
-			Session: &sessionUpdate{
-				Seq:       e.Seq,
-				ProjectID: e.ProjectID,
-				SessionID: e.SessionID,
-				EventType: string(e.Type),
-			},
-		})
+		if c.mgr.sessionSrc == nil || e.SessionID == "" {
+			return
+		}
+		c.pushSessionEvent(sessionEvent{id: e.SessionID})
 	})
 	c.mu.Lock()
 	c.unsubEvts = unsub
 	c.mu.Unlock()
+
+	// Queue an initial full snapshot so the client gets current state immediately.
+	if c.mgr.sessionSrc != nil {
+		c.pushSessionEvent(sessionEvent{snapshot: true})
+	}
+}
+
+// pushSessionEvent queues a session-state work item for the writer. A full
+// buffer means the client cannot keep up; tear the connection down rather than
+// block the poller loop the CDC callback runs on.
+func (c *connState) pushSessionEvent(ev sessionEvent) {
+	select {
+	case c.sessionEvents <- ev:
+	default:
+		c.cancel()
+	}
 }
 
 // enqueue pushes a frame to the writer. If the buffer is full the client is too
@@ -349,6 +388,32 @@ func (c *connState) writeLoop(ctx context.Context) {
 			return
 		case msg := <-c.out:
 			if err := c.conn.WriteJSON(ctx, msg); err != nil {
+				c.cancel()
+				return
+			}
+		case ev := <-c.sessionEvents:
+			// Resolve state here, off the broadcaster's hot path. Reading live at
+			// write time (not enqueue time) means the last frame for any session
+			// always reflects current state, whatever the queue interleaving.
+			if c.mgr.sessionSrc == nil {
+				continue
+			}
+			var patches []sessionPatch
+			if ev.snapshot {
+				all, err := c.mgr.sessionSrc.AllSessions(ctx)
+				if err != nil {
+					c.mgr.log.Warn("terminal: failed to fetch session snapshot", "err", err)
+					continue
+				}
+				patches = toSessionPatches(all)
+			} else {
+				sess, ok, err := c.mgr.sessionSrc.Session(ctx, domain.SessionID(ev.id))
+				if err != nil || !ok {
+					continue // vanished session: skip silently
+				}
+				patches = []sessionPatch{toSessionPatch(sess)}
+			}
+			if err := c.conn.WriteJSON(ctx, serverMsg{Ch: chSessions, Type: msgSnapshot, Sessions: patches}); err != nil {
 				c.cancel()
 				return
 			}
