@@ -196,6 +196,55 @@ func (q *Queries) ListPRsBySession(ctx context.Context, sessionID domain.Session
 	return items, nil
 }
 
+const upsertLegacyPR = `-- name: UpsertLegacyPR :exec
+INSERT INTO pr (
+    url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at,
+    is_draft, is_merged, is_closed
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT (url) DO UPDATE SET
+    number = excluded.number,
+    pr_state = excluded.pr_state,
+    review_decision = excluded.review_decision,
+    ci_state = excluded.ci_state,
+    mergeability = excluded.mergeability,
+    updated_at = excluded.updated_at,
+    is_draft = excluded.is_draft,
+    is_merged = excluded.is_merged,
+    is_closed = excluded.is_closed
+`
+
+type UpsertLegacyPRParams struct {
+	URL            string
+	SessionID      domain.SessionID
+	Number         int64
+	PRState        domain.PRState
+	ReviewDecision domain.ReviewDecision
+	CIState        domain.CIState
+	Mergeability   domain.Mergeability
+	UpdatedAt      time.Time
+	IsDraft        int64
+	IsMerged       int64
+	IsClosed       int64
+}
+
+func (q *Queries) UpsertLegacyPR(ctx context.Context, arg UpsertLegacyPRParams) error {
+	_, err := q.db.ExecContext(ctx, upsertLegacyPR,
+		arg.URL,
+		arg.SessionID,
+		arg.Number,
+		arg.PRState,
+		arg.ReviewDecision,
+		arg.CIState,
+		arg.Mergeability,
+		arg.UpdatedAt,
+		arg.IsDraft,
+		arg.IsMerged,
+		arg.IsClosed,
+	)
+	return err
+}
+
 const upsertPR = `-- name: UpsertPR :exec
 INSERT INTO pr (
     url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at,

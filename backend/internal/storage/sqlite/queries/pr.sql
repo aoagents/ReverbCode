@@ -47,6 +47,23 @@ ON CONFLICT (url) DO UPDATE SET
     ci_observed_at = excluded.ci_observed_at,
     review_observed_at = excluded.review_observed_at;
 
+-- name: UpsertLegacyPR :exec
+INSERT INTO pr (
+    url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at,
+    is_draft, is_merged, is_closed
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT (url) DO UPDATE SET
+    number = excluded.number,
+    pr_state = excluded.pr_state,
+    review_decision = excluded.review_decision,
+    ci_state = excluded.ci_state,
+    mergeability = excluded.mergeability,
+    updated_at = excluded.updated_at,
+    is_draft = excluded.is_draft,
+    is_merged = excluded.is_merged,
+    is_closed = excluded.is_closed;
+
 -- name: GetPR :one
 SELECT
     url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at,

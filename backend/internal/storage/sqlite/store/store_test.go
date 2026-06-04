@@ -339,7 +339,13 @@ func TestWritePRPreservesSCMReviewThreads(t *testing.T) {
 	seedProject(t, s, "mer")
 	r, _ := s.CreateSession(ctx, sampleRecord("mer"))
 	now := time.Now().UTC().Truncate(time.Second)
-	pr := domain.PullRequest{URL: "https://github.com/o/r/pull/1", SessionID: r.ID, Number: 1, UpdatedAt: now}
+	observedAt := now.Add(-time.Minute)
+	pr := domain.PullRequest{
+		URL: "https://github.com/o/r/pull/1", SessionID: r.ID, Number: 1, UpdatedAt: now,
+		Provider: "github", Host: "github.com", Repo: "o/r", HeadSHA: "head-1",
+		MetadataHash: "metadata-v1", CIHash: "ci-v1", ReviewHash: "review-v1",
+		ObservedAt: observedAt, CIObservedAt: observedAt, ReviewObservedAt: observedAt,
+	}
 	threads := []domain.PullRequestReviewThread{{ThreadID: "t1", Path: "main.go", Line: 7, SemanticHash: "thread-v1", UpdatedAt: now}}
 	comments := []domain.PullRequestComment{{ThreadID: "t1", ID: "c1", Author: "reviewer", Body: "scm", URL: "https://example/comment/c1", CreatedAt: now}}
 
@@ -354,6 +360,20 @@ func TestWritePRPreservesSCMReviewThreads(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	gotPR, ok, err := s.GetPR(ctx, pr.URL)
+	if err != nil || !ok {
+		t.Fatalf("get pr: ok=%v err=%v", ok, err)
+	}
+	if gotPR.Provider != "github" || gotPR.Host != "github.com" || gotPR.Repo != "o/r" || gotPR.HeadSHA != "head-1" ||
+		gotPR.MetadataHash != "metadata-v1" || gotPR.CIHash != "ci-v1" || gotPR.ReviewHash != "review-v1" {
+		t.Fatalf("legacy WritePR must preserve SCM-owned metadata and hashes, got %+v", gotPR)
+	}
+	if !gotPR.ObservedAt.Equal(observedAt) || !gotPR.CIObservedAt.Equal(observedAt) || !gotPR.ReviewObservedAt.Equal(observedAt) {
+		t.Fatalf("legacy WritePR must preserve SCM observation timestamps, got observed=%s ci=%s review=%s", gotPR.ObservedAt, gotPR.CIObservedAt, gotPR.ReviewObservedAt)
+	}
+	if gotPR.CI != domain.CIPassing {
+		t.Fatalf("legacy WritePR should still update legacy scalar CI state, got %s", gotPR.CI)
+	}
 	gotThreads, err := s.ListPRReviewThreads(ctx, pr.URL)
 	if err != nil {
 		t.Fatal(err)
@@ -397,6 +417,29 @@ func TestWritePRPreservesSCMReviewThreads(t *testing.T) {
 	replacement, ok := byID["c2"]
 	if !ok || replacement.ThreadID != "t1" {
 		t.Fatalf("SCM merge did not insert replacement threaded comment, comments=%+v", gotComments)
+	}
+}
+
+func TestWritePRReplacesLegacyCommentBodies(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	r, _ := s.CreateSession(ctx, sampleRecord("mer"))
+	now := time.Now().UTC().Truncate(time.Second)
+	pr := domain.PullRequest{URL: "https://github.com/o/r/pull/2", SessionID: r.ID, Number: 2, UpdatedAt: now}
+
+	if err := s.WritePR(ctx, pr, nil, []domain.PullRequestComment{{ID: "legacy", Author: "reviewer", Body: "before", CreatedAt: now}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WritePR(ctx, pr, nil, []domain.PullRequestComment{{ID: "legacy", Author: "reviewer", Body: "after edit", CreatedAt: now.Add(time.Second)}}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.ListPRComments(ctx, pr.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Body != "after edit" || !got[0].CreatedAt.Equal(now.Add(time.Second)) {
+		t.Fatalf("legacy comment replacement did not persist edited row: %+v", got)
 	}
 }
 

@@ -58,8 +58,14 @@ func (s *Store) writePR(ctx context.Context, pr domain.PullRequest, checks []dom
 		if err == nil && existing.SessionID != pr.SessionID {
 			return fmt.Errorf("pr %s already belongs to session %s", pr.URL, existing.SessionID)
 		}
-		if err := q.UpsertPR(ctx, genPRParams(pr)); err != nil {
-			return err
+		if replaceLegacyComments {
+			if err := q.UpsertLegacyPR(ctx, genLegacyPRParams(pr)); err != nil {
+				return err
+			}
+		} else {
+			if err := q.UpsertPR(ctx, genPRParams(pr)); err != nil {
+				return err
+			}
 		}
 		for _, c := range checks {
 			if err := q.UpsertPRCheck(ctx, genCheckParams(pr.URL, c)); err != nil {
@@ -251,6 +257,22 @@ func genPRParams(r domain.PullRequest) gen.UpsertPRParams {
 		ObservedAt:               nullTime(r.ObservedAt),
 		CIObservedAt:             nullTime(r.CIObservedAt),
 		ReviewObservedAt:         nullTime(r.ReviewObservedAt),
+	}
+}
+
+func genLegacyPRParams(r domain.PullRequest) gen.UpsertLegacyPRParams {
+	return gen.UpsertLegacyPRParams{
+		URL:            r.URL,
+		SessionID:      r.SessionID,
+		Number:         int64(r.Number),
+		PRState:        prState(r),
+		ReviewDecision: reviewOrDefault(r.Review),
+		CIState:        ciOrDefault(r.CI),
+		Mergeability:   mergeabilityOrDefault(r.Mergeability),
+		UpdatedAt:      r.UpdatedAt,
+		IsDraft:        boolInt(r.Draft),
+		IsMerged:       boolInt(r.Merged),
+		IsClosed:       boolInt(r.Closed),
 	}
 }
 

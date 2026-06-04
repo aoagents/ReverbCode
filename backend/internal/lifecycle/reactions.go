@@ -102,6 +102,7 @@ func scmToPRObservation(o ports.SCMObservation) ports.PRObservation {
 	if pr.Mergeability == "" {
 		pr.Mergeability = domain.MergeUnknown
 	}
+	checkCommit := firstSCMNonEmpty(o.CI.HeadSHA, o.PR.HeadSHA)
 	for _, ch := range o.CI.FailedChecks {
 		status := domain.PRCheckStatus(ch.Status)
 		if status == "" {
@@ -113,7 +114,7 @@ func scmToPRObservation(o ports.SCMObservation) ports.PRObservation {
 		}
 		pr.Checks = append(pr.Checks, ports.PRCheckObservation{
 			Name:       ch.Name,
-			CommitHash: o.CI.HeadSHA,
+			CommitHash: checkCommit,
 			Status:     status,
 			URL:        ch.URL,
 			LogTail:    logTail,

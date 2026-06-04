@@ -612,6 +612,11 @@ func (o *Observer) enrichFailureLogs(ctx context.Context, obs *ports.SCMObservat
 		}
 	}
 	tails := make([]string, 0, len(obs.CI.FailedChecks))
+	checksByProviderID := make(map[string][]int, len(obs.CI.Checks))
+	for i := range obs.CI.Checks {
+		key := checkProviderKey(obs.CI.Checks[i])
+		checksByProviderID[key] = append(checksByProviderID[key], i)
+	}
 	for i := range obs.CI.FailedChecks {
 		tail := obs.CI.FailedChecks[i].LogTail
 		if tail == "" && obs.CI.FailedChecks[i].ProviderID != "" {
@@ -625,13 +630,15 @@ func (o *Observer) enrichFailureLogs(ctx context.Context, obs *ports.SCMObservat
 		if tail != "" {
 			tails = append(tails, tail)
 		}
-		for j := range obs.CI.Checks {
-			if obs.CI.Checks[j].Name == obs.CI.FailedChecks[i].Name && obs.CI.Checks[j].ProviderID == obs.CI.FailedChecks[i].ProviderID {
-				obs.CI.Checks[j].LogTail = tail
-			}
+		for _, j := range checksByProviderID[checkProviderKey(obs.CI.FailedChecks[i])] {
+			obs.CI.Checks[j].LogTail = tail
 		}
 	}
 	obs.CI.FailureLogTail = strings.Join(tails, "\n---\n")
+}
+
+func checkProviderKey(ch ports.SCMCheckObservation) string {
+	return ch.Name + "\x00" + ch.ProviderID
 }
 
 func applyStoredFailedLogTails(obs *ports.SCMObservation, checks []domain.PullRequestCheck) bool {
@@ -713,9 +720,7 @@ func (o *Observer) refreshReviews(ctx context.Context, subjects map[string]*subj
 		} else {
 			reviewModes[pkey] = ports.ReviewWriteReplace
 		}
-		if _, ok := o.Cache.ReviewRefreshFailed[pkey]; ok {
-			o.Cache.ReviewRefreshFailed[pkey] = false
-		}
+		cacheDelete(o.Cache.ReviewRefreshFailed, &o.Cache.reviewFailedOrder, pkey)
 	}
 }
 
@@ -1155,6 +1160,20 @@ func (o *Observer) cacheSetBool(m map[string]bool, order *[]string, key string, 
 		*order = (*order)[1:]
 		delete(m, evict)
 	}
+}
+
+func cacheDelete[V any](m map[string]V, order *[]string, key string) {
+	if _, ok := m[key]; !ok {
+		return
+	}
+	delete(m, key)
+	dst := (*order)[:0]
+	for _, cachedKey := range *order {
+		if cachedKey != key {
+			dst = append(dst, cachedKey)
+		}
+	}
+	*order = dst
 }
 
 func (o *Observer) evictStrings(m map[string]string, order *[]string) {

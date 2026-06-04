@@ -164,6 +164,31 @@ func TestSCMObservationProjectsToExistingPRReactions(t *testing.T) {
 	}
 }
 
+func TestSCMObservationUsesPRHeadWhenCIHeadMissing(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	o := ports.SCMObservation{
+		Fetched: true,
+		PR:      ports.SCMPRObservation{URL: "pr1", HeadSHA: "c1"},
+		CI: ports.SCMCIObservation{
+			Summary: string(domain.CIFailing),
+			FailedChecks: []ports.SCMCheckObservation{{
+				Name: "build", Status: string(domain.PRCheckFailed),
+			}},
+		},
+	}
+	if err := m.ApplySCMObservation(ctx, "mer-1", o); err != nil {
+		t.Fatal(err)
+	}
+	o.PR.HeadSHA = "c2"
+	if err := m.ApplySCMObservation(ctx, "mer-1", o); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 2 {
+		t.Fatalf("want separate CI nudges for distinct PR heads when CI head is absent, got %d: %v", len(msg.msgs), msg.msgs)
+	}
+}
+
 func TestPRObservation_MergeConflictNudgesAgent(t *testing.T) {
 	m, st, msg := newManager()
 	st.sessions["mer-1"] = working("mer-1")

@@ -661,6 +661,37 @@ func TestPoll_ReviewFetchFailureDoesNotUpdateReviewDecision(t *testing.T) {
 	}
 }
 
+func TestPoll_SuccessfulReviewRefreshClearsRetryCacheSlot(t *testing.T) {
+	store := testStoreWithSession()
+	local := knownPR(1)
+	local.Review = domain.ReviewChangesRequest
+	local.ReviewHash = "old-review"
+	store.prs["p-1"] = []domain.PullRequest{local}
+	review := ports.SCMReviewObservation{
+		Decision: string(domain.ReviewChangesRequest),
+		Threads:  []ports.SCMReviewThreadObservation{{ID: "t1", Path: "f.go", Line: 2, Comments: []ports.SCMReviewCommentObservation{{ID: "c1", Body: "fix"}}}},
+	}
+	provider := &fakeProvider{
+		repoGuards: map[string]ports.SCMGuardResult{prKey(testRepo, 0): {ETag: "repo", NotModified: true}},
+		reviews:    map[string]ports.SCMReviewObservation{prKey(testRepo, 1): review},
+	}
+	obs := newTestObserver(store, provider, nil, time.Unix(350, 0).UTC())
+	obs.Cache.RepoPRListETag[prKey(testRepo, 0)] = "repo"
+	obs.cacheSetBool(obs.Cache.ReviewRefreshFailed, &obs.Cache.reviewFailedOrder, prKey(testRepo, 1), true)
+
+	if err := obs.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := obs.Cache.ReviewRefreshFailed[prKey(testRepo, 1)]; ok {
+		t.Fatalf("successful review refresh should delete retry map entry, got %#v", obs.Cache.ReviewRefreshFailed)
+	}
+	for _, key := range obs.Cache.reviewFailedOrder {
+		if key == prKey(testRepo, 1) {
+			t.Fatalf("successful review refresh should remove retry order slot, got %#v", obs.Cache.reviewFailedOrder)
+		}
+	}
+}
+
 func TestPoll_DoesNotCommitCommitETagWhenFetchFails(t *testing.T) {
 	store := testStoreWithSession()
 	local := knownPR(1)

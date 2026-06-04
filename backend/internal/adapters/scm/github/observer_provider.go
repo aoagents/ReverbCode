@@ -165,7 +165,12 @@ func (p *Provider) FetchReviewThreads(ctx context.Context, ref ports.SCMPRRef) (
 	}
 	out := latest
 	startCursor := str(pi["startCursor"])
-	if len(latest) == 0 || !latest[0].Resolved {
+	// GitHub returns nodes in connection order even when selecting last:N, so
+	// latest[0] is the oldest thread in the latest window. If that boundary
+	// thread is still unresolved, fetch one older window to avoid hiding older
+	// active review feedback behind the normal 50-thread cost cap.
+	oldestLatestUnresolved := len(latest) == 0 || !latest[0].Resolved
+	if oldestLatestUnresolved {
 		if startCursor == "" {
 			p.logger.Warn("github scm: review thread page is partial but missing start cursor",
 				"repo", repoFullName(ref.Repo), "pr", ref.Number)
