@@ -61,6 +61,8 @@ func Build() ([]byte, error) {
 			"Agent session lifecycle and messaging"),
 		*(&openapi31.Tag{Name: "prs"}).WithDescription(
 			"Pull-request actions (SCM lane)"),
+		*(&openapi31.Tag{Name: "events"}).WithDescription(
+			"Server-sent CDC event stream with durable replay"),
 	}
 
 	for _, op := range operations() {
@@ -81,7 +83,11 @@ func Build() ([]byte, error) {
 			oc.AddReqStructure(op.reqBody, openapi.WithCustomize(markRequestBodyRequired))
 		}
 		for _, resp := range op.resps {
-			oc.AddRespStructure(resp.body, openapi.WithHTTPStatus(resp.status))
+			opts := []openapi.ContentOption{openapi.WithHTTPStatus(resp.status)}
+			if op.contentTypes != nil && op.contentTypes[resp.status] != "" {
+				opts = append(opts, openapi.WithContentType(op.contentTypes[resp.status]))
+			}
+			oc.AddRespStructure(resp.body, opts...)
 		}
 		if err := r.AddOperation(oc); err != nil {
 			return nil, fmt.Errorf("add operation %s %s: %w", op.method, op.path, err)
@@ -218,13 +224,36 @@ type operation struct {
 	pathParams                []any // path/query param containers (e.g. ProjectIDParam)
 	reqBody                   any   // JSON request body struct, nil when the op takes none
 	resps                     []respUnit
+	contentTypes              map[int]string // optional non-JSON response content types by status
 }
 
 func operations() []operation {
-	ops := append([]operation{}, projectOperations()...)
+	ops := append([]operation{}, eventOperations()...)
+	ops = append(ops, projectOperations()...)
 	ops = append(ops, sessionOperations()...)
 	ops = append(ops, prOperations()...)
 	return ops
+}
+
+type eventsQuery struct {
+	After *int64 `query:"after,omitempty" minimum:"0" description:"Replay events with seq greater than this cursor. When omitted, clients may send Last-Event-ID instead."`
+}
+
+func eventOperations() []operation {
+	return []operation{
+		{
+			method: http.MethodGet, path: "/api/v1/events", id: "streamEvents", tag: "events",
+			summary:    "Stream CDC events with durable replay",
+			pathParams: []any{eventsQuery{}},
+			resps: []respUnit{
+				{http.StatusOK, ""},
+				{status: http.StatusBadRequest, body: envelope.APIError{}},
+				{status: http.StatusInternalServerError, body: envelope.APIError{}},
+				{status: http.StatusNotImplemented, body: envelope.APIError{}},
+			},
+			contentTypes: map[int]string{http.StatusOK: "text/event-stream"},
+		},
+	}
 }
 
 // projectOperations declares the 4 canonical /projects operations. The set must

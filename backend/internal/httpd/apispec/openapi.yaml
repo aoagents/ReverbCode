@@ -8,6 +8,49 @@ servers:
 - description: Local daemon (loopback only)
   url: http://127.0.0.1:3001
 paths:
+  /api/v1/events:
+    get:
+      operationId: streamEvents
+      parameters:
+      - description: Replay events with seq greater than this cursor. When omitted,
+          clients may send Last-Event-ID instead.
+        in: query
+        name: after
+        schema:
+          description: Replay events with seq greater than this cursor. When omitted,
+            clients may send Last-Event-ID instead.
+          minimum: 0
+          type:
+          - "null"
+          - integer
+      responses:
+        "200":
+          content:
+            text/event-stream:
+              schema:
+                type: string
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Stream CDC events with durable replay
+      tags:
+      - events
   /api/v1/orchestrators:
     get:
       operationId: listOrchestrators
@@ -1061,3 +1104,5 @@ tags:
   name: sessions
 - description: Pull-request actions (SCM lane)
   name: prs
+- description: Server-sent CDC event stream with durable replay
+  name: events

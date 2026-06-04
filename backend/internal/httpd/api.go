@@ -6,6 +6,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/cdc"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apispec"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/controllers"
@@ -19,6 +20,8 @@ type APIDeps struct {
 	Projects projectsvc.Manager
 	Sessions controllers.SessionService
 	PRs      prsvc.ActionManager
+	CDC      cdc.Source
+	Events   cdcSubscriber
 }
 
 // API owns one controller per resource and is the single Register call the
@@ -28,6 +31,7 @@ type API struct {
 	projects *controllers.ProjectsController
 	sessions *controllers.SessionsController
 	prs      *controllers.PRsController
+	events   *EventsController
 }
 
 // NewAPI constructs the API surface from its dependencies. cfg carries the
@@ -42,7 +46,8 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 		sessions: &controllers.SessionsController{
 			Svc: deps.Sessions,
 		},
-		prs: &controllers.PRsController{Svc: deps.PRs},
+		prs:    &controllers.PRsController{Svc: deps.PRs},
+		events: &EventsController{Source: deps.CDC, Live: deps.Events},
 	}
 }
 
@@ -65,7 +70,8 @@ func (a *API) Register(root chi.Router) {
 			a.prs.Register(r)
 			// Sibling REST controllers plug in here.
 		})
-		// Surfaces that intentionally bypass the REST timeout register at this level.
+		// Long-lived streams intentionally bypass the REST timeout middleware.
+		a.events.Register(r)
 	})
 }
 
