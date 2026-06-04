@@ -76,14 +76,15 @@ func Run() error {
 	termMgr := terminal.NewManager(runtimeAdapter, cdcPipe.Broadcaster, log)
 	defer termMgr.Close()
 
+	// The agent messenger resolves a session's live runtime handle from the
+	// store and sends validated user input into its zellij pane. It backs both
+	// human /send and the lifecycle PR nudges, so it is built before the LCM.
+	messenger := newSessionMessenger(store, runtimeAdapter, log)
+
 	// Bring up the Lifecycle Manager and the reaper first: it makes the session
 	// lifecycle write path live (reducer write -> store -> DB trigger ->
 	// change_log -> poller -> broadcaster) and gives startSession the shared LCM.
-	lcStack := startLifecycle(ctx, store, runtimeAdapter, log)
-
-	// The agent messenger sends validated user input to the session's live
-	// zellij pane. Keep this path small until durable inbox semantics are needed.
-	messenger := newSessionMessenger(store, runtimeAdapter, log)
+	lcStack := startLifecycle(ctx, store, runtimeAdapter, messenger, log)
 
 	// Wire the controller-facing session service over the same store + LCM, the
 	// zellij runtime, a gitworktree workspace, the per-session agent resolver
@@ -99,12 +100,18 @@ func Run() error {
 		return fmt.Errorf("wire session service: %w", err)
 	}
 
+	// Start the PR observation path: discover each live session's PR from its
+	// branch, observe it, persist, and drive lifecycle nudges through the shared
+	// LCM. Degrades to a no-op when no GitHub token is configured.
+	prStack := startPRPoller(ctx, store, lcStack.LCM, log)
+
 	srv, err := httpd.NewWithDeps(cfg, log, termMgr, httpd.APIDeps{
 		Projects: projectsvc.New(store),
 		Sessions: sessionSvc,
 	})
 	if err != nil {
 		stop()
+		prStack.Stop()
 		lcStack.Stop()
 		if cdcErr := cdcPipe.Stop(); cdcErr != nil {
 			log.Error("cdc pipeline shutdown", "err", cdcErr)
@@ -119,6 +126,7 @@ func Run() error {
 	// via defer) avoids the LIFO trap where a Stop() that blocks on ctx-cancel
 	// runs before the cancel — which would hang any non-signal exit path.
 	stop()
+	prStack.Stop()
 	lcStack.Stop()
 	if err := cdcPipe.Stop(); err != nil {
 		log.Error("cdc pipeline shutdown", "err", err)

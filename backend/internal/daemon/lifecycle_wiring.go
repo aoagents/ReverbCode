@@ -33,8 +33,8 @@ type lifecycleStack struct {
 
 // startLifecycle constructs the Lifecycle Manager over the store and starts the
 // reaper. The goroutine stops when ctx is cancelled; Stop waits for it to drain.
-func startLifecycle(ctx context.Context, store *sqlite.Store, runtime ports.Runtime, logger *slog.Logger) *lifecycleStack {
-	lcm := lifecycle.New(store, nil)
+func startLifecycle(ctx context.Context, store *sqlite.Store, runtime ports.Runtime, messenger ports.AgentMessenger, logger *slog.Logger) *lifecycleStack {
+	lcm := lifecycle.New(store, messenger)
 	rp := reaper.New(lcm, store, runtime, reaper.Config{Logger: logger})
 	return &lifecycleStack{LCM: lcm, reaperDone: rp.Start(ctx)}
 }
@@ -45,8 +45,9 @@ func (l *lifecycleStack) Stop() { <-l.reaperDone }
 
 // startSession builds the controller-facing session service: a session manager
 // over the real zellij runtime, a per-session gitworktree workspace, the shared
-// store + LCM, the per-session agent resolver (AO_AGENT default), and the
-// agent messenger. The returned service is mounted at httpd APIDeps.Sessions.
+// store + LCM, the per-session agent resolver (AO_AGENT default), and the live
+// runtime messenger so human /send reaches the agent's pane. The returned
+// service is mounted at httpd APIDeps.Sessions.
 func startSession(cfg config.Config, runtime ports.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, messenger ports.AgentMessenger, log *slog.Logger) (*sessionsvc.Service, error) {
 	agents, err := buildAgentResolver(cfg.Agent, log)
 	if err != nil {
