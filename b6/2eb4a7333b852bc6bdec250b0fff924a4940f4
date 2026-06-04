@@ -1,0 +1,19 @@
+frontend/src/renderer/terminal/MuxConnection.test.ts
+  s_021815646d7ba6::t_5198028e320c6e 1-127
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "b62eb4a7333b852bc6bdec250b0fff924a4940f4",
+  "prompts": {},
+  "sessions": {
+    "s_021815646d7ba6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "00b561b9-439b-48ba-a5d0-d51c6ed90579",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    }
+  }
+}
