@@ -25,10 +25,11 @@ func TestGetLaunchCommandBuildsArgv(t *testing.T) {
 	}
 
 	// opencode has no system-prompt flag, so SystemPrompt/SystemPromptFile are
-	// dropped; the prompt is delivered via --prompt.
+	// dropped; the prompt is delivered via --prompt. bypass-permissions prepends
+	// an `env OPENCODE_PERMISSION=...` assignment (the TUI has no permission flag).
 	want := []string{
+		"env", `OPENCODE_PERMISSION={"*":"allow"}`,
 		"opencode",
-		"--dangerously-skip-permissions",
 		"--prompt", "-fix this",
 	}
 	if !reflect.DeepEqual(cmd, want) {
@@ -38,16 +39,17 @@ func TestGetLaunchCommandBuildsArgv(t *testing.T) {
 
 func TestGetLaunchCommandMapsPermissionModes(t *testing.T) {
 	tests := []struct {
-		name        string
-		permission  ports.PermissionMode
-		wantFlag    bool
-		notExpected string
+		name       string
+		permission ports.PermissionMode
+		// wantEnv is the expected OPENCODE_PERMISSION value, or "" when the mode
+		// emits no env prefix at all (defers entirely to opencode's own config).
+		wantEnv string
 	}{
-		{name: "default", permission: ports.PermissionModeDefault, notExpected: "--dangerously-skip-permissions"},
-		{name: "accept-edits", permission: ports.PermissionModeAcceptEdits, notExpected: "--dangerously-skip-permissions"},
-		{name: "auto", permission: ports.PermissionModeAuto, notExpected: "--dangerously-skip-permissions"},
-		{name: "bypass-permissions", permission: ports.PermissionModeBypassPermissions, wantFlag: true},
-		{name: "empty", permission: "", notExpected: "--dangerously-skip-permissions"},
+		{name: "default", permission: ports.PermissionModeDefault, wantEnv: ""},
+		{name: "accept-edits", permission: ports.PermissionModeAcceptEdits, wantEnv: `{"edit":"allow"}`},
+		{name: "auto", permission: ports.PermissionModeAuto, wantEnv: `{"bash":"allow","edit":"allow"}`},
+		{name: "bypass-permissions", permission: ports.PermissionModeBypassPermissions, wantEnv: `{"*":"allow"}`},
+		{name: "empty", permission: "", wantEnv: ""},
 	}
 
 	for _, tt := range tests {
@@ -57,12 +59,21 @@ func TestGetLaunchCommandMapsPermissionModes(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			has := contains(cmd, "--dangerously-skip-permissions")
-			if tt.wantFlag && !has {
-				t.Fatalf("command %#v missing --dangerously-skip-permissions", cmd)
+			// A permission FLAG must never leak onto the interactive TUI launch;
+			// those exist only on `opencode run`.
+			if contains(cmd, "--dangerously-skip-permissions") {
+				t.Fatalf("command %#v contains run-only --dangerously-skip-permissions", cmd)
 			}
-			if tt.notExpected != "" && has {
-				t.Fatalf("command %#v contains %q", cmd, tt.notExpected)
+			if tt.wantEnv == "" {
+				if len(cmd) == 0 || cmd[0] == "env" {
+					t.Fatalf("command %#v should have no env prefix", cmd)
+				}
+				return
+			}
+			// Non-default modes prepend `env OPENCODE_PERMISSION=<json>`.
+			want := "OPENCODE_PERMISSION=" + tt.wantEnv
+			if len(cmd) < 3 || cmd[0] != "env" || cmd[1] != want || cmd[2] != "opencode" {
+				t.Fatalf("command %#v must be prefixed with `env %s`", cmd, want)
 			}
 		})
 	}
@@ -277,8 +288,8 @@ func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 		t.Fatal("ok = false, want true")
 	}
 	want := []string{
+		"env", `OPENCODE_PERMISSION={"*":"allow"}`,
 		"opencode",
-		"--dangerously-skip-permissions",
 		"--session", "ses_abc123",
 	}
 	if !reflect.DeepEqual(cmd, want) {

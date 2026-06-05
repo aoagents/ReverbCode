@@ -7,9 +7,11 @@
 //     equivalent). Its only lifecycle-extensibility surface is a JS/TS plugin
 //     loaded from .opencode/plugins/, so GetAgentHooks installs an AO-owned
 //     plugin file (see hooks.go) instead of merging JSON.
-//   - Its CLI exposes only one approval flag (--dangerously-skip-permissions)
-//     and no system-prompt flag, so the graduated permission modes and the
-//     system prompt are deferred to opencode's own config.
+//   - Its interactive TUI exposes no permission flag
+//     (--dangerously-skip-permissions lives only on `opencode run`, not the
+//     default TUI command AO launches) and no system-prompt flag. AO's graduated
+//     permission modes are delivered via the OPENCODE_PERMISSION env var (see
+//     opencodePermissionConfig); the system prompt defers to opencode's own config.
 //
 // AO-managed sessions derive native session identity and display metadata from
 // the opencode plugin's reported events, mirroring the Codex adapter.
@@ -17,6 +19,7 @@ package opencode
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -82,22 +85,22 @@ func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
 // GetLaunchCommand builds the argv to start a new interactive opencode session.
 // Shape:
 //
-//	opencode [--dangerously-skip-permissions] [--prompt <prompt>]
+//	[env OPENCODE_PERMISSION=<json>] opencode [--prompt <prompt>]
 //
 // The session runs in the worktree (cwd is set by the runtime, as for Claude
 // Code and Codex). opencode has no CLI flag to set a system prompt, so
 // cfg.SystemPrompt / SystemPromptFile are intentionally ignored here — opencode
 // resolves instructions from its own config and AGENTS.md rules. The initial
 // task prompt is delivered via --prompt (its argument, so a leading "-" is not
-// read as a flag).
+// read as a flag). Non-default permission modes prepend an `env` assignment
+// rather than a flag (see opencodePermissionEnvPrefix).
 func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (cmd []string, err error) {
 	binary, err := p.opencodeBinary(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	cmd = []string{binary}
-	appendPermissionFlags(&cmd, cfg.Permissions)
+	cmd = append(opencodePermissionEnvPrefix(cfg.Permissions), binary)
 	if cfg.Prompt != "" {
 		cmd = append(cmd, "--prompt", cfg.Prompt)
 	}
@@ -114,8 +117,8 @@ func (p *Plugin) GetPromptDeliveryStrategy(ctx context.Context, cfg ports.Launch
 }
 
 // GetRestoreCommand rebuilds the argv that continues an existing opencode
-// session: `opencode [--dangerously-skip-permissions] --session <agentSessionId>`.
-// It re-applies the permission flag (resume otherwise reverts to the configured
+// session: `[env OPENCODE_PERMISSION=<json>] opencode --session <agentSessionId>`.
+// It re-applies the permission env (resume otherwise reverts to the configured
 // default) but not the prompt, which the session already carries. ok is false
 // when the plugin-derived native session id has not landed yet, so callers fall
 // back to fresh launch behavior — mirroring the Codex adapter.
@@ -133,10 +136,7 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 		return nil, false, err
 	}
 
-	cmd = make([]string, 0, 4)
-	cmd = append(cmd, binary)
-	appendPermissionFlags(&cmd, cfg.Permissions)
-	cmd = append(cmd, "--session", agentSessionID)
+	cmd = append(opencodePermissionEnvPrefix(cfg.Permissions), binary, "--session", agentSessionID)
 	return cmd, true, nil
 }
 
@@ -158,16 +158,55 @@ func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (por
 	return info, true, nil
 }
 
-// appendPermissionFlags maps AO's permission modes onto opencode's single
-// approval flag. opencode exposes only --dangerously-skip-permissions (no
-// graduated accept-edits/auto modes), so:
-//   - bypass-permissions → --dangerously-skip-permissions
-//   - default / accept-edits / auto → no flag. opencode resolves approvals from
-//     its own `permission` config exactly as a normal launch.
-func appendPermissionFlags(cmd *[]string, permissions ports.PermissionMode) {
-	if normalizePermissionMode(permissions) == ports.PermissionModeBypassPermissions {
-		*cmd = append(*cmd, "--dangerously-skip-permissions")
+// opencodePermissionEnvVar is the env var opencode merges into its permission
+// config (see opencode's config.ts). It is the only permission-control surface
+// the interactive TUI honors: the --dangerously-skip-permissions flag exists
+// solely on `opencode run`, not on the default TUI command AO launches, so
+// passing any permission flag makes opencode reject the argv and the session
+// fails to launch.
+const opencodePermissionEnvVar = "OPENCODE_PERMISSION"
+
+// opencodePermissionConfig maps an AO permission mode onto opencode's permission
+// config (tool -> action). Tools left unset fall back to opencode's own default
+// action ("ask"), so each mode only names the tools it relaxes:
+//   - default            → nil: no env; opencode's config decides every prompt.
+//   - accept-edits       → edits ("write"/"edit"/"patch" all gate on the "edit"
+//     key) auto-approved; bash and everything else still prompt.
+//   - auto               → edits + bash auto-approved; network/other still prompt.
+//     opencode has no classifier/reviewer gate (unlike Claude Code's "auto"), so
+//     this is the closest analog its flat allow/ask/deny config can express.
+//   - bypass-permissions → "*" wildcard-allows every tool: nothing prompts.
+func opencodePermissionConfig(mode ports.PermissionMode) map[string]string {
+	switch normalizePermissionMode(mode) {
+	case ports.PermissionModeAcceptEdits:
+		return map[string]string{"edit": "allow"}
+	case ports.PermissionModeAuto:
+		return map[string]string{"edit": "allow", "bash": "allow"}
+	case ports.PermissionModeBypassPermissions:
+		return map[string]string{"*": "allow"}
+	default:
+		return nil
 	}
+}
+
+// opencodePermissionEnvPrefix renders mode's permission config as an
+// `env OPENCODE_PERMISSION=<json>` argv prefix, or nil for the default mode.
+//
+// The var must reach opencode as a process env var, not an argv flag. The zellij
+// runtime runs the argv through a shell, which execs `env`, which sets the var
+// and execs opencode. A bare `OPENCODE_PERMISSION=...` argv element would not
+// work: the runtime shell-quotes every element, and a quoted token is run as a
+// command rather than read as an assignment — hence the explicit `env` wrapper.
+// POSIX-only, which matches the zellij runtime.
+func opencodePermissionEnvPrefix(mode ports.PermissionMode) []string {
+	config := opencodePermissionConfig(mode)
+	if len(config) == 0 {
+		return nil
+	}
+	// Marshaling a map[string]string never errors and emits keys in sorted order,
+	// so the prefix is deterministic for tests and reproducible across launches.
+	blob, _ := json.Marshal(config)
+	return []string{"env", opencodePermissionEnvVar + "=" + string(blob)}
 }
 
 func normalizePermissionMode(mode ports.PermissionMode) ports.PermissionMode {

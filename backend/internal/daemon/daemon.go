@@ -105,6 +105,7 @@ func Run() error {
 	srv, err := httpd.NewWithDeps(cfg, log, termMgr, httpd.APIDeps{
 		Projects: projectsvc.New(store),
 		Sessions: sessionSvc,
+		Activity: lcStack.LCM,
 	})
 	if err != nil {
 		stop()

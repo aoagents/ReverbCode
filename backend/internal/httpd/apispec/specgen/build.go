@@ -137,6 +137,8 @@ var schemaNames = map[string]string{
 	"ControllersClaimPRRequest":             "ClaimPRRequest",
 	"ControllersSessionPRFacts":             "SessionPRFacts",
 	"ControllersListSessionPRsResponse":     "ListSessionPRsResponse",
+	"ControllersSetActivityRequest":         "SetActivityRequest",
+	"ControllersSetActivityResponse":        "SetActivityResponse",
 	"ControllersSpawnOrchestratorRequest":   "SpawnOrchestratorRequest",
 	"ControllersSpawnOrchestratorResponse":  "SpawnOrchestratorResponse",
 	"ControllersOrchestratorResponse":       "OrchestratorResponse",
@@ -393,6 +395,19 @@ func sessionOperations() []operation {
 				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/activity", id: "setSessionActivity", tag: "sessions",
+			summary:    "Report an agent activity-state signal for a session",
+			pathParams: []any{controllers.SessionIDParam{}},
+			reqBody:    controllers.SetActivityRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.SetActivityResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
 			},
 		},
 		{

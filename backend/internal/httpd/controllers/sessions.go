@@ -37,10 +37,20 @@ type SessionService interface {
 	ClaimPR(ctx context.Context, id domain.SessionID, ref string, opts sessionsvc.ClaimPROptions) (sessionsvc.ClaimPRResult, error)
 }
 
+// ActivityRecorder applies an agent activity-state signal to a session. It is
+// satisfied directly by *lifecycle.Manager: an activity signal is a pure
+// lifecycle reduction (no runtime/workspace teardown), so it bypasses
+// SessionService rather than threading a no-op passthrough through the session
+// manager.
+type ActivityRecorder interface {
+	ApplyActivitySignal(ctx context.Context, id domain.SessionID, s ports.ActivitySignal) error
+}
+
 // SessionsController owns the session routes. Nil keeps routes registered but
 // returns OpenAPI-backed 501s.
 type SessionsController struct {
-	Svc SessionService
+	Svc      SessionService
+	Activity ActivityRecorder
 }
 
 // Register mounts the session routes on the supplied router.
@@ -55,6 +65,7 @@ func (c *SessionsController) Register(r chi.Router) {
 	r.Post("/sessions/{sessionId}/restore", c.restore)
 	r.Post("/sessions/{sessionId}/kill", c.kill)
 	r.Post("/sessions/{sessionId}/send", c.send)
+	r.Post("/sessions/{sessionId}/activity", c.activity)
 	r.Get("/orchestrators", c.listOrchestrators)
 	r.Post("/orchestrators", c.spawnOrchestrator)
 	r.Get("/orchestrators/{id}", c.getOrchestrator)
@@ -244,6 +255,34 @@ func (c *SessionsController) send(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	envelope.WriteJSON(w, http.StatusOK, SendSessionMessageResponse{OK: true, SessionID: sessionID(r), Message: message})
+}
+
+// activity records an agent activity-state signal reported by an agent hook
+// (via `ao hooks <agent> <event>`). It funnels through the single
+// lifecycle.Manager so the reaper and hooks never race on the session's
+// activity/termination columns.
+func (c *SessionsController) activity(w http.ResponseWriter, r *http.Request) {
+	if c.Activity == nil {
+		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/{sessionId}/activity")
+		return
+	}
+	var in SetActivityRequest
+	if err := decodeJSON(r, &in); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+		return
+	}
+	state := domain.ActivityState(in.State)
+	switch state {
+	case domain.ActivityActive, domain.ActivityIdle, domain.ActivityWaitingInput, domain.ActivityExited:
+	default:
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_ACTIVITY_STATE", "Unknown activity state", nil)
+		return
+	}
+	if err := c.Activity.ApplyActivitySignal(r.Context(), sessionID(r), ports.ActivitySignal{Valid: true, State: state}); err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, SetActivityResponse{OK: true, SessionID: sessionID(r), State: in.State})
 }
 
 func (c *SessionsController) spawnOrchestrator(w http.ResponseWriter, r *http.Request) {

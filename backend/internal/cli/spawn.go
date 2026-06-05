@@ -6,6 +6,7 @@ import (
 	"net/url"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/zellij"
 )
@@ -113,8 +114,16 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 		},
 	}
 	f := cmd.Flags()
+	// --agent is an alias for --harness so the more intuitive `ao spawn --agent
+	// droid` works identically; both resolve to the same harness flag.
+	f.SetNormalizeFunc(func(_ *pflag.FlagSet, name string) pflag.NormalizedName {
+		if name == "agent" {
+			name = "harness"
+		}
+		return pflag.NormalizedName(name)
+	})
 	f.StringVar(&opts.project, "project", "", "Project id to spawn the session in (required)")
-	f.StringVar(&opts.harness, "harness", "", "Agent harness: claude-code, codex, … (default: the daemon's AO_AGENT)")
+	f.StringVar(&opts.harness, "harness", "", "Agent harness / --agent: claude-code, codex, aider, opencode, grok, droid, amp, agy, crush, cursor, qwen, copilot, goose, auggie, continue, devin, cline, kimi, kiro, kilocode, vibe, pi, autohand (default: the daemon's AO_AGENT)")
 	f.StringVar(&opts.branch, "branch", "", "Branch for the session worktree (default: ao/<session-id>)")
 	f.StringVar(&opts.prompt, "prompt", "", "Initial prompt for the agent")
 	f.StringVar(&opts.issue, "issue", "", "Issue id to associate with the session")

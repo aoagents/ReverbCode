@@ -121,7 +121,7 @@ type SpawnSessionRequest struct {
 	ProjectID  domain.ProjectID    `json:"projectId"`
 	IssueID    domain.IssueID      `json:"issueId,omitempty"`
 	Kind       domain.SessionKind  `json:"kind,omitempty" enum:"worker,orchestrator"`
-	Harness    domain.AgentHarness `json:"harness,omitempty" enum:"claude-code,codex,aider,opencode"`
+	Harness    domain.AgentHarness `json:"harness,omitempty" enum:"claude-code,codex,aider,opencode,grok,droid,amp,agy,crush,cursor,qwen,copilot,goose,auggie,continue,devin,cline,kimi,kiro,kilocode,vibe,pi,autohand"`
 	Branch     string              `json:"branch,omitempty"`
 	Prompt     string              `json:"prompt,omitempty" maxLength:"4096"`
 	AgentRules string              `json:"agentRules,omitempty"`
@@ -207,6 +207,18 @@ type ClaimPRResponse struct {
 	PRs           []SessionPRFacts   `json:"prs"`
 	BranchChanged bool               `json:"branchChanged"`
 	TakenOverFrom []domain.SessionID `json:"takenOverFrom"`
+}
+
+// SetActivityRequest is the body of POST /api/v1/sessions/{sessionId}/activity.
+type SetActivityRequest struct {
+	State string `json:"state" enum:"active,idle,waiting_input,exited" description:"Agent activity state reported by an agent hook."`
+}
+
+// SetActivityResponse is the body of POST /api/v1/sessions/{sessionId}/activity.
+type SetActivityResponse struct {
+	OK        bool             `json:"ok"`
+	SessionID domain.SessionID `json:"sessionId"`
+	State     string           `json:"state"`
 }
 
 // OrchestratorIDParam is the {id} path parameter for orchestrator routes.
