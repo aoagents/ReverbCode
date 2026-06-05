@@ -1,0 +1,98 @@
+/* ════════════════════════════════════════════════════════════════════════
+   ReverbCode — Design Language (single source of truth)
+
+   This @theme block IS the design system. Every colour, font, radius, and
+   size the app uses is declared here as a token. Components reference tokens
+   (never raw hex) — via Tailwind utilities (bg-card, text-muted, rounded-lg)
+   or via the legacy CSS vars aliased at the bottom (var(--bg), var(--fg)…).
+
+   Tailwind v4 emits every @theme variable to :root AND generates utilities for
+   the namespaced ones (--color-*, --radius-*, --text-*, --font-*). Preflight
+   (Tailwind's CSS reset) is intentionally NOT imported, so existing plain-CSS
+   components in styles.css keep their look untouched.
+
+   See DESIGN.md for naming rules and how to add a token.
+   ════════════════════════════════════════════════════════════════════════ */
+
+@layer theme, base, components, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+
+@theme {
+  /* ── Type ─────────────────────────────────────────────────────────── */
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "SF Pro Text", sans-serif;
+  --font-mono: ui-monospace, "JetBrains Mono", "SFMono-Regular", Menlo, monospace;
+
+  --text-2xs: 0.625rem;  /* 10px — ids, meta */
+  --text-xs: 0.6875rem;  /* 11px — labels */
+  --text-sm: 0.8125rem;  /* 13px — body */
+
+  /* ── Surfaces (warm near-black, darkest → lightest) ───────────────── */
+  --color-bg: #0b0a09;          /* app background */
+  --color-bar: #0e0d0b;         /* top bar + sidebar */
+  --color-inset: #100f0d;       /* inputs, code, wells */
+  --color-card: #161412;        /* cards, panels */
+  --color-card-hover: #1c1a17;
+  --color-elevated: #1f1c19;    /* hover chips, badges */
+
+  /* ── Text ─────────────────────────────────────────────────────────── */
+  --color-fg: #ece7e1;          /* primary */
+  --color-muted: #978f86;       /* secondary */
+  --color-dim: #645d55;         /* tertiary / disabled */
+
+  /* ── Lines (warm, low-alpha) ──────────────────────────────────────── */
+  --color-border: rgba(255, 240, 220, 0.07);
+  --color-border-strong: rgba(255, 240, 220, 0.15);
+
+  /* ── Brand / action (periwinkle) ──────────────────────────────────── */
+  --color-primary: #5c64b5;
+  --color-primary-hover: #6970c6;
+  --color-ring: #5c64b5;
+
+  /* ── Status tones (board columns, badges, dots) ───────────────────── */
+  --color-working: #f97316;     /* orange */
+  --color-needs: #e0a93b;       /* amber  */
+  --color-review: #9b8cf7;      /* periwinkle */
+  --color-merge: #54c98a;       /* green  */
+  --color-danger: #f1736b;      /* red    */
+  --color-merged: #c084fc;      /* purple */
+  --color-neutral: #6b655e;     /* dim    */
+
+  /* ── Radius ───────────────────────────────────────────────────────── */
+  --radius-sm: 6px;
+  --radius: 8px;
+  --radius-lg: 11px;
+  --radius-xl: 14px;
+}
+
+/* ── Legacy aliases ───────────────────────────────────────────────────────
+   The existing plain-CSS components use short names (--bg, --fg, --orange…).
+   These map onto the @theme tokens above so there is still ONE source of
+   truth — change a value once in @theme and both worlds update. New code
+   should prefer the Tailwind utilities or the --color-* tokens directly. */
+:root {
+  --bg: var(--color-bg);
+  --bg-bar: var(--color-bar);
+  --bg-card: var(--color-card);
+  --bg-card-hover: var(--color-card-hover);
+  --bg-elevated: var(--color-elevated);
+  --bg-inset: var(--color-inset);
+
+  --fg: var(--color-fg);
+  --fg-muted: var(--color-muted);
+  --fg-dim: var(--color-dim);
+
+  --border: var(--color-border);
+  --border-strong: var(--color-border-strong);
+
+  --primary: var(--color-primary);
+  --primary-hover: var(--color-primary-hover);
+
+  --orange: var(--color-working);
+  --amber: var(--color-needs);
+  --blue: var(--color-review);
+  --green: var(--color-merge);
+  --red: var(--color-danger);
+  --purple: var(--color-merged);
+  --dim: var(--color-neutral);
+}
