@@ -93,6 +93,7 @@ func TestWiring_AgentResolverResolvesRealAdapters(t *testing.T) {
 		{domain.HarnessClaudeCode, "claude-code"},
 		{domain.HarnessCodex, "codex"},
 		{domain.HarnessOpenCode, "opencode"},
+		{domain.HarnessGrok, "grok"},
 		{"", config.DefaultAgent}, // empty harness falls back to the AO_AGENT default
 	} {
 		agent, ok := resolver.Agent(tc.harness)
