@@ -137,6 +137,31 @@ func reviewThreadIDs(threads []domain.PullRequestReviewThread, comments []domain
 	return out
 }
 
+// GetPRLastNudgeSignature returns the persisted nudge-dedup JSON payload for a
+// PR (empty string when the PR has no row or no signatures yet). The payload is
+// opaque to storage; lifecycle.Manager owns its shape.
+func (s *Store) GetPRLastNudgeSignature(ctx context.Context, url string) (string, error) {
+	sig, err := s.qr.GetPRLastNudgeSignature(ctx, url)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("get pr nudge signature %s: %w", url, err)
+	}
+	return sig, nil
+}
+
+// UpdatePRLastNudgeSignature overwrites the persisted nudge-dedup JSON payload
+// for a PR. A no-op when the URL has no pr row yet.
+func (s *Store) UpdatePRLastNudgeSignature(ctx context.Context, url, payload string) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	if err := s.qw.UpdatePRLastNudgeSignature(ctx, gen.UpdatePRLastNudgeSignatureParams{LastNudgeSignature: payload, URL: url}); err != nil {
+		return fmt.Errorf("update pr nudge signature %s: %w", url, err)
+	}
+	return nil
+}
+
 // GetPR returns the PR facts for a URL, or ok=false if absent.
 func (s *Store) GetPR(ctx context.Context, url string) (domain.PullRequest, bool, error) {
 	p, err := s.qr.GetPR(ctx, url)

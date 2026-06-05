@@ -379,3 +379,28 @@ func (q *Queries) UpsertPR(ctx context.Context, arg UpsertPRParams) error {
 	)
 	return err
 }
+
+const getPRLastNudgeSignature = `-- name: GetPRLastNudgeSignature :one
+SELECT last_nudge_signature FROM pr WHERE url = ?
+`
+
+func (q *Queries) GetPRLastNudgeSignature(ctx context.Context, url string) (string, error) {
+	row := q.db.QueryRowContext(ctx, getPRLastNudgeSignature, url)
+	var sig string
+	err := row.Scan(&sig)
+	return sig, err
+}
+
+const updatePRLastNudgeSignature = `-- name: UpdatePRLastNudgeSignature :exec
+UPDATE pr SET last_nudge_signature = ? WHERE url = ?
+`
+
+type UpdatePRLastNudgeSignatureParams struct {
+	LastNudgeSignature string
+	URL                string
+}
+
+func (q *Queries) UpdatePRLastNudgeSignature(ctx context.Context, arg UpdatePRLastNudgeSignatureParams) error {
+	_, err := q.db.ExecContext(ctx, updatePRLastNudgeSignature, arg.LastNudgeSignature, arg.URL)
+	return err
+}

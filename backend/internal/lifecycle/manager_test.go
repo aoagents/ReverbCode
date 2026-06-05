@@ -14,11 +14,15 @@ import (
 var ctx = context.Background()
 
 type fakeStore struct {
-	sessions map[domain.SessionID]domain.SessionRecord
+	sessions   map[domain.SessionID]domain.SessionRecord
+	signatures map[string]string
+
+	signatureWriteErr error
+	signatureWrites   int
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{sessions: map[domain.SessionID]domain.SessionRecord{}}
+	return &fakeStore{sessions: map[domain.SessionID]domain.SessionRecord{}, signatures: map[string]string{}}
 }
 
 func (f *fakeStore) GetSession(_ context.Context, id domain.SessionID) (domain.SessionRecord, bool, error) {
@@ -28,6 +32,22 @@ func (f *fakeStore) GetSession(_ context.Context, id domain.SessionID) (domain.S
 
 func (f *fakeStore) UpdateSession(_ context.Context, rec domain.SessionRecord) error {
 	f.sessions[rec.ID] = rec
+	return nil
+}
+
+func (f *fakeStore) GetPRLastNudgeSignature(_ context.Context, prURL string) (string, error) {
+	return f.signatures[prURL], nil
+}
+
+func (f *fakeStore) UpdatePRLastNudgeSignature(_ context.Context, prURL, payload string) error {
+	if f.signatureWriteErr != nil {
+		return f.signatureWriteErr
+	}
+	if f.signatures == nil {
+		f.signatures = map[string]string{}
+	}
+	f.signatures[prURL] = payload
+	f.signatureWrites++
 	return nil
 }
 
@@ -213,6 +233,85 @@ func TestPRObservation_MergedTerminatesWithoutNudge(t *testing.T) {
 	}
 	if len(msg.msgs) != 0 {
 		t.Fatalf("merged PR should not send nudge, got %v", msg.msgs)
+	}
+}
+
+// TestPRObservation_DedupSurvivesManagerRestart guards issue #108: the
+// reaction-dedup `seen` map used to live only on Manager and was lost on
+// daemon restart, so a still-failing CI nudged the agent again on the first
+// post-restart poll. The fix persists the signatures keyed by PR URL; this
+// test simulates a restart by constructing a fresh Manager over the same
+// fakeStore and asserts the second send is suppressed.
+func TestPRObservation_DedupSurvivesManagerRestart(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = working("mer-1")
+
+	o := ports.PRObservation{
+		Fetched: true,
+		URL:     "https://github.com/o/r/pull/1",
+		CI:      domain.CIFailing,
+		Checks:  []ports.PRCheckObservation{{Name: "build", CommitHash: "c1", Status: domain.PRCheckFailed, LogTail: "boom"}},
+	}
+
+	first := &fakeMessenger{}
+	m1 := New(st, first)
+	if err := m1.ApplyPRObservation(ctx, "mer-1", o); err != nil {
+		t.Fatalf("first ApplyPRObservation: %v", err)
+	}
+	if len(first.msgs) != 1 {
+		t.Fatalf("first manager: want 1 nudge, got %d", len(first.msgs))
+	}
+	if got := st.signatures[o.URL]; got == "" {
+		t.Fatalf("signature was not persisted; want a non-empty JSON payload for %q", o.URL)
+	}
+
+	// Simulate daemon restart: the second Manager has no in-memory state but
+	// shares the same store, so it should hydrate seen/attempts from the
+	// persisted payload and suppress the re-send.
+	second := &fakeMessenger{}
+	m2 := New(st, second)
+	if err := m2.ApplyPRObservation(ctx, "mer-1", o); err != nil {
+		t.Fatalf("second ApplyPRObservation: %v", err)
+	}
+	if len(second.msgs) != 0 {
+		t.Fatalf("post-restart manager re-nudged on identical observation, got %d msgs: %v", len(second.msgs), second.msgs)
+	}
+
+	// And a genuinely new signature (different log tail) still fires — proving
+	// the persisted state is per-signature, not a blanket "this PR was nudged".
+	o2 := o
+	o2.Checks = []ports.PRCheckObservation{{Name: "build", CommitHash: "c1", Status: domain.PRCheckFailed, LogTail: "different boom"}}
+	if err := m2.ApplyPRObservation(ctx, "mer-1", o2); err != nil {
+		t.Fatalf("third ApplyPRObservation: %v", err)
+	}
+	if len(second.msgs) != 1 {
+		t.Fatalf("new signature should send, got %d msgs", len(second.msgs))
+	}
+}
+
+func TestPRObservation_DedupPersistsAcrossPRs(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = working("mer-1")
+	msg := &fakeMessenger{}
+	m := New(st, msg)
+
+	for _, url := range []string{"https://github.com/o/r/pull/1", "https://github.com/o/r/pull/2"} {
+		o := ports.PRObservation{
+			Fetched: true, URL: url, CI: domain.CIFailing,
+			Checks: []ports.PRCheckObservation{{Name: "build", CommitHash: "c1", Status: domain.PRCheckFailed, LogTail: "boom"}},
+		}
+		if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
+			t.Fatalf("ApplyPRObservation for %s: %v", url, err)
+		}
+	}
+	if len(msg.msgs) != 2 {
+		t.Fatalf("distinct PRs should each get one nudge, got %d", len(msg.msgs))
+	}
+	if _, ok := st.signatures["https://github.com/o/r/pull/1"]; !ok {
+		t.Fatal("missing persisted signature for PR 1")
+	}
+	if _, ok := st.signatures["https://github.com/o/r/pull/2"]; !ok {
+		t.Fatal("missing persisted signature for PR 2")
 	}
 }
 

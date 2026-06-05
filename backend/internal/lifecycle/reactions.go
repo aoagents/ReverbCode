@@ -2,6 +2,7 @@ package lifecycle
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"sync"
 
@@ -15,10 +16,22 @@ type reactionState struct {
 	mu       sync.Mutex
 	seen     map[string]string
 	attempts map[string]int
+	// loaded tracks PR URLs whose persisted dedup payload has been merged into
+	// seen/attempts during this process. Lazy: we only pay the DB read on the
+	// first reaction touching each PR after startup.
+	loaded map[string]bool
 }
 
 func newReactionState() reactionState {
-	return reactionState{seen: map[string]string{}, attempts: map[string]int{}}
+	return reactionState{seen: map[string]string{}, attempts: map[string]int{}, loaded: map[string]bool{}}
+}
+
+// reactionPayload is the JSON document persisted in pr.last_nudge_signature.
+// Keeping the schema explicit (and stable) lets the daemon restart and resume
+// the existing dedup state without re-nudging an agent.
+type reactionPayload struct {
+	Seen     map[string]string `json:"seen,omitempty"`
+	Attempts map[string]int    `json:"attempts,omitempty"`
 }
 
 // ApplyPRObservation reacts to a fetched PR observation after the PR service has
@@ -49,7 +62,7 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 				if ch.LogTail != "" {
 					msg += "\n\nFailing output:\n" + ch.LogTail
 				}
-				return m.sendOnce(ctx, id, "ci:"+o.URL+":"+ch.Name, ch.CommitHash+":"+ch.LogTail, msg, 0)
+				return m.sendOnce(ctx, id, o.URL, "ci:"+o.URL+":"+ch.Name, ch.CommitHash+":"+ch.LogTail, msg, 0)
 			}
 		}
 	}
@@ -62,10 +75,10 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 		if sig == "" {
 			sig = string(o.Review)
 		}
-		return m.sendOnce(ctx, id, "review:"+o.URL, sig, msg, reviewMaxNudge)
+		return m.sendOnce(ctx, id, o.URL, "review:"+o.URL, sig, msg, reviewMaxNudge)
 	}
 	if o.Mergeability == domain.MergeConflicting {
-		return m.sendOnce(ctx, id, "merge-conflict:"+o.URL, string(o.Mergeability), "Your PR has merge conflicts. Rebase onto the base branch and resolve them.", 0)
+		return m.sendOnce(ctx, id, o.URL, "merge-conflict:"+o.URL, string(o.Mergeability), "Your PR has merge conflicts. Rebase onto the base branch and resolve them.", 0)
 	}
 	return nil
 }
@@ -170,26 +183,103 @@ func reviewContent(comments []ports.PRCommentObservation) (string, string) {
 	return strings.Join(bodies, "\n\n"), strings.Join(ids, ",")
 }
 
-func (m *Manager) sendOnce(ctx context.Context, id domain.SessionID, key, sig, msg string, maxAttempts int) error {
+func (m *Manager) sendOnce(ctx context.Context, id domain.SessionID, prURL, key, sig, msg string, maxAttempts int) error {
 	if m.messenger == nil {
 		return nil
 	}
 	m.react.mu.Lock()
+	defer m.react.mu.Unlock()
+
+	if prURL != "" && !m.react.loaded[prURL] {
+		if err := m.loadPRSignaturesLocked(ctx, prURL); err != nil {
+			return err
+		}
+		m.react.loaded[prURL] = true
+	}
+
 	if m.react.seen[key] == sig {
-		m.react.mu.Unlock()
 		return nil
 	}
 	attempts := m.react.attempts[key]
 	if maxAttempts > 0 && attempts >= maxAttempts {
-		m.react.mu.Unlock()
 		return nil
 	}
 	if err := m.messenger.Send(ctx, id, msg); err != nil {
-		m.react.mu.Unlock()
 		return err
 	}
 	m.react.seen[key] = sig
 	m.react.attempts[key] = attempts + 1
-	m.react.mu.Unlock()
+	if prURL != "" {
+		if err := m.persistPRSignaturesLocked(ctx, prURL); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// loadPRSignaturesLocked merges any previously persisted reaction-dedup state
+// for prURL into the in-memory maps. Caller must hold m.react.mu.
+func (m *Manager) loadPRSignaturesLocked(ctx context.Context, prURL string) error {
+	raw, err := m.store.GetPRLastNudgeSignature(ctx, prURL)
+	if err != nil {
+		return err
+	}
+	if raw == "" {
+		return nil
+	}
+	var p reactionPayload
+	if err := json.Unmarshal([]byte(raw), &p); err != nil {
+		// Treat corrupt payloads as empty — re-firing a nudge once is preferable
+		// to crashing the lifecycle write path on bad persisted state.
+		return nil
+	}
+	for k, v := range p.Seen {
+		if _, ok := m.react.seen[k]; !ok {
+			m.react.seen[k] = v
+		}
+	}
+	for k, v := range p.Attempts {
+		if cur, ok := m.react.attempts[k]; !ok || v > cur {
+			m.react.attempts[k] = v
+		}
+	}
+	return nil
+}
+
+// persistPRSignaturesLocked serialises every reaction-dedup entry whose key
+// references prURL and writes the JSON payload back via the store. Caller must
+// hold m.react.mu. A failed persist surfaces upward so the in-memory mutation
+// (which the messenger already acted on) is not silently divergent from disk.
+func (m *Manager) persistPRSignaturesLocked(ctx context.Context, prURL string) error {
+	payload := reactionPayload{Seen: map[string]string{}, Attempts: map[string]int{}}
+	for k, v := range m.react.seen {
+		if reactionKeyTargetsPR(k, prURL) {
+			payload.Seen[k] = v
+		}
+	}
+	for k, v := range m.react.attempts {
+		if reactionKeyTargetsPR(k, prURL) {
+			payload.Attempts[k] = v
+		}
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	return m.store.UpdatePRLastNudgeSignature(ctx, prURL, string(raw))
+}
+
+// reactionKeyTargetsPR matches the "<type>:<url>[:<extra>]" reaction keys used
+// by ApplyPRObservation. Anchoring on the second colon-delimited segment keeps
+// PR-specific keys grouped with the row that survives a restart.
+func reactionKeyTargetsPR(key, prURL string) bool {
+	if prURL == "" {
+		return false
+	}
+	parts := strings.SplitN(key, ":", 2)
+	if len(parts) != 2 {
+		return false
+	}
+	rest := parts[1]
+	return rest == prURL || strings.HasPrefix(rest, prURL+":")
 }

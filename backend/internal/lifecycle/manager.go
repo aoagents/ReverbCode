@@ -17,6 +17,10 @@ import (
 type sessionStore interface {
 	GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error)
 	UpdateSession(ctx context.Context, rec domain.SessionRecord) error
+	// GetPRLastNudgeSignature / UpdatePRLastNudgeSignature persist the
+	// reaction-dedup map so nudges survive a daemon restart.
+	GetPRLastNudgeSignature(ctx context.Context, prURL string) (string, error)
+	UpdatePRLastNudgeSignature(ctx context.Context, prURL, payload string) error
 }
 
 // Manager reduces runtime, activity, spawn, and termination observations into durable session facts.

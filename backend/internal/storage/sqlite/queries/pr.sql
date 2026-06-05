@@ -89,6 +89,12 @@ FROM pr
 WHERE session_id = ?
 ORDER BY updated_at DESC;
 
+-- name: GetPRLastNudgeSignature :one
+SELECT last_nudge_signature FROM pr WHERE url = ?;
+
+-- name: UpdatePRLastNudgeSignature :exec
+UPDATE pr SET last_nudge_signature = ? WHERE url = ?;
+
 -- name: GetDisplayPRFactsBySession :one
 SELECT
     pr.url,
