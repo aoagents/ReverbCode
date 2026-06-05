@@ -12,6 +12,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agy"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/claudecode"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/codex"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/cursor"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/droid"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/opencode"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -37,6 +38,7 @@ var Derivers = map[string]DeriveFunc{
 	"codex":       codex.DeriveActivityState,
 	"droid":       droid.DeriveActivityState,
 	"agy":         agy.DeriveActivityState,
+	"cursor":      cursor.DeriveActivityState,
 }
 
 // Derive looks up the deriver for an agent token and applies it. ok=false when
