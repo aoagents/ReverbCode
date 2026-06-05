@@ -313,6 +313,140 @@ func TestPRObservation_DedupPersistsAcrossPRs(t *testing.T) {
 	}
 }
 
+func TestApplyTrackerFacts_TerminalStateMarksTerminated(t *testing.T) {
+	for _, state := range []domain.NormalizedIssueState{domain.IssueDone, domain.IssueCancelled} {
+		t.Run(string(state), func(t *testing.T) {
+			m, st, msg := newManager()
+			st.sessions["mer-1"] = working("mer-1")
+			o := ports.TrackerObservation{
+				Fetched: true,
+				Issue:   ports.TrackerIssueObservation{URL: "https://github.com/o/r/issues/1", State: state},
+			}
+			if err := m.ApplyTrackerFacts(ctx, "mer-1", o); err != nil {
+				t.Fatalf("ApplyTrackerFacts: %v", err)
+			}
+			got := st.sessions["mer-1"]
+			if !got.IsTerminated || got.Activity.State != domain.ActivityExited {
+				t.Fatalf("want terminated/exited for state %q, got %+v", state, got)
+			}
+			if len(msg.msgs) != 0 {
+				t.Fatalf("terminal state should not nudge, got %v", msg.msgs)
+			}
+		})
+	}
+}
+
+func TestApplyTrackerFacts_AssigneeChangedIsLogOnly(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	before := st.sessions["mer-1"]
+	o := ports.TrackerObservation{
+		Fetched: true,
+		Issue:   ports.TrackerIssueObservation{URL: "https://github.com/o/r/issues/1", State: domain.IssueOpen, Assignee: "someone-else"},
+		Changed: ports.TrackerChanged{Assignee: true},
+	}
+	if err := m.ApplyTrackerFacts(ctx, "mer-1", o); err != nil {
+		t.Fatalf("ApplyTrackerFacts: %v", err)
+	}
+	if st.sessions["mer-1"] != before {
+		t.Fatalf("assignee-only change must not mutate the session row, got %+v", st.sessions["mer-1"])
+	}
+	if len(msg.msgs) != 0 {
+		t.Fatalf("assignee-only change must not nudge, got %v", msg.msgs)
+	}
+}
+
+func TestApplyTrackerFacts_NewBotCommentNudges(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	o := ports.TrackerObservation{
+		Fetched: true,
+		Issue:   ports.TrackerIssueObservation{URL: "https://github.com/o/r/issues/1", State: domain.IssueOpen},
+		Comments: []ports.TrackerCommentObservation{
+			{ID: "human-1", Author: "alice", Body: "human chime-in, must NOT nudge", IsBot: false},
+			{ID: "bot-1", Author: "ci-bot[bot]", Body: "please rerun the migration", IsBot: true},
+		},
+		Changed: ports.TrackerChanged{Comments: true},
+	}
+	if err := m.ApplyTrackerFacts(ctx, "mer-1", o); err != nil {
+		t.Fatalf("ApplyTrackerFacts: %v", err)
+	}
+	if len(msg.msgs) != 1 {
+		t.Fatalf("want one bot-mention nudge, got %d: %v", len(msg.msgs), msg.msgs)
+	}
+	if !strings.Contains(msg.msgs[0], "please rerun the migration") {
+		t.Fatalf("nudge should include the bot comment body, got %q", msg.msgs[0])
+	}
+	if strings.Contains(msg.msgs[0], "human chime-in") {
+		t.Fatalf("nudge must not include human comments, got %q", msg.msgs[0])
+	}
+}
+
+func TestApplyTrackerFacts_NudgeSuppressedOnRepeat(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	o := ports.TrackerObservation{
+		Fetched: true,
+		Issue:   ports.TrackerIssueObservation{URL: "https://github.com/o/r/issues/1", State: domain.IssueOpen},
+		Comments: []ports.TrackerCommentObservation{
+			{ID: "bot-1", Author: "ci-bot[bot]", Body: "please rerun the migration", IsBot: true},
+		},
+		Changed: ports.TrackerChanged{Comments: true},
+	}
+	if err := m.ApplyTrackerFacts(ctx, "mer-1", o); err != nil {
+		t.Fatalf("first ApplyTrackerFacts: %v", err)
+	}
+	if err := m.ApplyTrackerFacts(ctx, "mer-1", o); err != nil {
+		t.Fatalf("second ApplyTrackerFacts: %v", err)
+	}
+	if len(msg.msgs) != 1 {
+		t.Fatalf("repeat observation must dedup; got %d nudges: %v", len(msg.msgs), msg.msgs)
+	}
+
+	// A genuinely new bot comment still fires.
+	o.Comments = append(o.Comments, ports.TrackerCommentObservation{ID: "bot-2", Author: "ci-bot[bot]", Body: "now check the seed", IsBot: true})
+	if err := m.ApplyTrackerFacts(ctx, "mer-1", o); err != nil {
+		t.Fatalf("third ApplyTrackerFacts: %v", err)
+	}
+	if len(msg.msgs) != 2 {
+		t.Fatalf("new bot comment id should re-fire, got %d: %v", len(msg.msgs), msg.msgs)
+	}
+}
+
+func TestApplyTrackerFacts_NotFetchedIsNoop(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	before := st.sessions["mer-1"]
+	if err := m.ApplyTrackerFacts(ctx, "mer-1", ports.TrackerObservation{Fetched: false}); err != nil {
+		t.Fatalf("ApplyTrackerFacts: %v", err)
+	}
+	if st.sessions["mer-1"] != before {
+		t.Fatalf("not-fetched observation must not mutate state")
+	}
+	if len(msg.msgs) != 0 {
+		t.Fatalf("not-fetched observation must not nudge")
+	}
+}
+
+func TestApplyTrackerFacts_TerminatedSessionDoesNotRefireOrNudge(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", IsTerminated: true, Activity: domain.Activity{State: domain.ActivityExited}}
+	o := ports.TrackerObservation{
+		Fetched: true,
+		Issue:   ports.TrackerIssueObservation{URL: "https://github.com/o/r/issues/1", State: domain.IssueOpen},
+		Comments: []ports.TrackerCommentObservation{
+			{ID: "bot-1", Body: "x", IsBot: true},
+		},
+		Changed: ports.TrackerChanged{Comments: true},
+	}
+	if err := m.ApplyTrackerFacts(ctx, "mer-1", o); err != nil {
+		t.Fatalf("ApplyTrackerFacts: %v", err)
+	}
+	if len(msg.msgs) != 0 {
+		t.Fatalf("terminated session must not receive nudges, got %v", msg.msgs)
+	}
+}
+
 func TestPRObservation_RetriesAfterMessengerFailure(t *testing.T) {
 	m, st, msg := newManager()
 	st.sessions["mer-1"] = working("mer-1")
