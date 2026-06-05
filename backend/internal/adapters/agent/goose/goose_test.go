@@ -1,0 +1,440 @@
+package goose
+
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"testing"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+)
+
+func TestManifestIDIsGoose(t *testing.T) {
+	m := New().Manifest()
+	if m.ID != "goose" {
+		t.Fatalf("Manifest().ID = %q, want %q", m.ID, "goose")
+	}
+	if m.Name != "Goose" {
+		t.Fatalf("Manifest().Name = %q, want %q", m.Name, "Goose")
+	}
+	if len(m.Capabilities) != 1 || m.Capabilities[0] != "agent" {
+		t.Fatalf("Manifest().Capabilities = %#v, want [agent]", m.Capabilities)
+	}
+}
+
+func TestGetLaunchCommandBuildsArgv(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "goose"}
+
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Permissions:  ports.PermissionModeBypassPermissions,
+		Prompt:       "-fix this",
+		SystemPrompt: "be terse",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{
+		"env", "GOOSE_MODE=auto",
+		"goose", "run",
+		"--system", "be terse",
+		"-t", "-fix this",
+	}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
+	}
+}
+
+func TestGetLaunchCommandSystemPromptFileInlined(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "prompt.md")
+	if err := os.WriteFile(file, []byte("  from file  \n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	plugin := &Plugin{resolvedBinary: "goose"}
+
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		SystemPromptFile: file,
+		SystemPrompt:     "inline fallback ignored",
+		Prompt:           "do work",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{"goose", "run", "--system", "from file", "-t", "do work"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
+	}
+}
+
+func TestGetLaunchCommandMapsApprovalModes(t *testing.T) {
+	tests := []struct {
+		name        string
+		permission  ports.PermissionMode
+		want        []string
+		notExpected string
+	}{
+		{
+			name:        "default",
+			permission:  ports.PermissionModeDefault,
+			notExpected: "env",
+		},
+		{
+			name:       "accept-edits",
+			permission: ports.PermissionModeAcceptEdits,
+			want:       []string{"env", "GOOSE_MODE=smart_approve"},
+		},
+		{
+			name:       "auto",
+			permission: ports.PermissionModeAuto,
+			want:       []string{"env", "GOOSE_MODE=auto"},
+		},
+		{
+			name:       "bypass-permissions",
+			permission: ports.PermissionModeBypassPermissions,
+			want:       []string{"env", "GOOSE_MODE=auto"},
+		},
+		{
+			name:        "empty",
+			permission:  "",
+			notExpected: "env",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plugin := &Plugin{resolvedBinary: "goose"}
+			cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+				Permissions: tt.permission,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(tt.want) > 0 && !containsSubsequence(cmd, tt.want) {
+				t.Fatalf("command %#v does not contain %#v", cmd, tt.want)
+			}
+			if tt.notExpected != "" && contains(cmd, tt.notExpected) {
+				t.Fatalf("command %#v contains %q", cmd, tt.notExpected)
+			}
+		})
+	}
+}
+
+func TestGetPromptDeliveryStrategyIsInCommand(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "goose"}
+
+	got, err := plugin.GetPromptDeliveryStrategy(context.Background(), ports.LaunchConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != ports.PromptDeliveryInCommand {
+		t.Fatalf("unexpected strategy: %q", got)
+	}
+}
+
+func TestGetConfigSpecHasNoCustomFieldsYet(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "goose"}
+
+	spec, err := plugin.GetConfigSpec(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(spec.Fields) != 0 {
+		t.Fatalf("unexpected config fields: %#v", spec.Fields)
+	}
+}
+
+func TestContextCancellationIsHonored(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "goose"}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if _, err := plugin.GetConfigSpec(ctx); err == nil {
+		t.Fatal("GetConfigSpec: expected error from cancelled context")
+	}
+	if _, err := plugin.GetPromptDeliveryStrategy(ctx, ports.LaunchConfig{}); err == nil {
+		t.Fatal("GetPromptDeliveryStrategy: expected error from cancelled context")
+	}
+	if _, _, err := plugin.GetRestoreCommand(ctx, ports.RestoreConfig{}); err == nil {
+		t.Fatal("GetRestoreCommand: expected error from cancelled context")
+	}
+	if _, _, err := plugin.SessionInfo(ctx, ports.SessionRef{}); err == nil {
+		t.Fatal("SessionInfo: expected error from cancelled context")
+	}
+	if err := plugin.GetAgentHooks(ctx, ports.WorkspaceHookConfig{WorkspacePath: "/tmp"}); err == nil {
+		t.Fatal("GetAgentHooks: expected error from cancelled context")
+	}
+}
+
+func TestGetAgentHooksInstallsGooseHooks(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "goose"}
+	workspace := t.TempDir()
+	hooksPath := gooseHooksPath(workspace)
+	if err := os.MkdirAll(filepath.Dir(hooksPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	existing := `{"hooks":{"Stop":[{"matcher":null,"hooks":[{"type":"command","command":"custom stop hook","timeout":3}]}]}}`
+	if err := os.WriteFile(hooksPath, []byte(existing), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := ports.WorkspaceHookConfig{
+		DataDir:       t.TempDir(),
+		SessionID:     "sess-1",
+		WorkspacePath: workspace,
+	}
+	if err := plugin.GetAgentHooks(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	// A second install must not duplicate AO hook commands.
+	if err := plugin.GetAgentHooks(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(hooksPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config gooseHookFile
+	if err := json.Unmarshal(data, &config); err != nil {
+		t.Fatal(err)
+	}
+	if config.Hooks == nil {
+		t.Fatalf("hooks config missing hooks object: %#v", config)
+	}
+	for _, spec := range gooseManagedHooks {
+		entries := config.Hooks[spec.Event]
+		if count := countGooseHookCommand(entries, spec.Command); count != 1 {
+			t.Fatalf("%s command count = %d, want 1 in %#v", spec.Event, count, entries)
+		}
+	}
+	stopEntries := config.Hooks["Stop"]
+	if countGooseHookCommand(stopEntries, "custom stop hook") != 1 {
+		t.Fatalf("existing Stop hook was not preserved: %#v", stopEntries)
+	}
+}
+
+func TestUninstallHooksRemovesGooseHooks(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "goose"}
+	workspace := t.TempDir()
+	hooksPath := gooseHooksPath(workspace)
+
+	ctx := context.Background()
+	cfg := ports.WorkspaceHookConfig{DataDir: t.TempDir(), SessionID: "sess-1", WorkspacePath: workspace}
+
+	// Pre-seed a user's own Stop hook; it must survive uninstall.
+	if err := os.MkdirAll(filepath.Dir(hooksPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	existing := `{"hooks":{"Stop":[{"matcher":null,"hooks":[{"type":"command","command":"custom stop hook","timeout":3}]}]}}`
+	if err := os.WriteFile(hooksPath, []byte(existing), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := plugin.GetAgentHooks(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if installed, err := plugin.AreHooksInstalled(ctx, workspace); err != nil || !installed {
+		t.Fatalf("AreHooksInstalled after install = (%v, %v), want (true, nil)", installed, err)
+	}
+
+	if err := plugin.UninstallHooks(ctx, workspace); err != nil {
+		t.Fatal(err)
+	}
+	if installed, err := plugin.AreHooksInstalled(ctx, workspace); err != nil || installed {
+		t.Fatalf("AreHooksInstalled after uninstall = (%v, %v), want (false, nil)", installed, err)
+	}
+
+	data, err := os.ReadFile(hooksPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config gooseHookFile
+	if err := json.Unmarshal(data, &config); err != nil {
+		t.Fatal(err)
+	}
+	for _, spec := range gooseManagedHooks {
+		if got := countGooseHookCommand(config.Hooks[spec.Event], spec.Command); got != 0 {
+			t.Fatalf("%s command %q count = %d after uninstall, want 0", spec.Event, spec.Command, got)
+		}
+	}
+	if countGooseHookCommand(config.Hooks["Stop"], "custom stop hook") != 1 {
+		t.Fatalf("user Stop hook not preserved: %#v", config.Hooks["Stop"])
+	}
+}
+
+func TestGetAgentHooksRequiresWorkspacePath(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "goose"}
+	if err := plugin.GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{}); err == nil {
+		t.Fatal("expected error when WorkspacePath is empty")
+	}
+}
+
+func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "goose"}
+
+	cmd, ok, err := plugin.GetRestoreCommand(context.Background(), ports.RestoreConfig{
+		Permissions: ports.PermissionModeAuto,
+		Session: ports.SessionRef{
+			Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "thread-123"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+	if !ok {
+		t.Fatal("ok = false, want true")
+	}
+	want := []string{
+		"env", "GOOSE_MODE=auto",
+		"goose", "run", "--resume", "--session-id", "thread-123",
+	}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("restore cmd\nwant: %#v\n got: %#v", want, cmd)
+	}
+}
+
+func TestGetRestoreCommandFalseWithoutAgentSessionID(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "goose"}
+
+	cases := []struct {
+		name string
+		ref  ports.SessionRef
+	}{
+		{"empty session ref", ports.SessionRef{}},
+		{"empty metadata", ports.SessionRef{Metadata: map[string]string{}}},
+		{"blank agent session metadata", ports.SessionRef{Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "   "}}},
+		{"workspace path only", ports.SessionRef{WorkspacePath: "/some/path"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd, ok, err := plugin.GetRestoreCommand(context.Background(), ports.RestoreConfig{
+				Permissions: ports.PermissionModeAuto,
+				Session:     tc.ref,
+			})
+			if err != nil {
+				t.Fatalf("err = %v, want nil", err)
+			}
+			if ok {
+				t.Fatalf("ok = true, want false")
+			}
+			if cmd != nil {
+				t.Fatalf("cmd = %#v, want nil", cmd)
+			}
+		})
+	}
+}
+
+func TestSessionInfoReadsHookMetadata(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "goose"}
+
+	info, ok, err := plugin.SessionInfo(context.Background(), ports.SessionRef{
+		WorkspacePath: "/some/path",
+		Metadata: map[string]string{
+			ports.MetadataKeyAgentSessionID: "thread-123",
+			gooseTitleMetadataKey:           "Fix login redirect",
+			gooseSummaryMetadataKey:         "Updated the auth callback and tests.",
+			"ignored":                       "not returned",
+		},
+	})
+	if err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+	if !ok {
+		t.Fatalf("ok = false, want true")
+	}
+	if info.AgentSessionID != "thread-123" {
+		t.Fatalf("AgentSessionID = %q, want native id", info.AgentSessionID)
+	}
+	if info.Title != "Fix login redirect" {
+		t.Fatalf("Title = %q, want hook title", info.Title)
+	}
+	if info.Summary != "Updated the auth callback and tests." {
+		t.Fatalf("Summary = %q, want hook summary", info.Summary)
+	}
+	if info.Metadata != nil {
+		t.Fatalf("Metadata = %#v, want nil for Goose", info.Metadata)
+	}
+}
+
+func TestSessionInfoFalseWhenNoHookMetadata(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "goose"}
+
+	info, ok, err := plugin.SessionInfo(context.Background(), ports.SessionRef{
+		WorkspacePath: "/some/path",
+		Metadata:      map[string]string{},
+	})
+	if err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+	if ok {
+		t.Fatalf("ok = true, want false")
+	}
+	if !reflect.DeepEqual(info, ports.SessionInfo{}) {
+		t.Fatalf("info = %#v, want zero value", info)
+	}
+}
+
+func TestResolveGooseBinaryFallback(t *testing.T) {
+	// On a machine without goose on PATH or any well-known location, resolution
+	// still returns a usable last-ditch "goose" name rather than empty.
+	got, err := ResolveGooseBinary(context.Background())
+	if err != nil {
+		t.Fatalf("ResolveGooseBinary err = %v", err)
+	}
+	if got == "" {
+		t.Fatal("ResolveGooseBinary returned empty binary")
+	}
+	if !strings.Contains(got, "goose") {
+		t.Fatalf("ResolveGooseBinary = %q, want a path containing goose", got)
+	}
+}
+
+func contains(values []string, needle string) bool {
+	for _, value := range values {
+		if value == needle {
+			return true
+		}
+	}
+	return false
+}
+
+func containsSubsequence(values []string, needle []string) bool {
+	if len(needle) == 0 {
+		return true
+	}
+
+	for start := range values {
+		if start+len(needle) > len(values) {
+			return false
+		}
+		ok := true
+		for offset, want := range needle {
+			if values[start+offset] != want {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			return true
+		}
+	}
+
+	return false
+}
+
+func countGooseHookCommand(entries []gooseMatcherGroup, command string) int {
+	count := 0
+	for _, entry := range entries {
+		for _, hook := range entry.Hooks {
+			if hook.Command == command {
+				count++
+			}
+		}
+	}
+	return count
+}
