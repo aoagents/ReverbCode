@@ -14,9 +14,11 @@ import (
 	"log/slog"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/observe"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -160,39 +162,25 @@ func New(provider Provider, store Store, lifecycle Lifecycle, cfg Config) *Obser
 
 // Start launches the observer loop. The first Poll runs immediately inside the
 // goroutine so daemon startup is not blocked; subsequent polls run on the tick.
+//
+// The first invocation of poll inside the supervisor also runs checkCredentials
+// up front. That way the "scm observer disabled: provider credentials
+// unavailable" warning is emitted on a fresh daemon even if discoverSubjects
+// has no subjects yet (which would otherwise short-circuit Poll before
+// checkCredentials). checkCredentials is guarded by credentialsChecked, so the
+// wrap stays once-per-process; a transient error there simply defers the check
+// to the next tick.
 func (o *Observer) Start(ctx context.Context) <-chan struct{} {
-	done := make(chan struct{})
-	go o.loop(ctx, done)
-	return done
-}
-
-func (o *Observer) loop(ctx context.Context, done chan<- struct{}) {
-	defer close(done)
-	// Run the credential gate once before the first poll so the
-	// "scm observer disabled: provider credentials unavailable" warning is
-	// emitted on a fresh daemon even if discoverSubjects has no subjects yet
-	// (which would otherwise short-circuit Poll before checkCredentials).
-	// checkCredentials is guarded by credentialsChecked, so this remains
-	// once-per-process; a transient error here simply defers the check to the
-	// next Poll, matching existing behavior.
-	if _, err := o.checkCredentials(ctx); err != nil && !errors.Is(err, context.Canceled) {
-		o.logger.Error("scm observer: initial credential check failed", "err", err)
-	}
-	if err := o.Poll(ctx); err != nil && !errors.Is(err, context.Canceled) {
-		o.logger.Error("scm observer: initial poll failed", "err", err)
-	}
-	t := time.NewTicker(o.tick)
-	defer t.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-			if err := o.Poll(ctx); err != nil && !errors.Is(err, context.Canceled) {
-				o.logger.Error("scm observer: poll failed", "err", err)
+	var credentialGate sync.Once
+	poll := func(ctx context.Context) error {
+		credentialGate.Do(func() {
+			if _, err := o.checkCredentials(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				o.logger.Error("scm observer: initial credential check failed", "err", err)
 			}
-		}
+		})
+		return o.Poll(ctx)
 	}
+	return observe.StartPollLoop(ctx, o.tick, poll, o.logger, "scm observer")
 }
 
 type subject struct {
@@ -410,29 +398,11 @@ func (o *Observer) Poll(ctx context.Context) error {
 }
 
 func (o *Observer) checkCredentials(ctx context.Context) (bool, error) {
-	if o.credentialsChecked {
-		return true, nil
+	var probe observe.CredentialProbe
+	if checker, ok := o.provider.(credentialChecker); ok {
+		probe = checker.SCMCredentialsAvailable
 	}
-	if err := ctx.Err(); err != nil {
-		return false, err
-	}
-	checker, ok := o.provider.(credentialChecker)
-	if !ok {
-		o.credentialsChecked = true
-		return true, nil
-	}
-	available, err := checker.SCMCredentialsAvailable(ctx)
-	if err != nil {
-		o.logger.Warn("scm observer credentials check failed; will retry", "err", err)
-		return false, nil
-	}
-	o.credentialsChecked = true
-	if !available {
-		o.disabled = true
-		o.logger.Warn("scm observer disabled: provider credentials unavailable")
-		return false, nil
-	}
-	return true, nil
+	return observe.CheckCredentialsOnce(ctx, probe, &o.credentialsChecked, &o.disabled, o.logger, "scm observer")
 }
 
 func (o *Observer) discoverSubjects(ctx context.Context) (map[string]*subject, error) {
@@ -1162,56 +1132,22 @@ func scrubLine(s string) string {
 	return strings.TrimSpace(s)
 }
 
+// cacheSetString / cacheSetTime / cacheSetBool are thin wrappers around the
+// generic observe.CacheSet helper, kept on Observer so callers don't need to
+// thread o.Cache.max through every invocation. The single shared
+// implementation lives in the observe package.
 func (o *Observer) cacheSetString(m map[string]string, order *[]string, key, value string) {
-	if _, ok := m[key]; !ok {
-		*order = append(*order, key)
-	}
-	m[key] = value
-	o.evictStrings(m, order)
+	observe.CacheSet(m, order, o.Cache.max, key, value)
 }
 
 func (o *Observer) cacheSetTime(m map[string]time.Time, order *[]string, key string, value time.Time) {
-	if _, ok := m[key]; !ok {
-		*order = append(*order, key)
-	}
-	m[key] = value
-	for len(*order) > o.Cache.max {
-		evict := (*order)[0]
-		*order = (*order)[1:]
-		delete(m, evict)
-	}
+	observe.CacheSet(m, order, o.Cache.max, key, value)
 }
 
 func (o *Observer) cacheSetBool(m map[string]bool, order *[]string, key string, value bool) {
-	if _, ok := m[key]; !ok {
-		*order = append(*order, key)
-	}
-	m[key] = value
-	for len(*order) > o.Cache.max {
-		evict := (*order)[0]
-		*order = (*order)[1:]
-		delete(m, evict)
-	}
+	observe.CacheSet(m, order, o.Cache.max, key, value)
 }
 
 func cacheDelete[V any](m map[string]V, order *[]string, key string) {
-	if _, ok := m[key]; !ok {
-		return
-	}
-	delete(m, key)
-	dst := (*order)[:0]
-	for _, cachedKey := range *order {
-		if cachedKey != key {
-			dst = append(dst, cachedKey)
-		}
-	}
-	*order = dst
-}
-
-func (o *Observer) evictStrings(m map[string]string, order *[]string) {
-	for len(*order) > o.Cache.max {
-		evict := (*order)[0]
-		*order = (*order)[1:]
-		delete(m, evict)
-	}
+	observe.CacheDelete(m, order, key)
 }
