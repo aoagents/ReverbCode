@@ -1,0 +1,228 @@
+// Package amp implements the Amp agent adapter: launching new interactive Amp
+// sessions and resuming sessions when a native Amp thread id is known.
+//
+// Amp activity hooks and SessionInfo derivation will likely require an
+// Amp-specific TypeScript plugin, similar to opencode. Until that integration
+// exists, hook installation and SessionInfo are intentionally no-ops.
+package amp
+
+import (
+	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"sync"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+)
+
+const adapterID = "amp"
+
+// Plugin is the Amp agent adapter. It is safe for concurrent use; the binary
+// path is resolved once and cached under binaryMu.
+type Plugin struct {
+	binaryMu       sync.Mutex
+	resolvedBinary string
+}
+
+// New returns a ready-to-register Amp adapter.
+func New() *Plugin {
+	return &Plugin{}
+}
+
+var _ adapters.Adapter = (*Plugin)(nil)
+var _ ports.Agent = (*Plugin)(nil)
+
+// Manifest returns the adapter's static self-description.
+func (p *Plugin) Manifest() adapters.Manifest {
+	return adapters.Manifest{
+		ID:          adapterID,
+		Name:        "Amp",
+		Description: "Run Amp worker sessions.",
+		Version:     "0.0.1",
+		Capabilities: []adapters.Capability{
+			adapters.CapabilityAgent,
+		},
+	}
+}
+
+// GetConfigSpec reports no agent-specific config keys yet.
+func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
+	if err := ctx.Err(); err != nil {
+		return ports.ConfigSpec{}, err
+	}
+	return ports.ConfigSpec{}, nil
+}
+
+// GetLaunchCommand builds the argv to start a new interactive Amp session:
+//
+//	amp [--permission-mode <mode>] [--append-system-prompt <system prompt>] [-- <prompt>]
+//
+// The prompt is passed after `--` so a prompt beginning with "-" is not
+// mistaken for a flag. System prompts are appended to Amp's defaults, mirroring
+// the Claude Code adapter's launch shape.
+func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (cmd []string, err error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	binary, err := p.ampBinary(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	cmd = []string{binary}
+	appendPermissionFlags(&cmd, cfg.Permissions)
+	if cfg.SystemPromptFile != "" {
+		cmd = append(cmd, "--append-system-prompt-file", cfg.SystemPromptFile)
+	} else if cfg.SystemPrompt != "" {
+		cmd = append(cmd, "--append-system-prompt", cfg.SystemPrompt)
+	}
+	if cfg.Prompt != "" {
+		cmd = append(cmd, "--", cfg.Prompt)
+	}
+	return cmd, nil
+}
+
+// GetPromptDeliveryStrategy reports that Amp receives its prompt in the launch
+// command itself.
+func (p *Plugin) GetPromptDeliveryStrategy(ctx context.Context, cfg ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	return ports.PromptDeliveryInCommand, nil
+}
+
+// GetAgentHooks is intentionally a no-op until Amp activity can be reported via
+// an Amp-specific plugin.
+func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfig) error {
+	return ctx.Err()
+}
+
+// GetRestoreCommand rebuilds the argv that continues an existing Amp session
+// when plugin-derived native session metadata is available. Until that metadata
+// exists, ok is false and callers fall back to fresh launch behavior.
+func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig) (cmd []string, ok bool, err error) {
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
+	agentSessionID := strings.TrimSpace(cfg.Session.Metadata[ports.MetadataKeyAgentSessionID])
+	if agentSessionID == "" {
+		return nil, false, nil
+	}
+
+	binary, err := p.ampBinary(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	// Capacity fits binary + up to two permission flags + --resume + sessionID.
+	cmd = make([]string, 0, 5)
+	cmd = append(cmd, binary)
+	appendPermissionFlags(&cmd, cfg.Permissions)
+	cmd = append(cmd, "--resume", agentSessionID)
+	return cmd, true, nil
+}
+
+// SessionInfo is intentionally a no-op until Amp plugin metadata exists.
+func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (ports.SessionInfo, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return ports.SessionInfo{}, false, err
+	}
+	return ports.SessionInfo{}, false, nil
+}
+
+func appendPermissionFlags(cmd *[]string, mode ports.PermissionMode) {
+	switch mode {
+	case ports.PermissionModeAcceptEdits:
+		*cmd = append(*cmd, "--permission-mode", "acceptEdits")
+	case ports.PermissionModeAuto:
+		*cmd = append(*cmd, "--permission-mode", "auto")
+	case ports.PermissionModeBypassPermissions:
+		*cmd = append(*cmd, "--permission-mode", "bypassPermissions")
+	}
+}
+
+// ResolveAmpBinary finds the `amp` binary, searching PATH then common install
+// locations. It returns "amp" as a last resort so callers get the shell's normal
+// command-not-found behavior if Amp is absent.
+func ResolveAmpBinary(ctx context.Context) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+
+	if runtime.GOOS == "windows" {
+		for _, name := range []string{"amp.cmd", "amp.exe", "amp"} {
+			if path, err := exec.LookPath(name); err == nil && path != "" {
+				return path, nil
+			}
+			if err := ctx.Err(); err != nil {
+				return "", err
+			}
+		}
+		candidates := []string{}
+		if appData := os.Getenv("APPDATA"); appData != "" {
+			candidates = append(candidates,
+				filepath.Join(appData, "npm", "amp.cmd"),
+				filepath.Join(appData, "npm", "amp.exe"),
+			)
+		}
+		for _, candidate := range candidates {
+			if fileExists(candidate) {
+				return candidate, nil
+			}
+			if err := ctx.Err(); err != nil {
+				return "", err
+			}
+		}
+		return "amp", nil
+	}
+
+	if path, err := exec.LookPath("amp"); err == nil && path != "" {
+		return path, nil
+	}
+
+	candidates := []string{
+		"/usr/local/bin/amp",
+		"/opt/homebrew/bin/amp",
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		candidates = append(candidates,
+			filepath.Join(home, ".local", "bin", "amp"),
+			filepath.Join(home, ".npm", "bin", "amp"),
+		)
+	}
+
+	for _, candidate := range candidates {
+		if fileExists(candidate) {
+			return candidate, nil
+		}
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+	}
+
+	return "amp", nil
+}
+
+func (p *Plugin) ampBinary(ctx context.Context) (string, error) {
+	p.binaryMu.Lock()
+	defer p.binaryMu.Unlock()
+
+	if p.resolvedBinary != "" {
+		return p.resolvedBinary, nil
+	}
+
+	binary, err := ResolveAmpBinary(ctx)
+	if err != nil {
+		return "", err
+	}
+	p.resolvedBinary = binary
+	return binary, nil
+}
+
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
+}
