@@ -95,21 +95,21 @@ func CheckCredentialsOnce(ctx context.Context, probe CredentialProbe, checked, d
 
 // CacheSet writes value to m[key] and tracks insertion order in *order for
 // bounded FIFO eviction. If the bucket already had key, order is left
-// unchanged; otherwise key is appended. When len(*order) exceeds max, the
-// oldest keys are evicted from both order and m.
+// unchanged; otherwise key is appended. When len(*order) exceeds maxEntries,
+// the oldest keys are evicted from both order and m.
 //
-// max <= 0 disables eviction; callers that want bounded behavior must pass a
-// positive max. The generic shape lets the same helper serve string-, time-,
-// and bool-valued caches without per-type duplication.
-func CacheSet[V any](m map[string]V, order *[]string, max int, key string, value V) {
+// maxEntries <= 0 disables eviction; callers that want bounded behavior must
+// pass a positive value. The generic shape lets the same helper serve
+// string-, time-, and bool-valued caches without per-type duplication.
+func CacheSet[V any](m map[string]V, order *[]string, maxEntries int, key string, value V) {
 	if _, ok := m[key]; !ok {
 		*order = append(*order, key)
 	}
 	m[key] = value
-	if max <= 0 {
+	if maxEntries <= 0 {
 		return
 	}
-	for len(*order) > max {
+	for len(*order) > maxEntries {
 		evict := (*order)[0]
 		*order = (*order)[1:]
 		delete(m, evict)
