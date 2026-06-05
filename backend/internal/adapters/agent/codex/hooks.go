@@ -34,7 +34,7 @@ type codexHookFile struct {
 }
 
 type codexMatcherGroup struct {
-	Matcher *string          `json:"matcher"`
+	Matcher *string          `json:"matcher,omitempty"`
 	Hooks   []codexHookEntry `json:"hooks"`
 }
 
@@ -56,6 +56,7 @@ type codexHookSpec struct {
 var codexManagedHooks = []codexHookSpec{
 	{Event: "SessionStart", Command: codexHookCommandPrefix + "session-start"},
 	{Event: "UserPromptSubmit", Command: codexHookCommandPrefix + "user-prompt-submit"},
+	{Event: "PermissionRequest", Command: codexHookCommandPrefix + "permission-request"},
 	{Event: "Stop", Command: codexHookCommandPrefix + "stop"},
 }
 

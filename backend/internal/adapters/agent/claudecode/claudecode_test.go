@@ -214,6 +214,14 @@ func TestGetAgentHooksInstallsClaudeHooks(t *testing.T) {
 	if m := matcherForCommand(config.Hooks["UserPromptSubmit"], "ao hooks claude-code user-prompt-submit"); m != nil {
 		t.Fatalf("UserPromptSubmit matcher = %v, want none", m)
 	}
+	// Notification and SessionEnd install with no matcher; the handler filters
+	// on the payload.
+	if m := matcherForCommand(config.Hooks["Notification"], "ao hooks claude-code notification"); m != nil {
+		t.Fatalf("Notification matcher = %v, want none", m)
+	}
+	if m := matcherForCommand(config.Hooks["SessionEnd"], "ao hooks claude-code session-end"); m != nil {
+		t.Fatalf("SessionEnd matcher = %v, want none", m)
+	}
 }
 
 func TestUninstallHooksRemovesClaudeHooks(t *testing.T) {

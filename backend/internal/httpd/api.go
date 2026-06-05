@@ -19,6 +19,7 @@ import (
 type APIDeps struct {
 	Projects projectsvc.Manager
 	Sessions controllers.SessionService
+	Activity controllers.ActivityRecorder
 	PRs      prsvc.ActionManager
 	CDC      cdc.Source
 	Events   cdcSubscriber
@@ -44,7 +45,8 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 			Mgr: deps.Projects,
 		},
 		sessions: &controllers.SessionsController{
-			Svc: deps.Sessions,
+			Svc:      deps.Sessions,
+			Activity: deps.Activity,
 		},
 		prs:    &controllers.PRsController{Svc: deps.PRs},
 		events: &EventsController{Source: deps.CDC, Live: deps.Events},

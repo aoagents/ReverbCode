@@ -93,7 +93,7 @@ func (c *commandContext) doJSON(ctx context.Context, method, path string, body, 
 		reader = bytes.NewReader(payload)
 	}
 	url := fmt.Sprintf("http://%s:%d/api/v1/%s", config.LoopbackHost, info.Port, path)
-	req, err := http.NewRequestWithContext(ctx, method, url, reader)
+	req, err := http.NewRequestWithContext(ctx, method, url, reader) // #nosec G704 -- daemon host is fixed loopback; path is an internal API route.
 	if err != nil {
 		return err
 	}
@@ -105,7 +105,7 @@ func (c *commandContext) doJSON(ctx context.Context, method, path string, body, 
 	// give daemon API calls far more headroom than the 2s status-probe timeout.
 	client := *c.deps.HTTPClient
 	client.Timeout = commandTimeout
-	resp, err := client.Do(req)
+	resp, err := client.Do(req) // #nosec G704 -- request target is the fixed loopback daemon URL above.
 	if err != nil {
 		return fmt.Errorf("call daemon: %w", err)
 	}

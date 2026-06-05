@@ -209,6 +209,18 @@ type ClaimPRResponse struct {
 	TakenOverFrom []domain.SessionID `json:"takenOverFrom"`
 }
 
+// SetActivityRequest is the body of POST /api/v1/sessions/{sessionId}/activity.
+type SetActivityRequest struct {
+	State string `json:"state" enum:"active,idle,waiting_input,exited" description:"Agent activity state reported by an agent hook."`
+}
+
+// SetActivityResponse is the body of POST /api/v1/sessions/{sessionId}/activity.
+type SetActivityResponse struct {
+	OK        bool             `json:"ok"`
+	SessionID domain.SessionID `json:"sessionId"`
+	State     string           `json:"state"`
+}
+
 // OrchestratorIDParam is the {id} path parameter for orchestrator routes.
 type OrchestratorIDParam struct {
 	ID string `path:"id" description:"Orchestrator session identifier, e.g. project-orchestrator."`

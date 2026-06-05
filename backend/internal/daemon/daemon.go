@@ -107,6 +107,7 @@ func Run() error {
 		Sessions: sessionSvc,
 		CDC:      store,
 		Events:   cdcPipe.Broadcaster,
+		Activity: lcStack.LCM,
 	})
 	if err != nil {
 		stop()
