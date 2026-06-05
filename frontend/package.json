@@ -2,15 +2,37 @@
   "name": "agent-orchestrator-frontend",
   "version": "0.0.0",
   "private": true,
-  "description": "Electron + TypeScript frontend for the agent-orchestrator rewrite",
+  "description": "Electron + React desktop UI for the agent-orchestrator daemon",
   "main": "dist/main.js",
   "scripts": {
-    "build": "tsc",
-    "typecheck": "tsc --noEmit",
+    "build:main": "tsc -p tsconfig.main.json",
+    "build:renderer": "vite build",
+    "build": "npm run build:main && npm run build:renderer",
+    "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.renderer.json",
+    "dev:renderer": "vite",
+    "dev:electron": "tsc -p tsconfig.main.json && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron .",
+    "dev": "concurrently -k -n vite,electron -c magenta,cyan \"npm:dev:renderer\" \"wait-on tcp:5173 && npm:dev:electron\"",
     "start": "npm run build && electron ."
   },
   "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.0",
+    "cross-env": "^7.0.3",
     "electron": "^33.0.0",
-    "typescript": "^5.6.0"
+    "typescript": "^5.6.0",
+    "vite": "^5.4.11",
+    "wait-on": "^8.0.1"
+  },
+  "dependencies": {
+    "@tailwindcss/vite": "^4.3.0",
+    "clsx": "^2.1.1",
+    "lucide-react": "^1.17.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-resizable-panels": "^2.1.9",
+    "tailwind-merge": "^3.6.0",
+    "tailwindcss": "^4.3.0"
   }
 }
