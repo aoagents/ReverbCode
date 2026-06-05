@@ -83,7 +83,7 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 				var claim claimPRResponse
 				if err := ctx.postJSON(cmd.Context(), "sessions/"+url.PathEscape(res.Session.ID)+"/pr/claim", claimPRRequest{PR: claimRef, AllowTakeover: !opts.noTakeover}, &claim); err != nil {
 					if killErr := ctx.rollbackSpawnedSession(cmd.Context(), res.Session.ID); killErr != nil {
-						return fmt.Errorf("failed to claim PR %s: %w; rollback of session %s failed: %v", opts.claimPR, err, res.Session.ID, killErr)
+						return fmt.Errorf("failed to claim PR %s: %w; rollback of session %s failed: %w", opts.claimPR, err, res.Session.ID, killErr)
 					}
 					return fmt.Errorf("failed to claim PR %s: %w; rolled back session %s", opts.claimPR, err, res.Session.ID)
 				}

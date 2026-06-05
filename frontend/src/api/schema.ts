@@ -162,6 +162,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sessions/{sessionId}/pr": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List pull requests owned by a session */
+        get: operations["listSessionPRs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sessions/{sessionId}/pr/claim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Claim an existing pull request for a session */
+        post: operations["claimSessionPR"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sessions/{sessionId}/restore": {
         parameters: {
             query?: never;
@@ -231,6 +265,17 @@ export interface components {
             path: string;
             projectId?: null | string;
         };
+        ClaimPRRequest: {
+            allowTakeover?: null | boolean;
+            pr: string;
+        };
+        ClaimPRResponse: {
+            branchChanged: boolean;
+            ok: boolean;
+            prs: components["schemas"]["SessionPRFacts"][];
+            sessionId: string;
+            takenOverFrom: string[];
+        };
         CleanupSessionsResponse: {
             cleaned: string[];
             ok: boolean;
@@ -253,6 +298,10 @@ export interface components {
         };
         ListProjectsResponse: {
             projects: components["schemas"]["ProjectSummary"][];
+        };
+        ListSessionPRsResponse: {
+            prs: components["schemas"]["SessionPRFacts"][];
+            sessionId: string;
         };
         ListSessionsResponse: {
             sessions: components["schemas"]["Session"][];
@@ -350,6 +399,18 @@ export interface components {
             status: string;
             /** Format: date-time */
             updatedAt: string;
+        };
+        SessionPRFacts: {
+            ci: string;
+            mergeability: string;
+            number: number;
+            review: string;
+            reviewComments: boolean;
+            /** @enum {string} */
+            state: "draft" | "open" | "merged" | "closed";
+            /** Format: date-time */
+            updatedAt: string;
+            url: string;
         };
         SessionResponse: {
             session: components["schemas"]["Session"];
@@ -1057,6 +1118,137 @@ export interface operations {
             };
             /** @description Internal Server Error */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    listSessionPRs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListSessionPRsResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    claimSessionPR: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ClaimPRRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClaimPRResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
