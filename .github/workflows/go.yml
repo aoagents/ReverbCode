@@ -85,8 +85,13 @@ jobs:
         with:
           node-version: "24"
 
+      - name: Install dependencies
+        run: npm ci
+
       - name: Regenerate API spec and TS types
         run: npm run api
 
-      - name: Check for drift
-        run: git diff --exit-code -- backend/internal/httpd/apispec/openapi.yaml frontend/src/api/schema.ts
+      # openapi.yaml drift is already caught by TestBuild_MatchesEmbedded in
+      # the build-test job (go test -race ./...). Only schema.ts needs checking here.
+      - name: Check for schema.ts drift
+        run: git diff --exit-code -- frontend/src/api/schema.ts
