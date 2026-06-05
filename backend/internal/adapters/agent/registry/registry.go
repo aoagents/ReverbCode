@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/amp"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/claudecode"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/codex"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/droid"
@@ -27,6 +28,7 @@ func Constructors() []adapters.Adapter {
 		opencode.New(),
 		grok.New(),
 		droid.New(),
+		amp.New(),
 	}
 }
 
