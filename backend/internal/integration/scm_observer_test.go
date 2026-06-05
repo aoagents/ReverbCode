@@ -11,7 +11,6 @@ package integration
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"log/slog"
 	"strings"
@@ -68,25 +67,26 @@ func (s *scmMessengerSpy) snapshot() []scmCapturedNudge {
 }
 
 // cannedSCMProvider satisfies observe/scm.Provider with hand-built observations
-// keyed by branch (for DetectPRByBranch) and PR (for FetchPullRequests). It is
-// the integration-package analog of observer_test.go's fakeProvider: the SCM
-// adapter has its own httptest-based coverage, so this test holds the provider
-// constant and exercises every other layer end-to-end.
+// keyed by branch (for DetectPRByBranch) and by PR number (for everything else,
+// since every test case uses scmTestRepo). It is the integration-package analog
+// of observer_test.go's fakeProvider: the SCM adapter has its own httptest-based
+// coverage, so this test holds the provider constant and exercises every other
+// layer end-to-end.
 type cannedSCMProvider struct {
 	mu sync.Mutex
 
 	parsedRepo   ports.SCMRepo
 	detected     map[string]ports.SCMPRObservation
-	observations map[string]ports.SCMObservation
-	reviews      map[string]ports.SCMReviewObservation
+	observations map[int]ports.SCMObservation
+	reviews      map[int]ports.SCMReviewObservation
 }
 
 func newCannedSCMProvider() *cannedSCMProvider {
 	return &cannedSCMProvider{
 		parsedRepo:   scmTestRepo,
 		detected:     map[string]ports.SCMPRObservation{},
-		observations: map[string]ports.SCMObservation{},
-		reviews:      map[string]ports.SCMReviewObservation{},
+		observations: map[int]ports.SCMObservation{},
+		reviews:      map[int]ports.SCMReviewObservation{},
 	}
 }
 
@@ -120,7 +120,7 @@ func (p *cannedSCMProvider) FetchPullRequests(_ context.Context, refs []ports.SC
 	defer p.mu.Unlock()
 	out := make([]ports.SCMObservation, 0, len(refs))
 	for _, ref := range refs {
-		if obs, ok := p.observations[scmObservationKey(ref.Repo, ref.Number)]; ok {
+		if obs, ok := p.observations[ref.Number]; ok {
 			out = append(out, obs)
 		}
 	}
@@ -138,17 +138,7 @@ func (p *cannedSCMProvider) FetchFailedCheckLogTail(_ context.Context, _ ports.S
 func (p *cannedSCMProvider) FetchReviewThreads(_ context.Context, ref ports.SCMPRRef) (ports.SCMReviewObservation, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return p.reviews[scmObservationKey(ref.Repo, ref.Number)], nil
-}
-
-// scmObservationKey mirrors the observer's internal prKey shape so our maps
-// agree with the strings the observer hands back through SCMPRRef.
-func scmObservationKey(repo ports.SCMRepo, number int) string {
-	display := repo.Repo
-	if display == "" {
-		display = repo.Owner + "/" + repo.Name
-	}
-	return repo.Provider + ":" + repo.Host + ":" + display + "#" + fmt.Sprint(number)
+	return p.reviews[ref.Number], nil
 }
 
 // scmFixture bundles the live collaborators a single SCM observer scenario
@@ -286,7 +276,7 @@ func TestSCMObserverEndToEnd(t *testing.T) {
 		f.provider.detected["feat/x"] = ports.SCMPRObservation{
 			URL: prURL, Number: 42, SourceBranch: "feat/x", TargetBranch: "main", HeadSHA: headSHA,
 		}
-		f.provider.observations[scmObservationKey(scmTestRepo, 42)] = failingSCMObservation(prURL, 42, headSHA, logTail)
+		f.provider.observations[42] = failingSCMObservation(prURL, 42, headSHA, logTail)
 
 		if err := f.observer.Poll(ctx); err != nil {
 			t.Fatalf("Poll: %v", err)
@@ -355,7 +345,12 @@ func TestSCMObserverEndToEnd(t *testing.T) {
 			t.Fatalf("last_nudge_signature not persisted after first nudge")
 		}
 
-		// A second identical Poll must produce zero additional nudges.
+		// A second identical Poll must produce zero additional nudges. This
+		// exercises the hash-match short-circuit in prepareForPersistence —
+		// the production fallback the observer relies on when the upstream
+		// ETag guard misses. The ETag-driven 304 short-circuit on the same
+		// SHA is covered by the unit tests in observe/scm/observer_test.go
+		// (Poll_RepoETag304SkipsDetectPR, Poll_CIETagChangeRefreshesWhenRepoUnchanged).
 		if err := f.observer.Poll(ctx); err != nil {
 			t.Fatalf("second Poll: %v", err)
 		}
@@ -381,7 +376,7 @@ func TestSCMObserverEndToEnd(t *testing.T) {
 		f.provider.detected["feat/x"] = ports.SCMPRObservation{
 			URL: prURL, Number: 77, SourceBranch: "feat/x", TargetBranch: "main", HeadSHA: headSHA, Merged: true,
 		}
-		f.provider.observations[scmObservationKey(scmTestRepo, 77)] = mergedSCMObservation(prURL, 77, headSHA)
+		f.provider.observations[77] = mergedSCMObservation(prURL, 77, headSHA)
 
 		if err := f.observer.Poll(ctx); err != nil {
 			t.Fatalf("Poll: %v", err)
