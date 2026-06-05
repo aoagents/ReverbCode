@@ -139,6 +139,106 @@ func readSSEIDs(t *testing.T, r io.Reader, want int) []string {
 	return nil
 }
 
+// dedupeEventSource publishes a duplicate of its replay event plus a new event
+// into the live channel so the dedupe path in writeSSEEvent can be exercised.
+type dedupeEventSource struct {
+	live *fakeEventSubscriber
+}
+
+func (s *dedupeEventSource) EventsAfter(_ context.Context, _ int64, _ int) ([]cdc.Event, error) {
+	// Both published before replay returns: seq=5 duplicates the replay event;
+	// seq=6 is genuinely new. After replay sentSeq=5, so seq=5 must be dropped
+	// and seq=6 sent.
+	s.live.publish(testCDCEvent(5))
+	s.live.publish(testCDCEvent(6))
+	return []cdc.Event{testCDCEvent(5)}, nil
+}
+
+func (*dedupeEventSource) LatestSeq(context.Context) (int64, error) { return 0, nil }
+
+// TestEventsStreamDeduplicatesLiveEventOverlappingReplay verifies that a live
+// event whose seq falls within the already-replayed range is silently dropped,
+// so the client sees each seq exactly once.
+func TestEventsStreamDeduplicatesLiveEventOverlappingReplay(t *testing.T) {
+	live := &fakeEventSubscriber{}
+	src := &dedupeEventSource{live: live}
+	router := NewRouterWithControl(config.Config{}, discardLogger(), nil, APIDeps{
+		CDC:    src,
+		Events: live,
+	}, ControlDeps{})
+	ts := httptest.NewServer(router)
+	defer ts.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/api/v1/events?after=0", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /api/v1/events: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Replay emits seq=5; live buffer holds seq=5 (dup) then seq=6 (new).
+	// writeSSEEvent must drop seq=5 from the live drain (5 <= sentSeq=5).
+	// The client must see exactly [5, 6], not [5, 5, 6].
+	ids := readSSEIDs(t, resp.Body, 2)
+	if got, want := strings.Join(ids, ","), "5,6"; got != want {
+		t.Fatalf("ids = %s, want %s (duplicate seq was not deduped)", got, want)
+	}
+}
+
+// lastEventIDSource returns a single event whose seq is calledAfter+1, letting
+// the test prove EventsAfter received the cursor from Last-Event-ID by checking
+// the event seq the client receives.
+type lastEventIDSource struct {
+	live *fakeEventSubscriber
+}
+
+func (s *lastEventIDSource) EventsAfter(_ context.Context, after int64, _ int) ([]cdc.Event, error) {
+	return []cdc.Event{testCDCEvent(after + 1)}, nil
+}
+
+func (*lastEventIDSource) LatestSeq(context.Context) (int64, error) { return 0, nil }
+
+// TestEventsStreamParsesLastEventIDHeader verifies that the Last-Event-ID
+// request header is used as the replay cursor when the after query param is
+// absent. The source returns after+1, so receiving seq=8 proves the cursor
+// was parsed as 7.
+func TestEventsStreamParsesLastEventIDHeader(t *testing.T) {
+	live := &fakeEventSubscriber{}
+	src := &lastEventIDSource{live: live}
+	router := NewRouterWithControl(config.Config{}, discardLogger(), nil, APIDeps{
+		CDC:    src,
+		Events: live,
+	}, ControlDeps{})
+	ts := httptest.NewServer(router)
+	defer ts.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/api/v1/events", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Last-Event-ID", "7")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /api/v1/events: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// EventsAfter(after=7) returns seq=8. Receiving seq=8 proves the header
+	// was parsed correctly. If the header were ignored (after=0 default),
+	// EventsAfter would return seq=1 and this assertion would fail.
+	ids := readSSEIDs(t, resp.Body, 1)
+	if got, want := ids[0], "8"; got != want {
+		t.Fatalf("id = %q, want %q (Last-Event-ID header was not used as cursor)", got, want)
+	}
+}
+
 func testCDCEvent(seq int64) cdc.Event {
 	return cdc.Event{
 		Seq:       seq,
