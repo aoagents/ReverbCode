@@ -227,10 +227,12 @@ func (m *Manager) loadPRSignaturesLocked(ctx context.Context, prURL string) erro
 	if raw == "" {
 		return nil
 	}
+	// Treat corrupt payloads as empty — re-firing a nudge once is preferable
+	// to crashing the lifecycle write path on bad persisted state. Comparing
+	// against nil directly (no `err :=`) keeps the nilerr lint quiet about the
+	// intentional swallow.
 	var p reactionPayload
-	if err := json.Unmarshal([]byte(raw), &p); err != nil {
-		// Treat corrupt payloads as empty — re-firing a nudge once is preferable
-		// to crashing the lifecycle write path on bad persisted state.
+	if json.Unmarshal([]byte(raw), &p) != nil {
 		return nil
 	}
 	for k, v := range p.Seen {
