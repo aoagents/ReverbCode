@@ -119,10 +119,11 @@ ORDER BY
 LIMIT 1;
 
 -- name: ClaimPRForSession :exec
-INSERT INTO pr (url, session_id, number, pr_state, ci_state, mergeability, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?)
+INSERT INTO pr (url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (url) DO UPDATE SET
     session_id = excluded.session_id,
+    review_decision = excluded.review_decision,
     updated_at = excluded.updated_at;
 
 -- name: GetPRClaimAndOwner :one

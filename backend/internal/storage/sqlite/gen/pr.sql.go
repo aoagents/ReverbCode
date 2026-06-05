@@ -14,21 +14,23 @@ import (
 )
 
 const claimPRForSession = `-- name: ClaimPRForSession :exec
-INSERT INTO pr (url, session_id, number, pr_state, ci_state, mergeability, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?)
+INSERT INTO pr (url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (url) DO UPDATE SET
     session_id = excluded.session_id,
+    review_decision = excluded.review_decision,
     updated_at = excluded.updated_at
 `
 
 type ClaimPRForSessionParams struct {
-	URL          string
-	SessionID    domain.SessionID
-	Number       int64
-	PRState      domain.PRState
-	CIState      domain.CIState
-	Mergeability domain.Mergeability
-	UpdatedAt    time.Time
+	URL            string
+	SessionID      domain.SessionID
+	Number         int64
+	PRState        domain.PRState
+	ReviewDecision domain.ReviewDecision
+	CIState        domain.CIState
+	Mergeability   domain.Mergeability
+	UpdatedAt      time.Time
 }
 
 func (q *Queries) ClaimPRForSession(ctx context.Context, arg ClaimPRForSessionParams) error {
@@ -37,6 +39,7 @@ func (q *Queries) ClaimPRForSession(ctx context.Context, arg ClaimPRForSessionPa
 		arg.SessionID,
 		arg.Number,
 		arg.PRState,
+		arg.ReviewDecision,
 		arg.CIState,
 		arg.Mergeability,
 		arg.UpdatedAt,

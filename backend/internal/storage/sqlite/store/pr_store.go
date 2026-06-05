@@ -69,7 +69,7 @@ func (s *Store) ClaimPR(ctx context.Context, pr domain.PullRequest, checks []dom
 		}
 		if err := q.ClaimPRForSession(ctx, gen.ClaimPRForSessionParams{
 			URL: pr.URL, SessionID: pr.SessionID, Number: int64(pr.Number), PRState: prState(pr),
-			CIState: ciOrDefault(pr.CI), Mergeability: mergeabilityOrDefault(pr.Mergeability), UpdatedAt: pr.UpdatedAt,
+			ReviewDecision: reviewOrDefault(pr.Review), CIState: ciOrDefault(pr.CI), Mergeability: mergeabilityOrDefault(pr.Mergeability), UpdatedAt: pr.UpdatedAt,
 		}); err != nil {
 			return err
 		}

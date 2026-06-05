@@ -193,6 +193,42 @@ func TestClaimPR_CreatesMovesAndGuardsActiveOwner(t *testing.T) {
 	}
 }
 
+func TestClaimPRCreatedCDCUsesClaimReviewDecision(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	rec, err := s.CreateSession(ctx, sampleRecord("mer"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	url := "https://github.com/acme/repo/pull/123"
+	pr := domain.PullRequest{
+		URL:       url,
+		SessionID: rec.ID,
+		Number:    123,
+		Review:    domain.ReviewChangesRequest,
+		UpdatedAt: time.Now().UTC(),
+	}
+	if _, err := s.ClaimPR(ctx, pr, nil, nil, nil, ports.ReviewWritePreserve, true); err != nil {
+		t.Fatal(err)
+	}
+
+	events, err := s.EventsAfter(ctx, 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ev := range events {
+		if ev.Type != cdc.EventPRCreated {
+			continue
+		}
+		if !strings.Contains(string(ev.Payload), `"review":"changes_requested"`) {
+			t.Fatalf("pr_created payload review not from claim: %s", ev.Payload)
+		}
+		return
+	}
+	t.Fatalf("no pr_created event found; events=%v", events)
+}
+
 func TestClaimPR_TakesOverTerminatedOwnerAndEmitsSessionChangedCDC(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

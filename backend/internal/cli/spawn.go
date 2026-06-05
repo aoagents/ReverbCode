@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"net/url"
 
@@ -81,7 +82,10 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 			if opts.claimPR != "" {
 				var claim claimPRResponse
 				if err := ctx.postJSON(cmd.Context(), "sessions/"+url.PathEscape(res.Session.ID)+"/pr/claim", claimPRRequest{PR: claimRef, AllowTakeover: !opts.noTakeover}, &claim); err != nil {
-					return fmt.Errorf("session %s was created, but failed to claim PR %s: %w", res.Session.ID, opts.claimPR, err)
+					if killErr := ctx.rollbackSpawnedSession(cmd.Context(), res.Session.ID); killErr != nil {
+						return fmt.Errorf("failed to claim PR %s: %w; rollback of session %s failed: %v", opts.claimPR, err, res.Session.ID, killErr)
+					}
+					return fmt.Errorf("failed to claim PR %s: %w; rolled back session %s", opts.claimPR, err, res.Session.ID)
 				}
 				if len(claim.PRs) > 0 {
 					claimed = claim.PRs[0].URL
@@ -118,4 +122,9 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 	f.StringVar(&opts.claimPR, "claim-pr", "", "Immediately claim an existing PR for the spawned session")
 	f.BoolVar(&opts.noTakeover, "no-takeover", false, "Refuse if another active session owns the claimed PR (requires --claim-pr)")
 	return cmd
+}
+
+func (c *commandContext) rollbackSpawnedSession(ctx context.Context, id string) error {
+	var res killSessionResponse
+	return c.postJSON(ctx, "sessions/"+url.PathEscape(id)+"/kill", struct{}{}, &res)
 }

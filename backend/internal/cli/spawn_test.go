@@ -79,6 +79,52 @@ func TestSpawnClaimPRWiring(t *testing.T) {
 	}
 }
 
+func TestSpawnClaimPRFailureRollsBackSession(t *testing.T) {
+	cfg := setConfigEnv(t)
+	var requests []string
+	sessions := map[string]bool{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.Method+" "+r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/demo":
+			_, _ = io.WriteString(w, `{"status":"ok","project":{"id":"demo","name":"Demo","path":"/repo/demo","repo":"https://github.com/aoagents/agent-orchestrator","defaultBranch":"main"}}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions":
+			sessions["demo-10"] = true
+			_, _ = io.WriteString(w, `{"session":{"id":"demo-10","status":"idle"}}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions/demo-10/pr/claim":
+			if !sessions["demo-10"] {
+				t.Fatal("claim called before session existed")
+			}
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = io.WriteString(w, `{"error":"not_found","code":"PR_NOT_FOUND","message":"PR not found"}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions/demo-10/kill":
+			delete(sessions, "demo-10")
+			_, _ = io.WriteString(w, `{"ok":true,"sessionId":"demo-10","freed":true}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	writeRunFileFor(t, cfg, srv)
+
+	_, _, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "demo", "--claim-pr", "142")
+	if err == nil {
+		t.Fatal("expected spawn claim failure")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "failed to claim PR 142") || !strings.Contains(msg, "rolled back session demo-10") {
+		t.Fatalf("error = %v", err)
+	}
+	if sessions["demo-10"] {
+		t.Fatalf("spawned session still present after claim rollback: %#v", sessions)
+	}
+	want := []string{"GET /api/v1/projects/demo", "POST /api/v1/sessions", "POST /api/v1/sessions/demo-10/pr/claim", "POST /api/v1/sessions/demo-10/kill"}
+	if !reflect.DeepEqual(requests, want) {
+		t.Fatalf("requests=%#v want %#v", requests, want)
+	}
+}
+
 func TestSpawnNoTakeoverRequiresClaimPR(t *testing.T) {
 	_, _, err := executeCLI(t, Deps{}, "spawn", "--project", "demo", "--no-takeover")
 	if err == nil || ExitCode(err) != 2 || !strings.Contains(err.Error(), "--no-takeover requires --claim-pr") {
