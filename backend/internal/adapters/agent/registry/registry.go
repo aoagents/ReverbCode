@@ -11,6 +11,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/aider"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/amp"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/auggie"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/autohand"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/claudecode"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/cline"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/codex"
@@ -61,6 +62,7 @@ func Constructors() []adapters.Adapter {
 		kilocode.New(),
 		vibe.New(),
 		pi.New(),
+		autohand.New(),
 	}
 }
 
