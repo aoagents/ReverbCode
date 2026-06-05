@@ -15,6 +15,29 @@ type PRWriter interface {
 	WritePR(ctx context.Context, pr domain.PullRequest, checks []domain.PullRequestCheck, comments []domain.PullRequestComment) error
 }
 
+// ReviewWriteMode describes how an SCM observation should update normalized
+// review-thread/comment rows.
+type ReviewWriteMode int
+
+const (
+	// ReviewWritePreserve leaves stored review rows untouched. Metadata/CI-only
+	// refreshes and failed review fetches use this mode.
+	ReviewWritePreserve ReviewWriteMode = iota
+	// ReviewWriteReplace treats the fetched review rows as a complete snapshot
+	// and replaces all stored review rows for the PR.
+	ReviewWriteReplace
+	// ReviewWriteMerge treats the fetched review rows as a partial window:
+	// fetched threads/comments are updated while older unseen rows are preserved.
+	ReviewWriteMerge
+)
+
+// SCMWriter records provider-neutral SCM observations. reviewMode decides
+// whether review facts are preserved, replaced with a complete snapshot, or
+// merged as a bounded partial window.
+type SCMWriter interface {
+	WriteSCMObservation(ctx context.Context, pr domain.PullRequest, checks []domain.PullRequestCheck, threads []domain.PullRequestReviewThread, comments []domain.PullRequestComment, reviewMode ReviewWriteMode) error
+}
+
 // AgentMessenger injects a message into a running agent.
 type AgentMessenger interface {
 	Send(ctx context.Context, id domain.SessionID, message string) error

@@ -280,7 +280,7 @@ func (m *Manager) Cleanup(ctx context.Context, project domain.ProjectID) ([]doma
 	if err != nil {
 		return nil, fmt.Errorf("cleanup %s: %w", project, err)
 	}
-	var cleaned []domain.SessionID
+	cleaned := make([]domain.SessionID, 0, len(recs))
 	for _, rec := range recs {
 		if !rec.IsTerminated {
 			continue

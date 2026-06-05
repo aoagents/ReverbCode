@@ -32,6 +32,39 @@ type PullRequest struct {
 	Review       ReviewDecision
 	Mergeability Mergeability
 	UpdatedAt    time.Time
+
+	Provider string
+	Host     string
+	Repo     string
+
+	SourceBranch   string
+	TargetBranch   string
+	HeadSHA        string
+	Title          string
+	Additions      int
+	Deletions      int
+	ChangedFiles   int
+	Author         string
+	BaseSHA        string
+	MergeCommitSHA string
+
+	ProviderState            string
+	ProviderMergeable        string
+	ProviderMergeStateStatus string
+	HTMLURL                  string
+
+	CreatedAtProvider time.Time
+	UpdatedAtProvider time.Time
+	MergedAtProvider  time.Time
+	ClosedAtProvider  time.Time
+
+	MetadataHash string
+	CIHash       string
+	ReviewHash   string
+
+	ObservedAt       time.Time
+	CIObservedAt     time.Time
+	ReviewObservedAt time.Time
 }
 
 // PullRequestCheck is one normalized CI check run for a pull request.
@@ -39,20 +72,36 @@ type PullRequestCheck struct {
 	Name       string
 	CommitHash string
 	Status     PRCheckStatus
+	Conclusion string
 	URL        string
+	Details    string
 	LogTail    string
 	CreatedAt  time.Time
 }
 
 // PullRequestComment is one normalized review comment for a pull request.
 type PullRequestComment struct {
+	ThreadID  string
 	ID        string
 	Author    string
 	File      string
 	Line      int
 	Body      string
+	URL       string
 	Resolved  bool
+	IsBot     bool
 	CreatedAt time.Time
+}
+
+// PullRequestReviewThread is one normalized review thread for a pull request.
+type PullRequestReviewThread struct {
+	ThreadID     string
+	Path         string
+	Line         int
+	Resolved     bool
+	IsBot        bool
+	SemanticHash string
+	UpdatedAt    time.Time
 }
 
 // CIState is the aggregate CI status of a PR.

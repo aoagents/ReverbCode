@@ -18,6 +18,7 @@ From the repo root unless noted:
 npm run lint                         # backend go test ./... + golangci-lint v2.12.2
 npm run frontend:typecheck           # frontend TypeScript check
 npm run sqlc                         # regenerate backend/internal/storage/sqlite/gen from queries/schema
+npm run api                          # regenerate OpenAPI spec + frontend TS types (see API contract changes below)
 npx @redwoodjs/agent-ci run --all    # local workflow validation; requires Docker socket
 ```
 
@@ -85,6 +86,32 @@ For code entry points:
 - Keep generated OpenAPI/API DTO drift in mind: controller response shapes live in `backend/internal/httpd/controllers/dto.go` and tests may assert CLI/HTTP wire compatibility.
 - Do not add network calls to tests unless the package already has an integration/e2e pattern for them. Prefer `httptest`, fakes, and injected dependencies.
 - Do not commit local run state, daemon data, temporary worktrees, build outputs, or credentials.
+
+## API contract changes
+
+The daemon API is code-first. The OpenAPI spec and frontend TypeScript types are generated artifacts — edit the source, then regenerate.
+
+**Source files to edit:**
+- `backend/internal/httpd/controllers/dto.go` — request/response shapes.
+- `backend/internal/httpd/apispec/specgen/build.go` — operation registry; add a `schemaNames` entry for any new named type.
+
+**Regenerate after editing:**
+```bash
+npm run api          # runs api:spec then api:ts in sequence
+```
+
+This is equivalent to running:
+```bash
+npm run api:spec     # cd backend && go generate ./internal/httpd/apispec/...
+npm run api:ts       # npx openapi-typescript@7.4.4 backend/internal/httpd/apispec/openapi.yaml -o frontend/src/api/schema.ts
+```
+
+**Verify:**
+```bash
+cd backend && go test ./internal/httpd/...    # spec drift + route/spec parity tests (does not cover schema.ts — that is checked by the api-drift CI job)
+```
+
+Commit `openapi.yaml` and `frontend/src/api/schema.ts` together with the Go changes. CI will regenerate both files and fail if the committed versions are out of date. The CLI hand-mirrored DTOs remain a deliberate manual boundary and are not generated.
 
 ## PR hygiene
 

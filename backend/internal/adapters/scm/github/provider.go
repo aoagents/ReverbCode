@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"path"
@@ -26,9 +27,13 @@ type ProviderOptions struct {
 	Client     *Client
 	HTTPClient *http.Client
 	Token      TokenSource
-	RESTBase   string
-	GraphQLURL string
-	UserAgent  string
+	// SkipTokenPreflight defers token validation until the first provider call.
+	// Daemon wiring uses this so gh-token shell-out never blocks readiness.
+	SkipTokenPreflight bool
+	RESTBase           string
+	GraphQLURL         string
+	UserAgent          string
+	Logger             *slog.Logger
 }
 
 // Provider observes one GitHub pull request and returns a normalized
@@ -37,15 +42,17 @@ type ProviderOptions struct {
 // observation primitive that loop will call.
 type Provider struct {
 	client *Client
+	logger *slog.Logger
 }
 
 // NewProvider returns a Provider. If opts.Client is supplied it is used
 // verbatim; otherwise a Client is built from the other options. When a
 // Token source is supplied it is exercised once so missing credentials
-// surface at daemon startup rather than at first observation. Tests that
-// want an unauthenticated fake pass opts.Client directly.
+// surface at daemon startup rather than at first observation, unless
+// SkipTokenPreflight is set. Tests that want an unauthenticated fake pass
+// opts.Client directly.
 func NewProvider(opts ProviderOptions) (*Provider, error) {
-	if opts.Client == nil && opts.Token != nil {
+	if opts.Client == nil && opts.Token != nil && !opts.SkipTokenPreflight {
 		if _, err := opts.Token.Token(context.Background()); err != nil {
 			return nil, err
 		}
@@ -60,7 +67,28 @@ func NewProvider(opts ProviderOptions) (*Provider, error) {
 			UserAgent:  opts.UserAgent,
 		})
 	}
-	return &Provider{client: c}, nil
+	logger := opts.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &Provider{client: c, logger: logger}, nil
+}
+
+// SCMCredentialsAvailable checks whether this provider can obtain a token. The
+// SCM observer calls it lazily during the first poll that has SCM subjects, so
+// daemon readiness is not blocked by shelling out to gh auth token and idle
+// daemons do not warn about missing credentials.
+func (p *Provider) SCMCredentialsAvailable(ctx context.Context) (bool, error) {
+	if p.client == nil || p.client.tokens == nil {
+		return true, nil
+	}
+	if _, err := p.client.tokens.Token(ctx); err != nil {
+		if errors.Is(err, ErrNoToken) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
 }
 
 // Observe fetches the current state of one PR by its github.com URL and
@@ -362,7 +390,10 @@ func mergeabilityFromGraphQL(pr map[string]any, rest restPull, ci domain.CIState
 		return domain.MergeConflicting
 	}
 
-	if review == domain.ReviewChangesRequest {
+	if rest.Draft || boolv(pr["isDraft"]) {
+		return domain.MergeBlocked
+	}
+	if review == domain.ReviewChangesRequest || review == domain.ReviewRequired {
 		return domain.MergeBlocked
 	}
 	if ci == domain.CIFailing {

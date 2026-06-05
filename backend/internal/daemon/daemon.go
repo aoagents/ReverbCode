@@ -80,6 +80,7 @@ func Run() error {
 	// lifecycle write path live (reducer write -> store -> DB trigger ->
 	// change_log -> poller -> broadcaster) and gives startSession the shared LCM.
 	lcStack := startLifecycle(ctx, store, runtimeAdapter, log)
+	lcStack.scmDone = startSCMObserver(ctx, store, lcStack.LCM, log)
 
 	// The agent messenger sends validated user input to the session's live
 	// zellij pane. Keep this path small until durable inbox semantics are needed.

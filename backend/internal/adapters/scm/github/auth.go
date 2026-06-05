@@ -59,6 +59,44 @@ func (s EnvTokenSource) Token(context.Context) (string, error) {
 	return "", ErrNoToken
 }
 
+// FallbackTokenSource tries each source in order, returning the first token. A
+// source that returns ErrNoToken is skipped; other errors are remembered and
+// surfaced if no later source yields a token.
+type FallbackTokenSource []TokenSource
+
+// Token returns the first non-empty token from the configured sources.
+func (s FallbackTokenSource) Token(ctx context.Context) (string, error) {
+	var firstErr error
+	for _, src := range s {
+		if src == nil {
+			continue
+		}
+		tok, err := src.Token(ctx)
+		if err == nil {
+			return tok, nil
+		}
+		if errors.Is(err, ErrNoToken) {
+			continue
+		}
+		if firstErr == nil {
+			firstErr = err
+		}
+	}
+	if firstErr != nil {
+		return "", firstErr
+	}
+	return "", ErrNoToken
+}
+
+// InvalidateToken forwards cache invalidation to sources that support it.
+func (s FallbackTokenSource) InvalidateToken() {
+	for _, src := range s {
+		if inv, ok := src.(tokenInvalidator); ok {
+			inv.InvalidateToken()
+		}
+	}
+}
+
 const defaultGHTokenCacheTTL = 5 * time.Minute
 
 // GHTokenSource shells out to `gh auth token` when env vars are not

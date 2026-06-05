@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 const (
@@ -25,7 +27,7 @@ const (
 // errors.Is; the orchestrator's lifecycle code is intentionally insulated
 // from raw HTTP status codes.
 var (
-	ErrNotFound    = errors.New("github scm: not found")
+	ErrNotFound    = ports.ErrSCMNotFound
 	ErrAuthFailed  = errors.New("github scm: authentication failed")
 	ErrRateLimited = errors.New("github scm: rate limited")
 )
@@ -125,6 +127,50 @@ type RESTResponse struct {
 	NotModified bool
 	ETag        string
 	Body        []byte
+}
+
+// doRESTWithETag performs one REST GET with an explicit caller-owned ETag.
+// Unlike doREST, it does not replay cached bodies or mutate the client's
+// internal compatibility cache; it exists for the provider-neutral SCM observer,
+// whose ETag cache belongs to the observer orchestration layer.
+func (c *Client) doRESTWithETag(ctx context.Context, path string, q url.Values, etag string) (RESTResponse, error) {
+	u, err := c.restURL(path, q)
+	if err != nil {
+		return RESTResponse{}, fmt.Errorf("github scm: build %s URL: %w", path, err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, http.NoBody)
+	if err != nil {
+		return RESTResponse{}, fmt.Errorf("github scm: build GET %s request: %w", path, err)
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	req.Header.Set("User-Agent", c.userAgent)
+	if etag != "" {
+		req.Header.Set("If-None-Match", etag)
+	}
+	if err := c.authorize(ctx, req); err != nil {
+		return RESTResponse{}, err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return RESTResponse{}, fmt.Errorf("github scm: GET %s: %w", path, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode == http.StatusNotModified {
+		return RESTResponse{StatusCode: resp.StatusCode, NotModified: true, ETag: firstNonEmptyHeader(resp.Header.Get("ETag"), etag)}, nil
+	}
+	b, readErr := io.ReadAll(resp.Body)
+	if readErr != nil {
+		return RESTResponse{}, fmt.Errorf("github scm: read %s body: %w", path, readErr)
+	}
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return RESTResponse{StatusCode: resp.StatusCode, ETag: resp.Header.Get("ETag"), Body: b}, nil
+	}
+	err = classifyError(resp, b)
+	if errors.Is(err, ErrAuthFailed) {
+		c.invalidateToken()
+	}
+	return RESTResponse{StatusCode: resp.StatusCode, Body: b}, err
 }
 
 // doREST performs one REST request with ETag-aware caching. The cache is
@@ -433,4 +479,11 @@ func githubMessage(body []byte) string {
 		return p.Message
 	}
 	return strings.TrimSpace(string(body))
+}
+
+func firstNonEmptyHeader(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
 }

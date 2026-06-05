@@ -29,6 +29,7 @@ type lifecycleStack struct {
 	// standing up a second store+LCM pair that would diverge under writes.
 	LCM        *lifecycle.Manager
 	reaperDone <-chan struct{}
+	scmDone    <-chan struct{}
 }
 
 // startLifecycle constructs the Lifecycle Manager over the store and starts the
@@ -41,7 +42,12 @@ func startLifecycle(ctx context.Context, store *sqlite.Store, runtime ports.Runt
 
 // Stop waits for the reaper goroutine to exit. The caller must cancel the ctx
 // passed to startLifecycle before calling Stop.
-func (l *lifecycleStack) Stop() { <-l.reaperDone }
+func (l *lifecycleStack) Stop() {
+	<-l.reaperDone
+	if l.scmDone != nil {
+		<-l.scmDone
+	}
+}
 
 // startSession builds the controller-facing session service: a session manager
 // over the real zellij runtime, a per-session gitworktree workspace, the shared

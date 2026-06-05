@@ -22,14 +22,44 @@ type ChangeLog struct {
 }
 
 type PR struct {
-	URL            string
-	SessionID      domain.SessionID
-	Number         int64
-	PRState        domain.PRState
-	ReviewDecision domain.ReviewDecision
-	CIState        domain.CIState
-	Mergeability   domain.Mergeability
-	UpdatedAt      time.Time
+	URL                      string
+	SessionID                domain.SessionID
+	Number                   int64
+	PRState                  domain.PRState
+	ReviewDecision           domain.ReviewDecision
+	CIState                  domain.CIState
+	Mergeability             domain.Mergeability
+	UpdatedAt                time.Time
+	Provider                 string
+	Host                     string
+	Repo                     string
+	SourceBranch             string
+	TargetBranch             string
+	HeadSha                  string
+	Title                    string
+	Additions                int64
+	Deletions                int64
+	ChangedFiles             int64
+	Author                   string
+	BaseSha                  string
+	MergeCommitSha           string
+	IsDraft                  int64
+	IsMerged                 int64
+	IsClosed                 int64
+	ProviderState            string
+	ProviderMergeable        string
+	ProviderMergeStateStatus string
+	HtmlURL                  string
+	CreatedAtProvider        sql.NullTime
+	UpdatedAtProvider        sql.NullTime
+	MergedAtProvider         sql.NullTime
+	ClosedAtProvider         sql.NullTime
+	MetadataHash             string
+	CIHash                   string
+	ReviewHash               string
+	ObservedAt               sql.NullTime
+	CIObservedAt             sql.NullTime
+	ReviewObservedAt         sql.NullTime
 }
 
 type PRCheck struct {
@@ -40,6 +70,8 @@ type PRCheck struct {
 	URL        string
 	LogTail    string
 	CreatedAt  time.Time
+	Conclusion string
+	Details    string
 }
 
 type PRComment struct {
@@ -51,6 +83,20 @@ type PRComment struct {
 	Body      string
 	Resolved  bool
 	CreatedAt time.Time
+	ThreadID  string
+	URL       string
+	IsBot     int64
+}
+
+type PRReviewThread struct {
+	PRURL        string
+	ThreadID     string
+	Path         string
+	Line         int64
+	Resolved     int64
+	IsBot        int64
+	SemanticHash string
+	UpdatedAt    time.Time
 }
 
 type Project struct {
