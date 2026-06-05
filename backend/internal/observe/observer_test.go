@@ -211,12 +211,20 @@ func TestStartPollLoop_LogsPollErrorWithoutPanic(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := StartPollLoop(ctx, 10*time.Millisecond, poll, quietLogger(), "test")
-	for time.Now().Before(time.Now().Add(200 * time.Millisecond)) {
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
 		if ran.Load() >= 2 {
 			break
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
 	cancel()
-	<-done
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("done channel not closed after cancel")
+	}
+	if ran.Load() < 2 {
+		t.Fatalf("expected at least 2 polls under error path, got %d", ran.Load())
+	}
 }
