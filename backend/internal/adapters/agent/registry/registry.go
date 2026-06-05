@@ -26,6 +26,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/kimi"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/kiro"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/opencode"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/pi"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/qwen"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/vibe"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -59,6 +60,7 @@ func Constructors() []adapters.Adapter {
 		kiro.New(),
 		kilocode.New(),
 		vibe.New(),
+		pi.New(),
 	}
 }
 
