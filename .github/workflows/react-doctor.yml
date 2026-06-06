@@ -3,6 +3,9 @@ name: React Doctor
 on:
   push:
     branches: [main]
+    paths:
+      - "frontend/src/landing/**"
+      - ".github/workflows/react-doctor.yml"
   pull_request:
     paths:
       - "frontend/src/landing/**"
