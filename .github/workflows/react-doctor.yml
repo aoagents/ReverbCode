@@ -1,0 +1,40 @@
+name: React Doctor
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - "frontend/src/landing/**"
+      - ".github/workflows/react-doctor.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  doctor:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend/src/landing
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Matches flake.nix (nodejs_22) and react-doctor's engines
+          # requirement (^20.19.0 || >=22.12.0). setup-node resolves "22"
+          # to the latest 22.x, which satisfies both.
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: frontend/src/landing/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      # Default --blocking=error: surfaces all categories (security, bugs,
+      # performance, accessibility, maintainability) but only fails CI on
+      # errors, not warnings. Tighten via `--blocking warning` once the
+      # warning backlog is triaged.
+      - name: React Doctor
+        run: npm run doctor
