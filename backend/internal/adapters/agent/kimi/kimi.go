@@ -66,13 +66,18 @@ func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
 	return ports.ConfigSpec{}, nil
 }
 
-// GetLaunchCommand builds the argv to start a new non-interactive Kimi session:
+// GetLaunchCommand builds the argv to start a new Kimi session:
 //
-//	kimi [-y|--auto] -p <prompt>
+//	kimi -p <prompt>                            (non-interactive, default)
+//	kimi [--yolo|--auto]                        (interactive, no prompt)
 //
-// The prompt is delivered via `-p` (in command), which runs a single prompt
-// without opening the TUI. Kimi has no documented system-prompt flag, so
-// cfg.SystemPrompt / cfg.SystemPromptFile are not injected.
+// When a prompt is supplied, it is delivered via `-p` (in command), which runs
+// a single prompt without opening the TUI. Per Kimi docs, `--prompt` cannot be
+// combined with `--yolo`, `--auto`, or `--plan` — non-interactive mode already
+// uses the `auto` permission policy by default, so approval flags would be
+// rejected at startup. They are only emitted on the (interactive) path with no
+// prompt. Kimi has no documented system-prompt flag, so cfg.SystemPrompt /
+// cfg.SystemPromptFile are not injected.
 func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (cmd []string, err error) {
 	binary, err := p.kimiBinary(ctx)
 	if err != nil {
@@ -80,12 +85,13 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	}
 
 	cmd = []string{binary}
-	appendApprovalFlags(&cmd, cfg.Permissions)
 
 	if cfg.Prompt != "" {
 		cmd = append(cmd, "-p", cfg.Prompt)
+		return cmd, nil
 	}
 
+	appendApprovalFlags(&cmd, cfg.Permissions)
 	return cmd, nil
 }
 
@@ -107,10 +113,13 @@ func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfi
 // GetRestoreCommand rebuilds the argv that continues an existing Kimi session
 // when a native Kimi session id is known:
 //
-//	kimi [-y|--auto] --session <agentSessionId>
+//	kimi --session <agentSessionId>
 //
 // ok is false when no native session id has been captured, so callers fall back
-// to fresh launch behavior. Kimi has no lifecycle hook for AO to capture the
+// to fresh launch behavior. Per Kimi docs, `--yolo` and `--auto` cannot be
+// combined with `--session` (or `--continue`) — resumed sessions inherit the
+// approval settings of the original session — so cfg.Permissions is
+// intentionally ignored here. Kimi has no lifecycle hook for AO to capture the
 // native session id from yet, so in practice this returns ok=false today.
 func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig) (cmd []string, ok bool, err error) {
 	if err := ctx.Err(); err != nil {
@@ -125,10 +134,7 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	if err != nil {
 		return nil, false, err
 	}
-	cmd = make([]string, 0, 4)
-	cmd = append(cmd, binary)
-	appendApprovalFlags(&cmd, cfg.Permissions)
-	cmd = append(cmd, "--session", agentSessionID)
+	cmd = []string{binary, "--session", agentSessionID}
 	return cmd, true, nil
 }
 
@@ -141,7 +147,10 @@ func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (por
 	return ports.SessionInfo{}, false, nil
 }
 
-// appendApprovalFlags maps AO's permission modes onto Kimi's approval flags.
+// appendApprovalFlags maps AO's permission modes onto Kimi's approval flags
+// for interactive launches. Per Kimi docs these flags cannot be combined with
+// `--prompt`, `--session`, or `--continue`, so callers on those paths must
+// skip this mapping.
 //
 //   - Default: no flag, deferring to the user's Kimi config/default behavior.
 //   - AcceptEdits / Auto: `--auto` (auto permission mode; approvals handled
