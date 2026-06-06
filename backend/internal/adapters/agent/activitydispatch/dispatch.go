@@ -11,6 +11,7 @@ package activitydispatch
 import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/claudecode"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/codex"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/copilot"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/cursor"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/opencode"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/qwen"
@@ -29,6 +30,7 @@ var Derivers = map[string]DeriveFunc{
 	"cursor":      cursor.DeriveActivityState,
 	"opencode":    opencode.DeriveActivityState,
 	"qwen":        qwen.DeriveActivityState,
+	"copilot":     copilot.DeriveActivityState,
 }
 
 // Derive looks up the deriver for an agent token and applies it. ok=false when
