@@ -47,7 +47,13 @@ func (c *commandContext) runHook(ctx context.Context, agent, event string) error
 		// invocation without a piped payload can't block on EOF.
 		return nil
 	}
-	payload, _ := io.ReadAll(c.deps.In) // read error -> empty payload, handled by the deriver.
+	payload, err := io.ReadAll(c.deps.In)
+	if err != nil {
+		// Surface read errors to stderr for parity with the daemon-error path,
+		// but keep the empty payload and exit 0: a failed hook must not break
+		// the agent. The deriver tolerates an empty payload.
+		_, _ = fmt.Fprintf(c.deps.Err, "ao hooks %s %s: read stdin: %v\n", agent, event, err)
+	}
 
 	state, ok := activitydispatch.Derive(agent, event, payload)
 	if !ok {

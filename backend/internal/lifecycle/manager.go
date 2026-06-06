@@ -127,8 +127,13 @@ func (m *Manager) MarkTerminated(ctx context.Context, id domain.SessionID) error
 	})
 }
 
+// sameActivity reports whether two activity signals describe the same state.
+// LastActivityAt is intentionally ignored: same-state repeats (e.g. a stream
+// of idle notifications) must not rewrite UpdatedAt or fan out a CDC event.
+// LastActivityAt now marks when this state was first entered since the last
+// transition, which is the timestamp a UI actually wants.
 func sameActivity(a, b domain.Activity) bool {
-	return a.State == b.State && a.LastActivityAt.Equal(b.LastActivityAt)
+	return a.State == b.State
 }
 
 func mergeMetadata(base, in domain.SessionMetadata) domain.SessionMetadata {
