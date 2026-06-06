@@ -106,6 +106,7 @@ func choosePR(prs []domain.PullRequest, wantURL string) *domain.PullRequest {
 				return &pr
 			}
 		}
+		return nil
 	}
 	pr := prs[0]
 	return &pr

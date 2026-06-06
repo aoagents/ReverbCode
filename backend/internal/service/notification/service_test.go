@@ -17,6 +17,10 @@ type fakeStore struct {
 	comments map[string][]domain.PullRequestComment
 	threads  map[string][]domain.PullRequestReviewThread
 
+	checkLookups   []string
+	commentLookups []string
+	threadLookups  []string
+
 	notifications map[string]domain.Notification
 	upsertChanged int
 	resolveCount  int
@@ -70,12 +74,15 @@ func (f *fakeStore) ListPRsBySession(_ context.Context, id domain.SessionID) ([]
 	return f.prs[id], nil
 }
 func (f *fakeStore) ListChecks(_ context.Context, prURL string) ([]domain.PullRequestCheck, error) {
+	f.checkLookups = append(f.checkLookups, prURL)
 	return f.checks[prURL], nil
 }
 func (f *fakeStore) ListPRComments(_ context.Context, prURL string) ([]domain.PullRequestComment, error) {
+	f.commentLookups = append(f.commentLookups, prURL)
 	return f.comments[prURL], nil
 }
 func (f *fakeStore) ListPRReviewThreads(_ context.Context, prURL string) ([]domain.PullRequestReviewThread, error) {
+	f.threadLookups = append(f.threadLookups, prURL)
 	return f.threads[prURL], nil
 }
 
@@ -136,6 +143,44 @@ func TestNotifyMissingOptionalFactsStillProducesFallback(t *testing.T) {
 	for _, n := range st.notifications {
 		if n.Summary == "" || n.Actions[0].ID != "open_session" {
 			t.Fatalf("fallback notification = %+v", n)
+		}
+	}
+}
+
+func TestNotifyPreservesRequestedPRURLWhenStoredPRDoesNotMatch(t *testing.T) {
+	now := time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC)
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer"}
+	newerPRURL := "https://github.com/o/r/pull/2"
+	requestedPRURL := "https://github.com/o/r/pull/1"
+	st.prs["mer-1"] = []domain.PullRequest{{URL: newerPRURL, HTMLURL: newerPRURL, SessionID: "mer-1", Number: 2, Title: "newer"}}
+	st.checks[newerPRURL] = []domain.PullRequestCheck{{Name: "build", CommitHash: "c2", Status: domain.PRCheckFailed, URL: "https://ci/newer"}}
+	svc := New(Deps{Store: st, Clock: func() time.Time { return now }})
+
+	err := svc.Notify(context.Background(), domain.NotificationIntent{
+		Type:      domain.NotificationCIFailing,
+		Priority:  domain.NotificationWarning,
+		ProjectID: "mer",
+		SessionID: "mer-1",
+		Source:    "test",
+		DedupeKey: "ci:older:build:c1",
+		Context: domain.NotificationIntentContext{
+			PRURL:      requestedPRURL,
+			CheckName:  "build",
+			CheckURL:   "https://ci/older",
+			CommitHash: "c1",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(st.checkLookups) != 1 || st.checkLookups[0] != requestedPRURL {
+		t.Fatalf("checks looked up for %v, want only requested PR %q", st.checkLookups, requestedPRURL)
+	}
+	for _, n := range st.notifications {
+		if n.Subject.PRURL != requestedPRURL {
+			t.Fatalf("notification subject PR URL = %q, want %q (notification=%+v)", n.Subject.PRURL, requestedPRURL, n)
 		}
 	}
 }
