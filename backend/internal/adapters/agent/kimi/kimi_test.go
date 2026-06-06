@@ -49,23 +49,47 @@ func TestGetPromptDeliveryStrategy(t *testing.T) {
 	}
 }
 
-func TestGetLaunchCommandBypassWithPrompt(t *testing.T) {
-	p := &Plugin{resolvedBinary: "kimi"}
-	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
-		Permissions: ports.PermissionModeBypassPermissions,
-		Prompt:      "-add a health check",
-	})
-	if err != nil {
-		t.Fatal(err)
+// Kimi docs: `--prompt` cannot be combined with `--yolo`, `--auto`, or `--plan`
+// — non-interactive mode already runs under the `auto` permission policy. The
+// adapter must not emit approval flags on the `-p` launch path regardless of
+// the requested AO PermissionMode.
+func TestGetLaunchCommandWithPromptOmitsApprovalFlags(t *testing.T) {
+	modes := []ports.PermissionMode{
+		ports.PermissionModeDefault,
+		"",
+		ports.PermissionModeAcceptEdits,
+		ports.PermissionModeAuto,
+		ports.PermissionModeBypassPermissions,
 	}
 
-	want := []string{"kimi", "-y", "-p", "-add a health check"}
-	if !reflect.DeepEqual(cmd, want) {
-		t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
+	for _, mode := range modes {
+		t.Run(string(mode), func(t *testing.T) {
+			p := &Plugin{resolvedBinary: "kimi"}
+			cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+				Permissions: mode,
+				Prompt:      "-add a health check",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			want := []string{"kimi", "-p", "-add a health check"}
+			if !reflect.DeepEqual(cmd, want) {
+				t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
+			}
+			for _, arg := range cmd {
+				switch arg {
+				case "--auto", "-y", "--yolo", "--yes", "--auto-approve", "--plan":
+					t.Fatalf("cmd = %#v unexpectedly contains approval/plan flag %q", cmd, arg)
+				}
+			}
+		})
 	}
 }
 
-func TestGetLaunchCommandMapsPermissionModes(t *testing.T) {
+// Without a prompt the launch is interactive, so approval flags are valid and
+// the AO PermissionMode mapping applies.
+func TestGetLaunchCommandInteractiveMapsPermissionModes(t *testing.T) {
 	tests := []struct {
 		name       string
 		mode       ports.PermissionMode
@@ -118,24 +142,46 @@ func TestGetLaunchCommandIgnoresSystemPrompt(t *testing.T) {
 	}
 }
 
+// Kimi docs: `--yolo` and `--auto` cannot be used together with `--continue`
+// or `--session` — resumed sessions inherit the approval settings of the
+// original session — so the restore path must not emit approval flags
+// regardless of the requested AO PermissionMode.
 func TestGetRestoreCommand(t *testing.T) {
-	p := &Plugin{resolvedBinary: "kimi"}
-	cmd, ok, err := p.GetRestoreCommand(context.Background(), ports.RestoreConfig{
-		Session: ports.SessionRef{
-			Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "01HZABC"},
-		},
-		Permissions: ports.PermissionModeBypassPermissions,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !ok {
-		t.Fatal("ok=false, want true")
+	modes := []ports.PermissionMode{
+		ports.PermissionModeDefault,
+		"",
+		ports.PermissionModeAcceptEdits,
+		ports.PermissionModeAuto,
+		ports.PermissionModeBypassPermissions,
 	}
 
-	want := []string{"kimi", "-y", "--session", "01HZABC"}
-	if !reflect.DeepEqual(cmd, want) {
-		t.Fatalf("cmd = %#v, want %#v", cmd, want)
+	for _, mode := range modes {
+		t.Run(string(mode), func(t *testing.T) {
+			p := &Plugin{resolvedBinary: "kimi"}
+			cmd, ok, err := p.GetRestoreCommand(context.Background(), ports.RestoreConfig{
+				Session: ports.SessionRef{
+					Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "01HZABC"},
+				},
+				Permissions: mode,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !ok {
+				t.Fatal("ok=false, want true")
+			}
+
+			want := []string{"kimi", "--session", "01HZABC"}
+			if !reflect.DeepEqual(cmd, want) {
+				t.Fatalf("cmd = %#v, want %#v", cmd, want)
+			}
+			for _, arg := range cmd {
+				switch arg {
+				case "--auto", "-y", "--yolo", "--yes", "--auto-approve", "--plan":
+					t.Fatalf("cmd = %#v unexpectedly contains approval/plan flag %q", cmd, arg)
+				}
+			}
+		})
 	}
 }
 
