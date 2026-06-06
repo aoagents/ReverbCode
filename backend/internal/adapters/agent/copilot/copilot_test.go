@@ -371,6 +371,32 @@ func TestHookMethodsRequireWorkspacePath(t *testing.T) {
 	}
 }
 
+// TestCopilotManagedHooksUseDocumentedEventNames pins the JSON keys AO writes
+// into .github/hooks/ao.json to the camelCase names Copilot CLI documents
+// (https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/use-hooks).
+// Drifting back to lowercase-dashed or any other casing silently disables the
+// hooks, so this is a tripwire for that class of regression.
+func TestCopilotManagedHooksUseDocumentedEventNames(t *testing.T) {
+	wantEventByCommand := map[string]string{
+		"session-start":       "sessionStart",
+		"user-prompt-submit":  "userPromptSubmitted",
+		"permission-request":  "preToolUse",
+		"stop":                "agentStop",
+	}
+	if len(copilotManagedHooks) != len(wantEventByCommand) {
+		t.Fatalf("copilotManagedHooks length = %d, want %d", len(copilotManagedHooks), len(wantEventByCommand))
+	}
+	for _, spec := range copilotManagedHooks {
+		want, ok := wantEventByCommand[spec.Command]
+		if !ok {
+			t.Fatalf("unexpected AO sub-command %q in copilotManagedHooks", spec.Command)
+		}
+		if spec.Event != want {
+			t.Fatalf("command %q event = %q, want %q (Copilot CLI documented camelCase)", spec.Command, spec.Event, want)
+		}
+	}
+}
+
 func TestDeriveActivityState(t *testing.T) {
 	tests := []struct {
 		event     string

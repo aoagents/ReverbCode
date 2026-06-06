@@ -11,10 +11,12 @@ import "github.com/aoagents/agent-orchestrator/backend/internal/domain"
 // installs and what they mean live in one place.
 //
 // Copilot CLI documents that prompt-style hooks (userPromptSubmitted) do NOT
-// fire in non-interactive `-p` mode, while permissionRequest is "especially
-// useful in CLI pipe mode (-p)". AO still installs every event so interactive
-// resume and future modes report activity; the permission-request → waiting_input
-// mapping is the one that always fires under AO's headless launch.
+// fire in non-interactive `-p` mode, while preToolUse fires before every tool
+// invocation (including ones that would prompt the user for approval) and is
+// the most reliable signal in CLI pipe mode (-p). AO still installs every event
+// so interactive resume and future modes report activity; the
+// permission-request → waiting_input mapping (driven by preToolUse) is the one
+// that always fires under AO's headless launch.
 //
 // TODO(copilot): ActivityExited is still runtime-observation-owned. If Copilot's
 // sessionEnd/agentStop hook proves reliable in `-p` mode, map a real
