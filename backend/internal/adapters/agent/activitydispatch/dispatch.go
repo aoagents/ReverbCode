@@ -10,11 +10,16 @@ package activitydispatch
 
 import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agy"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/autohand"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/claudecode"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/cline"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/codex"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/copilot"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/cursor"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/droid"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/goose"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/kilocode"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/kiro"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/opencode"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/qwen"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -35,6 +40,11 @@ var Derivers = map[string]DeriveFunc{
 	"copilot":     copilot.DeriveActivityState,
 	"droid":       droid.DeriveActivityState,
 	"agy":         agy.DeriveActivityState,
+	"goose":       goose.DeriveActivityState,
+	"cline":       cline.DeriveActivityState,
+	"kiro":        kiro.DeriveActivityState,
+	"kilocode":    kilocode.DeriveActivityState,
+	"autohand":    autohand.DeriveActivityState,
 }
 
 // Derive looks up the deriver for an agent token and applies it. ok=false when
