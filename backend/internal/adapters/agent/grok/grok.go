@@ -115,6 +115,23 @@ func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfi
 	return (&claudecode.Plugin{}).GetAgentHooks(ctx, cfg)
 }
 
+// UninstallHooks removes the Claude Code-compatible AO hooks Grok uses.
+func (p *Plugin) UninstallHooks(ctx context.Context, workspacePath string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return (&claudecode.Plugin{}).UninstallHooks(ctx, workspacePath)
+}
+
+// AreHooksInstalled reports whether the delegated Claude Code-compatible AO
+// hooks are present for this Grok workspace.
+func (p *Plugin) AreHooksInstalled(ctx context.Context, workspacePath string) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	return (&claudecode.Plugin{}).AreHooksInstalled(ctx, workspacePath)
+}
+
 // GetRestoreCommand resumes a prior grok session by its captured id, building
 // `grok --no-auto-update [--permission-mode <mode>] -r <agentSessionId>`
 // when we have a hook-captured native id. ok=false otherwise (fall back to fresh

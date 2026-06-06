@@ -172,19 +172,28 @@ func TestSessionInfoFalseWhenNoHookMetadata(t *testing.T) {
 	}
 }
 
-func TestGetAgentHooksDelegates(t *testing.T) {
-	// We don't exercise the full hook merge here (claude tests cover it);
-	// just ensure it doesn't blow up on a temp workspace and that the
-	// method is wired (real hook install is exercised via claude delegation).
+func TestHookLifecycleDelegates(t *testing.T) {
+	// Claude tests cover the full merge behavior; here we assert Grok exposes
+	// the same delegated lifecycle so Grok-installed compat hooks can be
+	// detected and removed through the Grok adapter.
 	plugin := &Plugin{resolvedBinary: "grok"}
-	// Use a temp dir that won't exist as workspace; claude's impl will mkdir
-	// what it needs under it for settings, but since we only care that the
-	// call succeeds without "required" error, give a path.
+	ctx := context.Background()
 	ws := t.TempDir()
-	if err := plugin.GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
+	cfg := ports.WorkspaceHookConfig{
 		WorkspacePath: ws,
 		SessionID:     "grok-test-1",
-	}); err != nil {
+	}
+
+	if err := plugin.GetAgentHooks(ctx, cfg); err != nil {
 		t.Fatalf("GetAgentHooks: %v", err)
+	}
+	if installed, err := plugin.AreHooksInstalled(ctx, ws); err != nil || !installed {
+		t.Fatalf("AreHooksInstalled after install = (%v, %v), want (true, nil)", installed, err)
+	}
+	if err := plugin.UninstallHooks(ctx, ws); err != nil {
+		t.Fatalf("UninstallHooks: %v", err)
+	}
+	if installed, err := plugin.AreHooksInstalled(ctx, ws); err != nil || installed {
+		t.Fatalf("AreHooksInstalled after uninstall = (%v, %v), want (false, nil)", installed, err)
 	}
 }
