@@ -6,6 +6,8 @@ paired with a placeholder Electron + TypeScript frontend shell (`frontend/`).
 See [`docs/`](docs/README.md) for architecture and status — start with the
 Lifecycle Manager + Session Service lane in [`docs/architecture.md`](docs/architecture.md).
 
+See also [`README_2.md`](README_2.md) for supplementary notes.
+
 ## Backend daemon
 
 The Go backend now has a Cobra-based `ao` CLI in [`backend/cmd/ao`](backend/cmd/ao).
