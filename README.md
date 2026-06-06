@@ -32,9 +32,10 @@ and [`AGENTS.md`](AGENTS.md) for the contributor / worker contract.
 
 ## Quick start
 
-Requirements: Go 1.25+, SQLite, [`zellij`](https://zellij.dev/) on `PATH` for
-the runtime adapter, and `gh` (or `GITHUB_TOKEN`) if you want the SCM observer
-to authenticate against GitHub.
+Requirements: Go 1.25+, [`zellij`](https://zellij.dev/) on `PATH` for the
+runtime adapter, and `gh` (or `GITHUB_TOKEN`) if you want the SCM observer to
+authenticate against GitHub. The SQLite driver is the pure-Go
+`modernc.org/sqlite` — no system SQLite library is required.
 
 ```bash
 cd backend
@@ -43,8 +44,9 @@ go build -o /tmp/ao ./cmd/ao
 # Start the daemon and wait for /readyz.
 /tmp/ao start
 
-# Register a local git repo as a project.
-/tmp/ao project add --path /path/to/your/repo --name your-repo
+# Register a local git repo as a project. The id defaults to the lowercased
+# base of --path; pass --id explicitly when the directory name doesn't match.
+/tmp/ao project add --path /path/to/your/repo --id your-repo --name your-repo
 
 # Spawn a worker session running the default agent.
 /tmp/ao spawn --project your-repo --prompt "Refactor the auth module"
