@@ -2,6 +2,7 @@ package ports
 
 import (
 	"context"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
@@ -21,17 +22,24 @@ type PRObserver interface {
 // read it as "PR closed". Checks/Comments are observation DTOs, not persistence
 // rows; the PR Manager owns mapping them into stored domain.PullRequest rows.
 type PRObservation struct {
-	Fetched      bool
-	URL          string
-	Number       int
-	Draft        bool
-	Merged       bool
-	Closed       bool
-	CI           domain.CIState
-	Review       domain.ReviewDecision
-	Mergeability domain.Mergeability
-	Checks       []PRCheckObservation
-	Comments     []PRCommentObservation
+	Fetched        bool
+	URL            string
+	Number         int
+	Draft          bool
+	Merged         bool
+	Closed         bool
+	CI             domain.CIState
+	Review         domain.ReviewDecision
+	Mergeability   domain.Mergeability
+	ObservedAt     time.Time
+	HeadSHA        string
+	BaseSHA        string
+	MergeCommitSHA string
+	HTMLURL        string
+	ReviewHash     string
+	ThreadIDs      []string
+	Checks         []PRCheckObservation
+	Comments       []PRCommentObservation
 }
 
 // PRCheckObservation is one SCM check result on the observed PR.

@@ -10,11 +10,13 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/zellij"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd"
 	"github.com/aoagents/agent-orchestrator/backend/internal/runfile"
+	notificationsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/notification"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 	"github.com/aoagents/agent-orchestrator/backend/internal/terminal"
@@ -82,10 +84,20 @@ func Run() error {
 	// agent nudges (CI failure, review feedback, merge conflict).
 	messenger := newSessionMessenger(store, runtimeAdapter, log)
 
+	// The notification service owns enrichment, concise canonical copy, semantic
+	// action descriptors, durable dedupe, and SQLite persistence. It is wired into
+	// LCM independently from the messenger/nudge path.
+	notificationSvc := notificationsvc.New(notificationsvc.Deps{
+		Store:  store,
+		Maker:  notificationsvc.DefaultMaker{},
+		Clock:  time.Now,
+		Logger: log,
+	})
+
 	// Bring up the Lifecycle Manager and the reaper first: it makes the session
 	// lifecycle write path live (reducer write -> store -> DB trigger ->
 	// change_log -> poller -> broadcaster) and gives startSession the shared LCM.
-	lcStack := startLifecycle(ctx, store, runtimeAdapter, messenger, log)
+	lcStack := startLifecycle(ctx, store, runtimeAdapter, messenger, notificationSvc, log)
 	lcStack.scmDone = startSCMObserver(ctx, store, lcStack.LCM, log)
 
 	// Wire the controller-facing session service over the same store + LCM, the

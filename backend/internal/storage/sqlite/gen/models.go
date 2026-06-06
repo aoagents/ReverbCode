@@ -21,6 +21,30 @@ type ChangeLog struct {
 	CreatedAt time.Time
 }
 
+type Notification struct {
+	ID          domain.NotificationID
+	ProjectID   domain.ProjectID
+	SessionID   *domain.SessionID
+	Type        domain.NotificationType
+	Priority    domain.NotificationPriority
+	Status      domain.NotificationStatus
+	Source      string
+	DedupeKey   string
+	Fingerprint string
+	Title       string
+	Summary     string
+	Body        string
+	SubjectJson string
+	DataJson    string
+	ActionsJson string
+	ReadAt      sql.NullTime
+	DismissedAt sql.NullTime
+	ResolvedAt  sql.NullTime
+	OccurredAt  time.Time
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
 type PR struct {
 	URL                      string
 	SessionID                domain.SessionID

@@ -9,6 +9,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/lifecycle"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	notificationsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/notification"
 	prsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/pr"
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
 	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
@@ -93,7 +94,8 @@ func newStack(t *testing.T) *stack {
 		t.Fatal(err)
 	}
 	msg := &captureMessenger{}
-	lcm := lifecycle.New(store, msg)
+	notif := notificationsvc.New(notificationsvc.Deps{Store: store, Clock: time.Now})
+	lcm := lifecycle.NewWithDeps(lifecycle.Deps{Store: store, Messenger: msg, Notifications: notif})
 	prm := prsvc.New(prsvc.Deps{Writer: store, Lifecycle: lcm})
 	rt := &stubRuntime{}
 	ws := &stubWorkspace{}
@@ -179,5 +181,52 @@ func TestCDCPollerReceivesSessionAndPREvents(t *testing.T) {
 	}
 	if len(got) < 2 {
 		t.Fatalf("want CDC events, got %d", len(got))
+	}
+}
+
+func TestPRObservationPersistsNotificationAndBroadcastsCDC(t *testing.T) {
+	ctx := context.Background()
+	st := newStack(t)
+	sess, err := st.sm.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	b := cdc.NewBroadcaster()
+	var got []cdc.Event
+	b.Subscribe(func(e cdc.Event) { got = append(got, e) })
+	poller := cdc.NewPoller(st.store, b, cdc.PollerConfig{})
+	if err := poller.SeekToHead(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	obs := ports.PRObservation{
+		Fetched: true,
+		URL:     "https://github.com/o/r/pull/1",
+		Number:  1,
+		CI:      domain.CIFailing,
+		Checks:  []ports.PRCheckObservation{{Name: "build", CommitHash: "c1", Status: domain.PRCheckFailed, URL: "https://ci/build", LogTail: "boom"}},
+	}
+	if err := st.prm.ApplyObservation(ctx, sess.ID, obs); err != nil {
+		t.Fatal(err)
+	}
+	notifications, err := st.store.ListNotificationsBySession(ctx, sess.ID, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(notifications) != 1 || notifications[0].Type != domain.NotificationCIFailing {
+		t.Fatalf("notifications = %+v", notifications)
+	}
+	if err := poller.Poll(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var sawNotification bool
+	for _, ev := range got {
+		if ev.Type == cdc.EventNotificationCreated {
+			sawNotification = true
+		}
+	}
+	if !sawNotification {
+		t.Fatalf("no notification CDC event broadcast; got %+v", got)
 	}
 }

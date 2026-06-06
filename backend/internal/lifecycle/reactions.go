@@ -36,50 +36,174 @@ type reactionPayload struct {
 }
 
 // ApplyPRObservation reacts to a fetched PR observation after the PR service has
-// persisted it. It does not write PR rows; it owns PR-driven lifecycle effects
-// and sends actionable agent nudges such as rebase, fix-CI, and
-// address-review-feedback prompts.
+// persisted it. It does not write PR rows; it owns PR-driven lifecycle effects,
+// emits user notification intent, and sends actionable agent nudges such as
+// rebase, fix-CI, and address-review-feedback prompts.
 func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o ports.PRObservation) error {
 	if !o.Fetched {
-		return nil
-	}
-	if o.Merged {
-		return m.MarkTerminated(ctx, id)
-	}
-	if o.Closed {
 		return nil
 	}
 	rec, ok, err := m.store.GetSession(ctx, id)
 	if err != nil || !ok {
 		return err
 	}
-	if rec.IsTerminated || rec.Activity.State == domain.ActivityWaitingInput {
+	occurredAt := timeOr(o.ObservedAt, m.clock())
+	prURL := firstNonEmptyString(o.URL, o.HTMLURL)
+	if o.Merged {
+		if !rec.IsTerminated {
+			if err := m.notify(ctx, domain.NotificationIntent{
+				Type:       domain.NotificationMergeCompleted,
+				Priority:   domain.NotificationInfo,
+				ProjectID:  rec.ProjectID,
+				SessionID:  rec.ID,
+				Source:     "lifecycle.pr_observation",
+				DedupeKey:  mergeCompletedDedupeKey(prURL, o.MergeCommitSHA),
+				OccurredAt: occurredAt,
+				Context: domain.NotificationIntentContext{
+					PRURL:      prURL,
+					CommitHash: firstNonEmptyString(o.MergeCommitSHA, o.HeadSHA),
+					MergeState: string(domain.PRStateMerged),
+					Facts: map[string]any{
+						"headSha":        o.HeadSHA,
+						"baseSha":        o.BaseSHA,
+						"mergeCommitSha": o.MergeCommitSHA,
+					},
+				},
+			}); err != nil {
+				return err
+			}
+		}
+		return m.MarkTerminated(ctx, id)
+	}
+	if o.Closed || rec.IsTerminated {
 		return nil
 	}
+	suppressAgentNudge := rec.Activity.State == domain.ActivityWaitingInput
 	if o.CI == domain.CIFailing {
 		for _, ch := range o.Checks {
-			if ch.Status == domain.PRCheckFailed {
-				msg := "CI is failing on your PR. Review the output below and push a fix."
-				if ch.LogTail != "" {
-					msg += "\n\nFailing output:\n" + ch.LogTail
-				}
-				return m.sendOnce(ctx, id, o.URL, "ci:"+o.URL+":"+ch.Name, ch.CommitHash+":"+ch.LogTail, msg, 0)
+			if ch.Status != domain.PRCheckFailed {
+				continue
 			}
+			commit := firstNonEmptyString(ch.CommitHash, o.HeadSHA, "unknown")
+			if err := m.notify(ctx, domain.NotificationIntent{
+				Type:       domain.NotificationCIFailing,
+				Priority:   domain.NotificationWarning,
+				ProjectID:  rec.ProjectID,
+				SessionID:  rec.ID,
+				Source:     "lifecycle.pr_observation",
+				DedupeKey:  "ci:" + prURL + ":" + ch.Name + ":" + commit,
+				OccurredAt: occurredAt,
+				Context: domain.NotificationIntentContext{
+					PRURL:      prURL,
+					CheckName:  ch.Name,
+					CheckURL:   ch.URL,
+					CommitHash: commit,
+					Reason:     "failed_check",
+					Facts: map[string]any{
+						"status":  ch.Status,
+						"logTail": boundedString(ch.LogTail, 4000),
+					},
+				},
+			}); err != nil {
+				return err
+			}
+			if suppressAgentNudge {
+				return nil
+			}
+			msg := "CI is failing on your PR. Review the output below and push a fix."
+			if ch.LogTail != "" {
+				msg += "\n\nFailing output:\n" + ch.LogTail
+			}
+			return m.sendOnce(ctx, id, prURL, "ci:"+prURL+":"+ch.Name, commit+":"+ch.LogTail, msg, 0)
 		}
 	}
 	if o.Review == domain.ReviewChangesRequest || hasUnresolvedComments(o.Comments) {
 		comments, sig := reviewContent(o.Comments)
-		msg := "A reviewer left feedback on your PR. Address it and push."
-		if comments != "" {
-			msg += "\n\n" + comments
+		if o.ReviewHash != "" {
+			sig = o.ReviewHash
+		}
+		if sig == "" && len(o.ThreadIDs) > 0 {
+			sig = strings.Join(o.ThreadIDs, ",")
 		}
 		if sig == "" {
 			sig = string(o.Review)
 		}
-		return m.sendOnce(ctx, id, o.URL, "review:"+o.URL, sig, msg, reviewMaxNudge)
+		reviewIDs := reviewIDs(o.Comments)
+		if err := m.notify(ctx, domain.NotificationIntent{
+			Type:       domain.NotificationReviewChanges,
+			Priority:   domain.NotificationPriorityAction,
+			ProjectID:  rec.ProjectID,
+			SessionID:  rec.ID,
+			Source:     "lifecycle.pr_observation",
+			DedupeKey:  "review:" + prURL + ":" + sig,
+			OccurredAt: occurredAt,
+			Context: domain.NotificationIntentContext{
+				PRURL:     prURL,
+				ReviewIDs: reviewIDs,
+				ThreadIDs: append([]string(nil), o.ThreadIDs...),
+				Reason:    "review_feedback",
+				Facts: map[string]any{
+					"commentCount": len(reviewIDs),
+					"review":       o.Review,
+				},
+			},
+		}); err != nil {
+			return err
+		}
+		if suppressAgentNudge {
+			return nil
+		}
+		msg := "A reviewer left feedback on your PR. Address it and push."
+		if comments != "" {
+			msg += "\n\n" + comments
+		}
+		return m.sendOnce(ctx, id, prURL, "review:"+prURL, sig, msg, reviewMaxNudge)
 	}
 	if o.Mergeability == domain.MergeConflicting {
-		return m.sendOnce(ctx, id, o.URL, "merge-conflict:"+o.URL, string(o.Mergeability), "Your PR has merge conflicts. Rebase onto the base branch and resolve them.", 0)
+		if err := m.notify(ctx, domain.NotificationIntent{
+			Type:       domain.NotificationMergeConflicts,
+			Priority:   domain.NotificationPriorityAction,
+			ProjectID:  rec.ProjectID,
+			SessionID:  rec.ID,
+			Source:     "lifecycle.pr_observation",
+			DedupeKey:  mergeConflictDedupeKey(prURL, o.BaseSHA, o.HeadSHA),
+			OccurredAt: occurredAt,
+			Context: domain.NotificationIntentContext{
+				PRURL:      prURL,
+				CommitHash: o.HeadSHA,
+				MergeState: string(o.Mergeability),
+				Reason:     "merge_conflicts",
+				Facts:      map[string]any{"baseSha": o.BaseSHA, "headSha": o.HeadSHA},
+			},
+		}); err != nil {
+			return err
+		}
+		if suppressAgentNudge {
+			return nil
+		}
+		return m.sendOnce(ctx, id, prURL, "merge-conflict:"+prURL, string(o.Mergeability), "Your PR has merge conflicts. Rebase onto the base branch and resolve them.", 0)
+	}
+	if prReadyToMerge(o) {
+		return m.notify(ctx, domain.NotificationIntent{
+			Type:       domain.NotificationMergeReady,
+			Priority:   domain.NotificationPriorityAction,
+			ProjectID:  rec.ProjectID,
+			SessionID:  rec.ID,
+			Source:     "lifecycle.pr_observation",
+			DedupeKey:  mergeReadyDedupeKey(prURL, o.HeadSHA),
+			OccurredAt: occurredAt,
+			Context: domain.NotificationIntentContext{
+				PRURL:      prURL,
+				CommitHash: o.HeadSHA,
+				MergeState: string(o.Mergeability),
+				Reason:     "merge_ready",
+				Facts: map[string]any{
+					"ci":           o.CI,
+					"review":       o.Review,
+					"mergeability": o.Mergeability,
+				},
+			},
+		})
 	}
 	return nil
 }
@@ -97,15 +221,20 @@ func (m *Manager) ApplySCMObservation(ctx context.Context, id domain.SessionID, 
 
 func scmToPRObservation(o ports.SCMObservation) ports.PRObservation {
 	pr := ports.PRObservation{
-		Fetched:      o.Fetched,
-		URL:          firstSCMNonEmpty(o.PR.URL, o.PR.HTMLURL),
-		Number:       o.PR.Number,
-		Draft:        o.PR.Draft,
-		Merged:       o.PR.Merged,
-		Closed:       o.PR.Closed,
-		CI:           domain.CIState(o.CI.Summary),
-		Review:       domain.ReviewDecision(o.Review.Decision),
-		Mergeability: domain.Mergeability(o.Mergeability.State),
+		Fetched:        o.Fetched,
+		URL:            firstSCMNonEmpty(o.PR.URL, o.PR.HTMLURL),
+		Number:         o.PR.Number,
+		Draft:          o.PR.Draft,
+		Merged:         o.PR.Merged,
+		Closed:         o.PR.Closed,
+		CI:             domain.CIState(o.CI.Summary),
+		Review:         domain.ReviewDecision(o.Review.Decision),
+		Mergeability:   domain.Mergeability(o.Mergeability.State),
+		ObservedAt:     o.ObservedAt,
+		HeadSHA:        firstSCMNonEmpty(o.CI.HeadSHA, o.PR.HeadSHA),
+		BaseSHA:        o.PR.BaseSHA,
+		MergeCommitSHA: o.PR.MergeCommitSHA,
+		HTMLURL:        o.PR.HTMLURL,
 	}
 	if pr.CI == "" {
 		pr.CI = domain.CIUnknown
@@ -134,13 +263,21 @@ func scmToPRObservation(o ports.SCMObservation) ports.PRObservation {
 			LogTail:    logTail,
 		})
 	}
+	var reviewSigParts []string
 	for _, th := range o.Review.Threads {
 		if th.Resolved || th.IsBot {
 			continue
 		}
+		if th.ID != "" {
+			pr.ThreadIDs = append(pr.ThreadIDs, th.ID)
+			reviewSigParts = append(reviewSigParts, th.ID)
+		}
 		for _, c := range th.Comments {
 			if c.IsBot {
 				continue
+			}
+			if c.ID != "" {
+				reviewSigParts = append(reviewSigParts, c.ID)
 			}
 			pr.Comments = append(pr.Comments, ports.PRCommentObservation{
 				ID:       c.ID,
@@ -152,6 +289,7 @@ func scmToPRObservation(o ports.SCMObservation) ports.PRObservation {
 			})
 		}
 	}
+	pr.ReviewHash = strings.Join(reviewSigParts, ",")
 	return pr
 }
 
@@ -258,6 +396,61 @@ func reviewContent(comments []ports.PRCommentObservation) (string, string) {
 		ids = append(ids, c.ID)
 	}
 	return strings.Join(bodies, "\n\n"), strings.Join(ids, ",")
+}
+
+func reviewIDs(comments []ports.PRCommentObservation) []string {
+	ids := make([]string, 0, len(comments))
+	for _, c := range comments {
+		if c.Resolved || c.ID == "" {
+			continue
+		}
+		ids = append(ids, c.ID)
+	}
+	return ids
+}
+
+func prReadyToMerge(o ports.PRObservation) bool {
+	return !o.Draft && !o.Merged && !o.Closed &&
+		o.CI == domain.CIPassing &&
+		o.Review == domain.ReviewApproved &&
+		o.Mergeability == domain.MergeMergeable
+}
+
+func mergeConflictDedupeKey(prURL, baseSHA, headSHA string) string {
+	if baseSHA != "" && headSHA != "" {
+		return "merge-conflict:" + prURL + ":" + baseSHA + ":" + headSHA
+	}
+	return "merge-conflict:" + prURL
+}
+
+func mergeReadyDedupeKey(prURL, headSHA string) string {
+	if headSHA != "" {
+		return "merge-ready:" + prURL + ":" + headSHA
+	}
+	return "merge-ready:" + prURL
+}
+
+func mergeCompletedDedupeKey(prURL, mergeCommitSHA string) string {
+	if mergeCommitSHA != "" {
+		return "merge-completed:" + prURL + ":" + mergeCommitSHA
+	}
+	return "merge-completed:" + prURL
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func boundedString(s string, limit int) string {
+	if limit <= 0 || len(s) <= limit {
+		return s
+	}
+	return s[:limit]
 }
 
 func (m *Manager) sendOnce(ctx context.Context, id domain.SessionID, prURL, key, sig, msg string, maxAttempts int) error {

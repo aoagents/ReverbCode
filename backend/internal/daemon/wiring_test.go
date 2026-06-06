@@ -16,6 +16,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/lifecycle"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	notificationsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/notification"
 	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 )
@@ -315,7 +316,7 @@ func TestWiring_StartLifecycleThreadsMessengerIntoLCM(t *testing.T) {
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	messenger := &captureMessenger{}
-	stack := startLifecycle(ctx, store, zellij.New(zellij.Options{}), messenger, log)
+	stack := startLifecycle(ctx, store, zellij.New(zellij.Options{}), messenger, nil, log)
 	t.Cleanup(stack.Stop)
 	t.Cleanup(cancel)
 
@@ -336,6 +337,39 @@ func TestWiring_StartLifecycleThreadsMessengerIntoLCM(t *testing.T) {
 	}
 	if messenger.msgs[0].id != rec.ID {
 		t.Fatalf("nudge sent to %q, want %q", messenger.msgs[0].id, rec.ID)
+	}
+}
+
+func TestWiring_StartLifecycleThreadsNotificationSinkIntoLCM(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	store, err := sqlite.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	if err := store.UpsertProject(ctx, domain.ProjectRecord{ID: "p", Path: "/repo/p", RegisteredAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	rec, err := store.CreateSession(ctx, domain.SessionRecord{ProjectID: "p", Kind: domain.KindWorker, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: time.Now()}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	notificationSvc := notificationsvc.New(notificationsvc.Deps{Store: store, Clock: time.Now, Logger: log})
+	stack := startLifecycle(ctx, store, zellij.New(zellij.Options{}), nil, notificationSvc, log)
+	t.Cleanup(stack.Stop)
+	t.Cleanup(cancel)
+
+	if err := stack.LCM.ApplyActivitySignal(ctx, rec.ID, ports.ActivitySignal{Valid: true, State: domain.ActivityWaitingInput, Timestamp: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	notifications, err := store.ListNotificationsBySession(ctx, rec.ID, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(notifications) != 1 || notifications[0].Type != domain.NotificationSessionInput {
+		t.Fatalf("notifications = %+v", notifications)
 	}
 }
 

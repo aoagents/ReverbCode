@@ -497,3 +497,121 @@ func TestPRObservation_RetriesAfterMessengerFailure(t *testing.T) {
 		t.Fatalf("want retry to send once, got %v", msg.msgs)
 	}
 }
+
+type fakeNotifications struct {
+	intents []domain.NotificationIntent
+	err     error
+}
+
+func (f *fakeNotifications) Notify(_ context.Context, intent domain.NotificationIntent) error {
+	if f.err != nil {
+		return f.err
+	}
+	f.intents = append(f.intents, intent)
+	return nil
+}
+
+func newManagerWithNotifications() (*Manager, *fakeStore, *fakeMessenger, *fakeNotifications) {
+	st := newFakeStore()
+	msg := &fakeMessenger{}
+	n := &fakeNotifications{}
+	return NewWithDeps(Deps{Store: st, Messenger: msg, Notifications: n}), st, msg, n
+}
+
+func TestPRObservation_CIFailingEmitsNotificationIntent(t *testing.T) {
+	m, st, _, notifications := newManagerWithNotifications()
+	st.sessions["mer-1"] = working("mer-1")
+	o := ports.PRObservation{Fetched: true, URL: "pr1", CI: domain.CIFailing, Checks: []ports.PRCheckObservation{{Name: "build", CommitHash: "c1", Status: domain.PRCheckFailed, URL: "ci", LogTail: "boom"}}}
+	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
+		t.Fatal(err)
+	}
+	if len(notifications.intents) != 1 {
+		t.Fatalf("intents = %d", len(notifications.intents))
+	}
+	got := notifications.intents[0]
+	if got.Type != domain.NotificationCIFailing || got.Priority != domain.NotificationWarning || got.DedupeKey != "ci:pr1:build:c1" || got.Context.CheckURL != "ci" {
+		t.Fatalf("intent = %+v", got)
+	}
+}
+
+func TestPRObservation_ReviewMergeConflictReadyAndMergedIntents(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		obs  ports.PRObservation
+		want domain.NotificationType
+	}{
+		{"review", ports.PRObservation{Fetched: true, URL: "pr1", Review: domain.ReviewChangesRequest, Comments: []ports.PRCommentObservation{{ID: "c1", Body: "fix"}}}, domain.NotificationReviewChanges},
+		{"conflict", ports.PRObservation{Fetched: true, URL: "pr1", Mergeability: domain.MergeConflicting, BaseSHA: "b1", HeadSHA: "h1"}, domain.NotificationMergeConflicts},
+		{"ready", ports.PRObservation{Fetched: true, URL: "pr1", CI: domain.CIPassing, Review: domain.ReviewApproved, Mergeability: domain.MergeMergeable, HeadSHA: "h1"}, domain.NotificationMergeReady},
+		{"merged", ports.PRObservation{Fetched: true, URL: "pr1", Merged: true, MergeCommitSHA: "m1"}, domain.NotificationMergeCompleted},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, st, _, notifications := newManagerWithNotifications()
+			st.sessions["mer-1"] = working("mer-1")
+			if err := m.ApplyPRObservation(ctx, "mer-1", tc.obs); err != nil {
+				t.Fatal(err)
+			}
+			if len(notifications.intents) != 1 || notifications.intents[0].Type != tc.want {
+				t.Fatalf("intents = %+v, want %s", notifications.intents, tc.want)
+			}
+			if tc.want == domain.NotificationMergeCompleted && !st.sessions["mer-1"].IsTerminated {
+				t.Fatal("merged PR should terminate session")
+			}
+		})
+	}
+}
+
+func TestActivitySignalWaitingInputAndExitedEmitNotifications(t *testing.T) {
+	m, st, _, notifications := newManagerWithNotifications()
+	st.sessions["mer-1"] = working("mer-1")
+	ts := time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC)
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityWaitingInput, Timestamp: ts}); err != nil {
+		t.Fatal(err)
+	}
+	if len(notifications.intents) != 1 || notifications.intents[0].Type != domain.NotificationSessionInput || !strings.Contains(notifications.intents[0].DedupeKey, ts.Format(time.RFC3339Nano)) {
+		t.Fatalf("waiting input intents = %+v", notifications.intents)
+	}
+	st.sessions["mer-1"] = working("mer-1")
+	notifications.intents = nil
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityExited, Timestamp: ts}); err != nil {
+		t.Fatal(err)
+	}
+	if len(notifications.intents) != 1 || notifications.intents[0].Type != domain.NotificationSessionExited {
+		t.Fatalf("exited intents = %+v", notifications.intents)
+	}
+}
+
+func TestWaitingInputSuppressesAgentNudgeButNotNotification(t *testing.T) {
+	m, st, msg, notifications := newManagerWithNotifications()
+	rec := working("mer-1")
+	rec.Activity.State = domain.ActivityWaitingInput
+	st.sessions["mer-1"] = rec
+	o := ports.PRObservation{Fetched: true, URL: "pr1", CI: domain.CIFailing, Checks: []ports.PRCheckObservation{{Name: "build", CommitHash: "c1", Status: domain.PRCheckFailed}}}
+	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 0 {
+		t.Fatalf("waiting_input should suppress agent nudge, got %v", msg.msgs)
+	}
+	if len(notifications.intents) != 1 || notifications.intents[0].Type != domain.NotificationCIFailing {
+		t.Fatalf("waiting_input should still notify user, got %+v", notifications.intents)
+	}
+}
+
+func TestNotificationSinkFailureIsReturned(t *testing.T) {
+	m, st, _, notifications := newManagerWithNotifications()
+	st.sessions["mer-1"] = working("mer-1")
+	notifications.err = errors.New("notify failed")
+	err := m.ApplyPRObservation(ctx, "mer-1", ports.PRObservation{Fetched: true, URL: "pr1", Mergeability: domain.MergeConflicting})
+	if !errors.Is(err, notifications.err) {
+		t.Fatalf("err = %v, want notify failure", err)
+	}
+}
+
+func TestNilNotificationSinkIsNoop(t *testing.T) {
+	m, st, _ := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityWaitingInput, Timestamp: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -54,7 +54,7 @@ func (m *Manager) ApplyObservation(ctx context.Context, id domain.SessionID, o p
 
 func (m *Manager) write(ctx context.Context, id domain.SessionID, o ports.PRObservation) error {
 	now := m.clock()
-	row := domain.PullRequest{URL: o.URL, SessionID: id, Number: o.Number, Draft: o.Draft, Merged: o.Merged, Closed: o.Closed, CI: o.CI, Review: o.Review, Mergeability: o.Mergeability, UpdatedAt: now}
+	row := domain.PullRequest{URL: o.URL, SessionID: id, Number: o.Number, Draft: o.Draft, Merged: o.Merged, Closed: o.Closed, CI: o.CI, Review: o.Review, Mergeability: o.Mergeability, UpdatedAt: now, HeadSHA: o.HeadSHA, BaseSHA: o.BaseSHA, MergeCommitSHA: o.MergeCommitSHA, HTMLURL: o.HTMLURL, ReviewHash: o.ReviewHash}
 	checks := make([]domain.PullRequestCheck, len(o.Checks))
 	for i, c := range o.Checks {
 		checks[i] = domain.PullRequestCheck{Name: c.Name, CommitHash: c.CommitHash, Status: c.Status, URL: c.URL, LogTail: c.LogTail, CreatedAt: now}
