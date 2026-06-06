@@ -212,7 +212,14 @@ func kilocodePermissionEnvPrefix(mode ports.PermissionMode) []string {
 	// The inline config is the JSON object {"permission": {<tool>: <action>}}.
 	// Marshaling a map[string]string never errors and emits keys in sorted order,
 	// so the prefix is deterministic for tests and reproducible across launches.
-	blob, _ := json.Marshal(map[string]map[string]string{"permission": config})
+	blob, err := json.Marshal(map[string]map[string]string{"permission": config})
+	if err != nil {
+		// Should never happen for map[string]map[string]string, but a silent
+		// empty KILO_CONFIG_CONTENT would silently launch with default Kilo
+		// permissions regardless of the requested mode — drop the prefix
+		// entirely so the caller's mode choice can't be misrepresented.
+		return nil
+	}
 	return []string{"env", kilocodePermissionEnvVar + "=" + string(blob)}
 }
 
