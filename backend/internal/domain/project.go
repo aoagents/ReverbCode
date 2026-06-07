@@ -10,8 +10,7 @@ type ProjectRecord struct {
 	DisplayName   string
 	RegisteredAt  time.Time
 	ArchivedAt    time.Time
-	// AgentConfig holds the typed per-project agent settings (model,
-	// permissions) AO resolves into a launch command at spawn. An IsZero value
-	// means unset.
-	AgentConfig AgentConfig
+	// Config holds the typed per-project configuration AO resolves at spawn. An
+	// IsZero value means unset.
+	Config ProjectConfig
 }

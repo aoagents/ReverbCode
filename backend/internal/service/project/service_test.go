@@ -95,7 +95,7 @@ func TestManager_AddListGetRemove(t *testing.T) {
 	wantCode(t, err, "PROJECT_NOT_FOUND")
 }
 
-func TestManager_SetAgentConfig(t *testing.T) {
+func TestManager_SetConfig(t *testing.T) {
 	ctx := context.Background()
 	m := newManager(t)
 	repo := gitRepo(t)
@@ -104,13 +104,20 @@ func TestManager_SetAgentConfig(t *testing.T) {
 		t.Fatalf("Add: %v", err)
 	}
 
-	cfg := domain.AgentConfig{Model: "claude-opus-4-5"}
-	proj, err := m.SetAgentConfig(ctx, "ao", project.SetAgentConfigInput{Config: cfg})
-	if err != nil {
-		t.Fatalf("SetAgentConfig: %v", err)
+	cfg := domain.ProjectConfig{
+		DefaultBranch: "develop",
+		Env:           map[string]string{"FOO": "bar"},
+		AgentConfig:   domain.AgentConfig{Model: "claude-opus-4-5"},
 	}
-	if proj.AgentConfig == nil || proj.AgentConfig.Model != "claude-opus-4-5" {
-		t.Fatalf("returned config = %#v", proj.AgentConfig)
+	proj, err := m.SetConfig(ctx, "ao", project.SetConfigInput{Config: cfg})
+	if err != nil {
+		t.Fatalf("SetConfig: %v", err)
+	}
+	if proj.Config == nil || proj.Config.AgentConfig.Model != "claude-opus-4-5" {
+		t.Fatalf("returned config = %#v", proj.Config)
+	}
+	if proj.DefaultBranch != "develop" {
+		t.Fatalf("DefaultBranch = %q, want develop", proj.DefaultBranch)
 	}
 
 	// The config persists and shows up on a fresh Get.
@@ -118,16 +125,20 @@ func TestManager_SetAgentConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if got.Project == nil || got.Project.AgentConfig == nil || got.Project.AgentConfig.Model != "claude-opus-4-5" {
+	if got.Project == nil || got.Project.Config == nil || got.Project.Config.Env["FOO"] != "bar" {
 		t.Fatalf("Get config = %#v", got.Project)
 	}
 
 	// An invalid permission value is rejected when set.
-	_, err = m.SetAgentConfig(ctx, "ao", project.SetAgentConfigInput{Config: domain.AgentConfig{Permissions: "yolo"}})
-	wantCode(t, err, "INVALID_AGENT_CONFIG")
+	_, err = m.SetConfig(ctx, "ao", project.SetConfigInput{Config: domain.ProjectConfig{AgentConfig: domain.AgentConfig{Permissions: "yolo"}}})
+	wantCode(t, err, "INVALID_PROJECT_CONFIG")
+
+	// An unknown role-override harness is rejected too.
+	_, err = m.SetConfig(ctx, "ao", project.SetConfigInput{Config: domain.ProjectConfig{Worker: domain.RoleOverride{Harness: "nope"}}})
+	wantCode(t, err, "INVALID_PROJECT_CONFIG")
 
 	// Setting on an unknown project is a clean not-found.
-	_, err = m.SetAgentConfig(ctx, "ghost", project.SetAgentConfigInput{Config: cfg})
+	_, err = m.SetConfig(ctx, "ghost", project.SetConfigInput{Config: cfg})
 	wantCode(t, err, "PROJECT_NOT_FOUND")
 }
 

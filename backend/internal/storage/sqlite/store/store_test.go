@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -71,15 +72,23 @@ func TestProjectCRUDAndArchive(t *testing.T) {
 	}
 }
 
-func TestProjectAgentConfigRoundTrips(t *testing.T) {
+func TestProjectConfigRoundTrips(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
 
-	// A populated config survives the JSON round trip.
-	cfg := domain.AgentConfig{Model: "claude-opus-4-5", Permissions: domain.PermissionModeAcceptEdits}
+	// A config with mixed field kinds (scalar, map, list, nested) survives the
+	// JSON round trip.
+	cfg := domain.ProjectConfig{
+		DefaultBranch: "develop",
+		Env:           map[string]string{"FOO": "bar"},
+		Symlinks:      []string{".env"},
+		PostCreate:    []string{"echo hi"},
+		AgentConfig:   domain.AgentConfig{Model: "claude-opus-4-5", Permissions: domain.PermissionModeAcceptEdits},
+		Worker:        domain.RoleOverride{Harness: domain.HarnessCodex},
+	}
 	if err := s.UpsertProject(ctx, domain.ProjectRecord{
-		ID: "cfg", Path: "/tmp/cfg", RegisteredAt: now, AgentConfig: cfg,
+		ID: "cfg", Path: "/tmp/cfg", RegisteredAt: now, Config: cfg,
 	}); err != nil {
 		t.Fatalf("upsert with config: %v", err)
 	}
@@ -87,25 +96,25 @@ func TestProjectAgentConfigRoundTrips(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("get: ok=%v err=%v", ok, err)
 	}
-	if got.AgentConfig != cfg {
-		t.Fatalf("agent config = %#v, want %#v", got.AgentConfig, cfg)
+	if !reflect.DeepEqual(got.Config, cfg) {
+		t.Fatalf("config = %#v, want %#v", got.Config, cfg)
 	}
 
 	// An unset config round-trips back to a zero value rather than an empty object.
 	seedProject(t, s, "nocfg")
 	got, _, _ = s.GetProject(ctx, "nocfg")
-	if !got.AgentConfig.IsZero() {
-		t.Fatalf("unset config = %#v, want zero", got.AgentConfig)
+	if !got.Config.IsZero() {
+		t.Fatalf("unset config = %#v, want zero", got.Config)
 	}
 
 	// Clearing replaces a previously-set config with a zero value.
 	if err := s.UpsertProject(ctx, domain.ProjectRecord{
-		ID: "cfg", Path: "/tmp/cfg", RegisteredAt: now, AgentConfig: domain.AgentConfig{},
+		ID: "cfg", Path: "/tmp/cfg", RegisteredAt: now, Config: domain.ProjectConfig{},
 	}); err != nil {
 		t.Fatalf("clear config: %v", err)
 	}
-	if got, _, _ := s.GetProject(ctx, "cfg"); !got.AgentConfig.IsZero() {
-		t.Fatalf("cleared config = %#v, want zero", got.AgentConfig)
+	if got, _, _ := s.GetProject(ctx, "cfg"); !got.Config.IsZero() {
+		t.Fatalf("cleared config = %#v, want zero", got.Config)
 	}
 }
 

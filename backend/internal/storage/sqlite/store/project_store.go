@@ -14,7 +14,7 @@ import (
 
 // UpsertProject inserts or replaces a registered project row.
 func (s *Store) UpsertProject(ctx context.Context, r domain.ProjectRecord) error {
-	agentConfig, err := marshalAgentConfig(r.AgentConfig)
+	config, err := marshalProjectConfig(r.Config)
 	if err != nil {
 		return err
 	}
@@ -27,7 +27,7 @@ func (s *Store) UpsertProject(ctx context.Context, r domain.ProjectRecord) error
 		DisplayName:   r.DisplayName,
 		RegisteredAt:  r.RegisteredAt,
 		ArchivedAt:    nullTime(r.ArchivedAt),
-		AgentConfig:   agentConfig,
+		Config:        config,
 	})
 }
 
@@ -95,7 +95,7 @@ func (s *Store) ArchiveProject(ctx context.Context, id string, at time.Time) (bo
 }
 
 func projectRowFromGen(p gen.Project) (domain.ProjectRecord, error) {
-	agentConfig, err := unmarshalAgentConfig(p.AgentConfig)
+	config, err := unmarshalProjectConfig(p.Config)
 	if err != nil {
 		return domain.ProjectRecord{}, err
 	}
@@ -105,7 +105,7 @@ func projectRowFromGen(p gen.Project) (domain.ProjectRecord, error) {
 		RepoOriginURL: p.RepoOriginURL,
 		DisplayName:   p.DisplayName,
 		RegisteredAt:  p.RegisteredAt,
-		AgentConfig:   agentConfig,
+		Config:        config,
 	}
 	if p.ArchivedAt.Valid {
 		r.ArchivedAt = p.ArchivedAt.Time
@@ -113,29 +113,29 @@ func projectRowFromGen(p gen.Project) (domain.ProjectRecord, error) {
 	return r, nil
 }
 
-// marshalAgentConfig encodes the typed per-project agent config into the
-// nullable JSON column. An IsZero config stores SQL NULL so an unset config
-// round-trips back to a zero value rather than an empty object.
-func marshalAgentConfig(cfg domain.AgentConfig) (sql.NullString, error) {
+// marshalProjectConfig encodes the typed per-project config into the nullable
+// JSON column. An IsZero config stores SQL NULL so an unset config round-trips
+// back to a zero value rather than an empty object.
+func marshalProjectConfig(cfg domain.ProjectConfig) (sql.NullString, error) {
 	if cfg.IsZero() {
 		return sql.NullString{}, nil
 	}
 	data, err := json.Marshal(cfg)
 	if err != nil {
-		return sql.NullString{}, fmt.Errorf("marshal agent config: %w", err)
+		return sql.NullString{}, fmt.Errorf("marshal project config: %w", err)
 	}
 	return sql.NullString{String: string(data), Valid: true}, nil
 }
 
-// unmarshalAgentConfig decodes the nullable JSON column back into the typed
+// unmarshalProjectConfig decodes the nullable JSON column back into the typed
 // struct. SQL NULL (an unset config) decodes to a zero value.
-func unmarshalAgentConfig(s sql.NullString) (domain.AgentConfig, error) {
+func unmarshalProjectConfig(s sql.NullString) (domain.ProjectConfig, error) {
 	if !s.Valid || s.String == "" {
-		return domain.AgentConfig{}, nil
+		return domain.ProjectConfig{}, nil
 	}
-	var cfg domain.AgentConfig
+	var cfg domain.ProjectConfig
 	if err := json.Unmarshal([]byte(s.String), &cfg); err != nil {
-		return domain.AgentConfig{}, fmt.Errorf("unmarshal agent config: %w", err)
+		return domain.ProjectConfig{}, fmt.Errorf("unmarshal project config: %w", err)
 	}
 	return cfg, nil
 }

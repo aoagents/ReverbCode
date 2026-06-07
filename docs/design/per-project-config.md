@@ -1,6 +1,12 @@
 # Design: typed per-project configuration
 
-Status: **blueprint** (agent config slice implemented; the rest is sequenced below)
+Status: **implemented** — the full per-project `ProjectConfig` is typed,
+validated, persisted (one `projects.config` JSON column), and surfaced via
+`ao project set-config` + `PUT /projects/{id}/config`. Consumption is wired at
+spawn for `defaultBranch`, `env`, `symlinks`, `postCreate`, the rules,
+`agentConfig`, and the `worker`/`orchestrator` role overrides. `tracker`, `scm`,
+`opencodeIssueSessionStrategy`, and `sessionPrefix`→id are stored + validated but
+not yet consumed (their consumers do not exist — see "deferred" below).
 
 ## Goal
 

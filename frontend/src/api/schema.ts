@@ -92,7 +92,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/projects/{id}/agent-config": {
+    "/api/v1/projects/{id}/config": {
         parameters: {
             query?: never;
             header?: never;
@@ -100,8 +100,8 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /** Replace a project's per-project agent config */
-        put: operations["setProjectAgentConfig"];
+        /** Replace a project's per-project config */
+        put: operations["setProjectConfig"];
         post?: never;
         delete?: never;
         options?: never;
@@ -329,10 +329,14 @@ export interface components {
             requestId?: string;
         };
         AddProjectInput: {
-            agentConfig?: components["schemas"]["DomainAgentConfig"];
+            config?: components["schemas"]["ProjectConfig"];
             name?: null | string;
             path: string;
             projectId?: null | string;
+        };
+        AgentConfig: {
+            model?: string;
+            permissions?: string;
         };
         ClaimPRRequest: {
             allowTakeover?: null | boolean;
@@ -359,10 +363,6 @@ export interface components {
             /** Format: date-time */
             lastActivityAt: string;
             state: string;
-        };
-        DomainAgentConfig: {
-            model?: string;
-            permissions?: string;
         };
         KillSessionResponse: {
             freed?: boolean;
@@ -391,14 +391,30 @@ export interface components {
         };
         Project: {
             agent?: string;
-            agentConfig?: components["schemas"]["DomainAgentConfig"];
+            config?: components["schemas"]["ProjectConfig"];
             defaultBranch: string;
             id: string;
             name: string;
             path: string;
             repo: string;
+        };
+        ProjectConfig: {
+            agentConfig?: components["schemas"]["AgentConfig"];
+            agentRules?: string;
+            agentRulesFile?: string;
+            defaultBranch?: string;
+            env?: {
+                [key: string]: string;
+            };
+            opencodeIssueSessionStrategy?: string;
+            orchestrator?: components["schemas"]["RoleOverride"];
+            orchestratorRules?: string;
+            postCreate?: string[];
             scm?: components["schemas"]["SCMConfig"];
+            sessionPrefix?: string;
+            symlinks?: string[];
             tracker?: components["schemas"]["TrackerConfig"];
+            worker?: components["schemas"]["RoleOverride"];
         };
         ProjectGetResponse: {
             project: components["schemas"]["ProjectOrDegraded"];
@@ -408,9 +424,6 @@ export interface components {
         ProjectOrDegraded: components["schemas"]["Project"] | components["schemas"]["DegradedProject"];
         ProjectResponse: {
             project: components["schemas"]["Project"];
-        };
-        ProjectSetAgentConfigInput: {
-            config: components["schemas"]["DomainAgentConfig"];
         };
         ProjectSummary: {
             id: string;
@@ -439,6 +452,10 @@ export interface components {
             session: components["schemas"]["Session"];
             sessionId: string;
         };
+        RoleOverride: {
+            agent?: string;
+            agentConfig?: components["schemas"]["AgentConfig"];
+        };
         RollbackSessionResponse: {
             deleted?: boolean;
             killed?: boolean;
@@ -446,14 +463,11 @@ export interface components {
             sessionId: string;
         };
         SCMConfig: {
-            package?: string;
-            path?: string;
             plugin?: string;
             webhook?: components["schemas"]["SCMWebhookConfig"];
         };
         SCMWebhookConfig: {
             deliveryHeader?: string;
-            enabled?: null | boolean;
             eventHeader?: string;
             maxBodyBytes?: number;
             path?: string;
@@ -510,6 +524,9 @@ export interface components {
             sessionId: string;
             state: string;
         };
+        SetProjectConfigInput: {
+            config: components["schemas"]["ProjectConfig"];
+        };
         SpawnOrchestratorRequest: {
             clean?: boolean;
             projectId: string;
@@ -529,9 +546,8 @@ export interface components {
             prompt?: string;
         };
         TrackerConfig: {
-            package?: string;
-            path?: string;
             plugin?: string;
+            teamId?: string;
         };
     };
     responses: never;
@@ -911,7 +927,7 @@ export interface operations {
             };
         };
     };
-    setProjectAgentConfig: {
+    setProjectConfig: {
         parameters: {
             query?: never;
             header?: never;
@@ -923,7 +939,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ProjectSetAgentConfigInput"];
+                "application/json": components["schemas"]["SetProjectConfigInput"];
             };
         };
         responses: {

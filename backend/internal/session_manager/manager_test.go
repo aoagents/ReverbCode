@@ -102,12 +102,14 @@ func (l *fakeLCM) MarkTerminated(_ context.Context, id domain.SessionID) error {
 type fakeRuntime struct {
 	createErr          error
 	created, destroyed int
+	lastCfg            ports.RuntimeConfig
 }
 
-func (r *fakeRuntime) Create(context.Context, ports.RuntimeConfig) (ports.RuntimeHandle, error) {
+func (r *fakeRuntime) Create(_ context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
 	if r.createErr != nil {
 		return ports.RuntimeHandle{}, r.createErr
 	}
+	r.lastCfg = cfg
 	r.created++
 	return ports.RuntimeHandle{ID: "h1"}, nil
 }
@@ -159,10 +161,19 @@ func (s singleAgent) Agent(domain.AgentHarness) (ports.Agent, bool) { return s.a
 type fakeWorkspace struct {
 	destroyErr error
 	destroyed  int
+	lastCfg    ports.WorkspaceConfig
+	// path, when set, is returned as the workspace path so provisioning tests
+	// can point at a real temp directory.
+	path string
 }
 
 func (w *fakeWorkspace) Create(_ context.Context, cfg ports.WorkspaceConfig) (ports.WorkspaceInfo, error) {
-	return ports.WorkspaceInfo{Path: "/ws/" + string(cfg.SessionID), Branch: cfg.Branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID}, nil
+	w.lastCfg = cfg
+	path := w.path
+	if path == "" {
+		path = "/ws/" + string(cfg.SessionID)
+	}
+	return ports.WorkspaceInfo{Path: path, Branch: cfg.Branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID}, nil
 }
 func (w *fakeWorkspace) Destroy(context.Context, ports.WorkspaceInfo) error {
 	w.destroyed++
@@ -196,18 +207,39 @@ func mkLive(id domain.SessionID) domain.SessionRecord {
 	return domain.SessionRecord{ID: id, ProjectID: "mer", Metadata: domain.SessionMetadata{WorkspacePath: "/ws/" + string(id), RuntimeHandleID: "h1"}, Activity: domain.Activity{State: domain.ActivityActive}}
 }
 
-func TestSpawn_ResolvesProjectAgentConfig(t *testing.T) {
+func TestSpawn_ResolvesProjectConfig(t *testing.T) {
 	st := newFakeStore()
-	st.projects["mer"] = domain.ProjectRecord{ID: "mer", AgentConfig: domain.AgentConfig{Model: "claude-opus-4-5"}}
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
+		DefaultBranch: "develop",
+		Env:           map[string]string{"FOO": "bar"},
+		AgentConfig:   domain.AgentConfig{Model: "base-model"},
+		// A worker role override wins over the base agent config for workers.
+		Worker: domain.RoleOverride{Harness: domain.HarnessCodex, AgentConfig: domain.AgentConfig{Model: "worker-model"}},
+	}}
 	agent := &recordingAgent{}
+	rt := &fakeRuntime{}
+	ws := &fakeWorkspace{}
 	lookPath := func(string) (string, error) { return "/bin/true", nil }
-	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+	m := New(Deps{Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
 
-	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
+	rec, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if agent.lastConfig.Model != "claude-opus-4-5" {
-		t.Fatalf("launch config = %#v, want model resolved from project", agent.lastConfig)
+	if agent.lastConfig.Model != "worker-model" {
+		t.Fatalf("launch model = %q, want role override worker-model", agent.lastConfig.Model)
+	}
+	if rec.Harness != domain.HarnessCodex {
+		t.Fatalf("harness = %q, want codex from role override", rec.Harness)
+	}
+	if ws.lastCfg.BaseBranch != "develop" {
+		t.Fatalf("workspace base branch = %q, want develop", ws.lastCfg.BaseBranch)
+	}
+	if rt.lastCfg.Env["FOO"] != "bar" {
+		t.Fatalf("runtime env FOO = %q, want bar", rt.lastCfg.Env["FOO"])
+	}
+	if rt.lastCfg.Env[EnvSessionID] == "" {
+		t.Fatal("runtime env missing AO_SESSION_ID")
 	}
 
 	// A project with no stored config yields a zero AgentConfig (adapter defaults).

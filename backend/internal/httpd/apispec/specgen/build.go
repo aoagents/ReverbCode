@@ -118,10 +118,16 @@ var schemaNames = map[string]string{
 	// httpd/envelope
 	"EnvelopeAPIError": "APIError",
 	// domain
-	"DomainProjectID": "ProjectID",
-	"DomainSessionID": "SessionID",
-	"DomainIssueID":   "IssueID",
-	"DomainSession":   "Session",
+	"DomainProjectID":        "ProjectID",
+	"DomainSessionID":        "SessionID",
+	"DomainIssueID":          "IssueID",
+	"DomainSession":          "Session",
+	"DomainProjectConfig":    "ProjectConfig",
+	"DomainAgentConfig":      "AgentConfig",
+	"DomainRoleOverride":     "RoleOverride",
+	"DomainTrackerConfig":    "TrackerConfig",
+	"DomainSCMConfig":        "SCMConfig",
+	"DomainSCMWebhookConfig": "SCMWebhookConfig",
 	// httpd/controllers (wire envelopes)
 	"ControllersListProjectsResponse":       "ListProjectsResponse",
 	"ControllersProjectResponse":            "ProjectResponse",
@@ -154,14 +160,12 @@ var schemaNames = map[string]string{
 	"ControllersResolveCommentsRequest":  "ResolveCommentsRequest",
 	"ControllersResolveCommentsResponse": "ResolveCommentsResponse",
 	// service/project entities + DTOs
-	"ProjectProject":          "Project",
-	"ProjectSummary":          "ProjectSummary",
-	"ProjectDegraded":         "DegradedProject",
-	"ProjectAddInput":         "AddProjectInput",
-	"ProjectRemoveResult":     "RemoveProjectResult",
-	"ProjectTrackerConfig":    "TrackerConfig",
-	"ProjectSCMConfig":        "SCMConfig",
-	"ProjectSCMWebhookConfig": "SCMWebhookConfig",
+	"ProjectProject":        "Project",
+	"ProjectSummary":        "ProjectSummary",
+	"ProjectDegraded":       "DegradedProject",
+	"ProjectAddInput":       "AddProjectInput",
+	"ProjectRemoveResult":   "RemoveProjectResult",
+	"ProjectSetConfigInput": "SetProjectConfigInput",
 }
 
 // markRequestBodyRequired sets requestBody.required: true on the operation's
@@ -298,10 +302,10 @@ func projectOperations() []operation {
 			},
 		},
 		{
-			method: http.MethodPut, path: "/api/v1/projects/{id}/agent-config", id: "setProjectAgentConfig", tag: "projects",
-			summary:    "Replace a project's per-project agent config",
+			method: http.MethodPut, path: "/api/v1/projects/{id}/config", id: "setProjectConfig", tag: "projects",
+			summary:    "Replace a project's per-project config",
 			pathParams: []any{controllers.ProjectIDParam{}},
-			reqBody:    projectsvc.SetAgentConfigInput{},
+			reqBody:    projectsvc.SetConfigInput{},
 			resps: []respUnit{
 				{http.StatusOK, controllers.ProjectResponse{}},
 				{http.StatusBadRequest, envelope.APIError{}},

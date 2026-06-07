@@ -29,3 +29,23 @@ const (
 	HarnessPi         AgentHarness = "pi"
 	HarnessAutohand   AgentHarness = "autohand"
 )
+
+// AllHarnesses lists every supported harness. It is the canonical set used to
+// validate user-supplied harness names (e.g. per-project role overrides).
+var AllHarnesses = []AgentHarness{
+	HarnessClaudeCode, HarnessCodex, HarnessAider, HarnessOpenCode, HarnessGrok,
+	HarnessDroid, HarnessAmp, HarnessAgy, HarnessCrush, HarnessCursor, HarnessQwen,
+	HarnessCopilot, HarnessGoose, HarnessAuggie, HarnessContinue, HarnessDevin,
+	HarnessCline, HarnessKimi, HarnessKiro, HarnessKilocode, HarnessVibe, HarnessPi,
+	HarnessAutohand,
+}
+
+// IsKnown reports whether h is one of the supported harnesses.
+func (h AgentHarness) IsKnown() bool {
+	for _, k := range AllHarnesses {
+		if h == k {
+			return true
+		}
+	}
+	return false
+}

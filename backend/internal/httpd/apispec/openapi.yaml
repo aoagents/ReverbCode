@@ -283,9 +283,9 @@ paths:
       summary: Fetch one project; discriminates ok vs degraded
       tags:
       - projects
-  /api/v1/projects/{id}/agent-config:
+  /api/v1/projects/{id}/config:
     put:
-      operationId: setProjectAgentConfig
+      operationId: setProjectConfig
       parameters:
       - description: Project identifier (registry key).
         in: path
@@ -298,7 +298,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ProjectSetAgentConfigInput'
+              $ref: '#/components/schemas/SetProjectConfigInput'
         required: true
       responses:
         "200":
@@ -325,7 +325,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Internal Server Error
-      summary: Replace a project's per-project agent config
+      summary: Replace a project's per-project config
       tags:
       - projects
   /api/v1/prs/{id}/merge:
@@ -961,8 +961,8 @@ components:
       type: object
     AddProjectInput:
       properties:
-        agentConfig:
-          $ref: '#/components/schemas/DomainAgentConfig'
+        config:
+          $ref: '#/components/schemas/ProjectConfig'
         name:
           type:
           - "null"
@@ -975,6 +975,13 @@ components:
           - string
       required:
       - path
+      type: object
+    AgentConfig:
+      properties:
+        model:
+          type: string
+        permissions:
+          type: string
       type: object
     ClaimPRRequest:
       properties:
@@ -1050,13 +1057,6 @@ components:
       - state
       - lastActivityAt
       type: object
-    DomainAgentConfig:
-      properties:
-        model:
-          type: string
-        permissions:
-          type: string
-      type: object
     KillSessionResponse:
       properties:
         freed:
@@ -1128,8 +1128,8 @@ components:
       properties:
         agent:
           type: string
-        agentConfig:
-          $ref: '#/components/schemas/DomainAgentConfig'
+        config:
+          $ref: '#/components/schemas/ProjectConfig'
         defaultBranch:
           type: string
         id:
@@ -1140,16 +1140,49 @@ components:
           type: string
         repo:
           type: string
-        scm:
-          $ref: '#/components/schemas/SCMConfig'
-        tracker:
-          $ref: '#/components/schemas/TrackerConfig'
       required:
       - id
       - name
       - path
       - repo
       - defaultBranch
+      type: object
+    ProjectConfig:
+      properties:
+        agentConfig:
+          $ref: '#/components/schemas/AgentConfig'
+        agentRules:
+          type: string
+        agentRulesFile:
+          type: string
+        defaultBranch:
+          type: string
+        env:
+          additionalProperties:
+            type: string
+          type: object
+        opencodeIssueSessionStrategy:
+          type: string
+        orchestrator:
+          $ref: '#/components/schemas/RoleOverride'
+        orchestratorRules:
+          type: string
+        postCreate:
+          items:
+            type: string
+          type: array
+        scm:
+          $ref: '#/components/schemas/SCMConfig'
+        sessionPrefix:
+          type: string
+        symlinks:
+          items:
+            type: string
+          type: array
+        tracker:
+          $ref: '#/components/schemas/TrackerConfig'
+        worker:
+          $ref: '#/components/schemas/RoleOverride'
       type: object
     ProjectGetResponse:
       properties:
@@ -1175,13 +1208,6 @@ components:
           $ref: '#/components/schemas/Project'
       required:
       - project
-      type: object
-    ProjectSetAgentConfigInput:
-      properties:
-        config:
-          $ref: '#/components/schemas/DomainAgentConfig'
-      required:
-      - config
       type: object
     ProjectSummary:
       properties:
@@ -1252,6 +1278,13 @@ components:
       - sessionId
       - session
       type: object
+    RoleOverride:
+      properties:
+        agent:
+          type: string
+        agentConfig:
+          $ref: '#/components/schemas/AgentConfig'
+      type: object
     RollbackSessionResponse:
       properties:
         deleted:
@@ -1268,10 +1301,6 @@ components:
       type: object
     SCMConfig:
       properties:
-        package:
-          type: string
-        path:
-          type: string
         plugin:
           type: string
         webhook:
@@ -1281,10 +1310,6 @@ components:
       properties:
         deliveryHeader:
           type: string
-        enabled:
-          type:
-          - "null"
-          - boolean
         eventHeader:
           type: string
         maxBodyBytes:
@@ -1421,6 +1446,13 @@ components:
       - sessionId
       - state
       type: object
+    SetProjectConfigInput:
+      properties:
+        config:
+          $ref: '#/components/schemas/ProjectConfig'
+      required:
+      - config
+      type: object
     SpawnOrchestratorRequest:
       properties:
         clean:
@@ -1486,11 +1518,9 @@ components:
       type: object
     TrackerConfig:
       properties:
-        package:
-          type: string
-        path:
-          type: string
         plugin:
+          type: string
+        teamId:
           type: string
       type: object
 tags:
