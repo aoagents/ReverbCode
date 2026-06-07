@@ -76,8 +76,8 @@ func TestProjectAgentConfigRoundTrips(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
 
-	// A config with mixed value kinds survives the JSON round trip.
-	cfg := map[string]any{"model": "claude-opus-4-5", "permissions": "accept-edits"}
+	// A populated config survives the JSON round trip.
+	cfg := domain.AgentConfig{Model: "claude-opus-4-5", Permissions: domain.PermissionModeAcceptEdits}
 	if err := s.UpsertProject(ctx, domain.ProjectRecord{
 		ID: "cfg", Path: "/tmp/cfg", RegisteredAt: now, AgentConfig: cfg,
 	}); err != nil {
@@ -87,25 +87,25 @@ func TestProjectAgentConfigRoundTrips(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("get: ok=%v err=%v", ok, err)
 	}
-	if got.AgentConfig["model"] != "claude-opus-4-5" || got.AgentConfig["permissions"] != "accept-edits" {
-		t.Fatalf("agent config = %#v", got.AgentConfig)
+	if got.AgentConfig != cfg {
+		t.Fatalf("agent config = %#v, want %#v", got.AgentConfig, cfg)
 	}
 
-	// An unset config round-trips back to nil rather than an empty object.
+	// An unset config round-trips back to a zero value rather than an empty object.
 	seedProject(t, s, "nocfg")
 	got, _, _ = s.GetProject(ctx, "nocfg")
-	if got.AgentConfig != nil {
-		t.Fatalf("unset config = %#v, want nil", got.AgentConfig)
+	if !got.AgentConfig.IsZero() {
+		t.Fatalf("unset config = %#v, want zero", got.AgentConfig)
 	}
 
-	// Clearing replaces a previously-set config with nil.
+	// Clearing replaces a previously-set config with a zero value.
 	if err := s.UpsertProject(ctx, domain.ProjectRecord{
-		ID: "cfg", Path: "/tmp/cfg", RegisteredAt: now, AgentConfig: nil,
+		ID: "cfg", Path: "/tmp/cfg", RegisteredAt: now, AgentConfig: domain.AgentConfig{},
 	}); err != nil {
 		t.Fatalf("clear config: %v", err)
 	}
-	if got, _, _ := s.GetProject(ctx, "cfg"); got.AgentConfig != nil {
-		t.Fatalf("cleared config = %#v, want nil", got.AgentConfig)
+	if got, _, _ := s.GetProject(ctx, "cfg"); !got.AgentConfig.IsZero() {
+		t.Fatalf("cleared config = %#v, want zero", got.AgentConfig)
 	}
 }
 

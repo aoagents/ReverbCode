@@ -12,15 +12,15 @@ type Summary struct {
 
 // Project is the full read-model returned by GET /api/v1/projects/{id}.
 type Project struct {
-	ID            domain.ProjectID `json:"id"`
-	Name          string           `json:"name"`
-	Path          string           `json:"path"`
-	Repo          string           `json:"repo"`
-	DefaultBranch string           `json:"defaultBranch"`
-	Agent         string           `json:"agent,omitempty"`
-	AgentConfig   map[string]any   `json:"agentConfig,omitempty"`
-	Tracker       *TrackerConfig   `json:"tracker,omitempty"`
-	SCM           *SCMConfig       `json:"scm,omitempty"`
+	ID            domain.ProjectID    `json:"id"`
+	Name          string              `json:"name"`
+	Path          string              `json:"path"`
+	Repo          string              `json:"repo"`
+	DefaultBranch string              `json:"defaultBranch"`
+	Agent         string              `json:"agent,omitempty"`
+	AgentConfig   *domain.AgentConfig `json:"agentConfig,omitempty"`
+	Tracker       *TrackerConfig      `json:"tracker,omitempty"`
+	SCM           *SCMConfig          `json:"scm,omitempty"`
 }
 
 // Degraded is returned in place of Project when project config failed to load.

@@ -66,9 +66,10 @@ const (
 	MetadataKeySummary = "summary"
 )
 
-// AgentConfig holds values loaded from the selected agent's config section.
-// Agent adapters own validation for their custom keys.
-type AgentConfig map[string]any
+// AgentConfig is the typed per-project agent config handed to adapters at
+// launch. It aliases domain.AgentConfig so storage, services, and adapters
+// share one definition without a translation layer.
+type AgentConfig = domain.AgentConfig
 
 // ConfigSpec describes the agent-specific config keys AO can expose to users.
 type ConfigSpec struct {
@@ -139,18 +140,19 @@ type SessionInfo struct {
 	Summary        string
 }
 
-// PermissionMode controls how much review an agent requires before acting.
-type PermissionMode string
+// PermissionMode controls how much review an agent requires before acting. It
+// is a type alias for domain.PermissionMode so adapters keep using
+// ports.PermissionMode while the typed AgentConfig (in domain) reuses the same
+// type.
+type PermissionMode = domain.PermissionMode
 
 // The permission modes adapters map onto their agent's native approval flags.
+// These re-export the domain constants so existing adapter code is unchanged.
 const (
-	// PermissionModeDefault is special: adapters emit no flag for it so the
-	// agent resolves its starting mode from the user's own config (e.g.
-	// Claude's TUI reading ~/.claude/settings.json defaultMode).
-	PermissionModeDefault           PermissionMode = "default"
-	PermissionModeAcceptEdits       PermissionMode = "accept-edits"
-	PermissionModeAuto              PermissionMode = "auto"
-	PermissionModeBypassPermissions PermissionMode = "bypass-permissions"
+	PermissionModeDefault           = domain.PermissionModeDefault
+	PermissionModeAcceptEdits       = domain.PermissionModeAcceptEdits
+	PermissionModeAuto              = domain.PermissionModeAuto
+	PermissionModeBypassPermissions = domain.PermissionModeBypassPermissions
 )
 
 // PromptDeliveryStrategy describes how AO should deliver the initial prompt.

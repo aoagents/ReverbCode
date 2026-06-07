@@ -426,8 +426,8 @@ func TestGetLaunchCommandAppliesAgentConfig(t *testing.T) {
 	p := &Plugin{resolvedBinary: "claude"}
 	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
 		Config: ports.AgentConfig{
-			"model":       "claude-opus-4-5",
-			"permissions": string(ports.PermissionModeAcceptEdits),
+			Model:       "claude-opus-4-5",
+			Permissions: ports.PermissionModeAcceptEdits,
 		},
 	})
 	if err != nil {
@@ -445,7 +445,7 @@ func TestGetLaunchCommandExplicitPermissionsOverrideConfig(t *testing.T) {
 	p := &Plugin{resolvedBinary: "claude"}
 	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
 		Permissions: ports.PermissionModeBypassPermissions,
-		Config:      ports.AgentConfig{"permissions": string(ports.PermissionModeAcceptEdits)},
+		Config:      ports.AgentConfig{Permissions: ports.PermissionModeAcceptEdits},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -456,49 +456,11 @@ func TestGetLaunchCommandExplicitPermissionsOverrideConfig(t *testing.T) {
 }
 
 func TestGetLaunchCommandRejectsInvalidConfig(t *testing.T) {
-	tests := []struct {
-		name   string
-		config ports.AgentConfig
-	}{
-		{"unknown key", ports.AgentConfig{"nope": "x"}},
-		{"wrong type for model", ports.AgentConfig{"model": 42}},
-		{"bad permission enum", ports.AgentConfig{"permissions": "yolo"}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			p := &Plugin{resolvedBinary: "claude"}
-			if _, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{Config: tt.config}); err == nil {
-				t.Fatalf("expected error for config %#v", tt.config)
-			}
-		})
-	}
-}
-
-func TestValidateConfigEnforcesSpecKinds(t *testing.T) {
-	spec := ports.ConfigSpec{Fields: []ports.ConfigField{
-		{Key: "name", Type: ports.ConfigFieldString, Required: true},
-		{Key: "tags", Type: ports.ConfigFieldStringList},
-		{Key: "mystery", Type: ports.ConfigFieldType("weird")},
-	}}
-	tests := []struct {
-		name    string
-		cfg     ports.AgentConfig
-		wantErr bool
-	}{
-		{"required field present", ports.AgentConfig{"name": "x"}, false},
-		{"required field missing", ports.AgentConfig{"tags": []any{"a"}}, true},
-		{"string list ok", ports.AgentConfig{"name": "x", "tags": []any{"a", "b"}}, false},
-		{"string list with non-string", ports.AgentConfig{"name": "x", "tags": []any{"a", 1.0}}, true},
-		{"string list wrong kind", ports.AgentConfig{"name": "x", "tags": "a"}, true},
-		{"unhandled field type", ports.AgentConfig{"name": "x", "mystery": "v"}, true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := validateConfig(spec, tt.cfg)
-			if (err != nil) != tt.wantErr {
-				t.Fatalf("validateConfig(%#v) err = %v, wantErr = %v", tt.cfg, err, tt.wantErr)
-			}
-		})
+	p := &Plugin{resolvedBinary: "claude"}
+	if _, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Config: ports.AgentConfig{Permissions: "yolo"},
+	}); err == nil {
+		t.Fatal("expected error for invalid permission mode")
 	}
 }
 

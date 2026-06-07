@@ -127,12 +127,10 @@ func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
 // The prompt is passed after `--` so a prompt beginning with "-" is not
 // mistaken for a flag.
 func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (cmd []string, err error) {
-	spec, err := p.GetConfigSpec(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if err := validateConfig(spec, cfg.Config); err != nil {
-		return nil, err
+	// Defense-in-depth: the project service validates on write, but re-check
+	// here so a config written by any other path can't launch a bad command.
+	if err := cfg.Config.Validate(); err != nil {
+		return nil, fmt.Errorf("claude-code: %w", err)
 	}
 
 	binary, err := p.claudeBinary(ctx)
@@ -144,19 +142,17 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	if cfg.SessionID != "" {
 		cmd = append(cmd, "--session-id", claudeSessionUUID(cfg.SessionID))
 	}
-	// A project's "permissions" config key drives the starting mode; the
-	// explicit LaunchConfig.Permissions wins when set so a per-spawn override
-	// still takes precedence over the stored project default.
+	// A project's configured permissions drive the starting mode; the explicit
+	// LaunchConfig.Permissions wins when set so a per-spawn override still takes
+	// precedence over the stored project default.
 	permissions := cfg.Permissions
 	if permissions == "" {
-		if mode, ok := cfg.Config["permissions"].(string); ok {
-			permissions = ports.PermissionMode(mode)
-		}
+		permissions = cfg.Config.Permissions
 	}
 	appendPermissionFlags(&cmd, permissions)
 
-	if model, ok := cfg.Config["model"].(string); ok && strings.TrimSpace(model) != "" {
-		cmd = append(cmd, "--model", strings.TrimSpace(model))
+	if model := strings.TrimSpace(cfg.Config.Model); model != "" {
+		cmd = append(cmd, "--model", model)
 	}
 
 	systemPrompt, err := resolveSystemPrompt(cfg)
@@ -482,75 +478,6 @@ func ensureWorkspaceTrusted(configPath, workspacePath string) error {
 	}
 	if err := os.Rename(tmpName, configPath); err != nil {
 		return fmt.Errorf("claude-code: replace config: %w", err)
-	}
-	return nil
-}
-
-// validateConfig rejects a per-project agent config whose keys or values the
-// adapter does not understand, so a bad project config surfaces a clear error at
-// spawn rather than an opaque CLI failure. An unknown key, a value of the wrong
-// primitive type, or an enum value outside the field's allowed set is an error.
-func validateConfig(spec ports.ConfigSpec, cfg ports.AgentConfig) error {
-	allowed := make(map[string]ports.ConfigField, len(spec.Fields))
-	for _, f := range spec.Fields {
-		allowed[f.Key] = f
-	}
-	for key, raw := range cfg {
-		field, ok := allowed[key]
-		if !ok {
-			return fmt.Errorf("claude-code: unknown config key %q", key)
-		}
-		if err := validateConfigValue(field, raw); err != nil {
-			return err
-		}
-	}
-	for _, f := range spec.Fields {
-		if f.Required {
-			if _, ok := cfg[f.Key]; !ok {
-				return fmt.Errorf("claude-code: config key %q is required", f.Key)
-			}
-		}
-	}
-	return nil
-}
-
-func validateConfigValue(field ports.ConfigField, raw any) error {
-	switch field.Type {
-	case ports.ConfigFieldString:
-		if _, ok := raw.(string); !ok {
-			return fmt.Errorf("claude-code: config key %q must be a string", field.Key)
-		}
-	case ports.ConfigFieldBool:
-		if _, ok := raw.(bool); !ok {
-			return fmt.Errorf("claude-code: config key %q must be a bool", field.Key)
-		}
-	case ports.ConfigFieldNumber:
-		if _, ok := raw.(float64); !ok {
-			return fmt.Errorf("claude-code: config key %q must be a number", field.Key)
-		}
-	case ports.ConfigFieldEnum:
-		s, ok := raw.(string)
-		if !ok {
-			return fmt.Errorf("claude-code: config key %q must be a string", field.Key)
-		}
-		for _, allowed := range field.Enum {
-			if s == allowed {
-				return nil
-			}
-		}
-		return fmt.Errorf("claude-code: config key %q must be one of %s", field.Key, strings.Join(field.Enum, ", "))
-	case ports.ConfigFieldStringList:
-		list, ok := raw.([]any)
-		if !ok {
-			return fmt.Errorf("claude-code: config key %q must be a list of strings", field.Key)
-		}
-		for _, item := range list {
-			if _, ok := item.(string); !ok {
-				return fmt.Errorf("claude-code: config key %q must be a list of strings", field.Key)
-			}
-		}
-	default:
-		return fmt.Errorf("claude-code: config key %q has unhandled type %q", field.Key, field.Type)
 	}
 	return nil
 }

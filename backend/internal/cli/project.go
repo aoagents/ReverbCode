@@ -54,21 +54,27 @@ type projectDetails struct {
 	Repo           string         `json:"repo"`
 	DefaultBranch  string         `json:"defaultBranch"`
 	DefaultHarness string         `json:"agent,omitempty"`
-	AgentConfig    map[string]any `json:"agentConfig,omitempty"`
+	AgentConfig    *agentConfig   `json:"agentConfig,omitempty"`
 	Tracker        map[string]any `json:"tracker,omitempty"`
 	SCM            map[string]any `json:"scm,omitempty"`
 	ResolveError   string         `json:"resolveError,omitempty"`
 }
 
+// agentConfig mirrors the daemon's typed domain.AgentConfig for the CLI client.
+type agentConfig struct {
+	Model       string `json:"model,omitempty"`
+	Permissions string `json:"permissions,omitempty"`
+}
+
 // setAgentConfigRequest mirrors the daemon's SetAgentConfigInput body for
 // PUT /api/v1/projects/{id}/agent-config.
 type setAgentConfigRequest struct {
-	Config map[string]any `json:"config"`
+	Config agentConfig `json:"config"`
 }
 
 type projectSetConfigOptions struct {
-	set        []string
-	configJSON string
+	model      string
+	permission string
 	clear      bool
 	json       bool
 }
@@ -200,11 +206,9 @@ func newProjectSetConfigCommand(ctx *commandContext) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "set-config <id>",
 		Short: "Set the per-project agent config",
-		Long: "Replace a project's per-project agent config (model, permissions, " +
-			"adapter-specific keys). The config is resolved into the launch command " +
-			"when a session spawns; the owning agent adapter validates the keys.\n\n" +
-			"Use --set key=value (repeatable) for string values, --config-json for a " +
-			"full JSON object, or --clear to remove all config.",
+		Long: "Replace a project's per-project agent config. The config is resolved " +
+			"into the launch command when a session spawns.\n\n" +
+			"Set --model and/or --permission, or pass --clear to remove all config.",
 		Args: func(cmd *cobra.Command, args []string) error {
 			if err := cobra.ExactArgs(1)(cmd, args); err != nil {
 				return usageError{err}
@@ -233,56 +237,28 @@ func newProjectSetConfigCommand(ctx *commandContext) *cobra.Command {
 		},
 	}
 	f := cmd.Flags()
-	f.StringArrayVar(&opts.set, "set", nil, "Config key=value (repeatable; values are strings)")
-	f.StringVar(&opts.configJSON, "config-json", "", "Full config as a JSON object")
+	f.StringVar(&opts.model, "model", "", "Model override (e.g. claude-opus-4-5)")
+	f.StringVar(&opts.permission, "permission", "", "Permission mode: default, accept-edits, auto, bypass-permissions")
 	f.BoolVar(&opts.clear, "clear", false, "Clear all agent config")
 	f.BoolVar(&opts.json, "json", false, "Output the updated project as JSON")
 	return cmd
 }
 
-// buildAgentConfig turns the set-config flags into the config map sent to the
-// daemon. The three input modes are mutually exclusive: --clear empties the
-// config, --config-json supplies the whole object, and --set builds it from
-// key=value pairs.
-func buildAgentConfig(opts projectSetConfigOptions) (map[string]any, error) {
-	modes := 0
+// buildAgentConfig turns the set-config flags into the typed config sent to the
+// daemon. --clear is mutually exclusive with the field flags and empties the
+// config; otherwise the supplied fields form the new config. The daemon
+// validates the values.
+func buildAgentConfig(opts projectSetConfigOptions) (agentConfig, error) {
 	if opts.clear {
-		modes++
-	}
-	if opts.configJSON != "" {
-		modes++
-	}
-	if len(opts.set) > 0 {
-		modes++
-	}
-	switch {
-	case modes == 0:
-		return nil, usageError{errors.New("usage: provide --set, --config-json, or --clear")}
-	case modes > 1:
-		return nil, usageError{errors.New("usage: --set, --config-json, and --clear are mutually exclusive")}
-	}
-
-	if opts.clear {
-		return map[string]any{}, nil
-	}
-	if opts.configJSON != "" {
-		var config map[string]any
-		if err := json.Unmarshal([]byte(opts.configJSON), &config); err != nil {
-			return nil, usageError{fmt.Errorf("--config-json is not a valid JSON object: %w", err)}
+		if opts.model != "" || opts.permission != "" {
+			return agentConfig{}, usageError{errors.New("usage: --clear cannot be combined with --model or --permission")}
 		}
-		return config, nil
+		return agentConfig{}, nil
 	}
-
-	config := make(map[string]any, len(opts.set))
-	for _, pair := range opts.set {
-		key, value, ok := strings.Cut(pair, "=")
-		key = strings.TrimSpace(key)
-		if !ok || key == "" {
-			return nil, usageError{fmt.Errorf("invalid --set %q: expected key=value", pair)}
-		}
-		config[key] = value
+	if opts.model == "" && opts.permission == "" {
+		return agentConfig{}, usageError{errors.New("usage: provide --model and/or --permission, or --clear")}
 	}
-	return config, nil
+	return agentConfig{Model: opts.model, Permissions: opts.permission}, nil
 }
 
 func newProjectRemoveCommand(ctx *commandContext) *cobra.Command {
@@ -391,9 +367,9 @@ func writeProjectDetails(cmd *cobra.Command, res projectGetResult) error {
 }
 
 // formatAgentConfig renders the per-project agent config as compact JSON for the
-// `project get` text view. An empty config returns "" so the row is skipped.
-func formatAgentConfig(config map[string]any) string {
-	if len(config) == 0 {
+// `project get` text view. A nil config returns "" so the row is skipped.
+func formatAgentConfig(config *agentConfig) string {
+	if config == nil {
 		return ""
 	}
 	data, err := json.Marshal(config)

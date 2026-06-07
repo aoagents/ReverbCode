@@ -10,8 +10,8 @@ type ProjectRecord struct {
 	DisplayName   string
 	RegisteredAt  time.Time
 	ArchivedAt    time.Time
-	// AgentConfig holds the per-project agent settings (model, permissions,
-	// adapter-specific keys) AO resolves into a launch command at spawn. nil
-	// means unset; the owning agent adapter validates the keys.
-	AgentConfig map[string]any
+	// AgentConfig holds the typed per-project agent settings (model,
+	// permissions) AO resolves into a launch command at spawn. An IsZero value
+	// means unset.
+	AgentConfig AgentConfig
 }

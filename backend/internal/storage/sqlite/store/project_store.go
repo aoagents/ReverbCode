@@ -113,11 +113,11 @@ func projectRowFromGen(p gen.Project) (domain.ProjectRecord, error) {
 	return r, nil
 }
 
-// marshalAgentConfig encodes a per-project agent config into the nullable JSON
-// column. A nil or empty map stores SQL NULL so an unset config round-trips back
-// to nil rather than an empty object.
-func marshalAgentConfig(cfg map[string]any) (sql.NullString, error) {
-	if len(cfg) == 0 {
+// marshalAgentConfig encodes the typed per-project agent config into the
+// nullable JSON column. An IsZero config stores SQL NULL so an unset config
+// round-trips back to a zero value rather than an empty object.
+func marshalAgentConfig(cfg domain.AgentConfig) (sql.NullString, error) {
+	if cfg.IsZero() {
 		return sql.NullString{}, nil
 	}
 	data, err := json.Marshal(cfg)
@@ -127,15 +127,15 @@ func marshalAgentConfig(cfg map[string]any) (sql.NullString, error) {
 	return sql.NullString{String: string(data), Valid: true}, nil
 }
 
-// unmarshalAgentConfig decodes the nullable JSON column back into a map. SQL
-// NULL (an unset config) decodes to nil.
-func unmarshalAgentConfig(s sql.NullString) (map[string]any, error) {
+// unmarshalAgentConfig decodes the nullable JSON column back into the typed
+// struct. SQL NULL (an unset config) decodes to a zero value.
+func unmarshalAgentConfig(s sql.NullString) (domain.AgentConfig, error) {
 	if !s.Valid || s.String == "" {
-		return nil, nil
+		return domain.AgentConfig{}, nil
 	}
-	var cfg map[string]any
+	var cfg domain.AgentConfig
 	if err := json.Unmarshal([]byte(s.String), &cfg); err != nil {
-		return nil, fmt.Errorf("unmarshal agent config: %w", err)
+		return domain.AgentConfig{}, fmt.Errorf("unmarshal agent config: %w", err)
 	}
 	return cfg, nil
 }

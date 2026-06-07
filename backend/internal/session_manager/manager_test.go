@@ -198,7 +198,7 @@ func mkLive(id domain.SessionID) domain.SessionRecord {
 
 func TestSpawn_ResolvesProjectAgentConfig(t *testing.T) {
 	st := newFakeStore()
-	st.projects["mer"] = domain.ProjectRecord{ID: "mer", AgentConfig: map[string]any{"model": "claude-opus-4-5"}}
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", AgentConfig: domain.AgentConfig{Model: "claude-opus-4-5"}}
 	agent := &recordingAgent{}
 	lookPath := func(string) (string, error) { return "/bin/true", nil }
 	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
@@ -206,18 +206,18 @@ func TestSpawn_ResolvesProjectAgentConfig(t *testing.T) {
 	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
 		t.Fatal(err)
 	}
-	if agent.lastConfig["model"] != "claude-opus-4-5" {
+	if agent.lastConfig.Model != "claude-opus-4-5" {
 		t.Fatalf("launch config = %#v, want model resolved from project", agent.lastConfig)
 	}
 
-	// A project with no stored config yields a nil AgentConfig (adapter defaults).
+	// A project with no stored config yields a zero AgentConfig (adapter defaults).
 	st.projects["bare"] = domain.ProjectRecord{ID: "bare"}
-	agent.lastConfig = ports.AgentConfig{"stale": true}
+	agent.lastConfig = ports.AgentConfig{Model: "stale"}
 	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "bare", Kind: domain.KindWorker}); err != nil {
 		t.Fatal(err)
 	}
-	if agent.lastConfig != nil {
-		t.Fatalf("launch config = %#v, want nil for project without config", agent.lastConfig)
+	if !agent.lastConfig.IsZero() {
+		t.Fatalf("launch config = %#v, want zero for project without config", agent.lastConfig)
 	}
 }
 

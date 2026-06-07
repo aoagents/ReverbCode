@@ -104,12 +104,12 @@ func TestManager_SetAgentConfig(t *testing.T) {
 		t.Fatalf("Add: %v", err)
 	}
 
-	cfg := map[string]any{"model": "claude-opus-4-5"}
+	cfg := domain.AgentConfig{Model: "claude-opus-4-5"}
 	proj, err := m.SetAgentConfig(ctx, "ao", project.SetAgentConfigInput{Config: cfg})
 	if err != nil {
 		t.Fatalf("SetAgentConfig: %v", err)
 	}
-	if proj.AgentConfig["model"] != "claude-opus-4-5" {
+	if proj.AgentConfig == nil || proj.AgentConfig.Model != "claude-opus-4-5" {
 		t.Fatalf("returned config = %#v", proj.AgentConfig)
 	}
 
@@ -118,9 +118,13 @@ func TestManager_SetAgentConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if got.Project == nil || got.Project.AgentConfig["model"] != "claude-opus-4-5" {
+	if got.Project == nil || got.Project.AgentConfig == nil || got.Project.AgentConfig.Model != "claude-opus-4-5" {
 		t.Fatalf("Get config = %#v", got.Project)
 	}
+
+	// An invalid permission value is rejected when set.
+	_, err = m.SetAgentConfig(ctx, "ao", project.SetAgentConfigInput{Config: domain.AgentConfig{Permissions: "yolo"}})
+	wantCode(t, err, "INVALID_AGENT_CONFIG")
 
 	// Setting on an unknown project is a clean not-found.
 	_, err = m.SetAgentConfig(ctx, "ghost", project.SetAgentConfigInput{Config: cfg})

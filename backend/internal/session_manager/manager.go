@@ -215,12 +215,12 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 func (m *Manager) resolveAgentConfig(ctx context.Context, projectID domain.ProjectID) (ports.AgentConfig, error) {
 	row, ok, err := m.store.GetProject(ctx, string(projectID))
 	if err != nil {
-		return nil, fmt.Errorf("resolve agent config: %w", err)
+		return ports.AgentConfig{}, fmt.Errorf("resolve agent config: %w", err)
 	}
-	if !ok || len(row.AgentConfig) == 0 {
-		return nil, nil
+	if !ok {
+		return ports.AgentConfig{}, nil
 	}
-	return ports.AgentConfig(row.AgentConfig), nil
+	return row.AgentConfig, nil
 }
 
 // markSpawnFailedTerminated best-effort parks an orphaned spawn as terminated.

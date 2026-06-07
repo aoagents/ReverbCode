@@ -329,9 +329,7 @@ export interface components {
             requestId?: string;
         };
         AddProjectInput: {
-            agentConfig?: {
-                [key: string]: unknown;
-            };
+            agentConfig?: components["schemas"]["DomainAgentConfig"];
             name?: null | string;
             path: string;
             projectId?: null | string;
@@ -362,6 +360,10 @@ export interface components {
             lastActivityAt: string;
             state: string;
         };
+        DomainAgentConfig: {
+            model?: string;
+            permissions?: string;
+        };
         KillSessionResponse: {
             freed?: boolean;
             ok: boolean;
@@ -389,9 +391,7 @@ export interface components {
         };
         Project: {
             agent?: string;
-            agentConfig?: {
-                [key: string]: unknown;
-            };
+            agentConfig?: components["schemas"]["DomainAgentConfig"];
             defaultBranch: string;
             id: string;
             name: string;
@@ -410,9 +410,7 @@ export interface components {
             project: components["schemas"]["Project"];
         };
         ProjectSetAgentConfigInput: {
-            config: {
-                [key: string]: unknown;
-            } | null;
+            config: components["schemas"]["DomainAgentConfig"];
         };
         ProjectSummary: {
             id: string;

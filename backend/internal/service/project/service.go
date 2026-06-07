@@ -123,13 +123,21 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 		})
 	}
 
+	var agentConfig domain.AgentConfig
+	if in.AgentConfig != nil {
+		if err := in.AgentConfig.Validate(); err != nil {
+			return Project{}, apierr.Invalid("INVALID_AGENT_CONFIG", err.Error(), nil)
+		}
+		agentConfig = *in.AgentConfig
+	}
+
 	row := domain.ProjectRecord{
 		ID:            string(id),
 		Path:          path,
 		RepoOriginURL: resolveGitOriginURL(path),
 		DisplayName:   name,
 		RegisteredAt:  time.Now(),
-		AgentConfig:   in.AgentConfig,
+		AgentConfig:   agentConfig,
 	}
 	if err := m.store.UpsertProject(ctx, row); err != nil {
 		return Project{}, apierr.Internal("PROJECT_ADD_FAILED", "Failed to register project")
@@ -137,12 +145,15 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 	return projectFromRow(row), nil
 }
 
-// SetAgentConfig replaces the project's stored agent config. The config is
-// persisted as-is; the owning agent adapter validates the keys at spawn when the
-// session's harness — and therefore the adapter that owns the keys — is known.
+// SetAgentConfig replaces the project's stored agent config. The typed config is
+// validated here so a bad value is rejected when set rather than silently
+// dropped at spawn.
 func (m *Service) SetAgentConfig(ctx context.Context, id domain.ProjectID, in SetAgentConfigInput) (Project, error) {
 	if err := validateProjectID(id); err != nil {
 		return Project{}, err
+	}
+	if err := in.Config.Validate(); err != nil {
+		return Project{}, apierr.Invalid("INVALID_AGENT_CONFIG", err.Error(), nil)
 	}
 	row, ok, err := m.store.GetProject(ctx, string(id))
 	if err != nil {
@@ -195,14 +206,18 @@ func (m *Service) suggestID(ctx context.Context, base domain.ProjectID) domain.P
 }
 
 func projectFromRow(row domain.ProjectRecord) Project {
-	return Project{
+	p := Project{
 		ID:            domain.ProjectID(row.ID),
 		Name:          displayName(row),
 		Path:          row.Path,
 		Repo:          row.RepoOriginURL,
 		DefaultBranch: "main",
-		AgentConfig:   row.AgentConfig,
 	}
+	if !row.AgentConfig.IsZero() {
+		cfg := row.AgentConfig
+		p.AgentConfig = &cfg
+	}
+	return p
 }
 
 func displayName(row domain.ProjectRecord) string {

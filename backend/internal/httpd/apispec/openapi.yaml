@@ -962,8 +962,7 @@ components:
     AddProjectInput:
       properties:
         agentConfig:
-          additionalProperties: {}
-          type: object
+          $ref: '#/components/schemas/DomainAgentConfig'
         name:
           type:
           - "null"
@@ -1051,6 +1050,13 @@ components:
       - state
       - lastActivityAt
       type: object
+    DomainAgentConfig:
+      properties:
+        model:
+          type: string
+        permissions:
+          type: string
+      type: object
     KillSessionResponse:
       properties:
         freed:
@@ -1123,8 +1129,7 @@ components:
         agent:
           type: string
         agentConfig:
-          additionalProperties: {}
-          type: object
+          $ref: '#/components/schemas/DomainAgentConfig'
         defaultBranch:
           type: string
         id:
@@ -1174,10 +1179,7 @@ components:
     ProjectSetAgentConfigInput:
       properties:
         config:
-          additionalProperties: {}
-          type:
-          - object
-          - "null"
+          $ref: '#/components/schemas/DomainAgentConfig'
       required:
       - config
       type: object
