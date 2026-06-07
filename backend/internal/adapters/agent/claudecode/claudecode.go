@@ -504,6 +504,13 @@ func validateConfig(spec ports.ConfigSpec, cfg ports.AgentConfig) error {
 			return err
 		}
 	}
+	for _, f := range spec.Fields {
+		if f.Required {
+			if _, ok := cfg[f.Key]; !ok {
+				return fmt.Errorf("claude-code: config key %q is required", f.Key)
+			}
+		}
+	}
 	return nil
 }
 
@@ -532,6 +539,18 @@ func validateConfigValue(field ports.ConfigField, raw any) error {
 			}
 		}
 		return fmt.Errorf("claude-code: config key %q must be one of %s", field.Key, strings.Join(field.Enum, ", "))
+	case ports.ConfigFieldStringList:
+		list, ok := raw.([]any)
+		if !ok {
+			return fmt.Errorf("claude-code: config key %q must be a list of strings", field.Key)
+		}
+		for _, item := range list {
+			if _, ok := item.(string); !ok {
+				return fmt.Errorf("claude-code: config key %q must be a list of strings", field.Key)
+			}
+		}
+	default:
+		return fmt.Errorf("claude-code: config key %q has unhandled type %q", field.Key, field.Type)
 	}
 	return nil
 }

@@ -474,6 +474,34 @@ func TestGetLaunchCommandRejectsInvalidConfig(t *testing.T) {
 	}
 }
 
+func TestValidateConfigEnforcesSpecKinds(t *testing.T) {
+	spec := ports.ConfigSpec{Fields: []ports.ConfigField{
+		{Key: "name", Type: ports.ConfigFieldString, Required: true},
+		{Key: "tags", Type: ports.ConfigFieldStringList},
+		{Key: "mystery", Type: ports.ConfigFieldType("weird")},
+	}}
+	tests := []struct {
+		name    string
+		cfg     ports.AgentConfig
+		wantErr bool
+	}{
+		{"required field present", ports.AgentConfig{"name": "x"}, false},
+		{"required field missing", ports.AgentConfig{"tags": []any{"a"}}, true},
+		{"string list ok", ports.AgentConfig{"name": "x", "tags": []any{"a", "b"}}, false},
+		{"string list with non-string", ports.AgentConfig{"name": "x", "tags": []any{"a", 1.0}}, true},
+		{"string list wrong kind", ports.AgentConfig{"name": "x", "tags": "a"}, true},
+		{"unhandled field type", ports.AgentConfig{"name": "x", "mystery": "v"}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateConfig(spec, tt.cfg)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("validateConfig(%#v) err = %v, wantErr = %v", tt.cfg, err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestManifestID(t *testing.T) {
 	if got := New().Manifest().ID; got != "claude-code" {
 		t.Fatalf("manifest id = %q, want claude-code", got)
