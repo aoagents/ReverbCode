@@ -13,6 +13,9 @@ ON CONFLICT (pr_url, thread_id) DO UPDATE SET
 -- name: DeletePRReviewThreads :exec
 DELETE FROM pr_review_threads WHERE pr_url = ?;
 
+-- name: DeletePRReviewThread :exec
+DELETE FROM pr_review_threads WHERE pr_url = ? AND thread_id = ?;
+
 -- name: ListPRReviewThreads :many
 SELECT pr_url, thread_id, path, line, resolved, is_bot, semantic_hash, updated_at
 FROM pr_review_threads WHERE pr_url = ? ORDER BY updated_at, thread_id;

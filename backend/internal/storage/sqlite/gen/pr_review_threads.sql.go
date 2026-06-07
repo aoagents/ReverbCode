@@ -19,6 +19,20 @@ func (q *Queries) DeletePRReviewThreads(ctx context.Context, prUrl string) error
 	return err
 }
 
+const deletePRReviewThread = `-- name: DeletePRReviewThread :exec
+DELETE FROM pr_review_threads WHERE pr_url = ? AND thread_id = ?
+`
+
+type DeletePRReviewThreadParams struct {
+	PRURL    string
+	ThreadID string
+}
+
+func (q *Queries) DeletePRReviewThread(ctx context.Context, arg DeletePRReviewThreadParams) error {
+	_, err := q.db.ExecContext(ctx, deletePRReviewThread, arg.PRURL, arg.ThreadID)
+	return err
+}
+
 const listPRReviewThreads = `-- name: ListPRReviewThreads :many
 SELECT pr_url, thread_id, path, line, resolved, is_bot, semantic_hash, updated_at
 FROM pr_review_threads WHERE pr_url = ? ORDER BY updated_at, thread_id

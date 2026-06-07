@@ -111,11 +111,6 @@ func writePRRows(ctx context.Context, q *gen.Queries, pr domain.PullRequest, che
 		}
 	}
 	if reviewMode == ports.ReviewWriteReplace {
-		if err := q.DeletePRReviewThreads(ctx, pr.URL); err != nil {
-			return err
-		}
-	}
-	if reviewMode == ports.ReviewWriteReplace {
 		if err := q.DeletePRComments(ctx, pr.URL); err != nil {
 			return err
 		}
@@ -128,6 +123,30 @@ func writePRRows(ctx context.Context, q *gen.Queries, pr domain.PullRequest, che
 		for _, th := range threads {
 			if err := q.UpsertPRReviewThread(ctx, genReviewThreadParams(pr.URL, th)); err != nil {
 				return fmt.Errorf("review thread %q: %w", th.ThreadID, err)
+			}
+		}
+	}
+	// Replace mode prunes orphans (threads no longer observed in the upstream
+	// listing) AFTER the upserts above, so that threads present in both the
+	// pre- and post-state hit ON CONFLICT DO UPDATE and fire the UPDATE trigger
+	// (e.g. pr_review_thread_resolved when resolved flips). The old
+	// delete-everything-first approach made every poll look like a fresh INSERT
+	// and the UPDATE trigger was unreachable for the common Replace path.
+	if reviewMode == ports.ReviewWriteReplace {
+		observed := make(map[string]struct{}, len(threads))
+		for _, th := range threads {
+			observed[th.ThreadID] = struct{}{}
+		}
+		existing, err := q.ListPRReviewThreads(ctx, pr.URL)
+		if err != nil {
+			return fmt.Errorf("list review threads for prune %s: %w", pr.URL, err)
+		}
+		for _, row := range existing {
+			if _, ok := observed[row.ThreadID]; ok {
+				continue
+			}
+			if err := q.DeletePRReviewThread(ctx, gen.DeletePRReviewThreadParams{PRURL: pr.URL, ThreadID: row.ThreadID}); err != nil {
+				return fmt.Errorf("prune review thread %q: %w", row.ThreadID, err)
 			}
 		}
 	}

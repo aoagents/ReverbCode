@@ -116,6 +116,130 @@ func TestPRReviewThreadsCDC_EmitsOnInsertAndResolvedTransition(t *testing.T) {
 	}
 }
 
+// Regression for the bug where pr_review_thread_resolved never fired on the
+// common Replace path. Real-world polls take ReviewWriteReplace whenever the
+// upstream listing is not paginated (provider observer sets Partial=false).
+// The previous implementation did DELETE-all + UPSERT inside the tx, so every
+// upsert hit the INSERT trigger and the UPDATE trigger that emits
+// pr_review_thread_resolved never saw the resolved flip. The fix is a set-diff
+// delete: upsert observed threads first (so unchanged thread_ids hit ON
+// CONFLICT DO UPDATE and the UPDATE trigger fires), then prune the rows whose
+// thread_id is no longer in the observed set.
+func TestPRReviewThreadsCDC_EmitsResolvedOnReplacePoll(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	rec, err := s.CreateSession(ctx, sampleRecord("mer"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	pr := domain.PullRequest{URL: "https://example/pr/55", SessionID: rec.ID, Number: 55, UpdatedAt: now}
+
+	// First poll: seed via Replace (no Partial pagination). Same shape as the
+	// real GitHub provider path when the review-thread listing fits in one page.
+	if err := s.WriteSCMObservation(ctx, pr, nil, []domain.PullRequestReviewThread{{
+		ThreadID: "t1", Path: "main.go", Line: 7, IsBot: true, SemanticHash: "v1", UpdatedAt: now,
+	}}, nil, ports.ReviewWriteReplace); err != nil {
+		t.Fatal(err)
+	}
+
+	// Second poll: same thread, resolved flipped to true, also via Replace.
+	// On the buggy code this fired the INSERT trigger again (because the
+	// DELETE-all removed the row first) and the UPDATE trigger never saw the
+	// resolved transition.
+	if err := s.WriteSCMObservation(ctx, pr, nil, []domain.PullRequestReviewThread{{
+		ThreadID: "t1", Path: "main.go", Line: 7, Resolved: true, IsBot: true, SemanticHash: "v2", UpdatedAt: now.Add(time.Second),
+	}}, nil, ports.ReviewWriteReplace); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := s.EventsAfter(ctx, 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var added, resolved []cdc.Event
+	for _, r := range rows {
+		switch r.Type {
+		case cdc.EventPRReviewThreadAdded:
+			added = append(added, r)
+		case cdc.EventPRReviewThreadResolved:
+			resolved = append(resolved, r)
+		}
+	}
+	if len(added) != 1 {
+		t.Fatalf("want 1 review-thread added CDC event (initial Replace insert), got %d", len(added))
+	}
+	if len(resolved) != 1 {
+		t.Fatalf("want 1 review-thread resolved CDC event on the second Replace poll, got %d", len(resolved))
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(resolved[0].Payload, &payload); err != nil {
+		t.Fatalf("resolved payload JSON: %v", err)
+	}
+	if payload["thread"] != "t1" || payload["resolved"] != true {
+		t.Fatalf("resolved payload = %#v", payload)
+	}
+}
+
+// Pruning regression: Replace must still drop threads that are no longer in
+// the observed listing, otherwise stale rows accumulate. Seed two threads,
+// then re-poll with only one; the missing thread must be gone, while the
+// surviving thread still gets an UPDATE (not a fresh INSERT).
+func TestPRReviewThreadsReplace_PrunesOrphansWithoutReinserting(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	rec, err := s.CreateSession(ctx, sampleRecord("mer"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	pr := domain.PullRequest{URL: "https://example/pr/56", SessionID: rec.ID, Number: 56, UpdatedAt: now}
+
+	if err := s.WriteSCMObservation(ctx, pr, nil, []domain.PullRequestReviewThread{
+		{ThreadID: "keep", Path: "a.go", Line: 1, IsBot: true, SemanticHash: "k1", UpdatedAt: now},
+		{ThreadID: "drop", Path: "b.go", Line: 2, IsBot: true, SemanticHash: "d1", UpdatedAt: now},
+	}, nil, ports.ReviewWriteReplace); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WriteSCMObservation(ctx, pr, nil, []domain.PullRequestReviewThread{
+		{ThreadID: "keep", Path: "a.go", Line: 1, Resolved: true, IsBot: true, SemanticHash: "k2", UpdatedAt: now.Add(time.Second)},
+	}, nil, ports.ReviewWriteReplace); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.ListPRReviewThreads(ctx, pr.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ThreadID != "keep" || !got[0].Resolved {
+		t.Fatalf("after prune want one resolved \"keep\" row, got %+v", got)
+	}
+	rows, err := s.EventsAfter(ctx, 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var added, resolved int
+	for _, r := range rows {
+		if r.Type == cdc.EventPRReviewThreadAdded {
+			added++
+		}
+		if r.Type == cdc.EventPRReviewThreadResolved {
+			resolved++
+		}
+	}
+	// Two adds from poll 1 ("keep" and "drop"), no extra add on poll 2
+	// (the surviving row went through ON CONFLICT DO UPDATE, not a fresh
+	// INSERT), and one resolved transition from the kept row's flip.
+	if added != 2 {
+		t.Fatalf("want 2 added events across both polls, got %d", added)
+	}
+	if resolved != 1 {
+		t.Fatalf("want 1 resolved event from the surviving thread's flip, got %d", resolved)
+	}
+}
+
 // WritePR persists scalar facts, checks, and comments in one tx; all three
 // should be queryable afterward.
 func TestWritePR_PersistsScalarsChecksAndComments(t *testing.T) {
