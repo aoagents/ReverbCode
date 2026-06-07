@@ -617,7 +617,7 @@ func applySymlinks(projectPath, workspacePath string, symlinks []string) error {
 			continue
 		}
 		target := filepath.Join(workspacePath, rel)
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(target), 0o750); err != nil {
 			return fmt.Errorf("symlink %q: %w", rel, err)
 		}
 		if _, err := os.Lstat(target); err == nil {
