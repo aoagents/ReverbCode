@@ -379,11 +379,13 @@ func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.Sess
 	if err := m.prepareWorkspace(ctx, agent, id, ws.Path); err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", id, err)
 	}
-	argv, err := restoreArgv(ctx, agent, id, ws.Path, meta)
+	project, err := m.loadProject(ctx, rec.ProjectID)
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", id, err)
 	}
-	project, err := m.loadProject(ctx, rec.ProjectID)
+	// Restore re-applies the project's resolved agent config so a configured
+	// model/permissions carry across a restore, matching fresh spawn.
+	argv, err := restoreArgv(ctx, agent, id, ws.Path, meta, effectiveAgentConfig(rec.Kind, project.Config))
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", id, err)
 	}
@@ -512,8 +514,10 @@ func (m *Manager) buildSpawnPrompt(ctx context.Context, cfg ports.SpawnConfig, p
 }
 
 // projectRules assembles the project's inline AgentRules and the contents of its
-// AgentRulesFile (read relative to the project path). A missing AgentRulesFile
-// is an error so a typo'd path surfaces rather than silently dropping rules.
+// AgentRulesFile (read relative to the project path). A missing rules file is
+// treated as absent optional context — not a hard dependency — so a deleted,
+// renamed, or never-created file does not fail every spawn for the project. Only
+// a real read error (e.g. permissions) surfaces.
 func projectRules(project domain.ProjectRecord) (string, error) {
 	rules := project.Config.AgentRules
 	if file := strings.TrimSpace(project.Config.AgentRulesFile); file != "" {
@@ -521,11 +525,12 @@ func projectRules(project domain.ProjectRecord) (string, error) {
 		if !filepath.IsAbs(path) {
 			path = filepath.Join(project.Path, file)
 		}
-		data, err := os.ReadFile(path)
-		if err != nil {
+		switch data, err := os.ReadFile(path); {
+		case err == nil:
+			rules = appendPromptSection(rules, strings.TrimRight(string(data), "\n"))
+		case !errors.Is(err, os.ErrNotExist):
 			return "", fmt.Errorf("agent rules file: %w", err)
 		}
-		rules = appendPromptSection(rules, strings.TrimRight(string(data), "\n"))
 	}
 	return rules, nil
 }
@@ -684,13 +689,13 @@ func (m *Manager) prepareWorkspace(ctx context.Context, agent ports.Agent, id do
 // restoreArgv builds the argv to relaunch a torn-down session: the agent's
 // native resume command when it can continue the session, else a fresh launch.
 // The agent signals via ok=false (e.g. no native session id captured yet).
-func restoreArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, workspacePath string, meta domain.SessionMetadata) ([]string, error) {
+func restoreArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, workspacePath string, meta domain.SessionMetadata, agentConfig ports.AgentConfig) ([]string, error) {
 	ref := ports.SessionRef{
 		ID:            string(id),
 		WorkspacePath: workspacePath,
 		Metadata:      map[string]string{ports.MetadataKeyAgentSessionID: meta.AgentSessionID},
 	}
-	cmd, ok, err := agent.GetRestoreCommand(ctx, ports.RestoreConfig{Session: ref})
+	cmd, ok, err := agent.GetRestoreCommand(ctx, ports.RestoreConfig{Session: ref, Config: agentConfig})
 	if err != nil {
 		return nil, fmt.Errorf("restore command: %w", err)
 	}
@@ -701,6 +706,7 @@ func restoreArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, wo
 		SessionID:     string(id),
 		WorkspacePath: workspacePath,
 		Prompt:        meta.Prompt,
+		Config:        agentConfig,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("launch command: %w", err)

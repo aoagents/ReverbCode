@@ -107,9 +107,14 @@ func TestProjectRulesReadsFile(t *testing.T) {
 		t.Fatalf("rules = %q, want %q", rules, want)
 	}
 
-	// A missing rules file is a clear error.
+	// A missing rules file is optional context, not a hard failure: it returns
+	// the inline rules without aborting the spawn.
 	rec.Config.AgentRulesFile = "nope.md"
-	if _, err := projectRules(rec); err == nil {
-		t.Fatal("expected error for missing rules file")
+	got, err := projectRules(rec)
+	if err != nil {
+		t.Fatalf("missing rules file should not error: %v", err)
+	}
+	if got != "use conventional commits" {
+		t.Fatalf("rules with missing file = %q, want inline rules only", got)
 	}
 }
