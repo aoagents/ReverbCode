@@ -5,12 +5,14 @@ package scm
 // review cadence, semantic hashes, and notification behavior stay provider-neutral.
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"os/exec"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -307,6 +309,89 @@ func TestPoll_RetriesTransientCredentialErrors(t *testing.T) {
 	}
 	if provider.credentialChecks != 2 || provider.repoGuardCalls != 1 {
 		t.Fatalf("second poll should retry credentials and continue: checks=%d repoGuards=%d", provider.credentialChecks, provider.repoGuardCalls)
+	}
+}
+
+// syncBuffer is a goroutine-safe wrapper around bytes.Buffer for capturing
+// slog output emitted from the observer's background goroutine.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.buf.Write(p)
+}
+
+func (s *syncBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.buf.String()
+}
+
+// TestStart_LogsDisabledWarningWhenNoTokenAndNoSubjects exercises the bug-7
+// regression: on a fresh daemon with no tracked sessions/PRs, discoverSubjects
+// returns empty and Poll short-circuits before reaching the credential gate.
+// The "scm observer disabled: provider credentials unavailable" warn line must
+// still fire exactly once from the observer loop's pre-Poll credential check.
+func TestStart_LogsDisabledWarningWhenNoTokenAndNoSubjects(t *testing.T) {
+	store := &fakeStore{
+		sessions: nil, // no sessions → discoverSubjects returns empty
+		projects: map[string]domain.ProjectRecord{},
+		prs:      map[domain.SessionID][]domain.PullRequest{},
+		checks:   map[string][]domain.PullRequestCheck{},
+	}
+	provider := &fakeProvider{
+		credentialGate: true,
+		credentialOK:   false,
+		repoGuards:     map[string]ports.SCMGuardResult{},
+		observations:   map[string]ports.SCMObservation{},
+	}
+
+	buf := &syncBuffer{}
+	logger := slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	obs := New(provider, store, &fakeLifecycle{}, Config{
+		Clock:    func() time.Time { return time.Unix(1, 0).UTC() },
+		Tick:     time.Hour,
+		Logger:   logger,
+		CacheMax: 128,
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := obs.Start(ctx)
+	// Wait until the loop has emitted the expected warn line, or fail on timeout.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if strings.Contains(buf.String(), "scm observer disabled: provider credentials unavailable") {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("observer did not exit after context cancellation")
+	}
+
+	logged := buf.String()
+	if !strings.Contains(logged, "scm observer disabled: provider credentials unavailable") {
+		t.Fatalf("expected disabled-credentials warn line in logs; got:\n%s", logged)
+	}
+	if got := strings.Count(logged, "scm observer disabled: provider credentials unavailable"); got != 1 {
+		t.Fatalf("warn line should fire exactly once, got %d occurrences:\n%s", got, logged)
+	}
+	if !obs.credentialsChecked || !obs.disabled {
+		t.Fatalf("observer state after pre-poll credential check: checked=%v disabled=%v", obs.credentialsChecked, obs.disabled)
+	}
+	if provider.credentialChecks != 1 {
+		t.Fatalf("credential checks = %d, want exactly one pre-poll check", provider.credentialChecks)
+	}
+	if provider.repoGuardCalls != 0 || provider.detectCalls != 0 || len(provider.fetchBatches) != 0 {
+		t.Fatalf("no provider API calls expected when disabled: guards=%d detects=%d batches=%d",
+			provider.repoGuardCalls, provider.detectCalls, len(provider.fetchBatches))
 	}
 }
 

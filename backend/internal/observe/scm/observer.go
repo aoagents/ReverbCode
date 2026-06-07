@@ -168,6 +168,16 @@ func (o *Observer) Start(ctx context.Context) <-chan struct{} {
 
 func (o *Observer) loop(ctx context.Context, done chan<- struct{}) {
 	defer close(done)
+	// Run the credential gate once before the first poll so the
+	// "scm observer disabled: provider credentials unavailable" warning is
+	// emitted on a fresh daemon even if discoverSubjects has no subjects yet
+	// (which would otherwise short-circuit Poll before checkCredentials).
+	// checkCredentials is guarded by credentialsChecked, so this remains
+	// once-per-process; a transient error here simply defers the check to the
+	// next Poll, matching existing behavior.
+	if _, err := o.checkCredentials(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		o.logger.Error("scm observer: initial credential check failed", "err", err)
+	}
 	if err := o.Poll(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		o.logger.Error("scm observer: initial poll failed", "err", err)
 	}
