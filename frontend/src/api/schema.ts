@@ -247,6 +247,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sessions/{sessionId}/rollback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Undo a partially-completed spawn (delete seed row, or kill if spawn output exists) */
+        post: operations["rollbackSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sessions/{sessionId}/send": {
         parameters: {
             query?: never;
@@ -394,6 +411,12 @@ export interface components {
         RestoreSessionResponse: {
             ok: boolean;
             session: components["schemas"]["Session"];
+            sessionId: string;
+        };
+        RollbackSessionResponse: {
+            deleted?: boolean;
+            killed?: boolean;
+            ok: boolean;
             sessionId: string;
         };
         SCMConfig: {
@@ -1436,6 +1459,56 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RestoreSessionResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    rollbackSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RollbackSessionResponse"];
                 };
             };
             /** @description Not Found */
