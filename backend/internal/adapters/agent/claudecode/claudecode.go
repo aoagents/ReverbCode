@@ -306,7 +306,7 @@ func ResolveClaudeBinary(ctx context.Context) (string, error) {
 				return candidate, nil
 			}
 		}
-		return "claude", nil
+		return "", fmt.Errorf("claude: %w", ports.ErrAgentBinaryNotFound)
 	}
 
 	if path, err := exec.LookPath("claude"); err == nil && path != "" {
@@ -333,7 +333,7 @@ func ResolveClaudeBinary(ctx context.Context) (string, error) {
 		}
 	}
 
-	return "claude", nil
+	return "", fmt.Errorf("claude: %w", ports.ErrAgentBinaryNotFound)
 }
 
 func (p *Plugin) claudeBinary(ctx context.Context) (string, error) {

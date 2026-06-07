@@ -92,6 +92,14 @@ func (f *fakeSessionService) Kill(_ context.Context, id domain.SessionID) (bool,
 	return true, nil
 }
 
+func (f *fakeSessionService) RollbackSpawn(_ context.Context, id domain.SessionID) (sessionsvc.RollbackOutcome, error) {
+	if _, ok := f.sessions[id]; ok {
+		delete(f.sessions, id)
+		return sessionsvc.RollbackOutcome{Deleted: true}, nil
+	}
+	return sessionsvc.RollbackOutcome{}, nil
+}
+
 func (f *fakeSessionService) Cleanup(_ context.Context, project domain.ProjectID) ([]domain.SessionID, error) {
 	f.cleanupProjects = append(f.cleanupProjects, project)
 	if f.cleanupResult != nil {

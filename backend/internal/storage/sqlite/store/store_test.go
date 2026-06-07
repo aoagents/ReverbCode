@@ -102,6 +102,76 @@ func TestSessionCreateAssignsPerProjectID(t *testing.T) {
 	}
 }
 
+// TestDeleteSessionOnlyRemovesSeedRows covers Bug 4's storage-layer guarantee:
+// DeleteSession removes a session row only when the row is still in seed state
+// (no workspace, no runtime handle, no agent session id, no prompt, not
+// terminated). Rows that already carry spawn output are immutable so the
+// no-resurrection guarantee for live sessions still holds.
+func TestDeleteSessionOnlyRemovesSeedRows(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+
+	// Seed row: just CreateSession output, no metadata yet.
+	now := time.Now().UTC().Truncate(time.Second)
+	seed := domain.SessionRecord{
+		ProjectID: "mer",
+		Kind:      domain.KindWorker,
+		Harness:   domain.HarnessClaudeCode,
+		Activity:  domain.Activity{State: domain.ActivityIdle, LastActivityAt: now},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	r1, err := s.CreateSession(ctx, seed)
+	if err != nil {
+		t.Fatalf("create seed: %v", err)
+	}
+
+	deleted, err := s.DeleteSession(ctx, r1.ID)
+	if err != nil || !deleted {
+		t.Fatalf("delete seed = %v %v, want true nil", deleted, err)
+	}
+	if _, ok, _ := s.GetSession(ctx, r1.ID); ok {
+		t.Fatal("seed row still present after DeleteSession")
+	}
+
+	// A row with workspace_path populated must NOT be deleted — even if
+	// !is_terminated. This is the no-resurrection guarantee for live work.
+	r2, err := s.CreateSession(ctx, sampleRecord("mer"))
+	if err != nil {
+		t.Fatalf("create live: %v", err)
+	}
+	deleted, err = s.DeleteSession(ctx, r2.ID)
+	if err != nil {
+		t.Fatalf("delete live err = %v", err)
+	}
+	if deleted {
+		t.Fatal("DeleteSession must be a no-op for rows with spawn output")
+	}
+	if _, ok, _ := s.GetSession(ctx, r2.ID); !ok {
+		t.Fatal("live row was removed by DeleteSession")
+	}
+
+	// A terminated row is also out of scope: terminal-state rows hold cleanup
+	// metadata users may still inspect, so the gate refuses them too.
+	r3, err := s.CreateSession(ctx, seed)
+	if err != nil {
+		t.Fatalf("create extra seed: %v", err)
+	}
+	terminated := r3
+	terminated.IsTerminated = true
+	if err := s.UpdateSession(ctx, terminated); err != nil {
+		t.Fatalf("mark terminated: %v", err)
+	}
+	deleted, err = s.DeleteSession(ctx, r3.ID)
+	if err != nil {
+		t.Fatalf("delete terminated err = %v", err)
+	}
+	if deleted {
+		t.Fatal("DeleteSession must be a no-op for terminated rows")
+	}
+}
+
 func TestSessionRenameUpdatesDisplayName(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

@@ -8,6 +8,7 @@ package codex
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -175,7 +176,7 @@ func ResolveCodexBinary(ctx context.Context) (string, error) {
 			}
 		}
 
-		return "codex", nil
+		return "", fmt.Errorf("codex: %w", ports.ErrAgentBinaryNotFound)
 	}
 
 	if path, err := exec.LookPath("codex"); err == nil && path != "" {
@@ -202,7 +203,7 @@ func ResolveCodexBinary(ctx context.Context) (string, error) {
 		}
 	}
 
-	return "codex", nil
+	return "", fmt.Errorf("codex: %w", ports.ErrAgentBinaryNotFound)
 }
 
 func (p *Plugin) codexBinary(ctx context.Context) (string, error) {

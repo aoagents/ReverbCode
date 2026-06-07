@@ -108,6 +108,18 @@ type Workspace interface {
 	Restore(ctx context.Context, cfg WorkspaceConfig) (WorkspaceInfo, error)
 }
 
+// Workspace-level sentinels surfaced through Create/Restore so the HTTP layer
+// can map them to typed errors rather than collapsing every adapter failure
+// into an opaque 500. Adapters wrap these via fmt.Errorf("...: %w", sentinel).
+var (
+	// ErrWorkspaceBranchCheckedOutElsewhere reports the requested branch is
+	// already checked out in another worktree of the same repo.
+	ErrWorkspaceBranchCheckedOutElsewhere = errors.New("workspace: branch is already checked out in another worktree")
+	// ErrWorkspaceBranchNotFetched reports the requested branch exists nowhere
+	// reachable (no local head, no remote-tracking branch, no tag).
+	ErrWorkspaceBranchNotFetched = errors.New("workspace: branch is not fetched")
+)
+
 // WorkspaceConfig is the spec for creating or restoring a session's workspace.
 type WorkspaceConfig struct {
 	ProjectID domain.ProjectID

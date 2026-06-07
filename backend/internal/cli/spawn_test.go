@@ -98,9 +98,9 @@ func TestSpawnClaimPRFailureRollsBackSession(t *testing.T) {
 			}
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = io.WriteString(w, `{"error":"not_found","code":"PR_NOT_FOUND","message":"PR not found"}`)
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions/demo-10/kill":
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions/demo-10/rollback":
 			delete(sessions, "demo-10")
-			_, _ = io.WriteString(w, `{"ok":true,"sessionId":"demo-10","freed":true}`)
+			_, _ = io.WriteString(w, `{"ok":true,"sessionId":"demo-10","deleted":true}`)
 		default:
 			http.NotFound(w, r)
 		}
@@ -119,7 +119,7 @@ func TestSpawnClaimPRFailureRollsBackSession(t *testing.T) {
 	if sessions["demo-10"] {
 		t.Fatalf("spawned session still present after claim rollback: %#v", sessions)
 	}
-	want := []string{"GET /api/v1/projects/demo", "POST /api/v1/sessions", "POST /api/v1/sessions/demo-10/pr/claim", "POST /api/v1/sessions/demo-10/kill"}
+	want := []string{"GET /api/v1/projects/demo", "POST /api/v1/sessions", "POST /api/v1/sessions/demo-10/pr/claim", "POST /api/v1/sessions/demo-10/rollback"}
 	if !reflect.DeepEqual(requests, want) {
 		t.Fatalf("requests=%#v want %#v", requests, want)
 	}

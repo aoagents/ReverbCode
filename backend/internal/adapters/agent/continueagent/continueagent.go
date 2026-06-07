@@ -22,6 +22,7 @@ package continueagent
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -197,7 +198,7 @@ func ResolveContinueBinary(ctx context.Context) (string, error) {
 				return "", err
 			}
 		}
-		return "cn", nil
+		return "", fmt.Errorf("cn: %w", ports.ErrAgentBinaryNotFound)
 	}
 
 	if path, err := exec.LookPath("cn"); err == nil && path != "" {
@@ -225,7 +226,7 @@ func ResolveContinueBinary(ctx context.Context) (string, error) {
 		}
 	}
 
-	return "cn", nil
+	return "", fmt.Errorf("cn: %w", ports.ErrAgentBinaryNotFound)
 }
 
 func (p *Plugin) continueBinary(ctx context.Context) (string, error) {

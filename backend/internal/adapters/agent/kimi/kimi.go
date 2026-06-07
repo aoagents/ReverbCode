@@ -17,6 +17,7 @@ package kimi
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -218,7 +219,7 @@ func ResolveKimiBinary(ctx context.Context) (string, error) {
 				return "", err
 			}
 		}
-		return "kimi", nil
+		return "", fmt.Errorf("kimi: %w", ports.ErrAgentBinaryNotFound)
 	}
 
 	if path, err := exec.LookPath("kimi"); err == nil && path != "" {
@@ -245,7 +246,7 @@ func ResolveKimiBinary(ctx context.Context) (string, error) {
 		}
 	}
 
-	return "kimi", nil
+	return "", fmt.Errorf("kimi: %w", ports.ErrAgentBinaryNotFound)
 }
 
 func (p *Plugin) kimiBinary(ctx context.Context) (string, error) {

@@ -15,6 +15,7 @@ package qwen
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -144,8 +145,9 @@ func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (por
 
 // ResolveQwenBinary returns the path to the qwen binary on this machine,
 // searching PATH then a handful of well-known install locations (Homebrew, npm
-// global). Returns "qwen" as a last-ditch fallback so callers see a clear
-// "command not found" rather than an empty argv.
+// global). Returns ports.ErrAgentBinaryNotFound when none of those find the
+// binary — better than the previous silent `"qwen"` fallback, which let an
+// empty zellij pane masquerade as a live session.
 func ResolveQwenBinary(ctx context.Context) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
@@ -178,7 +180,7 @@ func ResolveQwenBinary(ctx context.Context) (string, error) {
 			}
 		}
 
-		return "qwen", nil
+		return "", fmt.Errorf("qwen: %w", ports.ErrAgentBinaryNotFound)
 	}
 
 	if path, err := exec.LookPath("qwen"); err == nil && path != "" {
@@ -206,7 +208,7 @@ func ResolveQwenBinary(ctx context.Context) (string, error) {
 		}
 	}
 
-	return "qwen", nil
+	return "", fmt.Errorf("qwen: %w", ports.ErrAgentBinaryNotFound)
 }
 
 func (p *Plugin) qwenBinary(ctx context.Context) (string, error) {

@@ -56,6 +56,47 @@ func (s *Store) RenameSession(ctx context.Context, id domain.SessionID, displayN
 	return rows > 0, nil
 }
 
+// DeleteSession removes a session row, but only if it is still in seed state
+// (no workspace, no runtime handle, no agent session id, no prompt, and not
+// already terminated). Rows that have observable spawn output are immutable
+// to preserve the no-resurrection guarantee — for those, callers fall back to
+// MarkTerminated (lifecycle.Manager) instead.
+//
+// The deletion runs in a transaction that first clears any change_log rows
+// referencing the session id (the change_log table FKs sessions(id) without
+// ON DELETE CASCADE). Since the session is in seed state, the only events
+// present are its own session_created/session_updated rows — no PR or
+// downstream observation events have been written yet.
+//
+// Returns deleted=true when a seed row was removed; deleted=false when the
+// session id did not match a seed row (either it never existed, or it had
+// already progressed past seed state). The latter case is benign — the caller
+// should fall back to MarkTerminated.
+func (s *Store) DeleteSession(ctx context.Context, id domain.SessionID) (bool, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	var deleted bool
+	err := s.inTx(ctx, "delete seed session", func(q *gen.Queries) error {
+		// Drop change_log rows for this session id first so the FK doesn't
+		// reject the DELETE. Safe even in the no-op case: an empty match
+		// removes nothing. We do not touch project-level events (session_id
+		// IS NULL) — those belong to the project, not this session.
+		if _, err := q.DeleteChangeLogForSession(ctx, id); err != nil {
+			return fmt.Errorf("clear change log for %s: %w", id, err)
+		}
+		n, err := q.DeleteSeedSession(ctx, id)
+		if err != nil {
+			return fmt.Errorf("delete seed session %s: %w", id, err)
+		}
+		deleted = n > 0
+		return nil
+	})
+	if err != nil {
+		return false, err
+	}
+	return deleted, nil
+}
+
 // GetSession returns the full record for a session, or ok=false if absent.
 func (s *Store) GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error) {
 	row, err := s.qr.GetSession(ctx, id)

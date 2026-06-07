@@ -16,6 +16,7 @@ package grok
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -212,7 +213,7 @@ func ResolveGrokBinary(ctx context.Context) (string, error) {
 				return "", err
 			}
 		}
-		return "grok", nil
+		return "", fmt.Errorf("grok: %w", ports.ErrAgentBinaryNotFound)
 	}
 
 	if path, err := exec.LookPath("grok"); err == nil && path != "" {
@@ -239,7 +240,7 @@ func ResolveGrokBinary(ctx context.Context) (string, error) {
 		}
 	}
 
-	return "grok", nil
+	return "", fmt.Errorf("grok: %w", ports.ErrAgentBinaryNotFound)
 }
 
 func (p *Plugin) grokBinary(ctx context.Context) (string, error) {

@@ -281,11 +281,17 @@ func TestContextCancellation(t *testing.T) {
 }
 
 func TestResolveAiderBinaryFallback(t *testing.T) {
+	// When the binary is not on PATH or any well-known location, the resolver
+	// MUST surface ports.ErrAgentBinaryNotFound rather than a silent string
+	// fallback that lets a missing CLI launch into an empty zellij pane.
 	bin, err := ResolveAiderBinary(context.Background())
 	if err != nil {
-		t.Fatalf("err: %v", err)
+		if !errors.Is(err, ports.ErrAgentBinaryNotFound) {
+			t.Fatalf("err = %v, want ports.ErrAgentBinaryNotFound", err)
+		}
+		return
 	}
 	if bin == "" {
-		t.Fatal("ResolveAiderBinary returned empty string")
+		t.Fatal("ResolveAiderBinary returned empty string with no error")
 	}
 }

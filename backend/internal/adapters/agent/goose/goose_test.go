@@ -3,10 +3,10 @@ package goose
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
-	"strings"
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -380,17 +380,18 @@ func TestSessionInfoFalseWhenNoHookMetadata(t *testing.T) {
 }
 
 func TestResolveGooseBinaryFallback(t *testing.T) {
-	// On a machine without goose on PATH or any well-known location, resolution
-	// still returns a usable last-ditch "goose" name rather than empty.
-	got, err := ResolveGooseBinary(context.Background())
+	// When the binary is not on PATH or any well-known location, the resolver
+	// MUST surface ports.ErrAgentBinaryNotFound rather than a silent string
+	// fallback that lets a missing CLI launch into an empty zellij pane.
+	bin, err := ResolveGooseBinary(context.Background())
 	if err != nil {
-		t.Fatalf("ResolveGooseBinary err = %v", err)
+		if !errors.Is(err, ports.ErrAgentBinaryNotFound) {
+			t.Fatalf("err = %v, want ports.ErrAgentBinaryNotFound", err)
+		}
+		return
 	}
-	if got == "" {
-		t.Fatal("ResolveGooseBinary returned empty binary")
-	}
-	if !strings.Contains(got, "goose") {
-		t.Fatalf("ResolveGooseBinary = %q, want a path containing goose", got)
+	if bin == "" {
+		t.Fatal("ResolveGooseBinary returned empty path with no error")
 	}
 }
 

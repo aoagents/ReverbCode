@@ -133,7 +133,21 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 	return cmd
 }
 
+// rollbackSpawnedSession reverses a partial `spawn` whose out-of-band follow-up
+// (PR claim) failed. It calls the daemon's `/rollback` endpoint, which deletes
+// the seed-state row outright instead of marking it terminated — so the user
+// does not see an orphan terminated session under `--include-terminated`. If
+// spawn output has already landed (workspace + runtime), the daemon falls back
+// to a Kill on the server side so teardown still happens.
 func (c *commandContext) rollbackSpawnedSession(ctx context.Context, id string) error {
-	var res killSessionResponse
-	return c.postJSON(ctx, "sessions/"+url.PathEscape(id)+"/kill", struct{}{}, &res)
+	var res rollbackSessionResponse
+	return c.postJSON(ctx, "sessions/"+url.PathEscape(id)+"/rollback", struct{}{}, &res)
+}
+
+// rollbackSessionResponse mirrors the daemon's RollbackSessionResponse body.
+type rollbackSessionResponse struct {
+	OK        bool   `json:"ok"`
+	SessionID string `json:"sessionId"`
+	Deleted   bool   `json:"deleted,omitempty"`
+	Killed    bool   `json:"killed,omitempty"`
 }

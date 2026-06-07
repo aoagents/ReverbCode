@@ -5,6 +5,7 @@ package agy
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -182,7 +183,7 @@ func ResolveAgyBinary(ctx context.Context) (string, error) {
 			}
 		}
 
-		return "agy", nil
+		return "", fmt.Errorf("agy: %w", ports.ErrAgentBinaryNotFound)
 	}
 
 	if path, err := exec.LookPath("agy"); err == nil && path != "" {
@@ -210,7 +211,7 @@ func ResolveAgyBinary(ctx context.Context) (string, error) {
 		}
 	}
 
-	return "agy", nil
+	return "", fmt.Errorf("agy: %w", ports.ErrAgentBinaryNotFound)
 }
 
 func (p *Plugin) agyBinary(ctx context.Context) (string, error) {

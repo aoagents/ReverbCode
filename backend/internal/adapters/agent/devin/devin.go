@@ -24,6 +24,7 @@ package devin
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -200,7 +201,7 @@ func ResolveDevinBinary(ctx context.Context) (string, error) {
 				return "", err
 			}
 		}
-		return "devin", nil
+		return "", fmt.Errorf("devin: %w", ports.ErrAgentBinaryNotFound)
 	}
 
 	if path, err := exec.LookPath("devin"); err == nil && path != "" {
@@ -227,7 +228,7 @@ func ResolveDevinBinary(ctx context.Context) (string, error) {
 		}
 	}
 
-	return "devin", nil
+	return "", fmt.Errorf("devin: %w", ports.ErrAgentBinaryNotFound)
 }
 
 func (p *Plugin) devinBinary(ctx context.Context) (string, error) {

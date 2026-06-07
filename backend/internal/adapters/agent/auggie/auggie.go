@@ -38,6 +38,7 @@ package auggie
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -201,7 +202,7 @@ func ResolveAuggieBinary(ctx context.Context) (string, error) {
 				return "", err
 			}
 		}
-		return "auggie", nil
+		return "", fmt.Errorf("auggie: %w", ports.ErrAgentBinaryNotFound)
 	}
 
 	if path, err := exec.LookPath("auggie"); err == nil && path != "" {
@@ -229,7 +230,7 @@ func ResolveAuggieBinary(ctx context.Context) (string, error) {
 		}
 	}
 
-	return "auggie", nil
+	return "", fmt.Errorf("auggie: %w", ports.ErrAgentBinaryNotFound)
 }
 
 func (p *Plugin) auggieBinary(ctx context.Context) (string, error) {

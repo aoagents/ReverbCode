@@ -775,6 +775,46 @@ paths:
       summary: Restore a terminated session
       tags:
       - sessions
+  /api/v1/sessions/{sessionId}/rollback:
+    post:
+      operationId: rollbackSession
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RollbackSessionResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Undo a partially-completed spawn (delete seed row, or kill if spawn
+        output exists)
+      tags:
+      - sessions
   /api/v1/sessions/{sessionId}/send:
     post:
       operationId: sendSessionMessage
@@ -1148,6 +1188,20 @@ components:
       - ok
       - sessionId
       - session
+      type: object
+    RollbackSessionResponse:
+      properties:
+        deleted:
+          type: boolean
+        killed:
+          type: boolean
+        ok:
+          type: boolean
+        sessionId:
+          type: string
+      required:
+      - ok
+      - sessionId
       type: object
     SCMConfig:
       properties:

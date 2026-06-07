@@ -158,6 +158,16 @@ type KillSessionResponse struct {
 	Freed     bool             `json:"freed,omitempty"`
 }
 
+// RollbackSessionResponse is the body of POST /api/v1/sessions/{sessionId}/rollback.
+// Exactly one of Deleted/Killed is true on a successful rollback; both are
+// false when the session was already absent or already terminated (benign).
+type RollbackSessionResponse struct {
+	OK        bool             `json:"ok"`
+	SessionID domain.SessionID `json:"sessionId"`
+	Deleted   bool             `json:"deleted,omitempty"`
+	Killed    bool             `json:"killed,omitempty"`
+}
+
 // CleanupSessionsResponse is the body of POST /api/v1/sessions/cleanup.
 type CleanupSessionsResponse struct {
 	OK      bool               `json:"ok"`

@@ -8,6 +8,7 @@ package crush
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -191,7 +192,7 @@ func ResolveCrushBinary(ctx context.Context) (string, error) {
 			}
 		}
 
-		return "crush", nil
+		return "", fmt.Errorf("crush: %w", ports.ErrAgentBinaryNotFound)
 	}
 
 	if path, err := exec.LookPath("crush"); err == nil && path != "" {
@@ -218,7 +219,7 @@ func ResolveCrushBinary(ctx context.Context) (string, error) {
 		}
 	}
 
-	return "crush", nil
+	return "", fmt.Errorf("crush: %w", ports.ErrAgentBinaryNotFound)
 }
 
 func (p *Plugin) crushBinary(ctx context.Context) (string, error) {

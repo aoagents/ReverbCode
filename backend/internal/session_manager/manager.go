@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os/exec"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -49,6 +50,12 @@ type Store interface {
 	GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error)
 	ListSessions(ctx context.Context, project domain.ProjectID) ([]domain.SessionRecord, error)
 	ListAllSessions(ctx context.Context) ([]domain.SessionRecord, error)
+	// DeleteSession removes a session row only if it is still in seed state
+	// (no workspace, runtime handle, agent session id, or prompt; not
+	// terminated). Returns deleted=true when removal happened; deleted=false
+	// when the row had already progressed past seed state — preserving the
+	// no-resurrection guarantee for live sessions.
+	DeleteSession(ctx context.Context, id domain.SessionID) (bool, error)
 }
 
 // Manager coordinates internal session spawn, restore, kill, and cleanup over
@@ -62,6 +69,10 @@ type Manager struct {
 	lcm       lifecycleRecorder
 	dataDir   string
 	clock     func() time.Time
+	// lookPath is exec.LookPath in production; tests substitute a stub so
+	// they don't need real binaries on PATH. Returns ports.ErrAgentBinaryNotFound
+	// when the binary is missing so the sentinel propagates through toAPIError.
+	lookPath func(string) (string, error)
 }
 
 // Deps are the collaborators a Session Manager needs; New wires them together.
@@ -76,6 +87,10 @@ type Deps struct {
 	// commands can open the same store.
 	DataDir string
 	Clock   func() time.Time
+	// LookPath overrides exec.LookPath for the pre-launch agent-binary check.
+	// Production wiring leaves this nil and the manager defaults to
+	// exec.LookPath; tests inject a stub so they need not seed real binaries.
+	LookPath func(string) (string, error)
 }
 
 // New builds a Session Manager from its dependencies, defaulting the clock to
@@ -90,9 +105,13 @@ func New(d Deps) *Manager {
 		lcm:       d.Lifecycle,
 		dataDir:   d.DataDir,
 		clock:     d.Clock,
+		lookPath:  d.LookPath,
 	}
 	if m.clock == nil {
 		m.clock = time.Now
+	}
+	if m.lookPath == nil {
+		m.lookPath = exec.LookPath
 	}
 	return m
 }
@@ -147,6 +166,15 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		m.markSpawnFailedTerminated(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: launch command: %w", id, err)
 	}
+	// Pre-flight: confirm argv[0] actually exists on PATH (or as an absolute
+	// path the adapter returned) BEFORE handing the launch to the runtime.
+	// Zellij happily creates a session+pane around a missing command, so an
+	// unresolved binary would leak through as a "live" session that never ran.
+	if err := m.validateAgentBinary(argv); err != nil {
+		_ = m.workspace.Destroy(ctx, ws)
+		m.markSpawnFailedTerminated(ctx, id)
+		return domain.SessionRecord{}, fmt.Errorf("spawn %s: %w", id, err)
+	}
 	handle, err := m.runtime.Create(ctx, ports.RuntimeConfig{
 		SessionID:     id,
 		WorkspacePath: ws.Path,
@@ -170,9 +198,41 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 }
 
 // markSpawnFailedTerminated best-effort parks an orphaned spawn as terminated.
-// The store has no delete; a phantom half-spawned row is worse than a terminal one.
+// A phantom half-spawned row is worse than a terminal one; we only delete the
+// row when nothing observable has landed yet (seed state) via rollbackSpawn.
 func (m *Manager) markSpawnFailedTerminated(ctx context.Context, id domain.SessionID) {
 	_ = m.lcm.MarkTerminated(ctx, id)
+}
+
+// rollbackSpawn deletes a session row when it is still in seed state — used
+// when an out-of-band step that happens AFTER `Spawn` returns (e.g. PR claim
+// over HTTP) has failed and the caller wants the partially-spawned session
+// gone without leaving a terminated orphan visible under `--include-terminated`.
+//
+// If the row has progressed past seed state (workspace exists, runtime created,
+// etc.), DeleteSession is a no-op and rollbackSpawn falls back to a Kill so the
+// runtime/workspace are torn down. Returns (deleted, killed):
+//   - deleted=true: the row was a seed row and has been removed
+//   - killed=true:  the row had spawn output and was torn down + terminated
+//   - both false:   the row was already terminated or absent — benign no-op
+func (m *Manager) rollbackSpawn(ctx context.Context, id domain.SessionID) (deleted, killed bool, err error) {
+	deleted, err = m.store.DeleteSession(ctx, id)
+	if err != nil {
+		return false, false, fmt.Errorf("rollback %s: %w", id, err)
+	}
+	if deleted {
+		return true, false, nil
+	}
+	killed, err = m.Kill(ctx, id)
+	if err != nil {
+		return false, false, err
+	}
+	return false, killed, nil
+}
+
+// RollbackSpawn is the public surface of rollbackSpawn for service-layer callers.
+func (m *Manager) RollbackSpawn(ctx context.Context, id domain.SessionID) (deleted, killed bool, err error) {
+	return m.rollbackSpawn(ctx, id)
 }
 
 // Kill records terminal intent with the LCM, then tears down the runtime and
@@ -218,6 +278,13 @@ func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.Sess
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", id, ErrNotRestorable)
 	}
 	meta := rec.Metadata
+	// Mirror Kill's incomplete-handle guard: a session whose spawn failed before
+	// the workspace landed has neither WorkspacePath nor Branch, and there is
+	// nothing meaningful to restore from. Surface this as a typed 409 instead of
+	// letting workspace.Restore fail with an opaque wrapped error.
+	if meta.WorkspacePath == "" || meta.Branch == "" {
+		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", id, ErrIncompleteHandle)
+	}
 	if meta.AgentSessionID == "" && meta.Prompt == "" {
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: nothing to resume from", id)
 	}
@@ -460,6 +527,22 @@ func restoreArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, wo
 		return nil, fmt.Errorf("launch command: %w", err)
 	}
 	return argv, nil
+}
+
+// validateAgentBinary checks that argv[0] resolves via the manager's
+// lookPath (exec.LookPath in prod) before any runtime work happens. Adapters
+// that can't resolve their binary now return ports.ErrAgentBinaryNotFound from
+// GetLaunchCommand directly; this guard is a defense-in-depth for adapters
+// that return an argv[0] like "claude" without verifying.
+func (m *Manager) validateAgentBinary(argv []string) error {
+	if len(argv) == 0 {
+		return fmt.Errorf("agent: empty launch argv: %w", ports.ErrAgentBinaryNotFound)
+	}
+	bin := argv[0]
+	if _, err := m.lookPath(bin); err != nil {
+		return fmt.Errorf("agent binary %q: %w", bin, ports.ErrAgentBinaryNotFound)
+	}
+	return nil
 }
 
 func runtimeHandle(meta domain.SessionMetadata) ports.RuntimeHandle {

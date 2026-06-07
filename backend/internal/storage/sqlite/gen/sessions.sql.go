@@ -221,6 +221,24 @@ func (q *Queries) RenameSession(ctx context.Context, arg RenameSessionParams) (i
 	return result.RowsAffected()
 }
 
+const deleteSeedSession = `-- name: DeleteSeedSession :execrows
+DELETE FROM sessions
+WHERE id = ?
+  AND is_terminated = 0
+  AND workspace_path = ''
+  AND runtime_handle_id = ''
+  AND agent_session_id = ''
+  AND prompt = ''
+`
+
+func (q *Queries) DeleteSeedSession(ctx context.Context, id domain.SessionID) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteSeedSession, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const updateSession = `-- name: UpdateSession :exec
 UPDATE sessions SET
     issue_id = ?, kind = ?, harness = ?, display_name = ?,

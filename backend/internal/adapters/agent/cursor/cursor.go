@@ -9,6 +9,7 @@ package cursor
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -165,7 +166,7 @@ func ResolveCursorBinary(ctx context.Context) (string, error) {
 				return "", err
 			}
 		}
-		return "cursor-agent", nil
+		return "", fmt.Errorf("cursor: %w", ports.ErrAgentBinaryNotFound)
 	}
 
 	if path, err := exec.LookPath("cursor-agent"); err == nil && path != "" {
@@ -190,7 +191,7 @@ func ResolveCursorBinary(ctx context.Context) (string, error) {
 		}
 	}
 
-	return "cursor-agent", nil
+	return "", fmt.Errorf("cursor: %w", ports.ErrAgentBinaryNotFound)
 }
 
 func (p *Plugin) cursorBinary(ctx context.Context) (string, error) {

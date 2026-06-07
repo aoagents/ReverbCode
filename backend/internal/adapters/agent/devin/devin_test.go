@@ -2,6 +2,7 @@ package devin
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -254,14 +255,18 @@ func TestGetAgentHooksCtxCancelled(t *testing.T) {
 }
 
 func TestResolveDevinBinaryFallback(t *testing.T) {
-	// When devin is not on PATH or well-known locations, fall back to the bare
-	// name so exec can still attempt to launch it.
+	// When the binary is not on PATH or any well-known location, the resolver
+	// MUST surface ports.ErrAgentBinaryNotFound rather than a silent string
+	// fallback that lets a missing CLI launch into an empty zellij pane.
 	bin, err := ResolveDevinBinary(context.Background())
 	if err != nil {
-		t.Fatalf("err: %v", err)
+		if !errors.Is(err, ports.ErrAgentBinaryNotFound) {
+			t.Fatalf("err = %v, want ports.ErrAgentBinaryNotFound", err)
+		}
+		return
 	}
 	if bin == "" {
-		t.Fatal("empty binary path")
+		t.Fatal("ResolveDevinBinary returned empty path with no error")
 	}
 }
 

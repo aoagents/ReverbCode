@@ -41,6 +41,15 @@ type commander interface {
 	Kill(ctx context.Context, id domain.SessionID) (bool, error)
 	Send(ctx context.Context, id domain.SessionID, message string) error
 	Cleanup(ctx context.Context, project domain.ProjectID) ([]domain.SessionID, error)
+	RollbackSpawn(ctx context.Context, id domain.SessionID) (deleted, killed bool, err error)
+}
+
+// RollbackOutcome reports what happened in a rollback: either the seed row was
+// deleted, or the partially-spawned session was killed (runtime+workspace torn
+// down, row marked terminated).
+type RollbackOutcome struct {
+	Deleted bool `json:"deleted"`
+	Killed  bool `json:"killed"`
 }
 
 type scmProvider interface {
@@ -92,6 +101,9 @@ func NewWithDeps(d Deps) *Service {
 
 // Spawn creates a session and returns the API-facing read model.
 func (s *Service) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Session, error) {
+	if err := s.requireProject(ctx, cfg.ProjectID); err != nil {
+		return domain.Session{}, err
+	}
 	rec, err := s.manager.Spawn(ctx, cfg)
 	if err != nil {
 		return domain.Session{}, toAPIError(err)
@@ -99,11 +111,34 @@ func (s *Service) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	return s.toSession(ctx, rec)
 }
 
+// requireProject verifies the project is registered before any spawn write
+// touches the session store, so an unknown projectId surfaces as a typed 404
+// rather than an opaque 500 with an orphan terminated row left behind.
+func (s *Service) requireProject(ctx context.Context, id domain.ProjectID) error {
+	if id == "" {
+		return apierr.Invalid("PROJECT_ID_REQUIRED", "projectId is required", nil)
+	}
+	if s.store == nil {
+		return nil
+	}
+	_, ok, err := s.store.GetProject(ctx, string(id))
+	if err != nil {
+		return fmt.Errorf("get project %s: %w", id, err)
+	}
+	if !ok {
+		return apierr.NotFound("PROJECT_NOT_FOUND", "Unknown project — register it with `ao project add`")
+	}
+	return nil
+}
+
 // SpawnOrchestrator spawns an orchestrator session for a project. When clean is
 // true it first tears down any active orchestrator(s) for that project so the new
 // one is the only live coordinator — a business rule that belongs here, not in the
 // HTTP controller.
 func (s *Service) SpawnOrchestrator(ctx context.Context, projectID domain.ProjectID, clean bool) (domain.Session, error) {
+	if err := s.requireProject(ctx, projectID); err != nil {
+		return domain.Session{}, err
+	}
 	if clean {
 		active := true
 		existing, err := s.List(ctx, ListFilter{ProjectID: projectID, Active: &active, OrchestratorOnly: true})
@@ -132,6 +167,18 @@ func (s *Service) Restore(ctx context.Context, id domain.SessionID) (domain.Sess
 func (s *Service) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 	freed, err := s.manager.Kill(ctx, id)
 	return freed, toAPIError(err)
+}
+
+// RollbackSpawn deletes a seed-state session row, or falls back to a Kill if
+// the session has spawn output. Used by the CLI to undo a `spawn --claim-pr`
+// when the claim step fails, avoiding the orphan terminated row that a plain
+// Kill would leave behind.
+func (s *Service) RollbackSpawn(ctx context.Context, id domain.SessionID) (RollbackOutcome, error) {
+	deleted, killed, err := s.manager.RollbackSpawn(ctx, id)
+	if err != nil {
+		return RollbackOutcome{}, toAPIError(err)
+	}
+	return RollbackOutcome{Deleted: deleted, Killed: killed}, nil
 }
 
 // Send delegates agent messaging to the internal manager.
@@ -237,6 +284,12 @@ func toAPIError(err error) error {
 		return apierr.Conflict("SESSION_INCOMPLETE_HANDLE", "Session is missing runtime or workspace handles", nil)
 	case errors.Is(err, sessionmanager.ErrProjectNotResolvable):
 		return apierr.Invalid("PROJECT_NOT_RESOLVABLE", "Project is not registered or has no repo — register it with `ao project add`", nil)
+	case errors.Is(err, ports.ErrWorkspaceBranchCheckedOutElsewhere):
+		return apierr.Conflict("BRANCH_CHECKED_OUT_ELSEWHERE", err.Error(), nil)
+	case errors.Is(err, ports.ErrWorkspaceBranchNotFetched):
+		return apierr.Invalid("BRANCH_NOT_FETCHED", err.Error(), nil)
+	case errors.Is(err, ports.ErrAgentBinaryNotFound):
+		return apierr.Invalid("AGENT_BINARY_NOT_FOUND", err.Error(), nil)
 	default:
 		return err
 	}

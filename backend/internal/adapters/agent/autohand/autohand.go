@@ -12,6 +12,7 @@ package autohand
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -225,7 +226,7 @@ func ResolveAutohandBinary(ctx context.Context) (string, error) {
 			}
 		}
 
-		return "autohand", nil
+		return "", fmt.Errorf("autohand: %w", ports.ErrAgentBinaryNotFound)
 	}
 
 	if path, err := exec.LookPath("autohand"); err == nil && path != "" {
@@ -252,7 +253,7 @@ func ResolveAutohandBinary(ctx context.Context) (string, error) {
 		}
 	}
 
-	return "autohand", nil
+	return "", fmt.Errorf("autohand: %w", ports.ErrAgentBinaryNotFound)
 }
 
 func (p *Plugin) autohandBinary(ctx context.Context) (string, error) {

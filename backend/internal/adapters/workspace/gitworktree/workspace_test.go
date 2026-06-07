@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -225,6 +226,77 @@ func TestDestroyRefusesStillRegisteredPathAndPreservesDirectory(t *testing.T) {
 		if a == "--force" || a == "-f" {
 			t.Fatalf("git worktree remove was called with %q; --force must never be passed", a)
 		}
+	}
+}
+
+// TestAddWorktreeRefusesBranchCheckedOutElsewhere covers Bug 3 (a): if the
+// requested branch is already checked out in another worktree of the same repo,
+// Create must surface ports.ErrWorkspaceBranchCheckedOutElsewhere so the HTTP
+// layer can render a typed 409 instead of leaking raw git stderr through a 500.
+func TestAddWorktreeRefusesBranchCheckedOutElsewhere(t *testing.T) {
+	root := t.TempDir()
+	repo := t.TempDir()
+	ws, err := New(Options{ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	otherPath := filepath.Join(root, "proj", "other")
+	ws.run = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.Contains(joined, "check-ref-format"):
+			return nil, nil
+		case strings.Contains(joined, "worktree list --porcelain"):
+			return []byte("worktree " + otherPath + "\nbranch refs/heads/feature/x\n"), nil
+		case strings.Contains(joined, "rev-parse"):
+			return []byte("commit"), nil
+		default:
+			t.Fatalf("unexpected git invocation: %v", args)
+			return nil, nil
+		}
+	}
+	_, err = ws.Create(context.Background(), ports.WorkspaceConfig{ProjectID: "proj", SessionID: "sess", Branch: "feature/x"})
+	if !errors.Is(err, ports.ErrWorkspaceBranchCheckedOutElsewhere) {
+		t.Fatalf("err = %v, want ports.ErrWorkspaceBranchCheckedOutElsewhere", err)
+	}
+	if !strings.Contains(err.Error(), otherPath) {
+		t.Fatalf("err = %v, want message to include conflicting path %q", err, otherPath)
+	}
+}
+
+// TestAddWorktreeReportsBranchNotFetched covers Bug 3 (b): if no local head,
+// no origin remote-tracking branch, no default branch ref, and no tag of the
+// same name is reachable, Create must surface ports.ErrWorkspaceBranchNotFetched
+// so the HTTP layer can render a typed 400 with a `git fetch` suggestion.
+func TestAddWorktreeReportsBranchNotFetched(t *testing.T) {
+	root := t.TempDir()
+	repo := t.TempDir()
+	ws, err := New(Options{ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	// Build a real exit-1 error so refExists treats every probe as "absent".
+	exitOne := func() error {
+		cmd := exec.Command("sh", "-c", "exit 1")
+		return cmd.Run()
+	}()
+	ws.run = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.Contains(joined, "check-ref-format"):
+			return nil, nil
+		case strings.Contains(joined, "worktree list --porcelain"):
+			return nil, nil
+		case strings.Contains(joined, "rev-parse"):
+			return nil, commandError{args: args, err: exitOne}
+		default:
+			t.Fatalf("unexpected git invocation: %v", args)
+			return nil, nil
+		}
+	}
+	_, err = ws.Create(context.Background(), ports.WorkspaceConfig{ProjectID: "proj", SessionID: "sess", Branch: "feature/missing"})
+	if !errors.Is(err, ports.ErrWorkspaceBranchNotFetched) {
+		t.Fatalf("err = %v, want ports.ErrWorkspaceBranchNotFetched", err)
 	}
 }
 

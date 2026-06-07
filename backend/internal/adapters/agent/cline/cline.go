@@ -14,6 +14,7 @@ package cline
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -178,7 +179,7 @@ func ResolveClineBinary(ctx context.Context) (string, error) {
 			}
 		}
 
-		return "cline", nil
+		return "", fmt.Errorf("cline: %w", ports.ErrAgentBinaryNotFound)
 	}
 
 	if path, err := exec.LookPath("cline"); err == nil && path != "" {
@@ -206,7 +207,7 @@ func ResolveClineBinary(ctx context.Context) (string, error) {
 		}
 	}
 
-	return "cline", nil
+	return "", fmt.Errorf("cline: %w", ports.ErrAgentBinaryNotFound)
 }
 
 func (p *Plugin) clineBinary(ctx context.Context) (string, error) {

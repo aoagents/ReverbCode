@@ -53,6 +53,18 @@ func (f *fakeStore) ListAllSessions(context.Context) ([]domain.SessionRecord, er
 	}
 	return out, nil
 }
+func (f *fakeStore) DeleteSession(_ context.Context, id domain.SessionID) (bool, error) {
+	rec, ok := f.sessions[id]
+	if !ok {
+		return false, nil
+	}
+	// Mirror the sqlite gate: only delete rows still in seed state.
+	if rec.IsTerminated || rec.Metadata.WorkspacePath != "" || rec.Metadata.RuntimeHandleID != "" || rec.Metadata.AgentSessionID != "" || rec.Metadata.Prompt != "" {
+		return false, nil
+	}
+	delete(f.sessions, id)
+	return true, nil
+}
 func (f *fakeStore) GetDisplayPRFactsForSession(_ context.Context, id domain.SessionID) (domain.PRFacts, bool, error) {
 	if pr := f.pr[id]; pr.URL != "" {
 		return pr, true, nil
@@ -150,7 +162,10 @@ func newManager() (*Manager, *fakeStore, *fakeRuntime, *fakeWorkspace) {
 	st := newFakeStore()
 	rt := &fakeRuntime{}
 	ws := &fakeWorkspace{}
-	m := New(Deps{Runtime: rt, Agents: fakeAgents{}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}})
+	// Stub lookPath so the pre-launch agent-binary check passes; the fakeAgent
+	// returns argv ["launch"] which is not a real binary on PATH.
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: rt, Agents: fakeAgents{}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
 	return m, st, rt, ws
 }
 func seedTerminal(st *fakeStore, id domain.SessionID, meta domain.SessionMetadata) {
@@ -312,6 +327,99 @@ func TestSpawnOrchestrator_UsesCoordinatorPrompt(t *testing.T) {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("prompt missing %q:\n%s", want, prompt)
 		}
+	}
+}
+
+// TestRestore_RefusesIncompleteHandle covers Bug 2: a terminated row whose
+// spawn failed before the workspace landed (no WorkspacePath, no Branch) must
+// fail Restore with ErrIncompleteHandle — the same typed sentinel Kill returns
+// for the same shape — so the HTTP layer surfaces a typed 409 instead of an
+// opaque 500.
+func TestRestore_RefusesIncompleteHandle(t *testing.T) {
+	m, st, _, _ := newManager()
+	// Seed a terminated row with no workspace and no branch (the post-failure
+	// shape of a Spawn that died before workspace.Create succeeded).
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:           "mer-1",
+		ProjectID:    "mer",
+		IsTerminated: true,
+		Metadata:     domain.SessionMetadata{Prompt: "do it"},
+	}
+	if _, err := m.Restore(ctx, "mer-1"); !errors.Is(err, ErrIncompleteHandle) {
+		t.Fatalf("want ErrIncompleteHandle, got %v", err)
+	}
+}
+
+// TestRollbackSpawn_DeletesSeedRow covers Bug 4: a session row in seed state
+// (no workspace, no runtime, no agent session id, not terminated) is deleted
+// outright by RollbackSpawn so the user never sees an orphan terminated row.
+func TestRollbackSpawn_DeletesSeedRow(t *testing.T) {
+	m, st, _, _ := newManager()
+	// Seed row matches what CreateSession produces — no Metadata at all.
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:        "mer-1",
+		ProjectID: "mer",
+		Activity:  domain.Activity{State: domain.ActivityIdle},
+	}
+	deleted, killed, err := m.RollbackSpawn(ctx, "mer-1")
+	if err != nil {
+		t.Fatalf("rollback err = %v", err)
+	}
+	if !deleted || killed {
+		t.Fatalf("deleted=%v killed=%v, want deleted=true killed=false", deleted, killed)
+	}
+	if _, present := st.sessions["mer-1"]; present {
+		t.Fatal("seed row must be removed from the store, not left as terminated")
+	}
+}
+
+// TestRollbackSpawn_FallsBackToKillForLiveRow asserts the no-resurrection
+// guarantee from Bug 4's RCA: once a row has observable spawn output (workspace
+// + runtime handle), DeleteSession is a no-op and rollback falls back to Kill
+// so the runtime + workspace are torn down rather than abandoned.
+func TestRollbackSpawn_FallsBackToKillForLiveRow(t *testing.T) {
+	m, st, rt, ws := newManager()
+	st.sessions["mer-1"] = mkLive("mer-1")
+	deleted, killed, err := m.RollbackSpawn(ctx, "mer-1")
+	if err != nil {
+		t.Fatalf("rollback err = %v", err)
+	}
+	if deleted || !killed {
+		t.Fatalf("deleted=%v killed=%v, want deleted=false killed=true", deleted, killed)
+	}
+	if rt.destroyed != 1 || ws.destroyed != 1 {
+		t.Fatalf("kill teardown not invoked: rt=%d ws=%d", rt.destroyed, ws.destroyed)
+	}
+	if !st.sessions["mer-1"].IsTerminated {
+		t.Fatal("live row should be marked terminated after kill-fallback")
+	}
+}
+
+// TestSpawn_RejectsMissingAgentBinary covers Bug 6: when the agent adapter
+// returns an argv whose binary is not on PATH, Manager.Spawn must abort BEFORE
+// runtime.Create rather than launching into an empty zellij pane that the
+// reaper later mistakes for a live session.
+func TestSpawn_RejectsMissingAgentBinary(t *testing.T) {
+	st := newFakeStore()
+	rt := &fakeRuntime{}
+	ws := &fakeWorkspace{}
+	notFound := func(name string) (string, error) {
+		return "", fmt.Errorf("exec: %q: not found", name)
+	}
+	m := New(Deps{Runtime: rt, Agents: fakeAgents{}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: notFound})
+
+	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if !errors.Is(err, ports.ErrAgentBinaryNotFound) {
+		t.Fatalf("err = %v, want ports.ErrAgentBinaryNotFound", err)
+	}
+	if rt.created != 0 {
+		t.Fatal("runtime.Create must NOT run when the agent binary is missing")
+	}
+	if ws.destroyed != 1 {
+		t.Fatal("workspace must be torn down when the pre-launch binary check fails")
+	}
+	if !st.sessions["mer-1"].IsTerminated {
+		t.Fatal("the orphan row should be marked terminated after the failed spawn")
 	}
 }
 

@@ -10,6 +10,7 @@ package aider
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -173,7 +174,7 @@ func ResolveAiderBinary(ctx context.Context) (string, error) {
 				return "", err
 			}
 		}
-		return "aider", nil
+		return "", fmt.Errorf("aider: %w", ports.ErrAgentBinaryNotFound)
 	}
 
 	if path, err := exec.LookPath("aider"); err == nil && path != "" {
@@ -197,7 +198,7 @@ func ResolveAiderBinary(ctx context.Context) (string, error) {
 		}
 	}
 
-	return "aider", nil
+	return "", fmt.Errorf("aider: %w", ports.ErrAgentBinaryNotFound)
 }
 
 func (p *Plugin) aiderBinary(ctx context.Context) (string, error) {

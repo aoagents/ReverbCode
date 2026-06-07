@@ -2,9 +2,17 @@ package ports
 
 import (
 	"context"
+	"errors"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
+
+// ErrAgentBinaryNotFound is returned by agent adapters when neither PATH nor
+// any well-known install location holds the agent's binary. The session
+// manager surfaces this BEFORE creating the runtime so a missing CLI doesn't
+// silently launch into an empty zellij pane that the reaper later mistakes
+// for a live session.
+var ErrAgentBinaryNotFound = errors.New("agent: binary not found on PATH")
 
 // Agent is the contract every CLI coding agent adapter (claude-code, codex, …)
 // must satisfy. It supplies the argv and process configuration the Session

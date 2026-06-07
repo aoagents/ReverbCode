@@ -288,7 +288,7 @@ func ResolveDroidBinary(ctx context.Context) (string, error) {
 				return "", err
 			}
 		}
-		return "droid", nil
+		return "", fmt.Errorf("droid: %w", ports.ErrAgentBinaryNotFound)
 	}
 
 	if path, err := exec.LookPath("droid"); err == nil && path != "" {
@@ -315,7 +315,7 @@ func ResolveDroidBinary(ctx context.Context) (string, error) {
 		}
 	}
 
-	return "droid", nil
+	return "", fmt.Errorf("droid: %w", ports.ErrAgentBinaryNotFound)
 }
 
 func (p *Plugin) droidBinary(ctx context.Context) (string, error) {

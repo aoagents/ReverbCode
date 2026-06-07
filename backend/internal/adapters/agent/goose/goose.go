@@ -273,7 +273,7 @@ func ResolveGooseBinary(ctx context.Context) (string, error) {
 			}
 		}
 
-		return "goose", nil
+		return "", fmt.Errorf("goose: %w", ports.ErrAgentBinaryNotFound)
 	}
 
 	if path, err := exec.LookPath("goose"); err == nil && path != "" {
@@ -301,7 +301,7 @@ func ResolveGooseBinary(ctx context.Context) (string, error) {
 		}
 	}
 
-	return "goose", nil
+	return "", fmt.Errorf("goose: %w", ports.ErrAgentBinaryNotFound)
 }
 
 func (p *Plugin) gooseBinary(ctx context.Context) (string, error) {

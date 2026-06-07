@@ -147,9 +147,13 @@ func (f *fakeCommander) Send(context.Context, domain.SessionID, string) error { 
 func (f *fakeCommander) Cleanup(context.Context, domain.ProjectID) ([]domain.SessionID, error) {
 	return nil, nil
 }
+func (f *fakeCommander) RollbackSpawn(context.Context, domain.SessionID) (bool, bool, error) {
+	return false, false, nil
+}
 
 func TestSpawnOrchestratorCleanKillsActiveOrchestratorsBeforeSpawn(t *testing.T) {
 	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
 	// Two active orchestrators plus an unrelated worker and a terminated
 	// orchestrator that must be left alone.
 	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindOrchestrator}
@@ -172,8 +176,70 @@ func TestSpawnOrchestratorCleanKillsActiveOrchestratorsBeforeSpawn(t *testing.T)
 	}
 }
 
+// TestSpawnUnknownProjectReturns404 covers Bug 1: an HTTP spawn for an
+// unregistered projectId must surface PROJECT_NOT_FOUND (apierr.NotFound)
+// BEFORE any session row is created, so no orphan terminated row is left
+// behind under `--include-terminated`.
+func TestSpawnUnknownProjectReturns404(t *testing.T) {
+	st := newFakeStore()
+	fc := &fakeCommander{}
+	svc := &Service{manager: fc, store: st}
+
+	_, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "ghost", Kind: domain.KindWorker})
+	var e *apierr.Error
+	if !errors.As(err, &e) || e.Kind != apierr.KindNotFound || e.Code != "PROJECT_NOT_FOUND" {
+		t.Fatalf("err = %v, want apierr.NotFound PROJECT_NOT_FOUND", err)
+	}
+	if fc.spawned {
+		t.Fatal("manager.Spawn must NOT be invoked for an unknown project")
+	}
+}
+
+// TestSpawnOrchestratorUnknownProjectReturns404 is the orchestrator-side guard
+// for Bug 1: same pre-validation, same typed envelope.
+func TestSpawnOrchestratorUnknownProjectReturns404(t *testing.T) {
+	st := newFakeStore()
+	fc := &fakeCommander{}
+	svc := &Service{manager: fc, store: st}
+
+	_, err := svc.SpawnOrchestrator(context.Background(), "ghost", false)
+	var e *apierr.Error
+	if !errors.As(err, &e) || e.Kind != apierr.KindNotFound || e.Code != "PROJECT_NOT_FOUND" {
+		t.Fatalf("err = %v, want apierr.NotFound PROJECT_NOT_FOUND", err)
+	}
+	if fc.spawned {
+		t.Fatal("manager.Spawn must NOT be invoked for an unknown project")
+	}
+}
+
+// TestToAPIErrorMapsWorkspaceBranchSentinels covers Bug 3: the workspace
+// adapter's typed branch errors map to typed envelope errors instead of
+// collapsing to a 500.
+func TestToAPIErrorMapsWorkspaceBranchSentinels(t *testing.T) {
+	cases := []struct {
+		name     string
+		err      error
+		wantKind apierr.Kind
+		wantCode string
+	}{
+		{"checked out elsewhere", fmt.Errorf("spawn mer-1: workspace: %w: \"x\" is checked out at \"/tmp\"", ports.ErrWorkspaceBranchCheckedOutElsewhere), apierr.KindConflict, "BRANCH_CHECKED_OUT_ELSEWHERE"},
+		{"not fetched", fmt.Errorf("spawn mer-1: workspace: %w: \"x\" has no local head", ports.ErrWorkspaceBranchNotFetched), apierr.KindInvalid, "BRANCH_NOT_FETCHED"},
+		{"agent binary not found", fmt.Errorf("spawn mer-1: %w", ports.ErrAgentBinaryNotFound), apierr.KindInvalid, "AGENT_BINARY_NOT_FOUND"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mapped := toAPIError(tc.err)
+			var e *apierr.Error
+			if !errors.As(mapped, &e) || e.Kind != tc.wantKind || e.Code != tc.wantCode {
+				t.Fatalf("mapped = %v, want %s %s", mapped, tc.wantCode, e)
+			}
+		})
+	}
+}
+
 func TestSpawnOrchestratorNoCleanSkipsKills(t *testing.T) {
 	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
 	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindOrchestrator}
 
 	fc := &fakeCommander{}

@@ -19,6 +19,7 @@ package copilot
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -189,7 +190,7 @@ func ResolveCopilotBinary(ctx context.Context) (string, error) {
 			}
 		}
 
-		return "copilot", nil
+		return "", fmt.Errorf("copilot: %w", ports.ErrAgentBinaryNotFound)
 	}
 
 	if path, err := exec.LookPath("copilot"); err == nil && path != "" {
@@ -217,7 +218,7 @@ func ResolveCopilotBinary(ctx context.Context) (string, error) {
 		}
 	}
 
-	return "copilot", nil
+	return "", fmt.Errorf("copilot: %w", ports.ErrAgentBinaryNotFound)
 }
 
 func (p *Plugin) copilotBinary(ctx context.Context) (string, error) {

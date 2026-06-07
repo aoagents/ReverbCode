@@ -8,6 +8,7 @@ package amp
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -176,7 +177,7 @@ func ResolveAmpBinary(ctx context.Context) (string, error) {
 				return "", err
 			}
 		}
-		return "amp", nil
+		return "", fmt.Errorf("amp: %w", ports.ErrAgentBinaryNotFound)
 	}
 
 	if path, err := exec.LookPath("amp"); err == nil && path != "" {
@@ -203,7 +204,7 @@ func ResolveAmpBinary(ctx context.Context) (string, error) {
 		}
 	}
 
-	return "amp", nil
+	return "", fmt.Errorf("amp: %w", ports.ErrAgentBinaryNotFound)
 }
 
 func (p *Plugin) ampBinary(ctx context.Context) (string, error) {

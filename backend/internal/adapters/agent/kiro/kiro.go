@@ -20,6 +20,7 @@ package kiro
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -189,7 +190,7 @@ func ResolveKiroBinary(ctx context.Context) (string, error) {
 			}
 		}
 
-		return "kiro-cli", nil
+		return "", fmt.Errorf("kiro: %w", ports.ErrAgentBinaryNotFound)
 	}
 
 	if path, err := exec.LookPath("kiro-cli"); err == nil && path != "" {
@@ -216,7 +217,7 @@ func ResolveKiroBinary(ctx context.Context) (string, error) {
 		}
 	}
 
-	return "kiro-cli", nil
+	return "", fmt.Errorf("kiro: %w", ports.ErrAgentBinaryNotFound)
 }
 
 func (p *Plugin) kiroBinary(ctx context.Context) (string, error) {

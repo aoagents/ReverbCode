@@ -33,6 +33,7 @@ package pi
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -190,7 +191,7 @@ func ResolvePiBinary(ctx context.Context) (string, error) {
 				return "", err
 			}
 		}
-		return "pi", nil
+		return "", fmt.Errorf("pi: %w", ports.ErrAgentBinaryNotFound)
 	}
 
 	if path, err := exec.LookPath("pi"); err == nil && path != "" {
@@ -218,7 +219,7 @@ func ResolvePiBinary(ctx context.Context) (string, error) {
 		}
 	}
 
-	return "pi", nil
+	return "", fmt.Errorf("pi: %w", ports.ErrAgentBinaryNotFound)
 }
 
 func (p *Plugin) piBinary(ctx context.Context) (string, error) {

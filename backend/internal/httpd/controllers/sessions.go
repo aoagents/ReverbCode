@@ -30,6 +30,7 @@ type SessionService interface {
 	Get(ctx context.Context, id domain.SessionID) (domain.Session, error)
 	Restore(ctx context.Context, id domain.SessionID) (domain.Session, error)
 	Kill(ctx context.Context, id domain.SessionID) (bool, error)
+	RollbackSpawn(ctx context.Context, id domain.SessionID) (sessionsvc.RollbackOutcome, error)
 	Cleanup(ctx context.Context, project domain.ProjectID) ([]domain.SessionID, error)
 	Rename(ctx context.Context, id domain.SessionID, displayName string) error
 	Send(ctx context.Context, id domain.SessionID, message string) error
@@ -64,6 +65,7 @@ func (c *SessionsController) Register(r chi.Router) {
 	r.Patch("/sessions/{sessionId}", c.rename)
 	r.Post("/sessions/{sessionId}/restore", c.restore)
 	r.Post("/sessions/{sessionId}/kill", c.kill)
+	r.Post("/sessions/{sessionId}/rollback", c.rollback)
 	r.Post("/sessions/{sessionId}/send", c.send)
 	r.Post("/sessions/{sessionId}/activity", c.activity)
 	r.Get("/orchestrators", c.listOrchestrators)
@@ -216,6 +218,25 @@ func (c *SessionsController) kill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	envelope.WriteJSON(w, http.StatusOK, KillSessionResponse{OK: true, SessionID: sessionID(r), Freed: freed})
+}
+
+// rollback undoes a partially-completed spawn: if the session row is still in
+// seed state (no workspace, no runtime handle yet), the row is deleted
+// outright. If anything observable has landed it falls back to Kill so the
+// runtime/workspace are torn down. Used by `ao spawn --claim-pr` to undo a
+// session whose claim step failed, avoiding the orphan terminated row a
+// plain Kill would leave behind.
+func (c *SessionsController) rollback(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/{sessionId}/rollback")
+		return
+	}
+	out, err := c.Svc.RollbackSpawn(r.Context(), sessionID(r))
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, RollbackSessionResponse{OK: true, SessionID: sessionID(r), Deleted: out.Deleted, Killed: out.Killed})
 }
 
 func (c *SessionsController) cleanup(w http.ResponseWriter, r *http.Request) {

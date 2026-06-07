@@ -137,6 +137,7 @@ var schemaNames = map[string]string{
 	"ControllersRestoreSessionResponse":     "RestoreSessionResponse",
 	"ControllersCleanupSessionsResponse":    "CleanupSessionsResponse",
 	"ControllersKillSessionResponse":        "KillSessionResponse",
+	"ControllersRollbackSessionResponse":    "RollbackSessionResponse",
 	"ControllersSendSessionMessageRequest":  "SendSessionMessageRequest",
 	"ControllersSendSessionMessageResponse": "SendSessionMessageResponse",
 	"ControllersClaimPRResponse":            "ClaimPRResponse",
@@ -409,6 +410,17 @@ func sessionOperations() []operation {
 			pathParams: []any{controllers.SessionIDParam{}},
 			resps: []respUnit{
 				{http.StatusOK, controllers.KillSessionResponse{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/rollback", id: "rollbackSession", tag: "sessions",
+			summary:    "Undo a partially-completed spawn (delete seed row, or kill if spawn output exists)",
+			pathParams: []any{controllers.SessionIDParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.RollbackSessionResponse{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusConflict, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},

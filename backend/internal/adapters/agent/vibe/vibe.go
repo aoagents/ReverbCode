@@ -26,6 +26,7 @@ package vibe
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -197,7 +198,7 @@ func ResolveVibeBinary(ctx context.Context) (string, error) {
 				return "", err
 			}
 		}
-		return "vibe", nil
+		return "", fmt.Errorf("vibe: %w", ports.ErrAgentBinaryNotFound)
 	}
 
 	if path, err := exec.LookPath("vibe"); err == nil && path != "" {
@@ -224,7 +225,7 @@ func ResolveVibeBinary(ctx context.Context) (string, error) {
 		}
 	}
 
-	return "vibe", nil
+	return "", fmt.Errorf("vibe: %w", ports.ErrAgentBinaryNotFound)
 }
 
 func (p *Plugin) vibeBinary(ctx context.Context) (string, error) {

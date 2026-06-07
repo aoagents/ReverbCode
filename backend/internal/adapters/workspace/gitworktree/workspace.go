@@ -24,6 +24,16 @@ var (
 	ErrUnsafePath = errors.New("gitworktree: unsafe workspace path")
 )
 
+// ErrBranchCheckedOutElsewhere and ErrBranchNotFetched are adapter-local aliases
+// of the port-level sentinels: they preserve the gitworktree-prefixed message
+// while letting the service layer match on ports.ErrWorkspaceBranchCheckedOutElsewhere
+// / ports.ErrWorkspaceBranchNotFetched without importing this package. Tests
+// inside the adapter use these names; callers outside use the port sentinels.
+var (
+	ErrBranchCheckedOutElsewhere = ports.ErrWorkspaceBranchCheckedOutElsewhere
+	ErrBranchNotFetched          = ports.ErrWorkspaceBranchNotFetched
+)
+
 // RepoResolver maps a project to the absolute path of its source git repo.
 type RepoResolver interface {
 	RepoPath(projectID domain.ProjectID) (string, error)
@@ -195,6 +205,17 @@ func (w *Workspace) Restore(ctx context.Context, cfg ports.WorkspaceConfig) (por
 }
 
 func (w *Workspace) addWorktree(ctx context.Context, repo, path, branch string) error {
+	// Refuse early if the branch is already checked out in another worktree:
+	// `git worktree add` will fail, but its stderr leaks through as an opaque
+	// 500. A typed sentinel lets the HTTP layer surface a 409.
+	records, err := w.listRecords(ctx, repo)
+	if err != nil {
+		return err
+	}
+	if conflict, ok := findWorktreeByBranch(records, branch); ok && filepath.Clean(conflict.Path) != filepath.Clean(path) {
+		return fmt.Errorf("%w: %q is checked out at %q", ErrBranchCheckedOutElsewhere, branch, conflict.Path)
+	}
+
 	localBranch, err := w.refExists(ctx, repo, "refs/heads/"+branch)
 	if err != nil {
 		return err
@@ -205,8 +226,18 @@ func (w *Workspace) addWorktree(ctx context.Context, repo, path, branch string) 
 		}
 		return nil
 	}
+
+	// `worktree add -b <branch> <path> <base>` creates a fresh local branch from
+	// <base>. resolveBaseRef tries `origin/<branch>` first, so a fetched-but-
+	// not-checked-out remote branch auto-tracks cleanly via that path. If
+	// neither origin/<branch>, the default branch, nor any tag is reachable,
+	// the branch genuinely has no base — surface ErrBranchNotFetched so callers
+	// can suggest `git fetch`.
 	baseRef, err := w.resolveBaseRef(ctx, repo, branch)
 	if err != nil {
+		if errors.Is(err, errNoBaseRef) {
+			return fmt.Errorf("%w: %q has no local head, no remote, and no tag — run `git fetch` then retry", ErrBranchNotFetched, branch)
+		}
 		return err
 	}
 	if _, err := w.run(ctx, w.binary, worktreeAddNewBranchArgs(repo, branch, path, baseRef)...); err != nil {
@@ -222,6 +253,10 @@ func (w *Workspace) validateBranch(ctx context.Context, repo, branch string) err
 	return nil
 }
 
+// errNoBaseRef is an internal sentinel: every candidate base ref is missing.
+// addWorktree translates it into ErrBranchNotFetched.
+var errNoBaseRef = errors.New("gitworktree: no base ref found")
+
 func (w *Workspace) resolveBaseRef(ctx context.Context, repo, branch string) (string, error) {
 	candidates := baseRefCandidates(branch, w.defaultBranch)
 	for _, ref := range candidates {
@@ -233,7 +268,17 @@ func (w *Workspace) resolveBaseRef(ctx context.Context, repo, branch string) (st
 			return ref, nil
 		}
 	}
-	return "", fmt.Errorf("gitworktree: no base ref found for branch %q (tried %s)", branch, strings.Join(candidates, ", "))
+	// Also probe a same-named tag so requests like `--branch v1.2.3` can
+	// auto-track when the tag is fetched but no branch ref exists.
+	tagRef := "refs/tags/" + branch
+	exists, err := w.refExists(ctx, repo, tagRef)
+	if err != nil {
+		return "", err
+	}
+	if exists {
+		return tagRef, nil
+	}
+	return "", fmt.Errorf("%w for branch %q (tried %s, %s)", errNoBaseRef, branch, strings.Join(candidates, ", "), tagRef)
 }
 
 func (w *Workspace) refExists(ctx context.Context, repo, ref string) (bool, error) {
@@ -376,6 +421,15 @@ func findWorktree(records []worktreeRecord, path string) (worktreeRecord, bool) 
 	clean := filepath.Clean(path)
 	for _, rec := range records {
 		if filepath.Clean(rec.Path) == clean {
+			return rec, true
+		}
+	}
+	return worktreeRecord{}, false
+}
+
+func findWorktreeByBranch(records []worktreeRecord, branch string) (worktreeRecord, bool) {
+	for _, rec := range records {
+		if rec.Branch == branch {
 			return rec, true
 		}
 	}

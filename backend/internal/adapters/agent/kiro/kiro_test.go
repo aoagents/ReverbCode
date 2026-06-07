@@ -2,6 +2,7 @@ package kiro
 
 import (
 	"context"
+	"errors"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -384,12 +385,18 @@ func TestDeriveActivityState(t *testing.T) {
 }
 
 func TestResolveKiroBinaryFallback(t *testing.T) {
-	got, err := ResolveKiroBinary(context.Background())
+	// When the binary is not on PATH or any well-known location, the resolver
+	// MUST surface ports.ErrAgentBinaryNotFound rather than a silent string
+	// fallback that lets a missing CLI launch into an empty zellij pane.
+	bin, err := ResolveKiroBinary(context.Background())
 	if err != nil {
-		t.Fatal(err)
+		if !errors.Is(err, ports.ErrAgentBinaryNotFound) {
+			t.Fatalf("err = %v, want ports.ErrAgentBinaryNotFound", err)
+		}
+		return
 	}
-	if got == "" {
-		t.Fatal("ResolveKiroBinary returned empty path")
+	if bin == "" {
+		t.Fatal("ResolveKiroBinary returned empty path with no error")
 	}
 }
 
