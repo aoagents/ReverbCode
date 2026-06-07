@@ -65,27 +65,10 @@ ON CONFLICT (url) DO UPDATE SET
     is_closed = excluded.is_closed;
 
 -- name: GetPR :one
-SELECT
-    url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at,
-    provider, host, repo, source_branch, target_branch, head_sha, title,
-    additions, deletions, changed_files, author, base_sha, merge_commit_sha,
-    is_draft, is_merged, is_closed,
-    provider_state, provider_mergeable, provider_merge_state_status, html_url,
-    created_at_provider, updated_at_provider, merged_at_provider, closed_at_provider,
-    metadata_hash, ci_hash, review_hash, observed_at, ci_observed_at, review_observed_at
-FROM pr
-WHERE url = ?;
+SELECT * FROM pr WHERE url = ?;
 
 -- name: ListPRsBySession :many
-SELECT
-    url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at,
-    provider, host, repo, source_branch, target_branch, head_sha, title,
-    additions, deletions, changed_files, author, base_sha, merge_commit_sha,
-    is_draft, is_merged, is_closed,
-    provider_state, provider_mergeable, provider_merge_state_status, html_url,
-    created_at_provider, updated_at_provider, merged_at_provider, closed_at_provider,
-    metadata_hash, ci_hash, review_hash, observed_at, ci_observed_at, review_observed_at
-FROM pr
+SELECT * FROM pr
 WHERE session_id = ?
 ORDER BY updated_at DESC;
 

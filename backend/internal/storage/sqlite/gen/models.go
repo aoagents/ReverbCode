@@ -60,6 +60,7 @@ type PR struct {
 	ObservedAt               sql.NullTime
 	CIObservedAt             sql.NullTime
 	ReviewObservedAt         sql.NullTime
+	LastNudgeSignature       string
 }
 
 type PRCheck struct {

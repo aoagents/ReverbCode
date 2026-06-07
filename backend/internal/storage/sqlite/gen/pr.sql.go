@@ -99,16 +99,7 @@ func (q *Queries) GetDisplayPRFactsBySession(ctx context.Context, sessionID doma
 }
 
 const getPR = `-- name: GetPR :one
-SELECT
-    url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at,
-    provider, host, repo, source_branch, target_branch, head_sha, title,
-    additions, deletions, changed_files, author, base_sha, merge_commit_sha,
-    is_draft, is_merged, is_closed,
-    provider_state, provider_mergeable, provider_merge_state_status, html_url,
-    created_at_provider, updated_at_provider, merged_at_provider, closed_at_provider,
-    metadata_hash, ci_hash, review_hash, observed_at, ci_observed_at, review_observed_at
-FROM pr
-WHERE url = ?
+SELECT url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at, provider, host, repo, source_branch, target_branch, head_sha, title, additions, deletions, changed_files, author, base_sha, merge_commit_sha, is_draft, is_merged, is_closed, provider_state, provider_mergeable, provider_merge_state_status, html_url, created_at_provider, updated_at_provider, merged_at_provider, closed_at_provider, metadata_hash, ci_hash, review_hash, observed_at, ci_observed_at, review_observed_at, last_nudge_signature FROM pr WHERE url = ?
 `
 
 func (q *Queries) GetPR(ctx context.Context, url string) (PR, error) {
@@ -153,6 +144,7 @@ func (q *Queries) GetPR(ctx context.Context, url string) (PR, error) {
 		&i.ObservedAt,
 		&i.CIObservedAt,
 		&i.ReviewObservedAt,
+		&i.LastNudgeSignature,
 	)
 	return i, err
 }
@@ -178,16 +170,19 @@ func (q *Queries) GetPRClaimAndOwner(ctx context.Context, url string) (GetPRClai
 	return i, err
 }
 
+const getPRLastNudgeSignature = `-- name: GetPRLastNudgeSignature :one
+SELECT last_nudge_signature FROM pr WHERE url = ?
+`
+
+func (q *Queries) GetPRLastNudgeSignature(ctx context.Context, url string) (string, error) {
+	row := q.db.QueryRowContext(ctx, getPRLastNudgeSignature, url)
+	var last_nudge_signature string
+	err := row.Scan(&last_nudge_signature)
+	return last_nudge_signature, err
+}
+
 const listPRsBySession = `-- name: ListPRsBySession :many
-SELECT
-    url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at,
-    provider, host, repo, source_branch, target_branch, head_sha, title,
-    additions, deletions, changed_files, author, base_sha, merge_commit_sha,
-    is_draft, is_merged, is_closed,
-    provider_state, provider_mergeable, provider_merge_state_status, html_url,
-    created_at_provider, updated_at_provider, merged_at_provider, closed_at_provider,
-    metadata_hash, ci_hash, review_hash, observed_at, ci_observed_at, review_observed_at
-FROM pr
+SELECT url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at, provider, host, repo, source_branch, target_branch, head_sha, title, additions, deletions, changed_files, author, base_sha, merge_commit_sha, is_draft, is_merged, is_closed, provider_state, provider_mergeable, provider_merge_state_status, html_url, created_at_provider, updated_at_provider, merged_at_provider, closed_at_provider, metadata_hash, ci_hash, review_hash, observed_at, ci_observed_at, review_observed_at, last_nudge_signature FROM pr
 WHERE session_id = ?
 ORDER BY updated_at DESC
 `
@@ -240,6 +235,7 @@ func (q *Queries) ListPRsBySession(ctx context.Context, sessionID domain.Session
 			&i.ObservedAt,
 			&i.CIObservedAt,
 			&i.ReviewObservedAt,
+			&i.LastNudgeSignature,
 		); err != nil {
 			return nil, err
 		}
@@ -252,6 +248,20 @@ func (q *Queries) ListPRsBySession(ctx context.Context, sessionID domain.Session
 		return nil, err
 	}
 	return items, nil
+}
+
+const updatePRLastNudgeSignature = `-- name: UpdatePRLastNudgeSignature :exec
+UPDATE pr SET last_nudge_signature = ? WHERE url = ?
+`
+
+type UpdatePRLastNudgeSignatureParams struct {
+	LastNudgeSignature string
+	URL                string
+}
+
+func (q *Queries) UpdatePRLastNudgeSignature(ctx context.Context, arg UpdatePRLastNudgeSignatureParams) error {
+	_, err := q.db.ExecContext(ctx, updatePRLastNudgeSignature, arg.LastNudgeSignature, arg.URL)
+	return err
 }
 
 const upsertLegacyPR = `-- name: UpsertLegacyPR :exec
@@ -435,30 +445,5 @@ func (q *Queries) UpsertPR(ctx context.Context, arg UpsertPRParams) error {
 		arg.CIObservedAt,
 		arg.ReviewObservedAt,
 	)
-	return err
-}
-
-const getPRLastNudgeSignature = `-- name: GetPRLastNudgeSignature :one
-SELECT last_nudge_signature FROM pr WHERE url = ?
-`
-
-func (q *Queries) GetPRLastNudgeSignature(ctx context.Context, url string) (string, error) {
-	row := q.db.QueryRowContext(ctx, getPRLastNudgeSignature, url)
-	var sig string
-	err := row.Scan(&sig)
-	return sig, err
-}
-
-const updatePRLastNudgeSignature = `-- name: UpdatePRLastNudgeSignature :exec
-UPDATE pr SET last_nudge_signature = ? WHERE url = ?
-`
-
-type UpdatePRLastNudgeSignatureParams struct {
-	LastNudgeSignature string
-	URL                string
-}
-
-func (q *Queries) UpdatePRLastNudgeSignature(ctx context.Context, arg UpdatePRLastNudgeSignatureParams) error {
-	_, err := q.db.ExecContext(ctx, updatePRLastNudgeSignature, arg.LastNudgeSignature, arg.URL)
 	return err
 }

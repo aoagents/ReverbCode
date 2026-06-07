@@ -7,21 +7,7 @@ package gen
 
 import (
 	"context"
-
-	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
-
-const deleteChangeLogForSession = `-- name: DeleteChangeLogForSession :execrows
-DELETE FROM change_log WHERE session_id = ?
-`
-
-func (q *Queries) DeleteChangeLogForSession(ctx context.Context, sessionID domain.SessionID) (int64, error) {
-	result, err := q.db.ExecContext(ctx, deleteChangeLogForSession, sessionID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
-}
 
 const maxChangeLogSeq = `-- name: MaxChangeLogSeq :one
 SELECT CAST(COALESCE(MAX(seq), 0) AS INTEGER) AS seq FROM change_log

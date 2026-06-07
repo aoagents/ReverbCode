@@ -39,19 +39,27 @@ FROM sessions ORDER BY project_id, num;
 -- name: RenameSession :execrows
 UPDATE sessions SET display_name = ?, updated_at = ? WHERE id = ?;
 
--- name: DeleteSeedSession :execrows
--- DeleteSeedSession deletes a session row only if it is still in seed state:
--- the only fields a fresh CreateSession populates (id/project_id/num/issue_id/
--- kind/harness/timestamps/initial idle activity) are present, but no spawn-side
--- output has landed yet — no workspace path, no runtime handle, no agent
--- session id, no prompt, no termination flag. This narrow filter preserves the
--- no-resurrection guarantee for live sessions: once a session has spawned
--- anything observable, this DELETE is a no-op, and the caller must fall back
--- to MarkTerminated.
-DELETE FROM sessions
-WHERE id = ?
-  AND is_terminated = 0
-  AND workspace_path = ''
-  AND runtime_handle_id = ''
-  AND agent_session_id = ''
-  AND prompt = '';
+-- name: SessionIsSeed :one
+-- SessionIsSeed reports whether the session id matches a row still in seed
+-- state (see DeleteSeedSession for the conditions). Callers probe with this
+-- before touching change_log so that DeleteSession is a true no-op for live
+-- sessions instead of silently destroying their CDC events. Returns 0 when
+-- the row does not exist OR has progressed past seed state.
+SELECT EXISTS(
+    SELECT 1 FROM sessions
+    WHERE id = ?
+      AND is_terminated = 0
+      AND workspace_path = ''
+      AND runtime_handle_id = ''
+      AND agent_session_id = ''
+      AND prompt = ''
+) AS is_seed;
+
+-- NOTE: the `DELETE FROM sessions WHERE id = ? AND <seed-state predicates>`
+-- statement is intentionally NOT a sqlc query — same sqlc 1.31 SQLite-parser
+-- bug as documented in queries/changelog.sql: trailing string literals (and
+-- placeholders) on the RHS of `=` in a DELETE get silently stripped, so the
+-- generated SQL ends up mid-clause and the row count is meaningless. The
+-- store runs that DELETE directly via tx.ExecContext inside
+-- Store.DeleteSession, inside the same transaction as the SessionIsSeed
+-- probe and the raw change_log cleanup.

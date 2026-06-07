@@ -6,9 +6,12 @@ FROM change_log WHERE seq > ? ORDER BY seq LIMIT ?;
 -- name: MaxChangeLogSeq :one
 SELECT CAST(COALESCE(MAX(seq), 0) AS INTEGER) AS seq FROM change_log;
 
--- name: DeleteChangeLogForSession :execrows
--- DeleteChangeLogForSession removes all change_log rows referencing the given
--- session id. Used by Store.DeleteSession to satisfy the change_log → sessions
--- foreign key when removing a seed-state row whose orphan removal would
--- otherwise be blocked by the existing session_created CDC event.
-DELETE FROM change_log WHERE session_id = ?;
+-- NOTE: `DELETE FROM change_log WHERE session_id = ?` is intentionally NOT
+-- a sqlc query. sqlc 1.31's SQLite parser strips the `?` placeholder and
+-- emits a *domain.SessionID pointer parameter whenever a nullable column
+-- (change_log.session_id is nullable for project-level events) sits on the
+-- LHS of `=` in a top-level DELETE. None of the obvious SQL workarounds
+-- (sqlc.arg, IFNULL, rowid subquery, second predicate) defeated the
+-- heuristic. The store runs that DELETE directly via tx.ExecContext inside
+-- Store.DeleteSession to keep it part of the same transaction as the seed
+-- probe + session delete.

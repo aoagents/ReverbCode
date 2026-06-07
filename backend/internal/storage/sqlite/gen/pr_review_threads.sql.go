@@ -10,15 +10,6 @@ import (
 	"time"
 )
 
-const deletePRReviewThreads = `-- name: DeletePRReviewThreads :exec
-DELETE FROM pr_review_threads WHERE pr_url = ?
-`
-
-func (q *Queries) DeletePRReviewThreads(ctx context.Context, prUrl string) error {
-	_, err := q.db.ExecContext(ctx, deletePRReviewThreads, prUrl)
-	return err
-}
-
 const deletePRReviewThread = `-- name: DeletePRReviewThread :exec
 DELETE FROM pr_review_threads WHERE pr_url = ? AND thread_id = ?
 `
@@ -30,6 +21,15 @@ type DeletePRReviewThreadParams struct {
 
 func (q *Queries) DeletePRReviewThread(ctx context.Context, arg DeletePRReviewThreadParams) error {
 	_, err := q.db.ExecContext(ctx, deletePRReviewThread, arg.PRURL, arg.ThreadID)
+	return err
+}
+
+const deletePRReviewThreads = `-- name: DeletePRReviewThreads :exec
+DELETE FROM pr_review_threads WHERE pr_url = ?
+`
+
+func (q *Queries) DeletePRReviewThreads(ctx context.Context, prUrl string) error {
+	_, err := q.db.ExecContext(ctx, deletePRReviewThreads, prUrl)
 	return err
 }
 

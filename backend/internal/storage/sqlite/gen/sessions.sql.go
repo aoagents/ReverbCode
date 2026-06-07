@@ -221,22 +221,28 @@ func (q *Queries) RenameSession(ctx context.Context, arg RenameSessionParams) (i
 	return result.RowsAffected()
 }
 
-const deleteSeedSession = `-- name: DeleteSeedSession :execrows
-DELETE FROM sessions
-WHERE id = ?
-  AND is_terminated = 0
-  AND workspace_path = ''
-  AND runtime_handle_id = ''
-  AND agent_session_id = ''
-  AND prompt = ''
+const sessionIsSeed = `-- name: SessionIsSeed :one
+SELECT EXISTS(
+    SELECT 1 FROM sessions
+    WHERE id = ?
+      AND is_terminated = 0
+      AND workspace_path = ''
+      AND runtime_handle_id = ''
+      AND agent_session_id = ''
+      AND prompt = ''
+) AS is_seed
 `
 
-func (q *Queries) DeleteSeedSession(ctx context.Context, id domain.SessionID) (int64, error) {
-	result, err := q.db.ExecContext(ctx, deleteSeedSession, id)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
+// SessionIsSeed reports whether the session id matches a row still in seed
+// state (see DeleteSeedSession for the conditions). Callers probe with this
+// before touching change_log so that DeleteSession is a true no-op for live
+// sessions instead of silently destroying their CDC events. Returns 0 when
+// the row does not exist OR has progressed past seed state.
+func (q *Queries) SessionIsSeed(ctx context.Context, id domain.SessionID) (bool, error) {
+	row := q.db.QueryRowContext(ctx, sessionIsSeed, id)
+	var is_seed bool
+	err := row.Scan(&is_seed)
+	return is_seed, err
 }
 
 const updateSession = `-- name: UpdateSession :exec
