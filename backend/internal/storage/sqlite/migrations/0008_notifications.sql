@@ -3,7 +3,7 @@
 CREATE TABLE notifications (
     id           TEXT PRIMARY KEY,
     project_id   TEXT NOT NULL REFERENCES projects (id),
-    session_id   TEXT REFERENCES sessions (id),
+    session_id   TEXT NOT NULL REFERENCES sessions (id),
     type         TEXT NOT NULL,
     priority     TEXT NOT NULL CHECK (priority IN ('urgent', 'action', 'warning', 'info')),
     status       TEXT NOT NULL DEFAULT 'unread'

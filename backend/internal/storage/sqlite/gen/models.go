@@ -24,7 +24,7 @@ type ChangeLog struct {
 type Notification struct {
 	ID          domain.NotificationID
 	ProjectID   domain.ProjectID
-	SessionID   *domain.SessionID
+	SessionID   domain.SessionID
 	Type        domain.NotificationType
 	Priority    domain.NotificationPriority
 	Status      domain.NotificationStatus

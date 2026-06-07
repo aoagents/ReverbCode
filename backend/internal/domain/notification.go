@@ -136,15 +136,17 @@ func validNotificationStatus(v NotificationStatus) bool {
 	}
 }
 
-// Notification is the canonical persisted notification row. It stores concise
-// visible copy plus structured evidence and semantic action descriptors.
+// Notification is the canonical persisted notification row. Every notification
+// is session-scoped; project-level views should group these session-owned rows.
+// It stores concise visible copy plus structured evidence and semantic action
+// descriptors.
 type Notification struct {
 	ID          NotificationID
 	Type        NotificationType
 	Priority    NotificationPriority
 	Status      NotificationStatus
 	ProjectID   ProjectID
-	SessionID   *SessionID
+	SessionID   SessionID
 	Source      string
 	DedupeKey   string
 	Fingerprint string
@@ -251,6 +253,9 @@ func (n Notification) Validate() error {
 	}
 	if n.ProjectID == "" {
 		return errors.New("notification: missing project id")
+	}
+	if n.SessionID == "" {
+		return errors.New("notification: missing session id")
 	}
 	if n.Source == "" {
 		return errors.New("notification: missing source")

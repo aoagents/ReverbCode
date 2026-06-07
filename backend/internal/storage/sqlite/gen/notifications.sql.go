@@ -106,7 +106,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 type InsertNotificationParams struct {
 	ID          domain.NotificationID
 	ProjectID   domain.ProjectID
-	SessionID   *domain.SessionID
+	SessionID   domain.SessionID
 	Type        domain.NotificationType
 	Priority    domain.NotificationPriority
 	Status      domain.NotificationStatus
@@ -227,7 +227,7 @@ LIMIT ?
 `
 
 type ListNotificationsBySessionParams struct {
-	SessionID *domain.SessionID
+	SessionID domain.SessionID
 	Limit     int64
 }
 

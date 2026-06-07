@@ -37,7 +37,7 @@ type lifecycleStack struct {
 func startLifecycle(ctx context.Context, store *sqlite.Store, runtime ports.Runtime, messenger ports.AgentMessenger, notifications interface {
 	Notify(context.Context, domain.NotificationIntent) error
 }, logger *slog.Logger) *lifecycleStack {
-	lcm := lifecycle.NewWithDeps(lifecycle.Deps{Store: store, Messenger: messenger, Notifications: notifications})
+	lcm := lifecycle.NewWithDeps(lifecycle.Deps{Store: store, Messenger: messenger, Notifications: notifications, Logger: logger})
 	rp := reaper.New(lcm, store, runtime, reaper.Config{Logger: logger})
 	return &lifecycleStack{LCM: lcm, reaperDone: rp.Start(ctx)}
 }

@@ -51,6 +51,29 @@ func TestNotificationConstantsMatchStorageValues(t *testing.T) {
 	}
 }
 
+func TestNotificationValidateRequiresSessionID(t *testing.T) {
+	now := time.Now()
+	n := Notification{
+		ID:          "n1",
+		Type:        NotificationCIFailing,
+		Priority:    NotificationWarning,
+		Status:      NotificationUnread,
+		ProjectID:   "mer",
+		Source:      "test",
+		DedupeKey:   "ci:pr:build:c1",
+		Fingerprint: "fp",
+		Title:       "CI failed",
+		Summary:     "mer-1 has 1 failing check.",
+		OccurredAt:  now,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+	err := n.Validate()
+	if err == nil || !strings.Contains(err.Error(), "session") {
+		t.Fatalf("Validate err = %v, want missing session", err)
+	}
+}
+
 func TestNotificationActionPayloadIsJSONSafe(t *testing.T) {
 	a := NotificationAction{ID: "open_session", Label: "Open", Kind: "route", Route: "session", Payload: map[string]any{"sessionId": SessionID("mer-1")}}
 	if err := a.Validate(); err != nil {

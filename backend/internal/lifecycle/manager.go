@@ -7,6 +7,7 @@ package lifecycle
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -33,6 +34,7 @@ type Deps struct {
 	Store         sessionStore
 	Messenger     ports.AgentMessenger
 	Notifications notificationSink
+	Logger        *slog.Logger
 }
 
 // Manager reduces runtime, activity, spawn, and termination observations into durable session facts.
@@ -41,6 +43,7 @@ type Manager struct {
 	store         sessionStore
 	messenger     ports.AgentMessenger
 	notifications notificationSink
+	logger        *slog.Logger
 
 	mu     sync.Mutex
 	window time.Duration
@@ -55,7 +58,11 @@ func New(store sessionStore, messenger ports.AgentMessenger) *Manager {
 
 // NewWithDeps builds a Lifecycle Manager from explicit dependencies.
 func NewWithDeps(deps Deps) *Manager {
-	return &Manager{store: deps.Store, messenger: deps.Messenger, notifications: deps.Notifications, window: defaultRecentActivityWindow, clock: time.Now, react: newReactionState()}
+	logger := deps.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &Manager{store: deps.Store, messenger: deps.Messenger, notifications: deps.Notifications, logger: logger, window: defaultRecentActivityWindow, clock: time.Now, react: newReactionState()}
 }
 
 func (m *Manager) mutate(ctx context.Context, id domain.SessionID, fn func(domain.SessionRecord, time.Time) (domain.SessionRecord, bool)) error {
@@ -98,7 +105,7 @@ func (m *Manager) ApplyRuntimeObservation(ctx context.Context, id domain.Session
 	if err != nil || !changed {
 		return err
 	}
-	return m.notify(ctx, domain.NotificationIntent{
+	m.notifyBestEffort(ctx, domain.NotificationIntent{
 		Type:       domain.NotificationSessionExited,
 		Priority:   domain.NotificationWarning,
 		ProjectID:  next.ProjectID,
@@ -111,6 +118,7 @@ func (m *Manager) ApplyRuntimeObservation(ctx context.Context, id domain.Session
 			Facts:  map[string]any{"probe": f.Probe},
 		},
 	})
+	return nil
 }
 
 // ApplyActivitySignal records an authoritative agent activity signal.
@@ -138,7 +146,7 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	}
 	switch next.Activity.State {
 	case domain.ActivityWaitingInput:
-		return m.notify(ctx, domain.NotificationIntent{
+		m.notifyBestEffort(ctx, domain.NotificationIntent{
 			Type:       domain.NotificationSessionInput,
 			Priority:   domain.NotificationUrgent,
 			ProjectID:  next.ProjectID,
@@ -148,8 +156,9 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 			OccurredAt: next.Activity.LastActivityAt,
 			Context:    domain.NotificationIntentContext{Reason: "waiting_input"},
 		})
+		return nil
 	case domain.ActivityExited:
-		return m.notify(ctx, domain.NotificationIntent{
+		m.notifyBestEffort(ctx, domain.NotificationIntent{
 			Type:       domain.NotificationSessionExited,
 			Priority:   domain.NotificationWarning,
 			ProjectID:  next.ProjectID,
@@ -159,6 +168,7 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 			OccurredAt: next.Activity.LastActivityAt,
 			Context:    domain.NotificationIntentContext{Reason: "activity_exited"},
 		})
+		return nil
 	default:
 		return nil
 	}
@@ -195,11 +205,13 @@ func (m *Manager) MarkTerminated(ctx context.Context, id domain.SessionID) error
 	})
 }
 
-func (m *Manager) notify(ctx context.Context, intent domain.NotificationIntent) error {
+func (m *Manager) notifyBestEffort(ctx context.Context, intent domain.NotificationIntent) {
 	if m.notifications == nil {
-		return nil
+		return
 	}
-	return m.notifications.Notify(ctx, intent)
+	if err := m.notifications.Notify(ctx, intent); err != nil {
+		m.logger.Warn("notification intent failed", "type", intent.Type, "project", intent.ProjectID, "session", intent.SessionID, "source", intent.Source, "dedupeKey", intent.DedupeKey, "error", err)
+	}
 }
 
 // sameActivity reports whether two activity signals describe the same state.

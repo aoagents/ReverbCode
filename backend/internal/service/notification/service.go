@@ -77,14 +77,13 @@ func (s *Service) Notify(ctx context.Context, intent domain.NotificationIntent) 
 	}
 
 	now := s.clock().UTC()
-	sessionID := intent.SessionID
 	n := domain.Notification{
 		ID:          newNotificationID(),
 		Type:        intent.Type,
 		Priority:    intent.Priority,
 		Status:      domain.NotificationUnread,
 		ProjectID:   intent.ProjectID,
-		SessionID:   &sessionID,
+		SessionID:   intent.SessionID,
 		Source:      intent.Source,
 		DedupeKey:   intent.DedupeKey,
 		Fingerprint: fp,
@@ -121,9 +120,10 @@ func (s *Service) resolveSupersededPRNotifications(ctx context.Context, n domain
 	if prURL == "" {
 		return nil
 	}
+	sessionID := n.SessionID
 	count, err := s.store.ResolveNotifications(ctx, domain.NotificationResolveFilter{
 		ProjectID: n.ProjectID,
-		SessionID: n.SessionID,
+		SessionID: &sessionID,
 		PRURL:     prURL,
 		Types: []domain.NotificationType{
 			domain.NotificationCIFailing,

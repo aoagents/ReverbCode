@@ -184,7 +184,7 @@ func (s *Store) ListNotificationsBySession(ctx context.Context, sessionID domain
 	if limit <= 0 {
 		limit = 50
 	}
-	rows, err := s.qr.ListNotificationsBySession(ctx, gen.ListNotificationsBySessionParams{SessionID: &sessionID, Limit: int64(limit)})
+	rows, err := s.qr.ListNotificationsBySession(ctx, gen.ListNotificationsBySessionParams{SessionID: sessionID, Limit: int64(limit)})
 	if err != nil {
 		return nil, fmt.Errorf("list notifications for session %s: %w", sessionID, err)
 	}

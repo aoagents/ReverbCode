@@ -26,7 +26,7 @@ func seedNotificationSession(ctx context.Context, t *testing.T, s interface {
 func sampleNotification(id domain.NotificationID, project domain.ProjectID, session domain.SessionID, dedupe, fp string, at time.Time) domain.Notification {
 	return domain.Notification{
 		ID: id, Type: domain.NotificationCIFailing, Priority: domain.NotificationWarning, Status: domain.NotificationUnread,
-		ProjectID: project, SessionID: &session, Source: "test", DedupeKey: dedupe, Fingerprint: fp,
+		ProjectID: project, SessionID: session, Source: "test", DedupeKey: dedupe, Fingerprint: fp,
 		Title: "CI failed", Summary: "mer-1 has 1 failing check.", Body: "body",
 		Subject:    domain.NotificationSubject{Kind: "pull_request", ProjectID: project, SessionID: session, PRURL: "https://github.com/o/r/pull/1", Label: "PR"},
 		Data:       map[string]any{"pr": map[string]any{"url": "https://github.com/o/r/pull/1"}, "ci": map[string]any{"failedCount": 1}},

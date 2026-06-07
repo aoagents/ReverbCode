@@ -52,7 +52,7 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 	prURL := firstNonEmptyString(o.URL, o.HTMLURL)
 	if o.Merged {
 		if !rec.IsTerminated {
-			if err := m.notify(ctx, domain.NotificationIntent{
+			m.notifyBestEffort(ctx, domain.NotificationIntent{
 				Type:       domain.NotificationMergeCompleted,
 				Priority:   domain.NotificationInfo,
 				ProjectID:  rec.ProjectID,
@@ -70,9 +70,7 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 						"mergeCommitSha": o.MergeCommitSHA,
 					},
 				},
-			}); err != nil {
-				return err
-			}
+			})
 		}
 		return m.MarkTerminated(ctx, id)
 	}
@@ -86,7 +84,7 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 				continue
 			}
 			commit := firstNonEmptyString(ch.CommitHash, o.HeadSHA, "unknown")
-			if err := m.notify(ctx, domain.NotificationIntent{
+			m.notifyBestEffort(ctx, domain.NotificationIntent{
 				Type:       domain.NotificationCIFailing,
 				Priority:   domain.NotificationWarning,
 				ProjectID:  rec.ProjectID,
@@ -105,9 +103,7 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 						"logTail": boundedString(ch.LogTail, 4000),
 					},
 				},
-			}); err != nil {
-				return err
-			}
+			})
 			if suppressAgentNudge {
 				return nil
 			}
@@ -130,7 +126,7 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 			sig = string(o.Review)
 		}
 		reviewIDs := reviewIDs(o.Comments)
-		if err := m.notify(ctx, domain.NotificationIntent{
+		m.notifyBestEffort(ctx, domain.NotificationIntent{
 			Type:       domain.NotificationReviewChanges,
 			Priority:   domain.NotificationPriorityAction,
 			ProjectID:  rec.ProjectID,
@@ -148,9 +144,7 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 					"review":       o.Review,
 				},
 			},
-		}); err != nil {
-			return err
-		}
+		})
 		if suppressAgentNudge {
 			return nil
 		}
@@ -161,7 +155,7 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 		return m.sendOnce(ctx, id, prURL, "review:"+prURL, sig, msg, reviewMaxNudge)
 	}
 	if o.Mergeability == domain.MergeConflicting {
-		if err := m.notify(ctx, domain.NotificationIntent{
+		m.notifyBestEffort(ctx, domain.NotificationIntent{
 			Type:       domain.NotificationMergeConflicts,
 			Priority:   domain.NotificationPriorityAction,
 			ProjectID:  rec.ProjectID,
@@ -176,16 +170,14 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 				Reason:     "merge_conflicts",
 				Facts:      map[string]any{"baseSha": o.BaseSHA, "headSha": o.HeadSHA},
 			},
-		}); err != nil {
-			return err
-		}
+		})
 		if suppressAgentNudge {
 			return nil
 		}
 		return m.sendOnce(ctx, id, prURL, "merge-conflict:"+prURL, string(o.Mergeability), "Your PR has merge conflicts. Rebase onto the base branch and resolve them.", 0)
 	}
 	if prReadyToMerge(o) {
-		return m.notify(ctx, domain.NotificationIntent{
+		m.notifyBestEffort(ctx, domain.NotificationIntent{
 			Type:       domain.NotificationMergeReady,
 			Priority:   domain.NotificationPriorityAction,
 			ProjectID:  rec.ProjectID,
@@ -205,6 +197,7 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 				},
 			},
 		})
+		return nil
 	}
 	return nil
 }

@@ -640,13 +640,36 @@ func TestWaitingInputSuppressesAgentNudgeButNotNotification(t *testing.T) {
 	}
 }
 
-func TestNotificationSinkFailureIsReturned(t *testing.T) {
-	m, st, _, notifications := newManagerWithNotifications()
+func TestNotificationSinkFailureIsBestEffort(t *testing.T) {
+	m, st, msg, notifications := newManagerWithNotifications()
 	st.sessions["mer-1"] = working("mer-1")
 	notifications.err = errors.New("notify failed")
 	err := m.ApplyPRObservation(ctx, "mer-1", ports.PRObservation{Fetched: true, URL: "pr1", Mergeability: domain.MergeConflicting})
-	if !errors.Is(err, notifications.err) {
-		t.Fatalf("err = %v, want notify failure", err)
+	if err != nil {
+		t.Fatalf("notification failure should not fail lifecycle reaction: %v", err)
+	}
+	if len(msg.msgs) != 1 {
+		t.Fatalf("notification failure should not block agent nudge, got %v", msg.msgs)
+	}
+}
+
+func TestNotificationSinkFailureDoesNotBlockLifecycleFacts(t *testing.T) {
+	m, st, _, notifications := newManagerWithNotifications()
+	st.sessions["mer-1"] = working("mer-1")
+	notifications.err = errors.New("notify failed")
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityWaitingInput, Timestamp: time.Now()}); err != nil {
+		t.Fatalf("waiting-input notification failure should not fail activity update: %v", err)
+	}
+	if got := st.sessions["mer-1"]; got.Activity.State != domain.ActivityWaitingInput {
+		t.Fatalf("activity update not persisted: %+v", got)
+	}
+
+	st.sessions["mer-1"] = working("mer-1")
+	if err := m.ApplyPRObservation(ctx, "mer-1", ports.PRObservation{Fetched: true, URL: "pr1", Merged: true}); err != nil {
+		t.Fatalf("merge-completed notification failure should not fail termination: %v", err)
+	}
+	if got := st.sessions["mer-1"]; !got.IsTerminated || got.Activity.State != domain.ActivityExited {
+		t.Fatalf("merged PR should still terminate session: %+v", got)
 	}
 }
 
