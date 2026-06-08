@@ -10,6 +10,124 @@ Submodules are documented only as a rejected alternative. They are viable for
 teams that already want submodule semantics, but they should not be AO's
 workspace implementation.
 
+## Team presentation summary
+
+The decision is: **AO composes a session workspace from native git worktrees of
+selected child repos.** The parent root is shared context. Normal workers can see
+root files through links, but they cannot own or edit those files.
+
+```mermaid
+flowchart LR
+    subgraph Canonical["Canonical workspace folder"]
+        RootFiles["root files<br/>package.json<br/>pnpm-workspace.yaml<br/>Makefile"]
+        CLIRepo["cli/<br/>git repo"]
+        APIRepo["api/<br/>git repo"]
+        PFRepo["pf/<br/>git repo"]
+    end
+
+    subgraph Session["Session workspace: ao/project-abc-7"]
+        RootLinks["root context links<br/>read-only by AO policy"]
+        CLIWT["cli/<br/>git worktree<br/>branch ao/project-abc-7"]
+        APIWT["api/<br/>git worktree<br/>branch ao/project-abc-7"]
+    end
+
+    RootFiles -. "symlink/context" .-> RootLinks
+    CLIRepo ==>|"git worktree add"| CLIWT
+    APIRepo ==>|"git worktree add"| APIWT
+    PFRepo -. "not targeted" .-> Session
+```
+
+A worker that targets `cli,api` receives exactly the root context plus those two
+child repos. `pf/` is not provisioned unless requested.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User
+    participant AO as AO daemon
+    participant DB as SQLite
+    participant Git as gitworktree adapter
+    participant Agent as Agent runtime
+
+    User->>AO: ao spawn --project project-abc --targets cli,api
+    AO->>DB: create session row
+    AO->>DB: validate workspace repos cli/api
+    AO->>Git: create composite root
+    Git->>Git: link root context files
+    Git->>Git: git -C canonical/cli worktree add session/cli ao/session
+    Git->>Git: git -C canonical/api worktree add session/api ao/session
+    Git-->>AO: WorkspaceInfo(root, targets)
+    AO->>DB: persist session_targets + root manifest
+    AO->>Agent: launch with cwd=session root
+    AO->>DB: mark spawned
+```
+
+Root files have a separate access model from child repo targets:
+
+```mermaid
+flowchart TD
+    Spawn["Spawn workspace session"] --> RootMode{"root_access?"}
+    RootMode -->|read default| ReadOnly["Link root context<br/>for reading only"]
+    ReadOnly --> WorkerEdits["Worker edits only<br/>inside targeted repos"]
+    WorkerEdits --> PRs["Open PRs per child repo"]
+
+    RootMode -->|write explicit| Lock["Acquire project<br/>root-write lock"]
+    Lock --> Writer["Orchestrator or<br/>one authorized worker"]
+    Writer --> CanonicalRoot["Edit canonical parent root"]
+    CanonicalRoot --> Release["Release root-write lock<br/>on completion/cleanup"]
+
+    ReadOnly -. "write attempt" .-> Violation["Root write violation<br/>refuse to normalize/delete"]
+```
+
+The durable model makes workspaces explicit instead of hiding target repos in a
+JSON blob:
+
+```mermaid
+erDiagram
+    PROJECTS ||--o{ WORKSPACE_REPOS : contains
+    PROJECTS ||--o{ SESSIONS : owns
+    SESSIONS ||--o{ SESSION_TARGETS : provisions
+    WORKSPACE_REPOS ||--o{ SESSION_TARGETS : selected_as
+    PROJECTS ||--o| PROJECT_ROOT_WRITE_LOCKS : guards
+    SESSIONS ||--o| PROJECT_ROOT_WRITE_LOCKS : holds
+
+    PROJECTS {
+        text id PK
+        text kind "single_repo | workspace"
+        text path
+        text repo_origin_url
+    }
+
+    WORKSPACE_REPOS {
+        text project_id FK
+        text name
+        text relative_path
+        text repo_origin_url
+    }
+
+    SESSIONS {
+        text id PK
+        text project_id FK
+        text workspace_path
+        text branch "default/shared branch"
+        text root_access "read | write"
+    }
+
+    SESSION_TARGETS {
+        text session_id FK
+        text repo_name FK
+        text branch
+        text worktree_path
+    }
+
+    PROJECT_ROOT_WRITE_LOCKS {
+        text project_id PK
+        text session_id FK
+        timestamp acquired_at
+    }
+```
+
+
 ## Current AO shape that constrains the design
 
 AO currently assumes one registered project points at one git repository:
@@ -150,6 +268,8 @@ but they cannot claim ownership of those files unless the orchestrator grants a
 root-write session.
 
 ## Rejected default: parent repo with submodules
+
+This is included only to explain why the team is not choosing it.
 
 Shape:
 
