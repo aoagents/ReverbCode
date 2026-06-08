@@ -1,5 +1,7 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
+
 function XIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
@@ -24,61 +26,166 @@ function GithubIcon() {
   );
 }
 
+const navLinks = [
+  { label: "Docs", href: "/docs" },
+  { label: "Features", href: "#features" },
+  { label: "How It Works", href: "#how" },
+];
+
 export function LandingNav() {
+  // The logo + right cluster collapse away on scroll-down and return on
+  // scroll-up; the centered link pill stays put the whole time.
+  const [collapsed, setCollapsed] = useState(false);
+
+  // Scroll-spy: which hash section is currently in view (null over the hero).
+  // The cursor takes over via `hovered`; the sliding highlight follows
+  // whichever is set, falling back to the active section on mouse-out.
+  const [active, setActive] = useState<number | null>(null);
+  const [hovered, setHovered] = useState<number | null>(null);
+  const driver = hovered ?? active;
+
+  const itemRefs = useRef<Array<HTMLLIElement | null>>([]);
+  const [pill, setPill] = useState({ left: 0, width: 0, visible: false });
+
+  useEffect(() => {
+    let lastY = window.scrollY;
+    let raf = 0;
+    const evaluate = () => {
+      raf = 0;
+      const y = window.scrollY;
+      if (y < 80) setCollapsed(false);
+      else if (y > lastY + 4) setCollapsed(true);
+      else if (y < lastY - 4) setCollapsed(false);
+      lastY = y;
+
+      // Active section = last hash link whose section top has crossed a probe
+      // line ~35% down the viewport. Route links (e.g. /docs) are skipped.
+      const probe = y + window.innerHeight * 0.35;
+      let found: number | null = null;
+      navLinks.forEach((link, i) => {
+        if (!link.href.startsWith("#")) return;
+        const el = document.getElementById(link.href.slice(1));
+        if (el && el.offsetTop <= probe) found = i;
+      });
+      setActive(found);
+    };
+    const onScroll = () => {
+      if (!raf) raf = requestAnimationFrame(evaluate);
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    evaluate();
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, []);
+
+  // Reposition the sliding highlight under the driver link. Recomputed on
+  // driver change and on resize (link offsets shift with viewport width).
+  useEffect(() => {
+    const place = () => {
+      if (driver == null) {
+        setPill((p) => ({ ...p, visible: false }));
+        return;
+      }
+      const el = itemRefs.current[driver];
+      if (!el) return;
+      setPill({ left: el.offsetLeft, width: el.offsetWidth, visible: true });
+    };
+    place();
+    window.addEventListener("resize", place);
+    return () => window.removeEventListener("resize", place);
+  }, [driver]);
+
+  // Fade + slide for the side clusters; pointer-events off when hidden so the
+  // collapsed (invisible) logo/icons aren't clickable.
+  const sideStyle = (dir: "left" | "right"): React.CSSProperties => ({
+    opacity: collapsed ? 0 : 1,
+    transform: collapsed
+      ? `translateX(${dir === "left" ? "-12px" : "12px"})`
+      : "translateX(0)",
+    pointerEvents: collapsed ? "none" : "auto",
+    transition: "opacity 0.35s ease, transform 0.45s cubic-bezier(0.22,1,0.36,1)",
+  });
+
   return (
-    <nav className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-8 py-6 max-w-[80rem] mx-auto bg-[var(--landing-bg)]/90 backdrop-blur-sm">
-      <a
-        href="#"
-        className="inline-flex items-center gap-2 text-base font-semibold text-white no-underline font-sans font-[680] tracking-tight"
-      >
-        <img src="/ao-logo.svg" alt="" aria-hidden="true" width={28} height={28} className="h-7 w-7" />
-        Agent Orchestrator
-      </a>
-      <ul className="hidden md:flex items-center gap-8 list-none">
-        <li>
-          <a href="/docs" className="text-sm text-[var(--landing-muted)] no-underline hover:text-white transition-colors">
-            Docs
-          </a>
-        </li>
-        <li>
-          <a href="#features" className="text-sm text-[var(--landing-muted)] no-underline hover:text-white transition-colors">
-            Features
-          </a>
-        </li>
-        <li>
-          <a href="#how" className="text-sm text-[var(--landing-muted)] no-underline hover:text-white transition-colors">
-            How It Works
-          </a>
-        </li>
-      </ul>
-      <div className="flex items-center gap-2">
+    <nav className="fixed top-0 left-0 right-0 z-50">
+      <div className="relative flex items-center justify-between px-8 py-6 max-w-[80rem] mx-auto">
         <a
-          href="https://x.com/aoagents"
-          target="_blank"
-          rel="noopener noreferrer"
-          aria-label="X (Twitter)"
-          className="inline-flex h-9 w-9 items-center justify-center rounded-md text-white/80 transition-colors hover:text-white"
+          href="/"
+          className="inline-flex items-center gap-2 text-base font-semibold text-white no-underline font-sans font-[680] tracking-tight"
+          style={sideStyle("left")}
         >
-          <XIcon />
+          <img src="/ao-logo.svg" alt="" aria-hidden="true" width={28} height={28} className="h-7 w-7" />
+          Agent Orchestrator
         </a>
-        <a
-          href="https://discord.gg/UZv7JjxbwG"
-          target="_blank"
-          rel="noopener noreferrer"
-          aria-label="Discord"
-          className="inline-flex h-9 w-9 items-center justify-center rounded-md text-white/80 transition-colors hover:text-white"
+
+        {/* Centered link pill — always visible */}
+        <ul
+          className="hidden md:flex items-center gap-1 list-none absolute left-1/2 -translate-x-1/2 rounded-full px-2 py-1.5 bg-[var(--landing-card-bg)]/80 backdrop-blur-md border border-[var(--landing-border-subtle)]"
+          onMouseLeave={() => setHovered(null)}
         >
-          <DiscordIcon />
-        </a>
-        <a
-          href="https://github.com/ComposioHQ/agent-orchestrator"
-          target="_blank"
-          rel="noopener noreferrer"
-          aria-label="GitHub"
-          className="inline-flex h-9 w-9 items-center justify-center rounded-md text-white/80 transition-colors hover:text-white"
-        >
-          <GithubIcon />
-        </a>
+          {/* Single sliding highlight — glides between links, fades out over the hero */}
+          <span
+            aria-hidden="true"
+            className="absolute top-1/2 -translate-y-1/2 h-[calc(100%-0.5rem)] rounded-full bg-white/[0.07] border border-white/[0.06]"
+            style={{
+              left: pill.left,
+              width: pill.width,
+              opacity: pill.visible ? 1 : 0,
+              transition:
+                "left 0.4s cubic-bezier(0.22,1,0.36,1), width 0.4s cubic-bezier(0.22,1,0.36,1), opacity 0.25s ease",
+            }}
+          />
+          {navLinks.map((link, i) => (
+            <li
+              key={link.label}
+              ref={(el) => {
+                itemRefs.current[i] = el;
+              }}
+              onMouseEnter={() => setHovered(i)}
+            >
+              <a
+                href={link.href}
+                className={`relative z-10 block text-sm no-underline px-4 py-1.5 rounded-full transition-colors ${
+                  driver === i ? "text-white" : "text-[var(--landing-muted)] hover:text-white"
+                }`}
+              >
+                {link.label}
+              </a>
+            </li>
+          ))}
+        </ul>
+
+        <div className="flex items-center gap-2" style={sideStyle("right")}>
+          <a
+            href="https://x.com/aoagents"
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="X (Twitter)"
+            className="inline-flex h-9 w-9 items-center justify-center rounded-md text-white/80 transition-colors hover:text-white"
+          >
+            <XIcon />
+          </a>
+          <a
+            href="https://discord.gg/UZv7JjxbwG"
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="Discord"
+            className="inline-flex h-9 w-9 items-center justify-center rounded-md text-white/80 transition-colors hover:text-white"
+          >
+            <DiscordIcon />
+          </a>
+          <a
+            href="https://github.com/ComposioHQ/agent-orchestrator"
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="GitHub"
+            className="inline-flex h-9 w-9 items-center justify-center rounded-md text-white/80 transition-colors hover:text-white"
+          >
+            <GithubIcon />
+          </a>
+        </div>
       </div>
     </nav>
   );
