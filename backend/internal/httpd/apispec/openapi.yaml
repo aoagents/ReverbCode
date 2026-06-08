@@ -1376,8 +1376,6 @@ components:
       type: object
     SpawnSessionRequest:
       properties:
-        agentRules:
-          type: string
         branch:
           type: string
         harness:

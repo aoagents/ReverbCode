@@ -388,17 +388,8 @@ func seedRecord(cfg ports.SpawnConfig, now time.Time) domain.SessionRecord {
 	}
 }
 
-// buildPrompt assembles the spawn prompt from the explicit config (the full
-// 3-layer assembly lands later).
 func buildPrompt(cfg ports.SpawnConfig) string {
-	switch {
-	case cfg.AgentRules == "":
-		return cfg.Prompt
-	case cfg.Prompt == "":
-		return cfg.AgentRules
-	default:
-		return cfg.Prompt + "\n\n" + cfg.AgentRules
-	}
+	return cfg.Prompt
 }
 
 func (m *Manager) buildSpawnPrompt(ctx context.Context, cfg ports.SpawnConfig) (string, error) {
