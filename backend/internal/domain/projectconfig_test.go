@@ -14,6 +14,11 @@ func TestProjectConfigValidate(t *testing.T) {
 		{"good role override", ProjectConfig{Worker: RoleOverride{Harness: HarnessCodex}}, false},
 		{"unknown role harness", ProjectConfig{Orchestrator: RoleOverride{Harness: "nope"}}, true},
 		{"bad role agent config", ProjectConfig{Worker: RoleOverride{AgentConfig: AgentConfig{Permissions: "nope"}}}, true},
+		{"good symlinks", ProjectConfig{Symlinks: []string{".env", "configs/dev.toml"}}, false},
+		{"symlink absolute path", ProjectConfig{Symlinks: []string{"/etc/passwd"}}, true},
+		{"symlink parent escape", ProjectConfig{Symlinks: []string{"../escape"}}, true},
+		{"symlink embedded parent", ProjectConfig{Symlinks: []string{"a/../../b"}}, true},
+		{"symlink bare ..", ProjectConfig{Symlinks: []string{".."}}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

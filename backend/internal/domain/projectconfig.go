@@ -2,7 +2,9 @@ package domain
 
 import (
 	"fmt"
+	"path/filepath"
 	"reflect"
+	"strings"
 )
 
 // ProjectConfig is the typed per-project configuration — the SQLite twin of the
@@ -82,6 +84,35 @@ func (c ProjectConfig) Validate() error {
 		}
 		if err := ro.AgentConfig.Validate(); err != nil {
 			return fmt.Errorf("%s.%w", role, err)
+		}
+	}
+	for _, s := range c.Symlinks {
+		if err := validateRepoRelative(s); err != nil {
+			return fmt.Errorf("symlink %q: %w", s, err)
+		}
+	}
+	return nil
+}
+
+// validateRepoRelative refuses paths that would let a project config escape
+// its repo root: absolute paths and any ".." segment (before or after Clean).
+// The same guard runs at spawn time as defense-in-depth, but enforcing it here
+// rejects bad config when it is set rather than at every later spawn.
+func validateRepoRelative(p string) error {
+	trimmed := strings.TrimSpace(p)
+	if trimmed == "" {
+		return nil
+	}
+	if filepath.IsAbs(trimmed) || strings.HasPrefix(trimmed, "/") || strings.HasPrefix(trimmed, `\`) {
+		return fmt.Errorf("path must be repo-relative and must not escape the project root")
+	}
+	clean := filepath.Clean(trimmed)
+	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("path must be repo-relative and must not escape the project root")
+	}
+	for _, seg := range strings.Split(filepath.ToSlash(clean), "/") {
+		if seg == ".." {
+			return fmt.Errorf("path must be repo-relative and must not escape the project root")
 		}
 	}
 	return nil
