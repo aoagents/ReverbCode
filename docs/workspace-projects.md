@@ -1,18 +1,14 @@
 # Workspace projects: provisioning deep dive
 
-This note expands the scoping discussion for supporting one AO project backed by
-multiple sibling git repositories under one parent folder. It focuses on the two
-realistic provisioning choices:
+This note turns the scoping discussion into an Option 1 implementation plan.
+AO should support one logical project backed by multiple sibling git repositories
+under a parent folder by composing native child git worktrees. The parent folder
+may be plain/non-git; AO should not convert it into a submodule manifest repo as
+the default path.
 
-1. **Composed child worktrees**: keep the parent as a plain folder and run
-   `git worktree add` inside each targeted child repository.
-2. **Parent repo with submodules**: initialize or use a parent git repository,
-   register each child as a submodule, then create session worktrees from the
-   parent repository.
-
-The current recommendation is **Option 1 for the first implementation**. Option
-2 is viable only when the user intentionally wants submodule semantics for the
-workspace itself; it should not be AO's default conversion path.
+Submodules are documented only as a rejected alternative. They are viable for
+teams that already want submodule semantics, but they should not be AO's
+workspace implementation.
 
 ## Current AO shape that constrains the design
 
@@ -47,7 +43,7 @@ represent one composite session root plus N child git worktrees.
   multi-target workspace session it contains root context files plus selected
   target directories, each target directory being a real git checkout/worktree.
 
-## Option 1: composed child worktrees
+## Chosen provisioning model: composed child worktrees
 
 Shape:
 
@@ -58,7 +54,7 @@ canonical/project-abc/          # may be plain, non-git parent
   api/                          # git repo
 
 managed/project-abc/project-abc-7/
-  package.json                  # copied root context file
+  package.json -> canonical/project-abc/package.json  # root context link
   cli/                          # git worktree of canonical cli
   api/                          # git worktree of canonical api
 ```
@@ -102,25 +98,58 @@ git -C <canonical>/<target> worktree add <session-root>/<target> <branch>
 
 ### Root-file policy for first implementation
 
-Root files in a non-git parent should be **context snapshots, not synchronized
-outputs**:
+Root files in a non-git parent are **shared project context**, not
+session-owned outputs. Normal worker sessions must not edit them.
 
-1. At workspace creation, copy root-level files and directories that are not
+Use root context links for normal sessions:
+
+1. At workspace creation, link root-level files/directories that are not
    registered workspace repos and not `.git` into the composite root.
-2. Mark copied files/directories read-only as a best-effort signal.
-3. Store a small manifest of copied root paths and hashes for the session.
-4. Do not copy session root modifications back to the canonical parent.
-5. On cleanup, compare the manifest. If root context files changed, skip cleanup
-   with a clear "unsupported root edits" reason rather than deleting them.
-6. If root files must be edited as durable project output, require the parent to
-   be a real git repo and model it as another target/repo instead of relying on
-   copy-back semantics.
+2. Prefer symlinks because they make the workspace shape match the canonical
+   parent and avoid a copy-back path.
+3. Treat those links as read-only by AO policy: root paths are for context; all
+   durable worker edits belong under selected target repos.
+4. Do not copy root modifications back to canonical. With symlinks there is no
+   copy-back path; an attempted write is either rejected by enforcement or is an
+   immediate write to canonical and must be treated as a policy violation.
+5. Store a root-context manifest so AO can detect missing/changed root entries
+   during restore/cleanup and surface root write violations.
 
-This avoids last-write-wins and preserves AO's hard rule not to destroy dirty
-workspaces. Permissions alone are insufficient because the agent runs as the
-same user and can change modes back.
+Important caveat: a symlink by itself is not a write barrier. If the agent runs
+as the same OS user and the symlink points at a writable canonical file, a normal
+editor can follow the link and mutate the canonical parent. AO therefore needs an
+enforcement layer in addition to symlinks:
 
-## Option 2: parent repo with submodules
+- spawn prompts and session instructions must explicitly forbid root edits for
+  normal worker sessions;
+- session tooling should treat writes outside selected target repos as a root
+  write violation;
+- cleanup/restore should detect root-context changes and refuse to silently
+  discard or normalize them;
+- stronger OS-level sandboxing can be added later, but the V1 contract should
+  not pretend symlinks are sufficient isolation.
+
+Root edits require an explicit **root-write session**:
+
+- The orchestrator session may edit root files, or it may spawn/authorize one
+  explicit worker session with root-write access.
+- Root-write access is project-scoped and exclusive: at most one active
+  root-write session per workspace project.
+- Root-write sessions operate on the canonical parent root, not on per-session
+  copies. There is no last-write-wins merge from worker workspaces.
+- Normal target-only workers can still have read-only root context links while a
+  root-write session exists, but AO should warn that root context may change
+  under them.
+- If root files become a frequent code-change surface, the parent should be made
+  a git repo or modeled as its own workspace repo so git owns concurrency,
+  history, review, and rollback.
+
+This keeps normal multi-repo worker sessions safe: they can read workspace-level
+files like `package.json`, `pnpm-workspace.yaml`, `.env.example`, or `Makefile`,
+but they cannot claim ownership of those files unless the orchestrator grants a
+root-write session.
+
+## Rejected default: parent repo with submodules
 
 Shape:
 
@@ -172,10 +201,10 @@ git -C <session-root> -c protocol.file.allow=always submodule update --init --re
   child code changes in the usual repo PRs. If AO opens child PRs, parent
   gitlink bumps become extra bookkeeping.
 
-Option 2 is useful only when the team already wants a versioned workspace
+Submodules are useful only when the team already wants a versioned workspace
 manifest and accepts submodule workflows. AO can later support that as an
 advanced registration mode or by treating an existing parent repo as a normal
-single-repo project with submodules. It should not be the first workspace
+single-repo project with submodules. It should not be the workspace
 implementation.
 
 ## Schema direction
@@ -212,6 +241,19 @@ Keep `sessions.workspace_path` as the composite root handed to the runtime and
 agent. Keep `sessions.branch` as the default/shared branch for compatibility,
 but treat `session_targets.branch` as authoritative for workspace projects.
 
+Root access also needs durable state. Prefer explicit tables/columns such as:
+
+```sql
+ALTER TABLE sessions ADD COLUMN root_access TEXT NOT NULL DEFAULT 'read'
+  CHECK (root_access IN ('read', 'write'));
+
+CREATE TABLE project_root_write_locks (
+  project_id  TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+  session_id  TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  acquired_at TIMESTAMP NOT NULL
+);
+```
+
 If root context manifests are stored durably, add either a separate
 `session_root_files` table or a metadata blob dedicated to cleanup safety. Do
 not overload display status or activity state with root-file dirtiness.
@@ -225,7 +267,8 @@ type WorkspaceConfig struct {
     ProjectID domain.ProjectID
     SessionID domain.SessionID
     Branch    string
-    Targets   []string // empty means single-repo project or all/default targets by policy
+    Targets    []string // empty means single-repo project or all/default targets by policy
+    RootAccess string   // "read" for normal workers, "write" only when orchestrator-authorized
 }
 
 type WorkspaceInfo struct {
@@ -250,7 +293,7 @@ return either:
 - a workspace root plus named child repos for `workspace`.
 
 For single-repo projects, the adapter keeps today's exact behavior. For
-workspace projects, it creates the composite root, copies root context files,
+workspace projects, it creates the composite root, links root context entries,
 then creates one child worktree per selected target.
 
 ## Registration behavior
@@ -275,6 +318,11 @@ then creates one child worktree per selected target.
 - If targets are omitted, choose a product policy explicitly. The safest first
   cut is to require `--targets` for workspace projects so AO never accidentally
   provisions every repo in a large workspace.
+- Normal worker sessions get `root_access=read`: they can read root context
+  links but must not edit root files.
+- Add an orchestrator-only way to request `root_access=write` for the
+  orchestrator itself or for one explicit worker. The request must acquire the
+  project root-write lock before launch.
 - Use one shared branch name by default: `ao/<session-id>` in every selected
   target. Store per-target rows anyway.
 
@@ -282,15 +330,15 @@ then creates one child worktree per selected target.
 
 Create/restore/destroy must be all-target aware:
 
-- `Create`: create composite root, copy root context, then create each child
+- `Create`: create composite root, link root context, then create each child
   worktree. If target N fails, remove already-created child worktrees and leave
   no registered half-session when possible.
 - `Restore`: verify every target worktree still exists and is registered. If one
   is missing but its directory is empty, recreate it. If a path exists and is not
   the registered worktree, refuse restore.
 - `Destroy`: call `git worktree remove` for every target without `--force`, prune
-  each child repo, and only remove the composite root when every child removal
-  succeeds and root context is unchanged.
+  each child repo, release any root-write lock, and only remove the composite
+  root when every child removal succeeds and root context policy checks pass.
 - `Cleanup`: if one target refuses removal, preserve the composite root and
   report/skip the session for retry. Do not delete root files or sibling targets
   just because some targets cleaned up successfully.
@@ -315,9 +363,12 @@ Create/restore/destroy must be all-target aware:
      restore after one child worktree is manually removed.
 
 4. **Root context safety**
-   - Copy root context files with a manifest.
-   - Refuse cleanup when root context files changed.
-   - Document that root edits require a git-backed parent/target.
+   - Link root context entries into normal session roots.
+   - Record a root context manifest.
+   - Add root-write access state and an exclusive project root-write lock.
+   - Refuse cleanup/restore paths that would hide root write violations.
+   - Document that routine root edits require a root-write session, and frequent
+     root edits should make the parent a git repo or separate workspace repo.
 
 5. **SCM observer enumeration**
    - Read workspace child origins from `workspace_repos`.
@@ -326,12 +377,14 @@ Create/restore/destroy must be all-target aware:
 
 ## Decision checkpoint
 
-Before coding past slice 1, confirm these product decisions:
+Before coding past slice 1, confirm these remaining product decisions:
 
 1. Workspace spawn without `--targets`: reject, or default to all repos?
-2. Root files: accept context-only snapshots with no writeback?
+2. Root-write authorization UX: which exact command/agent path lets the
+   orchestrator grant `root_access=write` to itself or one explicit worker?
 3. Branch naming: one shared `ao/<session-id>` branch in every target for V1?
 
-If those answers are accepted, Option 1 is implementable as an incremental
-extension of the current daemon. Option 2 should remain a documented advanced
-alternative, not the default architecture.
+The provisioning decision is settled: implement composed child worktrees. The
+root-file decision is also directional: normal sessions get read-only root
+context links; root edits require an explicit orchestrator-authorized root-write
+session.
