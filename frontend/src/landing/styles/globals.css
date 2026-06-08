@@ -101,13 +101,32 @@ a {
 }
 
 .landing-card {
-  background: var(--landing-card-bg);
+  /* Lit from above: a soft warm glow pools at the top, while the body grades
+     from a gently raised tone down to near the page colour, so the card melts
+     into the background at its base instead of sitting as a flat muddy patch. */
+  background:
+    radial-gradient(
+      135% 100% at 50% 0%,
+      rgba(255, 255, 255, 0.035),
+      rgba(255, 255, 255, 0) 55%
+    ),
+    linear-gradient(180deg, #1a1918 0%, #141312 100%);
   border: 1px solid var(--landing-border-subtle);
-  transition: border-color 0.2s, background 0.2s;
+  /* Inner highlight lip at the top edge + a layered drop shadow for lift and
+     clean separation when the cards stack. */
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 1px 2px rgba(0, 0, 0, 0.35),
+    0 18px 44px -16px rgba(0, 0, 0, 0.55);
+  transition: border-color 0.25s, box-shadow 0.25s, background 0.25s;
 }
 
 .landing-card:hover {
   border-color: var(--landing-border-default);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.07),
+    0 1px 2px rgba(0, 0, 0, 0.35),
+    0 26px 60px -16px rgba(0, 0, 0, 0.62);
 }
 
 .landing-hero-grid {
@@ -275,6 +294,48 @@ a {
   animation: landing-stream-in 0.26s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
+/* Lifecycle "Merged" payoff — a single green glow + the commit dot sliding
+   onto the graph line. Both play once when the dial lands on Merged. */
+@keyframes landing-merge-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(134, 239, 172, 0);
+  }
+  35% {
+    box-shadow:
+      inset 0 0 0 1px rgba(134, 239, 172, 0.35),
+      0 0 26px -6px rgba(134, 239, 172, 0.4);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(134, 239, 172, 0);
+  }
+}
+
+.landing-merge-pulse {
+  animation: landing-merge-pulse 1.4s ease-out;
+}
+
+@keyframes landing-commit-dot {
+  from {
+    transform: translateX(-14px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.landing-commit-dot {
+  animation: landing-commit-dot 0.55s cubic-bezier(0.22, 1, 0.36, 1) 0.15s both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .landing-merge-pulse,
+  .landing-commit-dot {
+    animation: none;
+  }
+}
+
 @keyframes landing-sse-pulse {
   0%,
   100% {
@@ -287,6 +348,60 @@ a {
 
 .landing-sse-pulse {
   animation: landing-sse-pulse 1.6s ease-in-out infinite;
+}
+
+/* Quietly drifting "chaos" cards — a few px of out-of-phase vertical float, so
+   the scattered pile reads as restless without ever looking like it shakes. */
+@keyframes landing-tab-float {
+  0%,
+  100% {
+    transform: translateY(0) rotate(var(--rot, 0deg));
+  }
+  50% {
+    transform: translateY(-6px) rotate(var(--rot, 0deg));
+  }
+}
+
+.landing-tab {
+  transform: rotate(var(--rot, 0deg));
+  animation: landing-tab-float var(--dur, 5.5s) ease-in-out infinite;
+  animation-delay: var(--delay, 0s);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .landing-tab {
+    animation: none;
+    transform: rotate(var(--rot, 0deg));
+  }
+}
+
+/* Skeleton shimmer for asset placeholders awaiting a real capture */
+@keyframes landing-shimmer {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+
+.landing-shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.025),
+    transparent
+  );
+  animation: landing-shimmer 1.8s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .landing-shimmer::after {
+    animation: none;
+  }
 }
 
 /* Switcher progress bar */

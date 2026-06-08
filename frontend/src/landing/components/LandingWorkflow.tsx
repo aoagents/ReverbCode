@@ -175,7 +175,7 @@ export function LandingWorkflow() {
       </div>
 
       <div
-        className="landing-card rounded-2xl border-[var(--landing-border-subtle)] px-6 sm:px-10 pt-10 pb-12 select-none outline-none"
+        className="rounded-2xl border border-[var(--landing-border-subtle)] px-6 sm:px-10 pt-10 pb-12 select-none outline-none"
         tabIndex={0}
         role="group"
         aria-label="Session lifecycle timeline"
@@ -183,17 +183,42 @@ export function LandingWorkflow() {
         onMouseEnter={() => setPaused(true)}
         onMouseLeave={() => setPaused(false)}
       >
-        {/* Active icon + label */}
+        {/* Stage-proof card — swaps per milestone, cross-fades up in place.
+            Keyed on the active key so the inner reveal (and the Merged pulse)
+            replays on every landing. */}
+        <div
+          className="flex justify-center mb-5"
+          style={{ opacity: show ? 1 : 0, transition: "opacity 0.35s ease" }}
+        >
+          <div
+            key={cur.key}
+            className={`w-full max-w-[23rem] rounded-xl border border-[var(--landing-border-subtle)] bg-[#161514] overflow-hidden ${
+              cur.key === "merged" ? "landing-merge-pulse" : ""
+            }`}
+          >
+            <div className="flex items-center justify-between px-3.5 h-8 border-b border-[var(--landing-border-subtle)]">
+              <span className="flex items-center gap-2 font-mono text-[0.6875rem] text-[var(--landing-muted)]">
+                <span
+                  className="w-1.5 h-1.5 rounded-full"
+                  style={{ background: stageDot[cur.key] }}
+                />
+                s-312 · {cur.key}
+              </span>
+              <LifecycleIcon kind={cur.icon} size={15} />
+            </div>
+            <div className="px-3.5 py-3 min-h-[64px] flex flex-col justify-center font-mono text-[0.75rem] leading-[1.7]">
+              <StageArtifact m={cur} />
+            </div>
+          </div>
+        </div>
+
+        {/* Active label */}
         <div
           className="flex flex-col items-center text-center mb-2"
           style={{ opacity: show ? 1 : 0, transition: "opacity 0.35s ease" }}
         >
-          <LifecycleIcon kind={cur.icon} />
-          <div className="font-sans font-[680] tracking-tight text-[1.5rem] tracking-[-0.5px] mt-3">
+          <div className="font-sans font-[680] tracking-[-0.5px] text-[1.5rem]">
             {cur.label}
-          </div>
-          <div className="font-mono text-[0.6875rem] tracking-[0.08em] text-[var(--landing-accent)] opacity-80 mt-1">
-            {cur.key}
           </div>
         </div>
 
@@ -263,10 +288,103 @@ export function LandingWorkflow() {
   );
 }
 
-function LifecycleIcon({ kind }: { kind: Milestone["icon"] }) {
+const stageDot: Record<string, string> = {
+  spawning: "var(--landing-accent)",
+  working: "rgba(96,165,250,0.85)",
+  pr_open: "rgba(167,139,250,0.85)",
+  review: "rgba(251,191,36,0.85)",
+  mergeable: "rgba(134,239,172,0.85)",
+  merged: "rgba(134,239,172,0.9)",
+};
+
+const green = "rgba(134,239,172,0.85)";
+
+// Per-stage artifact — a tiny realistic slice of that moment, in the same mono
+// vocabulary as the rest of the page. Wrapped in landing-stream-line so it
+// reveals each time the card remounts on a new landing.
+function StageArtifact({ m }: { m: Milestone }) {
+  const muted = "text-[var(--landing-muted)]";
+  const dim = "text-[var(--landing-muted-dim)]";
+  switch (m.key) {
+    case "spawning":
+      return (
+        <div className={`landing-stream-line space-y-1.5 ${muted}`}>
+          <div>
+            <span className={dim}>$</span> ao spawn #312
+          </div>
+          <div className="text-[var(--landing-fg)]/80">
+            → worktree .ao/s-312 · branch issue-312
+          </div>
+        </div>
+      );
+    case "working":
+      return (
+        <div className="landing-stream-line space-y-1.5">
+          <div className={muted}>
+            <span className={dim}>⟩</span> writing src/auth.ts
+          </div>
+          <div style={{ color: green }}>✓ 48 tests pass</div>
+        </div>
+      );
+    case "pr_open":
+      return (
+        <div className="landing-stream-line space-y-1.5">
+          <div className="text-[var(--landing-fg)]/85">PR #312 · feat/user-auth</div>
+          <div className={muted}>
+            opened against <span className="text-[var(--landing-fg)]/80">main</span>
+          </div>
+        </div>
+      );
+    case "review":
+      return (
+        <div className="landing-stream-line space-y-1.5">
+          <div className={`flex items-center gap-4 ${muted}`}>
+            <span>
+              build <span style={{ color: green }}>✓</span>
+            </span>
+            <span>
+              tests <span style={{ color: green }}>✓</span>
+            </span>
+          </div>
+          <div className={`flex items-center gap-2 ${muted}`}>
+            <span className="inline-block w-3 h-3 rounded-full border border-[rgba(251,191,36,0.3)] border-t-[rgba(251,191,36,0.9)] landing-spin shrink-0" />
+            lint · agent patching
+          </div>
+        </div>
+      );
+    case "mergeable":
+      return (
+        <div className="landing-stream-line flex items-center gap-2" style={{ color: green }}>
+          ✓ all checks green
+          <span className={muted}>· 2 approvals</span>
+        </div>
+      );
+    case "merged":
+      return (
+        <div className="landing-stream-line space-y-2">
+          <div className="flex items-center gap-2.5">
+            <span className="inline-flex items-center shrink-0">
+              <span className="w-1.5 h-1.5 rounded-full border border-[var(--landing-muted-dim)]" />
+              <span className="w-6 h-px bg-[var(--landing-border-strong)]" />
+              <span
+                className="landing-commit-dot w-2 h-2 rounded-full"
+                style={{ background: green }}
+              />
+            </span>
+            <span className="text-[var(--landing-fg)]/85">merged into main</span>
+          </div>
+          <div className="text-[var(--landing-muted)]">worktree archived · session done</div>
+        </div>
+      );
+    default:
+      return null;
+  }
+}
+
+function LifecycleIcon({ kind, size = 30 }: { kind: Milestone["icon"]; size?: number }) {
   const common = {
-    width: 30,
-    height: 30,
+    width: size,
+    height: size,
     viewBox: "0 0 24 24",
     fill: "none",
     stroke: "var(--landing-accent)",

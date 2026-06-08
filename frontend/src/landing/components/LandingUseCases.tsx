@@ -65,11 +65,53 @@ const cases: UseCase[] = [
     cmd: "ao start",
     outcome: "3 projects · one dashboard",
   },
+  {
+    eyebrow: "Steer",
+    title: "Course-correct mid-run",
+    desc: "Drop a note to a running agent without stopping it — the new instruction folds straight into its work.",
+    prefix: "$",
+    cmd: 'ao send s-312 "use the v2 endpoint"',
+    outcome: "delivered · agent adjusts",
+  },
+  {
+    eyebrow: "Orchestrate",
+    title: "An agent that runs agents",
+    desc: "A lead reads the backlog, spawns a worker per issue, and supervises every one of them to merge.",
+    prefix: "$",
+    cmd: "ao orchestrator ls",
+    outcome: "1 lead · 6 workers",
+  },
+  {
+    eyebrow: "Attach",
+    title: "Jump into any session",
+    desc: "Stream an agent's live terminal in the browser and grab the keyboard the moment you want to.",
+    prefix: "⟡",
+    cmd: "attach · s-312 /mux",
+    outcome: "live pty · streaming",
+  },
+  {
+    eyebrow: "Notify",
+    title: "Pinged only when needed",
+    desc: "Agents run quietly and reach you only when a session genuinely needs a human in the loop.",
+    prefix: "⟡",
+    cmd: "notifier · slack",
+    outcome: "needs_you → DM",
+  },
+  {
+    eyebrow: "Resume",
+    title: "Pick up where it died",
+    desc: "A session dropped? Relaunch it with its branch, worktree, and context intact.",
+    prefix: "$",
+    cmd: "ao session restore s-204",
+    outcome: "terminated → working",
+  },
 ];
 
 const N = cases.length;
 const THETA = 360 / N;
-const RADIUS = 440;
+// Scale the ring with the card count so cards sit in a dense, near-continuous
+// band (~one card-width of arc each) instead of drifting apart with big gaps.
+const RADIUS = Math.round(N * 60);
 const CARD_W = 360;
 const CARD_H = 440;
 
@@ -101,8 +143,13 @@ export function LandingUseCases() {
         if (!el) return;
         const facing = Math.cos(((i * THETA + a) * Math.PI) / 180);
         const vis = Math.max(facing, 0);
-        el.style.opacity = `${0.2 + 0.8 * vis}`;
-        el.style.transform = `rotateY(${i * THETA}deg) translateZ(${RADIUS}px) scale(${0.9 + 0.1 * vis})`;
+        // Ease the focus so the growth + brightness concentrate near dead
+        // center — the card in the middle pops, then hands off as the next
+        // one rotates in.
+        const focus = Math.pow(vis, 1.6);
+        el.style.opacity = `${0.18 + 0.82 * vis}`;
+        el.style.zIndex = `${Math.round(vis * 100)}`;
+        el.style.transform = `rotateY(${i * THETA}deg) translateZ(${RADIUS}px) scale(${0.86 + 0.22 * focus})`;
       });
       raf = requestAnimationFrame(loop);
     };
