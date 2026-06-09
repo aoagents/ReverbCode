@@ -1,0 +1,118 @@
+frontend/src/renderer/components/SideRail.tsx
+  s_f3f1984aea090e::t_c52e56b30487db 2-13,17-22,56-99,101-199
+  s_2f6eeebdbd0814::t_233e5de4cdaffd 14-16,23-55
+  s_2f6eeebdbd0814::t_79d599014f5402 1
+  s_2f6eeebdbd0814::t_c678f2b87cbdaa 100
+frontend/src/renderer/components/ui/badge.tsx
+  s_f3f1984aea090e::t_5e5571e7afbe0e 4-5,9,15-21
+frontend/src/renderer/components/ui/input.tsx
+  s_f3f1984aea090e::t_ff45f058f1f3ab 8
+frontend/src/renderer/components/ui/tabs.tsx
+  s_f3f1984aea090e::t_bffbccbb524204 9,19
+frontend/playwright.config.ts
+  s_f3f1984aea090e::t_bca2d2b73ff879 9-11
+frontend/src/renderer/stores/ui-store.ts
+  s_f3f1984aea090e::t_9de5231a26cb88 4-7,10-11,16-17,21,23,44-45,50-51,63-71
+  s_fc6588cb7fe0bb::t_b9440f201cebde 28-30,33-34,53,60
+frontend/src/renderer/components/Topbar.tsx
+  s_f3f1984aea090e::t_3d948413003fee 1-178
+frontend/src/renderer/components/SpawnWorkerModal.tsx
+  s_f3f1984aea090e::t_7a9fc3d21b1fcb 1-167,169-285
+  s_f3f1984aea090e::t_10ddc75bf81267 168
+frontend/src/renderer/test/setup.ts
+  s_fc6588cb7fe0bb::t_dbc5e0228fbf7b 30-45
+frontend/src/renderer/App.test.tsx
+  s_f3f1984aea090e::t_32beca1f6ff9f7 1,4,24-32,37-38,40,46-47,49-52,56,71,76,80,87-88,94,96-98,104,106,112,116,118-120,126,128
+  s_f468373f7b50f9::t_54de3752570095 131
+frontend/src/renderer/App.tsx
+  s_2f6eeebdbd0814::t_87b6f54b50b0f0 186
+  s_f3f1984aea090e::t_35eb2e2e84eb8d 2-4,6-7,13,26-37,40,47,50-63,66-68,103,110,147-148,150,154-155,162,165,168,171,175-176,178-185,187-191,193,195-199
+  s_2f6eeebdbd0814::t_e68fac740fe928 177
+  s_f468373f7b50f9::t_457c7385eec36f 48
+  s_f468373f7b50f9::t_73967ce1e10102 139-141
+  s_2f6eeebdbd0814::t_e8f6591d9fd693 194
+  s_2f6eeebdbd0814::t_43c0c752fd94bf 41-46
+frontend/src/renderer/lib/terminal-mux.ts
+  s_fc6588cb7fe0bb::t_df9a06900aa7d4 16,61
+CLAUDE.md
+  s_2f6eeebdbd0814::t_74aecc2f79e8b1 4-11
+frontend/src/renderer/components/CenterPane.tsx
+  s_f3f1984aea090e::t_dfec3919fed23b 1-99
+frontend/src/renderer/styles.css
+  s_f3f1984aea090e::t_a1345a2a456ee8 163-169,172-180
+  s_f3f1984aea090e::t_547908a6f40fcb 60-61
+  s_f3f1984aea090e::t_d23d156bef918a 3-8,10-44,46-59,65-89,92-118,134-139,143-145,153-160
+frontend/e2e/workbench.spec.ts
+  s_f3f1984aea090e::t_495ef0bc7d138a 15
+  s_f3f1984aea090e::t_ff17606a0642a9 8,10-14,18-22,25,27-29
+frontend/src/renderer/components/ui/button.tsx
+  s_f3f1984aea090e::t_a7730442df1051 6-7,9,13-16,19-22,26
+frontend/src/renderer/hooks/useWorkspaceQuery.ts
+  s_f468373f7b50f9::t_9077bc135c130f 26
+frontend/src/renderer/components/Sidebar.tsx
+  s_f3f1984aea090e::t_6a9cdec225021c 1-3,12,16-23,26-28,30-39,43-44,46-52,55-59,62-64,66-68,70,72-76,93-113,116-131,137-149,173,178,181,183-187,221-223,225,227-228,230,232,234-238,240-242,244-245,247-258,260-267,270,272-274,278-279,281-282,285,288
+  s_f3f1984aea090e::t_407060cfbd0c3d 42
+  s_2f6eeebdbd0814::t_3288b8ac24c24a 69,71,78-80,83-84,86-90
+  s_2f6eeebdbd0814::t_889750268a1164 13
+  s_2f6eeebdbd0814::t_4d3e7a79233ffb 25
+  s_2f6eeebdbd0814::t_53d1ac50f3d043 192-195,197-199,202-211,213-217
+DESIGN.md
+  s_2f6eeebdbd0814::t_fe3107d5a3f869 148-150
+  s_2f6eeebdbd0814::t_87c7feb342bd6e 119-131
+  s_2f6eeebdbd0814::t_0d48ccd41e72ce 1-118,132-147,151-179,183-225
+  s_2f6eeebdbd0814::t_72266458267c2b 180-182
+frontend/src/renderer/types/workspace.ts
+  s_fc6588cb7fe0bb::t_f13281edaac924 1
+  s_f3f1984aea090e::t_28015b46666987 28-35,45-82,85-88
+frontend/src/renderer/components/TerminalPane.tsx
+  s_f3f1984aea090e::t_83d66642cef7da 21-27
+  s_f3f1984aea090e::t_53951c1f434c73 75
+  s_f3f1984aea090e::t_7c52dbe4671d8c 153-156,158-162
+frontend/package.json
+  s_f468373f7b50f9::t_98778184881744 38
+  s_f3f1984aea090e::t_d86a265f3b28c2 9
+frontend/src/renderer/lib/mock-data.ts
+  s_f3f1984aea090e::t_bfa91d98027da1 3-4,8,14,16-22,25,27-30,32-33,38-42,45-48,50-80,82
+frontend/vite.config.ts
+  s_f3f1984aea090e::t_dfd0047d7e27e7 6-10,15-27
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "f28227aaba14d34418c9a6f9591fd1225cfc9651",
+  "prompts": {},
+  "sessions": {
+    "s_2f6eeebdbd0814": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "698a353a-fda9-41d7-b14c-c13b03284455",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    },
+    "s_f3f1984aea090e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b53e217a-edb1-4801-a12d-02cbb66c4af6",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    },
+    "s_f468373f7b50f9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "753d6a4d-f6b7-4d3e-ae75-c06c46cbe51c",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    },
+    "s_fc6588cb7fe0bb": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019ead15-400b-7201-a324-bae982dc7bd7",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    }
+  }
+}
