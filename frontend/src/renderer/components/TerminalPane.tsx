@@ -30,19 +30,33 @@ export function TerminalPane({ session, theme }: TerminalPaneProps) {
   return <XtermTerminal session={session} theme={theme} />;
 }
 
-// Load the GPU-accelerated WebGL renderer, falling back to the 2D canvas
-// renderer when WebGL is unavailable (older GPUs, software rendering, context
-// loss). Renderer addons must be loaded after terminal.open().
-function attachRenderer(terminal: Terminal): void {
+function webgl2Available(): boolean {
   try {
-    const webgl = new WebglAddon();
-    webgl.onContextLoss(() => {
-      webgl.dispose();
-      terminal.loadAddon(new CanvasAddon());
-    });
-    terminal.loadAddon(webgl);
+    return Boolean(document.createElement("canvas").getContext("webgl2"));
   } catch {
+    return false;
+  }
+}
+
+// Load the GPU-accelerated WebGL renderer when a real WebGL2 context is
+// available, falling back to the 2D canvas renderer otherwise (software
+// rendering, older GPUs). Probing first avoids loading a half-initialised
+// WebglAddon that then throws on dispose. Renderer addons load after open().
+function attachRenderer(terminal: Terminal): void {
+  if (webgl2Available()) {
+    try {
+      const webgl = new WebglAddon();
+      webgl.onContextLoss(() => webgl.dispose());
+      terminal.loadAddon(webgl);
+      return;
+    } catch {
+      // WebGL init failed despite the probe; fall through to canvas.
+    }
+  }
+  try {
     terminal.loadAddon(new CanvasAddon());
+  } catch {
+    // The renderer addon is an optimisation; the DOM renderer still works.
   }
 }
 
@@ -119,7 +133,12 @@ function XtermTerminal({ session, theme }: TerminalPaneProps) {
       resizeObserver.disconnect();
       disposers.forEach((dispose) => dispose());
       mux?.dispose();
-      terminal.dispose();
+      try {
+        terminal.dispose();
+      } catch {
+        // Some xterm renderer addons can throw during dispose in certain GPU
+        // environments; the terminal is being torn down regardless.
+      }
     };
   }, [session?.id, session?.provider, theme]);
 
