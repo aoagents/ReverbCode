@@ -21,6 +21,6 @@ test("deep-links to a session route", async ({ page }) => {
 test("Details tab shows session metadata", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("tab", { name: "Details" }).click();
-  await expect(page.getByText("Provider")).toBeVisible();
-  await expect(page.getByText("Branch")).toBeVisible();
+  await expect(page.getByText("Provider", { exact: true })).toBeVisible();
+  await expect(page.getByText("Branch", { exact: true })).toBeVisible();
 });

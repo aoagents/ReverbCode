@@ -297,6 +297,12 @@ function CreateTaskComposer({
               className="min-h-28 w-full resize-none rounded-xl border border-border bg-background px-4 py-3 text-[15px] leading-6 text-foreground outline-none placeholder:text-muted-foreground focus:border-ring"
               id="task-prompt"
               onChange={(event) => setPrompt(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  setOpen(false);
+                }
+              }}
               placeholder="What do you want to do?"
               required
               value={prompt}
@@ -374,7 +380,7 @@ function ExpandedWorkspace({
   workspace: WorkspaceSummary;
   workspaces: WorkspaceSummary[];
   isActive: boolean;
-  selectedSessionId: string;
+  selectedSessionId: string | null;
   onCreateTask: SidebarProps["onCreateTask"];
   onSelect: () => void;
   selectSession: (sessionId: string) => void;
@@ -424,7 +430,7 @@ function ExpandedWorkspace({
           >
             <Bot className="h-3.5 w-3.5 shrink-0 text-[#666]" aria-hidden="true" />
             <span className="min-w-0 flex-1 truncate font-medium leading-4">{session.title}</span>
-            <span className="absolute right-2 hidden items-center gap-0.5 rounded-lg bg-[#e8e8e8] pl-2 group-hover/session:flex">
+            <span className="hidden shrink-0 items-center gap-0.5 group-hover/session:flex">
               <button
                 aria-label="Pin task"
                 className="grid h-5 w-5 place-items-center rounded-lg text-[#777] hover:bg-[#d8d8d8] hover:text-[#202020]"
@@ -487,7 +493,7 @@ function CollapsedWorkspace({
 }
 
 function WorkspaceIcon({ collapsed = false }: { collapsed?: boolean }) {
-  return <FolderGit2 className={cn("shrink-0 text-[#696969]", collapsed ? "h-4 w-4" : "h-4 w-4")} aria-hidden="true" />;
+  return <FolderGit2 className={cn("shrink-0 text-[#696969]", collapsed ? "h-3.5 w-3.5" : "h-4 w-4")} aria-hidden="true" />;
 }
 
 function EmdashFooter() {

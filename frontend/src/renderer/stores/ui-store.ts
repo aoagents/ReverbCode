@@ -7,8 +7,8 @@ export type Theme = "light" | "dark";
 type UiState = {
   activePane: ActivePane;
   isSidebarOpen: boolean;
-  selectedSessionId: string;
-  selectedWorkspaceId: string;
+  selectedSessionId: string | null;
+  selectedWorkspaceId: string | null;
   theme: Theme;
   /** Persisted resizable-panel layout (Panel id → flexGrow), undefined until first drag. */
   layout: Layout | undefined;
@@ -49,8 +49,8 @@ function initialTheme(): Theme {
 export const useUiStore = create<UiState>((set) => ({
   activePane: "sessions",
   isSidebarOpen: initialSidebarOpen(),
-  selectedSessionId: "ao-shell-scaffold",
-  selectedWorkspaceId: "agent-orchestrator",
+  selectedSessionId: null,
+  selectedWorkspaceId: null,
   theme: initialTheme(),
   layout: initialLayout(),
   setActivePane: (activePane) => set({ activePane }),

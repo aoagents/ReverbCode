@@ -124,8 +124,9 @@ test("starts a new task from a project", async () => {
   expect(await screen.findAllByText("Make task creation work")).toHaveLength(2);
 });
 
-test("starts a dummy task when session creation cannot reach the daemon", async () => {
+test("does not create a session when the API call fails", async () => {
   const user = userEvent.setup();
+  const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
   postMock.mockResolvedValueOnce({ error: new TypeError("Failed to fetch") });
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -138,7 +139,7 @@ test("starts a dummy task when session creation cannot reach the daemon", async 
   );
 
   await user.click(await screen.findByRole("button", { name: "Start task in agent-orchestrator-1" }));
-  fireEvent.change(screen.getByLabelText("Prompt"), { target: { value: "Dummy fallback task" } });
+  fireEvent.change(screen.getByLabelText("Prompt"), { target: { value: "Failing task" } });
   await user.click(screen.getByRole("button", { name: "Start task" }));
 
   expect(postMock).toHaveBeenCalledWith("/api/v1/sessions", {
@@ -146,9 +147,11 @@ test("starts a dummy task when session creation cannot reach the daemon", async 
       projectId: "agent-orchestrator",
       kind: "worker",
       harness: "codex",
-      prompt: "Dummy fallback task",
+      prompt: "Failing task",
       branch: undefined,
     },
   });
-  expect(await screen.findAllByText("Dummy fallback task")).toHaveLength(2);
+  expect(consoleSpy).toHaveBeenCalledWith("Task creation failed:", expect.anything());
+  expect(screen.queryAllByText("Failing task")).toHaveLength(0);
+  consoleSpy.mockRestore();
 });

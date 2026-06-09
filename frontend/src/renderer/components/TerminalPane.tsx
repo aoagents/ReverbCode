@@ -62,6 +62,7 @@ function attachRenderer(terminal: Terminal): void {
 
 function XtermTerminal({ session, theme }: TerminalPaneProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const terminalRef = useRef<Terminal | null>(null);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -74,6 +75,7 @@ function XtermTerminal({ session, theme }: TerminalPaneProps) {
       lineHeight: 1.35,
       theme: terminalTheme(theme),
     });
+    terminalRef.current = terminal;
     const fitAddon = new FitAddon();
 
     terminal.loadAddon(fitAddon);
@@ -83,9 +85,6 @@ function XtermTerminal({ session, theme }: TerminalPaneProps) {
     attachRenderer(terminal);
 
     const sessionId = session?.id;
-    // Connect this pane to the daemon's terminal multiplexer for the selected
-    // session. The mux speaks PTY bytes over a loopback WebSocket; without a
-    // selected session there is nothing to attach to.
     const mux = sessionId ? createTerminalMux(muxUrlFromApiBase(apiBaseUrl)) : null;
     const disposers: Array<() => void> = [];
     let rafId: number | undefined;
@@ -105,11 +104,8 @@ function XtermTerminal({ session, theme }: TerminalPaneProps) {
       const onExit = mux.onExit(sessionId, () => terminal.writeln("\r\n\x1b[2m[process exited]\x1b[0m"));
       const input = terminal.onData((data) => mux.sendInput(sessionId, data));
       disposers.push(onData, onExit, () => input.dispose());
+      terminal.writeln(`\x1b[2mAttaching to ${session?.title ?? sessionId}…\x1b[0m`);
       rafId = requestAnimationFrame(() => {
-        // Open BEFORE resizing: the backend ignores the open frame's size and only
-        // honours a resize once the pane is registered, so a resize sent first is
-        // silently dropped (backend manager.go). Fit to compute cols/rows, open, then
-        // send the matching resize.
         try {
           fitAddon.fit();
         } catch {
@@ -133,6 +129,7 @@ function XtermTerminal({ session, theme }: TerminalPaneProps) {
       resizeObserver.disconnect();
       disposers.forEach((dispose) => dispose());
       mux?.dispose();
+      terminalRef.current = null;
       try {
         terminal.dispose();
       } catch {
@@ -140,7 +137,13 @@ function XtermTerminal({ session, theme }: TerminalPaneProps) {
         // environments; the terminal is being torn down regardless.
       }
     };
-  }, [session?.id, session?.provider, theme]);
+  }, [session?.id, session?.provider]);
+
+  useEffect(() => {
+    if (terminalRef.current) {
+      terminalRef.current.options.theme = terminalTheme(theme);
+    }
+  }, [theme]);
 
   return <div ref={containerRef} className="h-full min-h-0 bg-terminal p-3" />;
 }

@@ -112,28 +112,22 @@ export function App({ routeSessionId, routeWorkspaceId }: AppProps) {
   };
 
   const createTask = async (input: { projectId: string; prompt: string; branch?: string; harness?: AgentProvider }) => {
-    let session: { id: string; harness?: string; isTerminated: boolean };
-    try {
-      const { data, error } = await apiClient.POST("/api/v1/sessions", {
-        body: {
-          projectId: input.projectId,
-          kind: "worker",
-          harness: input.harness,
-          prompt: input.prompt,
-          branch: input.branch || undefined,
-        },
-      });
-
-      if (error) throw error;
-      if (!data?.session) throw new Error("Task creation returned no session");
-      session = data.session;
-    } catch {
-      session = {
-        id: `dummy-${Date.now().toString(36)}`,
+    const { data, error } = await apiClient.POST("/api/v1/sessions", {
+      body: {
+        projectId: input.projectId,
+        kind: "worker",
         harness: input.harness,
-        isTerminated: false,
-      };
+        prompt: input.prompt,
+        branch: input.branch || undefined,
+      },
+    });
+
+    if (error || !data?.session) {
+      console.error("Task creation failed:", error ?? "no session returned");
+      return;
     }
+
+    const session = data.session;
 
     updateWorkspaces((current) =>
       current.map((workspace) =>
@@ -208,7 +202,7 @@ function statusLabel(status: WorkspaceSession["status"]): string {
 }
 
 function SessionStatusBadge({ status }: { status: WorkspaceSession["status"] }) {
-  const variant = status === "running" ? "success" : status === "needs_input" ? "muted" : "outline";
+  const variant = status === "running" ? "success" : status === "needs_input" ? "warning" : status === "failed" ? "outline" : "muted";
   return <Badge variant={variant}>{statusLabel(status)}</Badge>;
 }
 
@@ -236,7 +230,7 @@ function SessionDetails({ session }: { session?: WorkspaceSession }) {
 
 function WorkbenchMain({ session, theme }: { session?: WorkspaceSession; theme: Theme }) {
   return (
-    <Tabs defaultValue="terminal" className="flex h-full min-h-0 flex-col">
+    <Tabs defaultValue="terminal" className="flex h-full min-h-0 min-w-0 flex-1 flex-col">
       <header className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-border px-4">
         <div className="min-w-0">
           <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
