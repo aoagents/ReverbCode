@@ -7,15 +7,15 @@ import { SearchAddon } from "@xterm/addon-search";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import type { WorkspaceSession } from "../types/workspace";
 import type { Theme } from "../stores/ui-store";
-import { getApiBaseUrl } from "../lib/api-client";
-import { createTerminalMux, muxUrlFromApiBase } from "../lib/terminal-mux";
+import { useTerminalSession, type TerminalSessionState } from "../hooks/useTerminalSession";
 
 type TerminalPaneProps = {
   session?: WorkspaceSession;
   theme: Theme;
+  daemonReady: boolean;
 };
 
-export function TerminalPane({ session, theme }: TerminalPaneProps) {
+export function TerminalPane({ session, theme, daemonReady }: TerminalPaneProps) {
   if (!window.ao) {
     return (
       <pre className="h-full overflow-auto bg-terminal p-4 font-mono text-[13px] leading-relaxed text-[var(--term-fg)]">
@@ -29,7 +29,7 @@ export function TerminalPane({ session, theme }: TerminalPaneProps) {
     );
   }
 
-  return <XtermTerminal session={session} theme={theme} />;
+  return <XtermTerminal session={session} theme={theme} daemonReady={daemonReady} />;
 }
 
 function webgl2Available(): boolean {
@@ -62,9 +62,16 @@ function attachRenderer(terminal: Terminal): void {
   }
 }
 
-function XtermTerminal({ session, theme }: TerminalPaneProps) {
+function bannerText(state: TerminalSessionState, error?: string): string | undefined {
+  if (state === "reattaching") return "Terminal disconnected — reattaching…";
+  if (state === "error") return `Terminal error: ${error ?? "connection failed"}`;
+  return undefined;
+}
+
+function XtermTerminal({ session, theme, daemonReady }: TerminalPaneProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<Terminal | null>(null);
+  const { attach, state, error } = useTerminalSession(session, { daemonReady });
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -86,36 +93,24 @@ function XtermTerminal({ session, theme }: TerminalPaneProps) {
     terminal.open(containerRef.current);
     attachRenderer(terminal);
 
-    const sessionId = session?.id;
-    const terminalHandleId = session?.terminalHandleId;
-    const mux = terminalHandleId ? createTerminalMux(muxUrlFromApiBase(getApiBaseUrl())) : null;
-    const disposers: Array<() => void> = [];
+    let detach: (() => void) | undefined;
     let rafId: number | undefined;
 
+    // The attachment forwards size changes itself (terminal.onResize → mux);
+    // the component only owns fitting the terminal to its container.
     const fitTerminal = () => {
       if (!containerRef.current?.clientWidth || !containerRef.current.clientHeight) return;
       try {
         fitAddon.fit();
-        if (mux && terminalHandleId) mux.resize(terminalHandleId, terminal.cols, terminal.rows);
       } catch {
         // Electron can report zero-sized panels during startup; the next resize will retry.
       }
     };
 
-    if (mux && terminalHandleId) {
-      const onData = mux.onData(terminalHandleId, (bytes) => terminal.write(bytes));
-      const onExit = mux.onExit(terminalHandleId, () => terminal.writeln("\r\n\x1b[2m[process exited]\x1b[0m"));
-      const input = terminal.onData((data) => mux.sendInput(terminalHandleId, data));
-      disposers.push(onData, onExit, () => input.dispose());
-      terminal.writeln(`\x1b[2mAttaching to ${session?.title ?? sessionId}…\x1b[0m`);
+    if (session?.terminalHandleId) {
       rafId = requestAnimationFrame(() => {
-        try {
-          fitAddon.fit();
-        } catch {
-          // panel may be zero-sized at startup; the ResizeObserver retries the fit.
-        }
-        mux.open(terminalHandleId, terminal.cols, terminal.rows);
-        mux.resize(terminalHandleId, terminal.cols, terminal.rows);
+        fitTerminal();
+        detach = attach(terminal);
       });
     } else {
       rafId = requestAnimationFrame(fitTerminal);
@@ -130,8 +125,7 @@ function XtermTerminal({ session, theme }: TerminalPaneProps) {
     return () => {
       if (rafId !== undefined) cancelAnimationFrame(rafId);
       resizeObserver.disconnect();
-      disposers.forEach((dispose) => dispose());
-      mux?.dispose();
+      detach?.();
       terminalRef.current = null;
       try {
         terminal.dispose();
@@ -140,7 +134,7 @@ function XtermTerminal({ session, theme }: TerminalPaneProps) {
         // environments; the terminal is being torn down regardless.
       }
     };
-  }, [session?.id, session?.terminalHandleId]);
+  }, [session?.id, session?.terminalHandleId, attach]);
 
   useEffect(() => {
     if (terminalRef.current) {
@@ -148,7 +142,18 @@ function XtermTerminal({ session, theme }: TerminalPaneProps) {
     }
   }, [theme]);
 
-  return <div ref={containerRef} className="h-full min-h-0 bg-terminal p-3" />;
+  const banner = bannerText(state, error);
+
+  return (
+    <div className="relative h-full min-h-0">
+      <div ref={containerRef} className="h-full min-h-0 bg-terminal p-3" />
+      {banner && (
+        <div className="absolute inset-x-3 top-2 rounded-md border border-border bg-surface/95 px-3 py-1.5 font-mono text-[11px] text-muted-foreground">
+          {banner}
+        </div>
+      )}
+    </div>
+  );
 }
 
 // The terminal is the agent CLI; it keeps the emdash dark palette (green cursor) in

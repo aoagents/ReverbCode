@@ -78,6 +78,11 @@ export function muxUrlFromApiBase(apiBaseUrl: string): string {
 
 type DataListener = (bytes: Uint8Array) => void;
 type ExitListener = () => void;
+type OpenedListener = () => void;
+type ErrorListener = (message: string) => void;
+
+export type MuxConnectionState = "open" | "closed";
+type ConnectionListener = (state: MuxConnectionState) => void;
 
 export type TerminalMux = {
   /** Open a PTY pane for the given runtime/session id at an initial size. */
@@ -88,18 +93,34 @@ export type TerminalMux = {
   close: (id: string) => void;
   onData: (id: string, listener: DataListener) => () => void;
   onExit: (id: string, listener: ExitListener) => () => void;
+  /** Server ack that the pane is attached; the output replay follows it. */
+  onOpened: (id: string, listener: OpenedListener) => () => void;
+  /**
+   * Server `error` frames. A frame carrying a pane id reaches that pane's
+   * listeners; an id-less frame is connection-scoped and reaches every error
+   * listener.
+   */
+  onError: (id: string, listener: ErrorListener) => () => void;
+  /** Socket-level state: "open" on connect, "closed" on close or socket error. */
+  onConnectionChange: (listener: ConnectionListener) => () => void;
   /** Close the socket and drop all listeners. */
   dispose: () => void;
 };
 
 const PING_INTERVAL_MS = 20_000;
 
+function subscribeById<T>(map: Map<string, Set<T>>, id: string, listener: T): () => void {
+  const set = map.get(id) ?? new Set<T>();
+  set.add(listener);
+  map.set(id, set);
+  return () => set.delete(listener);
+}
+
 /**
  * Create a mux client over a single WebSocket. Frames sent before the socket is
- * OPEN are queued and flushed on connect. There is no auto-reconnect: the
- * TerminalPane creates one client per mounted session and disposes it on
- * unmount, so a dropped socket surfaces as a closed pane and the next mount
- * reconnects.
+ * OPEN are queued and flushed on connect. There is no auto-reconnect at this
+ * layer: a dropped socket is reported through onConnectionChange("closed") and
+ * the owner (useTerminalSession) decides whether to build a fresh client.
  */
 export function createTerminalMux(url: string, WebSocketImpl: typeof WebSocket = WebSocket): TerminalMux {
   const socket = new WebSocketImpl(url);
@@ -107,8 +128,20 @@ export function createTerminalMux(url: string, WebSocketImpl: typeof WebSocket =
   const queue: string[] = [];
   const dataListeners = new Map<string, Set<DataListener>>();
   const exitListeners = new Map<string, Set<ExitListener>>();
+  const openedListeners = new Map<string, Set<OpenedListener>>();
+  const errorListeners = new Map<string, Set<ErrorListener>>();
+  const connectionListeners = new Set<ConnectionListener>();
+  let connectionState: MuxConnectionState | undefined;
   let pingTimer: ReturnType<typeof setInterval> | undefined;
   let disposed = false;
+
+  // Dedupes transitions: a socket "error" event is typically followed by
+  // "close", and only the first should notify.
+  const setConnectionState = (next: MuxConnectionState) => {
+    if (disposed || connectionState === next) return;
+    connectionState = next;
+    connectionListeners.forEach((listener) => listener(next));
+  };
 
   const flush = () => {
     while (queue.length > 0) {
@@ -130,7 +163,11 @@ export function createTerminalMux(url: string, WebSocketImpl: typeof WebSocket =
     if (disposed) return;
     flush();
     pingTimer = setInterval(() => send(pingFrame()), PING_INTERVAL_MS);
+    setConnectionState("open");
   });
+
+  socket.addEventListener("close", () => setConnectionState("closed"));
+  socket.addEventListener("error", () => setConnectionState("closed"));
 
   socket.addEventListener("message", (event: MessageEvent) => {
     if (typeof event.data !== "string") return;
@@ -140,11 +177,23 @@ export function createTerminalMux(url: string, WebSocketImpl: typeof WebSocket =
     } catch {
       return;
     }
-    if (frame.ch !== "terminal" || frame.id === undefined) return;
+    if (frame.ch !== "terminal") return;
+    if (frame.type === "error") {
+      const message = frame.error ?? "unknown terminal error";
+      if (frame.id !== undefined) {
+        errorListeners.get(frame.id)?.forEach((listener) => listener(message));
+      } else {
+        errorListeners.forEach((set) => set.forEach((listener) => listener(message)));
+      }
+      return;
+    }
+    if (frame.id === undefined) return;
     if (frame.type === "data" && frame.data) {
       dataListeners.get(frame.id)?.forEach((listener) => listener(base64ToBytes(frame.data as string)));
     } else if (frame.type === "exited") {
       exitListeners.get(frame.id)?.forEach((listener) => listener());
+    } else if (frame.type === "opened") {
+      openedListeners.get(frame.id)?.forEach((listener) => listener());
     }
   });
 
@@ -154,6 +203,9 @@ export function createTerminalMux(url: string, WebSocketImpl: typeof WebSocket =
     if (pingTimer) clearInterval(pingTimer);
     dataListeners.clear();
     exitListeners.clear();
+    openedListeners.clear();
+    errorListeners.clear();
+    connectionListeners.clear();
     try {
       socket.close();
     } catch {
@@ -166,17 +218,13 @@ export function createTerminalMux(url: string, WebSocketImpl: typeof WebSocket =
     sendInput: (id, input) => send(dataFrame(id, encoder.encode(input))),
     resize: (id, cols, rows) => send(resizeFrame(id, cols, rows)),
     close: (id) => send(closeFrame(id)),
-    onData: (id, listener) => {
-      const set = dataListeners.get(id) ?? new Set();
-      set.add(listener);
-      dataListeners.set(id, set);
-      return () => set.delete(listener);
-    },
-    onExit: (id, listener) => {
-      const set = exitListeners.get(id) ?? new Set();
-      set.add(listener);
-      exitListeners.set(id, set);
-      return () => set.delete(listener);
+    onData: (id, listener) => subscribeById(dataListeners, id, listener),
+    onExit: (id, listener) => subscribeById(exitListeners, id, listener),
+    onOpened: (id, listener) => subscribeById(openedListeners, id, listener),
+    onError: (id, listener) => subscribeById(errorListeners, id, listener),
+    onConnectionChange: (listener) => {
+      connectionListeners.add(listener);
+      return () => connectionListeners.delete(listener);
     },
     dispose,
   };

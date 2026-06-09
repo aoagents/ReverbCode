@@ -1,14 +1,12 @@
 import { app, BrowserWindow, dialog, ipcMain, net, protocol, shell, type OpenDialogOptions } from "electron";
 import { autoUpdater } from "electron-updater";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { readFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-
-type DaemonStatus = {
-  state: "starting" | "ready" | "stopped" | "error";
-  port?: number;
-  message?: string;
-};
+import { createListenPortScanner, defaultRunFilePath, parseRunFile } from "./shared/daemon-discovery";
+import type { DaemonStatus } from "./shared/daemon-status";
 
 let mainWindow: BrowserWindow | null = null;
 let daemonProcess: ChildProcessWithoutNullStreams | null = null;
@@ -121,6 +119,20 @@ function createWindow(): void {
   });
 }
 
+// How long the supervisor waits for the daemon to confirm its bound port (via
+// the listen log line or running.json) before reporting the configured port as
+// a best-effort fallback.
+const PORT_DISCOVERY_TIMEOUT_MS = 15_000;
+const RUN_FILE_POLL_MS = 300;
+// Accept run-files stamped slightly before our spawn timestamp: the daemon's
+// clock reading and ours race within normal scheduling jitter.
+const RUN_FILE_FRESHNESS_SKEW_MS = 2_000;
+
+function runFilePath(): string | null {
+  if (process.env.AO_RUN_FILE) return process.env.AO_RUN_FILE;
+  return defaultRunFilePath(process.platform, process.env, os.homedir());
+}
+
 function startDaemon(): DaemonStatus {
   if (daemonProcess) {
     return daemonStatus;
@@ -153,29 +165,82 @@ function startDaemon(): DaemonStatus {
   });
   daemonProcess = child;
 
+  // Discover the port the daemon ACTUALLY bound rather than trusting AO_PORT:
+  // the daemon may fall back to a different port than the one requested. Two
+  // confirmed sources race — the "daemon listening" slog line (stderr, but both
+  // streams are scanned) and the running.json handshake — first one wins.
+  const spawnedAtMs = Date.now();
+  let portConfirmed = false;
+  let runFileTimer: ReturnType<typeof setInterval> | undefined;
+  let fallbackTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const stopDiscovery = () => {
+    if (runFileTimer) clearInterval(runFileTimer);
+    runFileTimer = undefined;
+    if (fallbackTimer) clearTimeout(fallbackTimer);
+    fallbackTimer = undefined;
+  };
+
+  const reportBoundPort = (port: number) => {
+    if (portConfirmed || daemonProcess !== child) return;
+    portConfirmed = true;
+    stopDiscovery();
+    setDaemonStatus({ state: "ready", port });
+  };
+
+  // One scanner per stream: each keeps its own partial-line buffer.
+  const scanStdout = createListenPortScanner(reportBoundPort);
+  const scanStderr = createListenPortScanner(reportBoundPort);
+
   child.stdout.on("data", (chunk: Buffer) => {
-    console.log(chunk.toString("utf8").trimEnd());
+    const text = chunk.toString("utf8");
+    console.log(text.trimEnd());
+    scanStdout(text);
   });
 
   child.stderr.on("data", (chunk: Buffer) => {
-    console.error(chunk.toString("utf8").trimEnd());
+    const text = chunk.toString("utf8");
+    console.error(text.trimEnd());
+    scanStderr(text);
   });
 
-  child.once("spawn", () => {
-    if (daemonProcess !== child) return;
+  const handshakePath = runFilePath();
+  if (handshakePath) {
+    runFileTimer = setInterval(() => {
+      readFile(handshakePath, "utf8")
+        .then((contents) => {
+          const info = parseRunFile(contents);
+          // Ignore a stale handshake left by a previous daemon: only trust a
+          // file written at/after this spawn.
+          if (info && info.startedAtMs >= spawnedAtMs - RUN_FILE_FRESHNESS_SKEW_MS) {
+            reportBoundPort(info.port);
+          }
+        })
+        .catch(() => undefined); // absent until the daemon binds; keep polling
+    }, RUN_FILE_POLL_MS);
+  }
+
+  // Last resort: neither source confirmed (e.g. an older daemon build). Report
+  // the configured port so the renderer is not stuck on "starting" forever.
+  fallbackTimer = setTimeout(() => {
+    if (portConfirmed || daemonProcess !== child) return;
+    stopDiscovery();
     setDaemonStatus({
       state: "ready",
       port: process.env.AO_PORT ? Number(process.env.AO_PORT) : undefined,
+      message: "Daemon port not confirmed from logs or running.json; assuming the configured port.",
     });
-  });
+  }, PORT_DISCOVERY_TIMEOUT_MS);
 
   child.once("error", (error) => {
+    stopDiscovery();
     if (daemonProcess !== child) return;
     daemonProcess = null;
     setDaemonStatus({ state: "error", message: error.message });
   });
 
   child.once("exit", (code, signal) => {
+    stopDiscovery();
     if (daemonProcess !== child) return;
     daemonProcess = null;
     setDaemonStatus({

@@ -1,10 +1,16 @@
 import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "../lib/api-client";
+import { mockWorkspaces } from "../lib/mock-data";
 import { toAgentProvider, toSessionStatus, type WorkspaceSummary } from "../types/workspace";
 
 export const workspaceQueryKey = ["workspaces"] as const;
+const usePreviewData = import.meta.env.VITE_NO_ELECTRON === "1";
 
 async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
+  if (usePreviewData) {
+    return mockWorkspaces;
+  }
+
   const [{ data: projectsData, error: projectsError }, { data: sessionsData, error: sessionsError }] = await Promise.all([
     apiClient.GET("/api/v1/projects"),
     apiClient.GET("/api/v1/sessions"),

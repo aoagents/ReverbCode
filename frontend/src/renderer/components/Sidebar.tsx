@@ -3,6 +3,7 @@ import { useState } from "react";
 import { sessionIsActive, sessionNeedsAttention, type WorkspaceSummary } from "../types/workspace";
 import { useUiStore } from "../stores/ui-store";
 import { aoBridge } from "../lib/bridge";
+import { useEventsConnection } from "../hooks/useEventsConnection";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { cn } from "../lib/utils";
 
@@ -25,6 +26,7 @@ export function Sidebar({ daemonStatus, workspaceError, workspaces, onCreateProj
   const { isSidebarOpen, view, selectedSessionId, selectedWorkspaceId, selectOrchestrator, selectSession, selectWorkspace } =
     useUiStore();
   const { agents, needYou } = fleetSummary(workspaces);
+  const eventsConnection = useEventsConnection();
 
   if (!isSidebarOpen) {
     return (
@@ -139,6 +141,7 @@ export function Sidebar({ daemonStatus, workspaceError, workspaces, onCreateProj
           <div className="truncate text-[12.5px] text-foreground">ReverbCode</div>
           <div className="truncate font-mono text-[10px] text-passive">
             daemon {daemonStatus.state}
+            {eventsConnection === "disconnected" && " · events offline"}
           </div>
         </div>
         <ChevronsUpDown className="ml-auto h-3.5 w-3.5 shrink-0 text-passive" aria-hidden="true" />

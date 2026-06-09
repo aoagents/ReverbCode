@@ -1,10 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-
-type DaemonStatus = {
-  state: "starting" | "ready" | "stopped" | "error";
-  port?: number;
-  message?: string;
-};
+import type { DaemonStatus } from "./shared/daemon-status";
 
 const api = {
   app: {

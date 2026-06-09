@@ -1,6 +1,7 @@
 import type { QueryClient } from "@tanstack/react-query";
 import { aoBridge } from "./bridge";
-import { getApiBaseUrl } from "./api-client";
+import { getApiBaseUrl, subscribeApiBaseUrl } from "./api-client";
+import { setEventsConnectionState } from "./events-connection";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 
 export type EventTransport = {
@@ -8,6 +9,12 @@ export type EventTransport = {
 };
 
 const INVALIDATE_DEBOUNCE_MS = 150;
+// How long to wait before rebuilding an EventSource the browser gave up on
+// (readyState CLOSED — e.g. the daemon answered with a non-SSE response).
+const SSE_RETRY_MS = 5_000;
+// EventSource.CLOSED, referenced numerically so test stubs without the static
+// constants still work.
+const EVENTSOURCE_CLOSED = 2;
 
 // CDC event types the daemon pushes over the SSE stream (see
 // backend/internal/cdc/event.go). The SSE writer tags each frame with
@@ -36,6 +43,7 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
   return {
     connect() {
       let debounce: ReturnType<typeof setTimeout> | undefined;
+      let retryTimer: ReturnType<typeof setTimeout> | undefined;
       let source: EventSource | undefined;
       let sourceBaseUrl: string | undefined;
       const refreshWorkspaces = () => {
@@ -45,21 +53,44 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
         }, INVALIDATE_DEBOUNCE_MS);
       };
 
+      const scheduleRetry = () => {
+        if (retryTimer) return;
+        retryTimer = setTimeout(() => {
+          retryTimer = undefined;
+          connectSource();
+        }, SSE_RETRY_MS);
+      };
+
       const connectSource = () => {
         // EventSource is unavailable in jsdom (tests) and some preview surfaces; guard it.
         if (typeof EventSource === "undefined") return;
         const baseUrl = getApiBaseUrl();
-        if (source && sourceBaseUrl === baseUrl) return;
+        // Keep a still-usable source on the same base URL; replace one the
+        // browser abandoned (CLOSED) or one bound to a stale port.
+        if (source && sourceBaseUrl === baseUrl && source.readyState !== EVENTSOURCE_CLOSED) return;
         source?.close();
         source = undefined;
         sourceBaseUrl = baseUrl;
         try {
           source = new EventSource(`${baseUrl.replace(/\/+$/, "")}/api/v1/events`);
+          source.onopen = () => {
+            setEventsConnectionState("connected");
+            // Events emitted during the gap were lost; refetch once on (re)open.
+            refreshWorkspaces();
+          };
+          source.onerror = () => {
+            // While readyState is CONNECTING the browser retries on its own;
+            // either way the stream is not delivering, so surface it instead
+            // of looping silently against a dead daemon.
+            setEventsConnectionState("disconnected");
+            if (source?.readyState === EVENTSOURCE_CLOSED) scheduleRetry();
+          };
           source.onmessage = refreshWorkspaces; // unnamed events, if any
           for (const type of CDC_EVENT_TYPES) {
             source.addEventListener(type, refreshWorkspaces);
           }
-          // EventSource auto-reconnects and resumes via Last-Event-ID; no handler needed.
+          // EventSource auto-reconnects and resumes via Last-Event-ID while
+          // CONNECTING; scheduleRetry only covers the terminal CLOSED state.
         } catch {
           source = undefined;
         }
@@ -69,12 +100,18 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
         connectSource();
         refreshWorkspaces();
       });
+      // Rebind when the daemon comes back on a different port, independent of
+      // status-event ordering.
+      const removeBaseUrlListener = subscribeApiBaseUrl(connectSource);
       connectSource();
 
       return () => {
         if (debounce) clearTimeout(debounce);
+        if (retryTimer) clearTimeout(retryTimer);
         removeDaemonListener();
+        removeBaseUrlListener();
         source?.close();
+        setEventsConnectionState("idle");
       };
     },
   };

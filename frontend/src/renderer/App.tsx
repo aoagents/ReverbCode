@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { CenterPane } from "./components/CenterPane";
 import { SideRail } from "./components/SideRail";
 import { Sidebar } from "./components/Sidebar";
@@ -10,14 +10,7 @@ import { useDaemonStatus } from "./hooks/useDaemonStatus";
 import { useWorkspaceQuery, workspaceQueryKey } from "./hooks/useWorkspaceQuery";
 import { apiClient } from "./lib/api-client";
 import { Theme, useUiStore } from "./stores/ui-store";
-import {
-  sessionIsActive,
-  sessionNeedsAttention,
-  toAgentProvider,
-  toSessionStatus,
-  type AgentProvider,
-  type WorkspaceSummary,
-} from "./types/workspace";
+import { toAgentProvider, toSessionStatus, type AgentProvider, type WorkspaceSummary } from "./types/workspace";
 
 type AppProps = {
   routeSessionId?: string;
@@ -65,14 +58,6 @@ export function App({ routeSessionId, routeWorkspaceId }: AppProps) {
   const sessionWorkspace = selectedSession
     ? (workspaces.find((workspace) => workspace.id === selectedSession.workspaceId) ?? selectedWorkspace)
     : selectedWorkspace;
-
-  const fleet = useMemo(() => {
-    const sessions = workspaces.flatMap((workspace) => workspace.sessions);
-    return {
-      agents: sessions.filter(sessionIsActive).length,
-      needYou: sessions.filter(sessionNeedsAttention).length,
-    };
-  }, [workspaces]);
 
   useEffect(() => {
     if (routeWorkspaceId) selectWorkspace(routeWorkspaceId);
@@ -203,7 +188,7 @@ export function App({ routeSessionId, routeWorkspaceId }: AppProps) {
             workspaceError={workspaceQuery.isError ? errorMessage(workspaceQuery.error) : undefined}
             workspaces={workspaces}
           />
-          <CenterPane fleet={fleet} session={selectedSession} theme={theme} view={view} />
+          <CenterPane daemonReady={daemonStatus.state === "ready"} session={selectedSession} theme={theme} view={view} />
           {showSideRail && (
             <SideRail onSelectSession={selectSession} session={selectedSession} view={view} workspaces={workspaces} />
           )}

@@ -1,10 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { onStatusMock, removeStatusMock, getApiBaseUrlMock } = vi.hoisted(() => ({
-  onStatusMock: vi.fn(),
-  removeStatusMock: vi.fn(),
-  getApiBaseUrlMock: vi.fn(() => "http://127.0.0.1:3001"),
-}));
+const { onStatusMock, removeStatusMock, getApiBaseUrlMock, subscribeApiBaseUrlMock, unsubscribeBaseUrlMock } =
+  vi.hoisted(() => ({
+    onStatusMock: vi.fn(),
+    removeStatusMock: vi.fn(),
+    getApiBaseUrlMock: vi.fn(() => "http://127.0.0.1:3001"),
+    subscribeApiBaseUrlMock: vi.fn(),
+    unsubscribeBaseUrlMock: vi.fn(),
+  }));
 
 vi.mock("./bridge", () => ({
   aoBridge: {
@@ -14,14 +17,19 @@ vi.mock("./bridge", () => ({
 
 vi.mock("./api-client", () => ({
   getApiBaseUrl: getApiBaseUrlMock,
+  subscribeApiBaseUrl: subscribeApiBaseUrlMock,
 }));
 
 import { createEventTransport } from "./event-transport";
+import { getEventsConnectionState, setEventsConnectionState } from "./events-connection";
 
 class EventSourceStub {
   static instances: EventSourceStub[] = [];
   url: string;
   closed = false;
+  readyState = 0; // CONNECTING
+  onopen: (() => void) | null = null;
+  onerror: (() => void) | null = null;
   onmessage: (() => void) | null = null;
   listeners: string[] = [];
   constructor(url: string) {
@@ -33,6 +41,7 @@ class EventSourceStub {
   }
   close() {
     this.closed = true;
+    this.readyState = 2; // CLOSED
   }
 }
 
@@ -45,6 +54,9 @@ beforeEach(() => {
   onStatusMock.mockReset().mockReturnValue(removeStatusMock);
   removeStatusMock.mockReset();
   getApiBaseUrlMock.mockReset().mockReturnValue("http://127.0.0.1:3001");
+  subscribeApiBaseUrlMock.mockReset().mockReturnValue(unsubscribeBaseUrlMock);
+  unsubscribeBaseUrlMock.mockReset();
+  setEventsConnectionState("idle");
   (globalThis as unknown as { EventSource: unknown }).EventSource = EventSourceStub;
 });
 
@@ -115,5 +127,67 @@ describe("createEventTransport", () => {
 
     expect(() => createEventTransport(fakeQueryClient()).connect()).not.toThrow();
     expect(EventSourceStub.instances).toHaveLength(0);
+  });
+
+  it("marks the stream connected on open and disconnected on error", () => {
+    createEventTransport(fakeQueryClient()).connect();
+    const source = EventSourceStub.instances[0];
+
+    source.readyState = 1; // OPEN
+    source.onopen?.();
+    expect(getEventsConnectionState()).toBe("connected");
+
+    source.readyState = 0; // CONNECTING — browser is auto-retrying
+    source.onerror?.();
+    expect(getEventsConnectionState()).toBe("disconnected");
+
+    source.readyState = 1;
+    source.onopen?.();
+    expect(getEventsConnectionState()).toBe("connected");
+  });
+
+  it("rebuilds a source the browser abandoned after the retry delay", () => {
+    vi.useFakeTimers();
+    try {
+      createEventTransport(fakeQueryClient()).connect();
+      const source = EventSourceStub.instances[0];
+
+      source.readyState = 2; // CLOSED — EventSource gave up for good
+      source.onerror?.();
+
+      expect(EventSourceStub.instances).toHaveLength(1);
+      vi.advanceTimersByTime(5_000);
+      expect(EventSourceStub.instances).toHaveLength(2);
+      expect(EventSourceStub.instances[1].url).toBe("http://127.0.0.1:3001/api/v1/events");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reconnects when the API base URL changes out-of-band", () => {
+    createEventTransport(fakeQueryClient()).connect();
+    expect(subscribeApiBaseUrlMock).toHaveBeenCalledTimes(1);
+    const onBaseUrlChange = subscribeApiBaseUrlMock.mock.calls[0][0] as () => void;
+    const first = EventSourceStub.instances[0];
+
+    getApiBaseUrlMock.mockReturnValue("http://127.0.0.1:4555");
+    onBaseUrlChange();
+
+    expect(first.closed).toBe(true);
+    expect(EventSourceStub.instances).toHaveLength(2);
+    expect(EventSourceStub.instances[1].url).toBe("http://127.0.0.1:4555/api/v1/events");
+  });
+
+  it("resets the connection state and unsubscribes on disconnect", () => {
+    const disconnect = createEventTransport(fakeQueryClient()).connect();
+    const source = EventSourceStub.instances[0];
+    source.readyState = 1;
+    source.onopen?.();
+    expect(getEventsConnectionState()).toBe("connected");
+
+    disconnect();
+
+    expect(getEventsConnectionState()).toBe("idle");
+    expect(unsubscribeBaseUrlMock).toHaveBeenCalledTimes(1);
   });
 });

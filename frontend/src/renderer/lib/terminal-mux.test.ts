@@ -74,6 +74,12 @@ class FakeSocket {
   emitMessage(data: string) {
     this.listeners.message?.forEach((cb) => cb({ data }));
   }
+  emitClose() {
+    this.listeners.close?.forEach((cb) => cb({}));
+  }
+  emitError() {
+    this.listeners.error?.forEach((cb) => cb({}));
+  }
 }
 
 describe("createTerminalMux client", () => {
@@ -111,5 +117,63 @@ describe("createTerminalMux client", () => {
     });
     socket.emitMessage(JSON.stringify({ ch: "terminal", id: "s", type: "exited" }));
     expect(exited).toBe(true);
+  });
+
+  it("fires the opened listener on the server's open ack", () => {
+    const mux = createTerminalMux("ws://x/mux", FakeSocket as unknown as typeof WebSocket);
+    const socket = FakeSocket.instances.at(-1)!;
+    socket.emitOpen();
+    let opened = false;
+    mux.onOpened("s", () => {
+      opened = true;
+    });
+    socket.emitMessage(JSON.stringify({ ch: "terminal", id: "s", type: "opened" }));
+    expect(opened).toBe(true);
+  });
+
+  it("routes a pane error frame to that pane's error listener only", () => {
+    const mux = createTerminalMux("ws://x/mux", FakeSocket as unknown as typeof WebSocket);
+    const socket = FakeSocket.instances.at(-1)!;
+    socket.emitOpen();
+    const errors: string[] = [];
+    const otherErrors: string[] = [];
+    mux.onError("s", (message) => errors.push(message));
+    mux.onError("other", (message) => otherErrors.push(message));
+    socket.emitMessage(JSON.stringify({ ch: "terminal", id: "s", type: "error", error: "no such pane" }));
+    expect(errors).toEqual(["no such pane"]);
+    expect(otherErrors).toEqual([]);
+  });
+
+  it("broadcasts an id-less error frame to every error listener", () => {
+    const mux = createTerminalMux("ws://x/mux", FakeSocket as unknown as typeof WebSocket);
+    const socket = FakeSocket.instances.at(-1)!;
+    socket.emitOpen();
+    const seen: string[] = [];
+    mux.onError("a", (message) => seen.push(`a:${message}`));
+    mux.onError("b", (message) => seen.push(`b:${message}`));
+    socket.emitMessage(JSON.stringify({ ch: "terminal", type: "error", error: "missing terminal id" }));
+    expect(seen.sort()).toEqual(["a:missing terminal id", "b:missing terminal id"]);
+  });
+
+  it("reports connection transitions, deduping error+close into one closed", () => {
+    const mux = createTerminalMux("ws://x/mux", FakeSocket as unknown as typeof WebSocket);
+    const socket = FakeSocket.instances.at(-1)!;
+    const states: string[] = [];
+    mux.onConnectionChange((state) => states.push(state));
+    socket.emitOpen();
+    socket.emitError();
+    socket.emitClose();
+    expect(states).toEqual(["open", "closed"]);
+  });
+
+  it("does not report a connection change for its own dispose", () => {
+    const mux = createTerminalMux("ws://x/mux", FakeSocket as unknown as typeof WebSocket);
+    const socket = FakeSocket.instances.at(-1)!;
+    socket.emitOpen();
+    const states: string[] = [];
+    mux.onConnectionChange((state) => states.push(state));
+    mux.dispose();
+    socket.emitClose(); // browser fires close after socket.close()
+    expect(states).toEqual([]);
   });
 });

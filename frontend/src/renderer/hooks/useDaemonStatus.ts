@@ -4,7 +4,6 @@ import { aoBridge } from "../lib/bridge";
 import { queryClient as defaultQueryClient } from "../lib/query-client";
 import { createEventTransport } from "../lib/event-transport";
 import { setApiBaseUrl } from "../lib/api-client";
-import { workspaceQueryKey } from "./useWorkspaceQuery";
 
 type DaemonStatus = Awaited<ReturnType<typeof aoBridge.daemon.getStatus>>;
 
@@ -15,18 +14,26 @@ export function useDaemonStatus(queryClient: QueryClient = defaultQueryClient) {
     let active = true;
     let stopTransport: () => void = () => undefined;
     const applyStatus = (nextStatus: DaemonStatus) => {
+      // Only point REST at the new port; the workspace refetch is the event
+      // transport's job (it invalidates, debounced, on every daemon status).
       if (nextStatus.port) {
         setApiBaseUrl(`http://127.0.0.1:${nextStatus.port}`);
-        void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
       }
       setStatus(nextStatus);
     };
 
-    void aoBridge.daemon.getStatus().then((nextStatus) => {
-      if (!active) return;
-      applyStatus(nextStatus);
-      stopTransport = createEventTransport(queryClient).connect();
-    });
+    void aoBridge.daemon
+      .getStatus()
+      .then((nextStatus) => {
+        if (active) applyStatus(nextStatus);
+      })
+      .catch(() => {
+        // IPC unavailable (browser preview, broken preload): stay "stopped";
+        // REST against the default base URL still works where it can.
+      })
+      .then(() => {
+        if (active) stopTransport = createEventTransport(queryClient).connect();
+      });
 
     const stopStatusListener = aoBridge.daemon.onStatus(applyStatus);
 

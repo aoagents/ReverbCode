@@ -23,6 +23,9 @@ const { postMock, mockData } = vi.hoisted(() => ({
 }));
 
 vi.mock("./lib/api-client", () => ({
+  getApiBaseUrl: () => "http://127.0.0.1:3001",
+  setApiBaseUrl: () => undefined,
+  subscribeApiBaseUrl: () => () => undefined,
   apiClient: {
     GET: vi.fn(async (url: string) => {
       if (url === "/api/v1/projects") {
