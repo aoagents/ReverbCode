@@ -19,7 +19,6 @@ type ServerFrame = {
   type: string;
   data?: string;
   error?: string;
-  session?: { seq: number; projectId: string; sessionId?: string; eventType: string };
 };
 
 // ---- pure framing helpers (unit-tested in terminal-mux.test.ts) ----
@@ -65,6 +64,11 @@ function pingFrame(): string {
 // Derive the ws(s)://.../mux URL from the REST API base. The mux is mounted at
 // the router root (backend router.go), not under /api/v1.
 export function muxUrlFromApiBase(apiBaseUrl: string): string {
+  if (apiBaseUrl === "" && typeof window !== "undefined") {
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    return `${protocol}//${window.location.host}/mux`;
+  }
+
   // http://host → ws://host and https://host → wss://host (the trailing "s" is left
   // in place by the anchored replace). apiBaseUrl is the host root (e.g.
   // http://127.0.0.1:4317); strip any trailing slash before appending /mux.

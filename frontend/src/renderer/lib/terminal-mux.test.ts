@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   base64ToBytes,
   bytesToBase64,
@@ -41,6 +41,10 @@ describe("terminal-mux framing", () => {
     expect(muxUrlFromApiBase("http://127.0.0.1:4317")).toBe("ws://127.0.0.1:4317/mux");
     expect(muxUrlFromApiBase("https://host:8443/")).toBe("wss://host:8443/mux");
   });
+
+  it("uses the current origin for a relative dev API base", () => {
+    expect(muxUrlFromApiBase("")).toBe("ws://localhost:3000/mux");
+  });
 });
 
 // Minimal fake socket so we can assert client behaviour without a live daemon.
@@ -73,6 +77,10 @@ class FakeSocket {
 }
 
 describe("createTerminalMux client", () => {
+  afterEach(() => {
+    FakeSocket.instances = [];
+  });
+
   it("queues frames until open, then flushes them in order", () => {
     const mux = createTerminalMux("ws://x/mux", FakeSocket as unknown as typeof WebSocket);
     const socket = FakeSocket.instances.at(-1)!;

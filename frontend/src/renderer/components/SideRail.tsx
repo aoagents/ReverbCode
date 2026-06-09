@@ -85,26 +85,30 @@ function WorkersList({
     <>
       <SideHead title="Workers" count={workers.length} />
       <div className="min-h-0 flex-1 overflow-y-auto">
-        {workers.map((worker) => {
-          const pr = worker.pullRequest;
-          const subtitle = [worker.workspaceName, pr ? `PR #${pr.number}` : worker.branch]
-            .filter(Boolean)
-            .join(" · ");
-          return (
-            <button
-              className="flex h-10 w-full items-center gap-2.5 border-b border-border/50 px-3 text-left transition-colors hover:bg-surface"
-              key={worker.id}
-              onClick={() => onSelectSession(worker.id, worker.workspaceId)}
-              type="button"
-            >
-              <StatusGlyph worker={worker} />
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-[13px] text-foreground">{worker.title}</span>
-                <span className="block truncate font-mono text-[10px] text-passive">{subtitle}</span>
-              </span>
-            </button>
-          );
-        })}
+        {workers.length === 0 ? (
+          <p className="px-3 py-6 text-center text-[12px] text-passive">No workers yet.</p>
+        ) : (
+          workers.map((worker) => {
+            const pr = worker.pullRequest;
+            const subtitle = [worker.workspaceName, pr ? `PR #${pr.number}` : worker.branch]
+              .filter(Boolean)
+              .join(" · ");
+            return (
+              <button
+                className="flex h-10 w-full items-center gap-2.5 border-b border-border/50 px-3 text-left transition-colors hover:bg-surface"
+                key={worker.id}
+                onClick={() => onSelectSession(worker.id, worker.workspaceId)}
+                type="button"
+              >
+                <StatusGlyph worker={worker} />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[13px] text-foreground">{worker.title}</span>
+                  <span className="block truncate font-mono text-[10px] text-passive">{subtitle}</span>
+                </span>
+              </button>
+            );
+          })
+        )}
       </div>
     </>
   );

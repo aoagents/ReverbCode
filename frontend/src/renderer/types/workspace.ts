@@ -1,4 +1,36 @@
-type SessionStatus = "running" | "needs_input" | "stopped" | "failed";
+export type SessionStatus =
+  | "working"
+  | "pr_open"
+  | "draft"
+  | "ci_failed"
+  | "review_pending"
+  | "changes_requested"
+  | "approved"
+  | "mergeable"
+  | "merged"
+  | "needs_input"
+  | "idle"
+  | "terminated";
+
+const sessionStatuses = new Set<SessionStatus>([
+  "working",
+  "pr_open",
+  "draft",
+  "ci_failed",
+  "review_pending",
+  "changes_requested",
+  "approved",
+  "mergeable",
+  "merged",
+  "needs_input",
+  "idle",
+  "terminated",
+]);
+
+export function toSessionStatus(status?: string, isTerminated = false): SessionStatus {
+  if (isTerminated) return "terminated";
+  return status && sessionStatuses.has(status as SessionStatus) ? (status as SessionStatus) : "working";
+}
 
 export type AgentProvider =
   | "codex"
@@ -35,6 +67,7 @@ export type ChangedFile = {
 
 export type WorkspaceSession = {
   id: string;
+  terminalHandleId?: string;
   workspaceId: string;
   workspaceName: string;
   title: string;
@@ -63,15 +96,34 @@ export type WorkerDisplayStatus = "working" | "needs_you" | "mergeable" | "ci_fa
 export function workerDisplayStatus(session: WorkspaceSession): WorkerDisplayStatus {
   if (session.displayStatus) return session.displayStatus;
   switch (session.status) {
-    case "running":
-      return "working";
     case "needs_input":
+    case "changes_requested":
+    case "review_pending":
       return "needs_you";
-    case "failed":
+    case "ci_failed":
       return "ci_failed";
-    default:
+    case "approved":
+    case "mergeable":
+      return "mergeable";
+    case "merged":
+    case "terminated":
       return "done";
+    default:
+      return "working";
   }
+}
+
+export function sessionIsActive(session: WorkspaceSession): boolean {
+  return session.status !== "merged" && session.status !== "terminated";
+}
+
+export function sessionNeedsAttention(session: WorkspaceSession): boolean {
+  return (
+    session.status === "needs_input" ||
+    session.status === "changes_requested" ||
+    session.status === "review_pending" ||
+    session.status === "ci_failed"
+  );
 }
 
 export const workerStatusLabel: Record<WorkerDisplayStatus, string> = {

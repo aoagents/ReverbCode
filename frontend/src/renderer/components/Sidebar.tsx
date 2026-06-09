@@ -1,6 +1,6 @@
 import { ChevronsUpDown, Folder, Plus, Search, Settings, Waypoints } from "lucide-react";
 import { useState } from "react";
-import type { WorkspaceSummary } from "../types/workspace";
+import { sessionIsActive, sessionNeedsAttention, type WorkspaceSummary } from "../types/workspace";
 import { useUiStore } from "../stores/ui-store";
 import { aoBridge } from "../lib/bridge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
@@ -8,6 +8,7 @@ import { cn } from "../lib/utils";
 
 type SidebarProps = {
   daemonStatus: { state: string; message?: string };
+  workspaceError?: string;
   workspaces: WorkspaceSummary[];
   onCreateProject: (input: { path: string }) => Promise<void>;
   onNewWorker: (projectId: string) => void;
@@ -15,14 +16,12 @@ type SidebarProps = {
 
 function fleetSummary(workspaces: WorkspaceSummary[]) {
   const sessions = workspaces.flatMap((workspace) => workspace.sessions);
-  const agents = sessions.filter((session) => session.status !== "stopped").length;
-  const needYou = sessions.filter(
-    (session) => session.status === "needs_input" || session.status === "failed",
-  ).length;
+  const agents = sessions.filter(sessionIsActive).length;
+  const needYou = sessions.filter(sessionNeedsAttention).length;
   return { agents, needYou };
 }
 
-export function Sidebar({ daemonStatus, workspaces, onCreateProject, onNewWorker }: SidebarProps) {
+export function Sidebar({ daemonStatus, workspaceError, workspaces, onCreateProject, onNewWorker }: SidebarProps) {
   const { isSidebarOpen, view, selectedSessionId, selectedWorkspaceId, selectOrchestrator, selectSession, selectWorkspace } =
     useUiStore();
   const { agents, needYou } = fleetSummary(workspaces);
@@ -55,7 +54,7 @@ export function Sidebar({ daemonStatus, workspaces, onCreateProject, onNewWorker
           <Waypoints className="h-4 w-4 shrink-0 text-accent" aria-hidden="true" />
           <span className="text-[13.5px] font-semibold text-foreground">Orchestrator</span>
           <span className="ml-auto whitespace-nowrap font-mono text-[10px] text-passive">
-            {agents} agents · <b className="font-semibold text-warning">{needYou} need you</b>
+            {agents} agents
           </span>
         </button>
 
@@ -64,53 +63,67 @@ export function Sidebar({ daemonStatus, workspaces, onCreateProject, onNewWorker
           <CreateProjectButton onCreateProject={onCreateProject} />
         </div>
 
-        {workspaces.map((workspace) => (
-          <section key={workspace.id} className="mb-1">
-            <div
-              className={cn(
-                "group flex h-8 w-full items-center rounded-lg pr-1 transition-colors",
-                selectedWorkspaceId === workspace.id && view !== "session"
-                  ? "bg-raised text-foreground"
-                  : "text-muted-foreground hover:bg-surface",
-              )}
-            >
-              <button
-                aria-label={`Select ${workspace.name}`}
-                className="flex h-full min-w-0 flex-1 items-center gap-2 rounded-lg px-2 text-left"
-                onClick={() => selectWorkspace(workspace.id)}
-                type="button"
+        {workspaceError ? (
+          <div className="px-3 py-4">
+            <p className="text-[12px] text-foreground">Could not load projects.</p>
+            <p className="mt-1 text-[11px] text-passive">{workspaceError}</p>
+          </div>
+        ) : workspaces.length === 0 ? (
+          <div className="px-3 py-4">
+            <p className="text-[12px] text-passive">No projects yet.</p>
+            <p className="mt-1 text-[11px] text-passive">
+              Click <span className="text-foreground">+</span> above to register a git repo.
+            </p>
+          </div>
+        ) : (
+          workspaces.map((workspace) => (
+            <section key={workspace.id} className="mb-1">
+              <div
+                className={cn(
+                  "group flex h-8 w-full items-center rounded-lg pr-1 transition-colors",
+                  selectedWorkspaceId === workspace.id && view !== "session"
+                    ? "bg-raised text-foreground"
+                    : "text-muted-foreground hover:bg-surface",
+                )}
               >
-                <Folder className="h-3.5 w-3.5 shrink-0 text-passive" aria-hidden="true" />
-                <span className="min-w-0 flex-1 truncate text-[13.5px]">{workspace.name}</span>
-              </button>
-              <NewWorkerButton
-                onClick={() => onNewWorker(workspace.id)}
-                projectName={workspace.name}
-                visible={selectedWorkspaceId === workspace.id && view !== "session"}
-              />
-            </div>
-
-            {workspace.sessions.map((session) => {
-              const active = view === "session" && selectedSessionId === session.id;
-              return (
                 <button
-                  aria-label={session.title}
-                  className={cn(
-                    "relative flex h-8 w-full items-center rounded-lg pl-[30px] pr-2 text-left transition-colors",
-                    active
-                      ? "bg-raised text-foreground before:absolute before:left-5 before:top-2 before:bottom-2 before:w-0.5 before:rounded before:bg-accent"
-                      : "text-muted-foreground hover:bg-surface",
-                  )}
-                  key={session.id}
-                  onClick={() => selectSession(session.id, workspace.id)}
+                  aria-label={`Select ${workspace.name}`}
+                  className="flex h-full min-w-0 flex-1 items-center gap-2 rounded-lg px-2 text-left"
+                  onClick={() => selectWorkspace(workspace.id)}
                   type="button"
                 >
-                  <span className="min-w-0 flex-1 truncate text-[13.5px]">{session.title}</span>
+                  <Folder className="h-3.5 w-3.5 shrink-0 text-passive" aria-hidden="true" />
+                  <span className="min-w-0 flex-1 truncate text-[13.5px]">{workspace.name}</span>
                 </button>
-              );
-            })}
-          </section>
-        ))}
+                <NewWorkerButton
+                  onClick={() => onNewWorker(workspace.id)}
+                  projectName={workspace.name}
+                  visible={selectedWorkspaceId === workspace.id && view !== "session"}
+                />
+              </div>
+
+              {workspace.sessions.map((session) => {
+                const active = view === "session" && selectedSessionId === session.id;
+                return (
+                  <button
+                    aria-label={session.title}
+                    className={cn(
+                      "relative flex h-8 w-full items-center rounded-lg pl-[30px] pr-2 text-left transition-colors",
+                      active
+                        ? "bg-raised text-foreground before:absolute before:left-5 before:top-2 before:bottom-2 before:w-0.5 before:rounded before:bg-accent"
+                        : "text-muted-foreground hover:bg-surface",
+                    )}
+                    key={session.id}
+                    onClick={() => selectSession(session.id, workspace.id)}
+                    type="button"
+                  >
+                    <span className="min-w-0 flex-1 truncate text-[13.5px]">{session.title}</span>
+                  </button>
+                );
+              })}
+            </section>
+          ))
+        )}
       </div>
 
       <div className="border-t border-border p-2">

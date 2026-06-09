@@ -13,9 +13,7 @@ type UiState = {
   selectedSessionId: string | null;
   selectedWorkspaceId: string | null;
   theme: Theme;
-  setView: (view: WorkbenchView) => void;
   setWorkbenchTab: (tab: WorkbenchTab) => void;
-  setSidebarOpen: (isSidebarOpen: boolean) => void;
   setSystemTheme: (theme: Theme) => void;
   toggleSidebar: () => void;
   selectOrchestrator: () => void;
@@ -47,12 +45,7 @@ export const useUiStore = create<UiState>((set) => ({
   selectedSessionId: null,
   selectedWorkspaceId: null,
   theme: initialTheme(),
-  setView: (view) => set({ view }),
   setWorkbenchTab: (workbenchTab) => set({ workbenchTab }),
-  setSidebarOpen: (isSidebarOpen) => {
-    getLocalStorage()?.setItem(sidebarStorageKey, String(isSidebarOpen));
-    set({ isSidebarOpen });
-  },
   setSystemTheme: (theme) => set({ theme }),
   toggleSidebar: () =>
     set((state) => {

@@ -1,13 +1,12 @@
 import type { QueryClient } from "@tanstack/react-query";
 import { aoBridge } from "./bridge";
-import { apiBaseUrl } from "./api-client";
+import { getApiBaseUrl } from "./api-client";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 
 export type EventTransport = {
   connect: () => () => void;
 };
 
-const EVENTS_URL = `${apiBaseUrl.replace(/\/+$/, "")}/api/v1/events`;
 const INVALIDATE_DEBOUNCE_MS = 150;
 
 // CDC event types the daemon pushes over the SSE stream (see
@@ -37,6 +36,8 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
   return {
     connect() {
       let debounce: ReturnType<typeof setTimeout> | undefined;
+      let source: EventSource | undefined;
+      let sourceBaseUrl: string | undefined;
       const refreshWorkspaces = () => {
         if (debounce) clearTimeout(debounce);
         debounce = setTimeout(() => {
@@ -44,13 +45,16 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
         }, INVALIDATE_DEBOUNCE_MS);
       };
 
-      const removeDaemonListener = aoBridge.daemon.onStatus(refreshWorkspaces);
-
-      // EventSource is unavailable in jsdom (tests) and some preview surfaces; guard it.
-      let source: EventSource | undefined;
-      if (typeof EventSource !== "undefined") {
+      const connectSource = () => {
+        // EventSource is unavailable in jsdom (tests) and some preview surfaces; guard it.
+        if (typeof EventSource === "undefined") return;
+        const baseUrl = getApiBaseUrl();
+        if (source && sourceBaseUrl === baseUrl) return;
+        source?.close();
+        source = undefined;
+        sourceBaseUrl = baseUrl;
         try {
-          source = new EventSource(EVENTS_URL);
+          source = new EventSource(`${baseUrl.replace(/\/+$/, "")}/api/v1/events`);
           source.onmessage = refreshWorkspaces; // unnamed events, if any
           for (const type of CDC_EVENT_TYPES) {
             source.addEventListener(type, refreshWorkspaces);
@@ -59,7 +63,13 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
         } catch {
           source = undefined;
         }
-      }
+      };
+
+      const removeDaemonListener = aoBridge.daemon.onStatus(() => {
+        connectSource();
+        refreshWorkspaces();
+      });
+      connectSource();
 
       return () => {
         if (debounce) clearTimeout(debounce);

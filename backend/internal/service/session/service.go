@@ -301,7 +301,7 @@ func (s *Service) toSession(ctx context.Context, rec domain.SessionRecord) (doma
 		return domain.Session{}, fmt.Errorf("pr facts %s: %w", rec.ID, err)
 	}
 	if !ok {
-		return domain.Session{SessionRecord: rec, Status: deriveStatus(rec, nil)}, nil
+		return domain.Session{SessionRecord: rec, Status: deriveStatus(rec, nil), TerminalHandleID: rec.Metadata.RuntimeHandleID}, nil
 	}
-	return domain.Session{SessionRecord: rec, Status: deriveStatus(rec, &pr)}, nil
+	return domain.Session{SessionRecord: rec, Status: deriveStatus(rec, &pr), TerminalHandleID: rec.Metadata.RuntimeHandleID}, nil
 }

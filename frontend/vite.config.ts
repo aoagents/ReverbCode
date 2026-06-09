@@ -9,6 +9,19 @@ import electron from "vite-plugin-electron/simple";
 const skipElectron = process.env.VITE_NO_ELECTRON === "1";
 
 export default defineConfig({
+  server: {
+    proxy: {
+      "/api": {
+        target: process.env.AO_DEV_API_TARGET ?? "http://127.0.0.1:3001",
+        changeOrigin: false,
+      },
+      "/mux": {
+        target: process.env.AO_DEV_API_TARGET ?? "http://127.0.0.1:3001",
+        changeOrigin: false,
+        ws: true,
+      },
+    },
+  },
   plugins: [
     react(),
     tailwindcss(),

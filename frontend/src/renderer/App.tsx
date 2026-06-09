@@ -10,7 +10,14 @@ import { useDaemonStatus } from "./hooks/useDaemonStatus";
 import { useWorkspaceQuery, workspaceQueryKey } from "./hooks/useWorkspaceQuery";
 import { apiClient } from "./lib/api-client";
 import { Theme, useUiStore } from "./stores/ui-store";
-import { toAgentProvider, type AgentProvider, type WorkspaceSummary } from "./types/workspace";
+import {
+  sessionIsActive,
+  sessionNeedsAttention,
+  toAgentProvider,
+  toSessionStatus,
+  type AgentProvider,
+  type WorkspaceSummary,
+} from "./types/workspace";
 
 type AppProps = {
   routeSessionId?: string;
@@ -19,6 +26,10 @@ type AppProps = {
 
 function systemTheme(): Theme {
   return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+}
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : "Could not load projects";
 }
 
 export function App({ routeSessionId, routeWorkspaceId }: AppProps) {
@@ -35,7 +46,8 @@ export function App({ routeSessionId, routeWorkspaceId }: AppProps) {
     selectWorkspace,
     selectSession,
   } = useUiStore();
-  const { data: workspaces = [] } = useWorkspaceQuery();
+  const workspaceQuery = useWorkspaceQuery();
+  const workspaces = workspaceQuery.data ?? [];
   const daemonStatus = useDaemonStatus(queryClient);
   const [spawnOpen, setSpawnOpen] = useState(false);
   const [spawnProjectId, setSpawnProjectId] = useState<string | undefined>(undefined);
@@ -45,7 +57,7 @@ export function App({ routeSessionId, routeWorkspaceId }: AppProps) {
     setSpawnOpen(true);
   };
 
-  const selectedWorkspace = workspaces.find((workspace) => workspace.id === selectedWorkspaceId) ?? workspaces[0];
+  const selectedWorkspace = workspaces.find((workspace) => workspace.id === selectedWorkspaceId) ?? workspaces[0] ?? null;
   const selectedSession =
     view === "session"
       ? workspaces.flatMap((workspace) => workspace.sessions).find((session) => session.id === selectedSessionId)
@@ -57,8 +69,8 @@ export function App({ routeSessionId, routeWorkspaceId }: AppProps) {
   const fleet = useMemo(() => {
     const sessions = workspaces.flatMap((workspace) => workspace.sessions);
     return {
-      agents: sessions.filter((session) => session.status !== "stopped").length,
-      needYou: sessions.filter((session) => session.status === "needs_input" || session.status === "failed").length,
+      agents: sessions.filter(sessionIsActive).length,
+      needYou: sessions.filter(sessionNeedsAttention).length,
     };
   }, [workspaces]);
 
@@ -151,12 +163,13 @@ export function App({ routeSessionId, routeWorkspaceId }: AppProps) {
               sessions: [
                 {
                   id: session.id,
+                  terminalHandleId: session.terminalHandleId,
                   workspaceId: item.id,
                   workspaceName: item.name,
                   title: input.prompt,
                   provider: toAgentProvider(session.harness),
                   branch: input.branch ?? "",
-                  status: session.isTerminated ? "stopped" : "running",
+                  status: toSessionStatus(session.status, session.isTerminated),
                   updatedAt: "now",
                 },
                 ...item.sessions.filter((existing) => existing.id !== session.id),
@@ -183,7 +196,13 @@ export function App({ routeSessionId, routeWorkspaceId }: AppProps) {
           workspace={sessionWorkspace}
         />
         <div className="flex min-h-0 flex-1">
-          <Sidebar daemonStatus={daemonStatus} onCreateProject={createProject} onNewWorker={openSpawn} workspaces={workspaces} />
+          <Sidebar
+            daemonStatus={daemonStatus}
+            onCreateProject={createProject}
+            onNewWorker={openSpawn}
+            workspaceError={workspaceQuery.isError ? errorMessage(workspaceQuery.error) : undefined}
+            workspaces={workspaces}
+          />
           <CenterPane fleet={fleet} session={selectedSession} theme={theme} view={view} />
           {showSideRail && (
             <SideRail onSelectSession={selectSession} session={selectedSession} view={view} workspaces={workspaces} />

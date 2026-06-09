@@ -52,7 +52,7 @@ function createWindow(): void {
 
   // Harden navigation: never let renderer/terminal content open in-app windows or
   // navigate the privileged window away from the app origin. External links go to
-  // the OS browser. This must stay in place before daemon stdout streaming is wired.
+  // the OS browser. Keep this in place before exposing any daemon output to the renderer.
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:\/\//.test(url)) {
       void shell.openExternal(url);
@@ -98,19 +98,25 @@ function startDaemon(): DaemonStatus {
   // Capture the spawned handle locally so the async lifecycle listeners act only
   // on THIS process. Without this, a stale exit from an already-stopped daemon
   // could null out a newer daemonProcess started in the meantime, orphaning it.
+  //
+  // `detached` makes the child its own process-group leader. Because shell:true
+  // runs the command through /bin/sh, a plain kill() would only signal the shell
+  // wrapper and orphan the real daemon (which keeps holding the port). Killing
+  // the whole group via killDaemon() reaches the daemon and any PTY children.
   const child = spawn(command, [], {
     cwd: app.getAppPath(),
     env: process.env,
     shell: true,
+    detached: true,
   });
   daemonProcess = child;
 
   child.stdout.on("data", (chunk: Buffer) => {
-    mainWindow?.webContents.send("daemon:stdout", chunk.toString("utf8"));
+    console.log(chunk.toString("utf8").trimEnd());
   });
 
   child.stderr.on("data", (chunk: Buffer) => {
-    mainWindow?.webContents.send("daemon:stderr", chunk.toString("utf8"));
+    console.error(chunk.toString("utf8").trimEnd());
   });
 
   child.once("spawn", () => {
@@ -139,13 +145,26 @@ function startDaemon(): DaemonStatus {
   return daemonStatus;
 }
 
+// Signal the daemon's whole process group so the kill reaches the real daemon
+// behind the /bin/sh wrapper (and any PTY children it forked), not just the
+// shell. Falls back to a direct kill if the group signal can't be delivered
+// (e.g. the process already exited).
+function killDaemon(child: ChildProcessWithoutNullStreams): void {
+  if (child.pid === undefined) return;
+  try {
+    process.kill(-child.pid, "SIGTERM");
+  } catch {
+    child.kill("SIGTERM");
+  }
+}
+
 function stopDaemon(): DaemonStatus {
   if (!daemonProcess) {
     setDaemonStatus({ state: "stopped" });
     return daemonStatus;
   }
 
-  daemonProcess.kill();
+  killDaemon(daemonProcess);
   daemonProcess = null;
   setDaemonStatus({ state: "stopped" });
   return daemonStatus;
@@ -193,7 +212,7 @@ app.whenReady().then(() => {
 
 app.on("before-quit", () => {
   if (daemonProcess) {
-    daemonProcess.kill();
+    killDaemon(daemonProcess);
   }
 });
 

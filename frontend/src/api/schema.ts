@@ -422,6 +422,7 @@ export interface components {
         ProjectSummary: {
             id: string;
             name: string;
+            path: string;
             resolveError?: string;
             sessionPrefix: string;
         };
@@ -476,6 +477,7 @@ export interface components {
             kind: string;
             projectId: string;
             status: string;
+            terminalHandleId?: string;
             /** Format: date-time */
             updatedAt: string;
         };

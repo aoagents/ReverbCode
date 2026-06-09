@@ -15,6 +15,10 @@ import { workerDisplayStatus } from "../types/workspace";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { cn } from "../lib/utils";
 
+const isMac = typeof navigator !== "undefined" && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent);
+const dragStyle = isMac ? ({ WebkitAppRegion: "drag" } as React.CSSProperties) : undefined;
+const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined;
+
 type TopbarProps = {
   view: WorkbenchView;
   session?: WorkspaceSession;
@@ -35,11 +39,15 @@ export function Topbar({
   onToggleSidebar,
 }: TopbarProps) {
   return (
-    <header className="flex h-11 shrink-0 items-center gap-2.5 border-b border-border bg-background px-3">
+    <header className="flex h-11 shrink-0 items-center gap-2.5 border-b border-border bg-background px-3" style={dragStyle}>
+      {isMac && (
+        <span className="inline-block w-[66px] shrink-0" />
+      )}
       <button
         aria-label="Toggle sidebar"
         className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-passive transition-colors hover:bg-raised hover:text-muted-foreground"
         onClick={onToggleSidebar}
+        style={noDragStyle}
         title="Toggle sidebar (⌘B)"
         type="button"
       >
@@ -67,6 +75,7 @@ export function Topbar({
               aria-label="New worker"
               className="mr-1 inline-flex h-6 items-center gap-1.5 rounded-md border border-border px-2.5 text-[11.5px] text-muted-foreground transition-colors hover:border-accent hover:text-accent"
               onClick={onNewWorker}
+              style={noDragStyle}
               type="button"
             >
               <Plus className="h-3 w-3" aria-hidden="true" />
@@ -127,6 +136,7 @@ function IconToggle({
             active ? "bg-accent-weak text-accent" : "text-passive hover:bg-raised hover:text-muted-foreground",
           )}
           onClick={onClick}
+          style={noDragStyle}
           type="button"
         >
           {children}
@@ -145,6 +155,7 @@ function PrPill({ session, workspace }: { session?: WorkspaceSession; workspace?
     return (
       <button
         className="mr-1 inline-flex h-6 items-center gap-1.5 rounded-md border border-border px-2.5 text-[11.5px] font-medium text-muted-foreground transition-colors hover:border-accent hover:text-accent"
+        style={noDragStyle}
         type="button"
       >
         <GitPullRequest className="h-3 w-3" aria-hidden="true" />
@@ -168,6 +179,7 @@ function PrPill({ session, workspace }: { session?: WorkspaceSession; workspace?
         "mr-1 inline-flex h-6 items-center gap-1.5 whitespace-nowrap rounded-md border px-2.5 text-[11.5px] font-medium",
         tone,
       )}
+      style={noDragStyle}
       title={`PR #${pr.number} — ${label}`}
       type="button"
     >

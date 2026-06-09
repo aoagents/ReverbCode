@@ -7,7 +7,7 @@ import { SearchAddon } from "@xterm/addon-search";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import type { WorkspaceSession } from "../types/workspace";
 import type { Theme } from "../stores/ui-store";
-import { apiBaseUrl } from "../lib/api-client";
+import { getApiBaseUrl } from "../lib/api-client";
 import { createTerminalMux, muxUrlFromApiBase } from "../lib/terminal-mux";
 
 type TerminalPaneProps = {
@@ -87,7 +87,8 @@ function XtermTerminal({ session, theme }: TerminalPaneProps) {
     attachRenderer(terminal);
 
     const sessionId = session?.id;
-    const mux = sessionId ? createTerminalMux(muxUrlFromApiBase(apiBaseUrl)) : null;
+    const terminalHandleId = session?.terminalHandleId;
+    const mux = terminalHandleId ? createTerminalMux(muxUrlFromApiBase(getApiBaseUrl())) : null;
     const disposers: Array<() => void> = [];
     let rafId: number | undefined;
 
@@ -95,16 +96,16 @@ function XtermTerminal({ session, theme }: TerminalPaneProps) {
       if (!containerRef.current?.clientWidth || !containerRef.current.clientHeight) return;
       try {
         fitAddon.fit();
-        if (mux && sessionId) mux.resize(sessionId, terminal.cols, terminal.rows);
+        if (mux && terminalHandleId) mux.resize(terminalHandleId, terminal.cols, terminal.rows);
       } catch {
         // Electron can report zero-sized panels during startup; the next resize will retry.
       }
     };
 
-    if (mux && sessionId) {
-      const onData = mux.onData(sessionId, (bytes) => terminal.write(bytes));
-      const onExit = mux.onExit(sessionId, () => terminal.writeln("\r\n\x1b[2m[process exited]\x1b[0m"));
-      const input = terminal.onData((data) => mux.sendInput(sessionId, data));
+    if (mux && terminalHandleId) {
+      const onData = mux.onData(terminalHandleId, (bytes) => terminal.write(bytes));
+      const onExit = mux.onExit(terminalHandleId, () => terminal.writeln("\r\n\x1b[2m[process exited]\x1b[0m"));
+      const input = terminal.onData((data) => mux.sendInput(terminalHandleId, data));
       disposers.push(onData, onExit, () => input.dispose());
       terminal.writeln(`\x1b[2mAttaching to ${session?.title ?? sessionId}…\x1b[0m`);
       rafId = requestAnimationFrame(() => {
@@ -113,8 +114,8 @@ function XtermTerminal({ session, theme }: TerminalPaneProps) {
         } catch {
           // panel may be zero-sized at startup; the ResizeObserver retries the fit.
         }
-        mux.open(sessionId, terminal.cols, terminal.rows);
-        mux.resize(sessionId, terminal.cols, terminal.rows);
+        mux.open(terminalHandleId, terminal.cols, terminal.rows);
+        mux.resize(terminalHandleId, terminal.cols, terminal.rows);
       });
     } else {
       rafId = requestAnimationFrame(fitTerminal);
@@ -139,7 +140,7 @@ function XtermTerminal({ session, theme }: TerminalPaneProps) {
         // environments; the terminal is being torn down regardless.
       }
     };
-  }, [session?.id, session?.provider]);
+  }, [session?.id, session?.terminalHandleId]);
 
   useEffect(() => {
     if (terminalRef.current) {
