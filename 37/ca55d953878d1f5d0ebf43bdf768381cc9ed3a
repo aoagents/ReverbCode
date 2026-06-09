@@ -1,0 +1,50 @@
+frontend/src/renderer/App.test.tsx
+  s_f468373f7b50f9::t_a6de3450ce8a40 127,129,142,150,154,156
+  s_f468373f7b50f9::t_397a0b2d8ed0ff 155
+frontend/src/renderer/components/Sidebar.tsx
+  s_f468373f7b50f9::t_09cc504906b7b7 496
+  s_f468373f7b50f9::t_933ed349d3e58f 383
+  s_f07fce4e39e8b4::t_bc147b5dcf1c90 300-305
+  s_f07fce4e39e8b4::t_0428c0c9dae6a2 433
+frontend/src/renderer/components/TerminalPane.tsx
+  s_f468373f7b50f9::t_9b7a5363d0f6d5 65,78,132,140-146
+  s_f07fce4e39e8b4::t_00492ed1e3527a 107
+frontend/src/renderer/components/ui/badge.tsx
+  s_f07fce4e39e8b4::t_8deb89d17e772a 4
+  s_f07fce4e39e8b4::t_ed786a07782fb7 18
+frontend/src/renderer/lib/api-client.ts
+  s_f468373f7b50f9::t_f67364fbdb4a9f 4
+frontend/e2e/workbench.spec.ts
+  s_f468373f7b50f9::t_5d6441de975a87 24-25
+frontend/src/renderer/stores/ui-store.ts
+  s_f468373f7b50f9::t_3fb582c2c5a692 52-53
+  s_f468373f7b50f9::t_cd3c9c2aeb2efb 10-11
+frontend/src/renderer/App.tsx
+  s_f468373f7b50f9::t_18698928e63106 115-118,120-127,130
+  s_f07fce4e39e8b4::t_adafa1d67d4b23 205
+  s_f07fce4e39e8b4::t_9a529e456a9faa 233
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "37ca55d953878d1f5d0ebf43bdf768381cc9ed3a",
+  "prompts": {},
+  "sessions": {
+    "s_f07fce4e39e8b4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "39e48354-c55c-48fb-b3bc-74212ba86dfd",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    },
+    "s_f468373f7b50f9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "753d6a4d-f6b7-4d3e-ae75-c06c46cbe51c",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    }
+  }
+}
