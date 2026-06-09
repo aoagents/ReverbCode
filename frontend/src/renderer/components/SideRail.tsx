@@ -153,7 +153,10 @@ function GitRail({ session }: { session?: WorkspaceSession }) {
               <span className="min-w-0 flex-1 truncate text-foreground">{file.path}</span>
               <span className="shrink-0 text-success">+{file.additions}</span>
               <span className="shrink-0 text-error">−{file.deletions}</span>
-              <Square className={cn("h-[13px] w-[13px] shrink-0", file.staged ? "text-accent" : "text-passive")} aria-hidden="true" />
+              <Square
+                className={cn("h-[13px] w-[13px] shrink-0", file.staged ? "text-accent" : "text-passive")}
+                aria-hidden="true"
+              />
             </div>
           ))
         )}

@@ -36,17 +36,26 @@ export function LandingNav() {
       </a>
       <ul className="hidden md:flex items-center gap-8 list-none">
         <li>
-          <a href="/docs" className="text-sm text-[var(--landing-muted)] no-underline hover:text-white transition-colors">
+          <a
+            href="/docs"
+            className="text-sm text-[var(--landing-muted)] no-underline hover:text-white transition-colors"
+          >
             Docs
           </a>
         </li>
         <li>
-          <a href="#features" className="text-sm text-[var(--landing-muted)] no-underline hover:text-white transition-colors">
+          <a
+            href="#features"
+            className="text-sm text-[var(--landing-muted)] no-underline hover:text-white transition-colors"
+          >
             Features
           </a>
         </li>
         <li>
-          <a href="#how" className="text-sm text-[var(--landing-muted)] no-underline hover:text-white transition-colors">
+          <a
+            href="#how"
+            className="text-sm text-[var(--landing-muted)] no-underline hover:text-white transition-colors"
+          >
             How It Works
           </a>
         </li>

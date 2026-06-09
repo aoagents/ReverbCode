@@ -14,12 +14,42 @@ type Milestone = {
 };
 
 const milestones: Milestone[] = [
-  { key: "spawning", label: "Spawn", icon: "spawn", desc: "Each issue spawns an agent in its own git worktree — isolated branch, isolated context." },
-  { key: "working", label: "Work", icon: "work", desc: "The agent writes code, runs the test suite, and commits. Watch it live or let it run." },
-  { key: "pr_open", label: "Open PR", icon: "pr", desc: "Work is pushed and a pull request opens against main with a summary of the changes." },
-  { key: "review", label: "CI & review", icon: "review", desc: "CI fails? It reads the logs and pushes a fix. Review comments land? It addresses them." },
-  { key: "mergeable", label: "Mergeable", icon: "mergeable", desc: "Green checks, approvals in. The PR settles into a clean, mergeable state." },
-  { key: "merged", label: "Merged", icon: "merged", desc: "It lands on main, the worktree is archived, and the session is marked done." },
+  {
+    key: "spawning",
+    label: "Spawn",
+    icon: "spawn",
+    desc: "Each issue spawns an agent in its own git worktree — isolated branch, isolated context.",
+  },
+  {
+    key: "working",
+    label: "Work",
+    icon: "work",
+    desc: "The agent writes code, runs the test suite, and commits. Watch it live or let it run.",
+  },
+  {
+    key: "pr_open",
+    label: "Open PR",
+    icon: "pr",
+    desc: "Work is pushed and a pull request opens against main with a summary of the changes.",
+  },
+  {
+    key: "review",
+    label: "CI & review",
+    icon: "review",
+    desc: "CI fails? It reads the logs and pushes a fix. Review comments land? It addresses them.",
+  },
+  {
+    key: "mergeable",
+    label: "Mergeable",
+    icon: "mergeable",
+    desc: "Green checks, approvals in. The PR settles into a clean, mergeable state.",
+  },
+  {
+    key: "merged",
+    label: "Merged",
+    icon: "merged",
+    desc: "It lands on main, the worktree is archived, and the session is marked done.",
+  },
 ];
 
 // Ruler geometry (viewBox units)
@@ -58,10 +88,7 @@ export function LandingWorkflow() {
   useEffect(() => {
     const el = wrapRef.current;
     if (!el) return;
-    const ob = new IntersectionObserver(
-      ([entry]) => entry.isIntersecting && setInView(true),
-      { threshold: 0.25 },
-    );
+    const ob = new IntersectionObserver(([entry]) => entry.isIntersecting && setInView(true), { threshold: 0.25 });
     ob.observe(el);
     return () => ob.disconnect();
   }, []);
@@ -96,10 +123,7 @@ export function LandingWorkflow() {
   // Auto-loop
   useEffect(() => {
     if (!inView || paused) return;
-    const t = window.setTimeout(
-      () => setActive((a) => (a + 1) % milestones.length),
-      STEP_MS,
-    );
+    const t = window.setTimeout(() => setActive((a) => (a + 1) % milestones.length), STEP_MS);
     return () => window.clearTimeout(t);
   }, [active, paused, inView]);
 
@@ -189,9 +213,7 @@ export function LandingWorkflow() {
           style={{ opacity: show ? 1 : 0, transition: "opacity 0.35s ease" }}
         >
           <LifecycleIcon kind={cur.icon} />
-          <div className="font-sans font-[680] tracking-tight text-[1.5rem] tracking-[-0.5px] mt-3">
-            {cur.label}
-          </div>
+          <div className="font-sans font-[680] tracking-tight text-[1.5rem] tracking-[-0.5px] mt-3">{cur.label}</div>
           <div className="font-mono text-[0.6875rem] tracking-[0.08em] text-[var(--landing-accent)] opacity-80 mt-1">
             {cur.key}
           </div>
@@ -208,7 +230,15 @@ export function LandingWorkflow() {
         >
           <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto" role="img" aria-label="Lifecycle scrubber">
             {/* center indicator */}
-            <line x1={CENTER_X} y1={4} x2={CENTER_X} y2={H - 8} stroke="var(--landing-accent)" strokeWidth={2} strokeLinecap="round" />
+            <line
+              x1={CENTER_X}
+              y1={4}
+              x2={CENTER_X}
+              y2={H - 8}
+              stroke="var(--landing-accent)"
+              strokeWidth={2}
+              strokeLinecap="round"
+            />
             <circle cx={CENTER_X} cy={arcTop(0)} r={4} fill="var(--landing-accent)" />
 
             {/* ticks */}
@@ -257,7 +287,6 @@ export function LandingWorkflow() {
         >
           <p className="text-[var(--landing-muted)] text-[0.9375rem] leading-[1.6]">{cur.desc}</p>
         </div>
-
       </div>
     </section>
   );

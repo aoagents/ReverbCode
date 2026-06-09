@@ -135,8 +135,7 @@ export function LandingUseCases() {
           One orchestrator, many jobs
         </h2>
         <p className="text-[var(--landing-muted)] text-[0.9375rem] leading-[1.6] max-w-[34rem] mx-auto mb-12">
-          Point AO at the work and walk away — drag to explore what a single
-          run can do.
+          Point AO at the work and walk away — drag to explore what a single run can do.
         </p>
       </div>
 
@@ -157,10 +156,8 @@ export function LandingUseCases() {
           maxWidth: "1120px",
           cursor: "grab",
           touchAction: "pan-y",
-          WebkitMaskImage:
-            "linear-gradient(to right, transparent, #000 16%, #000 84%, transparent)",
-          maskImage:
-            "linear-gradient(to right, transparent, #000 16%, #000 84%, transparent)",
+          WebkitMaskImage: "linear-gradient(to right, transparent, #000 16%, #000 84%, transparent)",
+          maskImage: "linear-gradient(to right, transparent, #000 16%, #000 84%, transparent)",
         }}
       >
         <div
@@ -201,10 +198,7 @@ export function LandingUseCases() {
                 <div className="font-mono text-[0.6875rem] tracking-[0.12em] uppercase text-[var(--landing-accent)] opacity-80">
                   {c.eyebrow}
                 </div>
-                <h3
-                  className="font-sans font-[680] text-[1.3125rem] tracking-tight"
-                  style={{ marginTop: "1rem" }}
-                >
+                <h3 className="font-sans font-[680] text-[1.3125rem] tracking-tight" style={{ marginTop: "1rem" }}>
                   {c.title}
                 </h3>
                 <p
@@ -218,12 +212,9 @@ export function LandingUseCases() {
                   style={{ marginTop: "auto", padding: "0.75rem 0.875rem" }}
                 >
                   <div className="whitespace-nowrap overflow-hidden text-ellipsis">
-                    <span className={dim}>{c.prefix}</span>{" "}
-                    <span className={fg}>{c.cmd}</span>
+                    <span className={dim}>{c.prefix}</span> <span className={fg}>{c.cmd}</span>
                   </div>
-                  <div className={`whitespace-nowrap overflow-hidden text-ellipsis ${ok}`}>
-                    → {c.outcome}
-                  </div>
+                  <div className={`whitespace-nowrap overflow-hidden text-ellipsis ${ok}`}>→ {c.outcome}</div>
                 </div>
               </div>
             </div>

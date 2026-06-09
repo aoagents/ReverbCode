@@ -75,12 +75,9 @@ describe("sessionIsActive", () => {
 });
 
 describe("sessionNeedsAttention", () => {
-  it.each(["needs_input", "changes_requested", "review_pending", "ci_failed"] as const)(
-    "is true for %s",
-    (status) => {
-      expect(sessionNeedsAttention(sessionWith({ status }))).toBe(true);
-    },
-  );
+  it.each(["needs_input", "changes_requested", "review_pending", "ci_failed"] as const)("is true for %s", (status) => {
+    expect(sessionNeedsAttention(sessionWith({ status }))).toBe(true);
+  });
 
   it("is false for statuses that don't need the user", () => {
     expect(sessionNeedsAttention(sessionWith({ status: "working" }))).toBe(false);

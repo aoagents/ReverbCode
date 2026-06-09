@@ -145,21 +145,15 @@ export function LandingFeatures() {
               marginBottom: "1.5rem",
               transformOrigin: "center top",
               transition: "transform 0.4s ease, opacity 0.4s ease, border-color 0.2s ease",
-              ...(stack
-                ? { position: "sticky", top: `${BASE_TOP + i * STACK_GAP}px`, zIndex: i + 1 }
-                : null),
+              ...(stack ? { position: "sticky", top: `${BASE_TOP + i * STACK_GAP}px`, zIndex: i + 1 } : null),
             }}
           >
             <div>
               <div className="font-mono text-xs tracking-[0.1em] text-[var(--landing-muted)] opacity-50 mb-4">
                 {f.n}
               </div>
-              <h3 className="font-sans font-[680] tracking-tight text-[1.375rem] mb-4">
-                {f.title}
-              </h3>
-              <p className="text-[var(--landing-muted)] text-[0.9375rem] leading-[1.7] max-w-[28rem]">
-                {f.desc}
-              </p>
+              <h3 className="font-sans font-[680] tracking-tight text-[1.375rem] mb-4">{f.title}</h3>
+              <p className="text-[var(--landing-muted)] text-[0.9375rem] leading-[1.7] max-w-[28rem]">{f.desc}</p>
             </div>
             <FeatureDemo kind={f.demo} />
           </div>
@@ -196,13 +190,8 @@ function ParallelBack() {
             className="bg-[rgba(255,240,220,0.035)] border border-[var(--landing-border-subtle)] rounded-xl p-3 flex flex-col"
           >
             <div className="flex items-center gap-1.5 mb-1">
-              <span
-                className="w-1.5 h-1.5 rounded-full shrink-0"
-                style={{ background: a.color }}
-              />
-              <span className="font-mono text-[0.6875rem] text-[var(--landing-fg)]/85 truncate">
-                {a.name}
-              </span>
+              <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: a.color }} />
+              <span className="font-mono text-[0.6875rem] text-[var(--landing-fg)]/85 truncate">{a.name}</span>
             </div>
             <div className="font-mono text-[0.625rem] text-[var(--landing-muted)] opacity-65 mb-auto truncate">
               {a.task}
@@ -243,13 +232,8 @@ function ParallelFront() {
             key={a.name}
             className="flex items-center gap-2 bg-[rgba(255,240,220,0.04)] border border-[var(--landing-border-subtle)] rounded-md px-2.5 py-1.5"
           >
-            <span
-              className="w-1.5 h-1.5 rounded-full shrink-0"
-              style={{ background: a.color }}
-            />
-            <span className="font-mono text-[0.6875rem] text-[var(--landing-fg)]/85 truncate">
-              {a.name}
-            </span>
+            <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: a.color }} />
+            <span className="font-mono text-[0.6875rem] text-[var(--landing-fg)]/85 truncate">{a.name}</span>
           </div>
         ))}
       </div>
@@ -284,9 +268,7 @@ function RecoveryBack() {
     <div className="p-5 h-full flex flex-col font-mono text-[0.6875rem]">
       <div className="flex items-center justify-between mb-3 pb-3 border-b border-[var(--landing-border-subtle)]">
         <span className="text-[var(--landing-fg)]/80">PR #312 · feat/user-auth</span>
-        <span className="text-[0.5625rem] uppercase tracking-[0.1em] text-[var(--landing-muted-dim)]">
-          healing
-        </span>
+        <span className="text-[0.5625rem] uppercase tracking-[0.1em] text-[var(--landing-muted-dim)]">healing</span>
       </div>
       <div className="flex-1 space-y-1.5 overflow-hidden">
         {visible.map((s, i) => {
@@ -304,9 +286,7 @@ function RecoveryBack() {
               key={`${i}-${s.text}`}
               className={`flex items-baseline gap-2.5 ${isLast ? "landing-stream-line" : ""}`}
             >
-              <span className="text-[var(--landing-muted-dim)] opacity-50 w-9 shrink-0">
-                {s.time}
-              </span>
+              <span className="text-[var(--landing-muted-dim)] opacity-50 w-9 shrink-0">{s.time}</span>
               <span className={`${color} truncate`}>{s.text}</span>
             </div>
           );
@@ -320,16 +300,12 @@ function RecoveryFront() {
   return (
     <div className="grid grid-cols-2 gap-2.5 p-5 w-full h-full items-stretch">
       <div className="bg-[rgba(248,113,113,0.05)] border border-[rgba(248,113,113,0.18)] rounded-xl p-3 flex flex-col items-center justify-center gap-1">
-        <span className="font-mono text-[0.5rem] tracking-[0.12em] uppercase text-[rgba(248,113,113,0.7)]">
-          before
-        </span>
+        <span className="font-mono text-[0.5rem] tracking-[0.12em] uppercase text-[rgba(248,113,113,0.7)]">before</span>
         <span className="text-[1.75rem] leading-none text-[rgba(248,113,113,0.85)]">✗</span>
         <span className="font-mono text-[0.625rem] text-[var(--landing-fg)]/70">12/48</span>
       </div>
       <div className="bg-[rgba(134,239,172,0.05)] border border-[rgba(134,239,172,0.2)] rounded-xl p-3 flex flex-col items-center justify-center gap-1">
-        <span className="font-mono text-[0.5rem] tracking-[0.12em] uppercase text-[rgba(134,239,172,0.7)]">
-          after
-        </span>
+        <span className="font-mono text-[0.5rem] tracking-[0.12em] uppercase text-[rgba(134,239,172,0.7)]">after</span>
         <span className="text-[1.75rem] leading-none text-[rgba(134,239,172,0.85)]">✓</span>
         <span className="font-mono text-[0.625rem] text-[var(--landing-fg)]/70">48/48</span>
       </div>
@@ -357,9 +333,7 @@ function PluginsBack() {
   return (
     <div className="p-5 h-full flex flex-col">
       <div className="flex items-center justify-between mb-3 pb-3 border-b border-[var(--landing-border-subtle)]">
-        <span className="font-mono text-[0.6875rem] text-[var(--landing-fg)]/80">
-          agent-orchestrator.yaml
-        </span>
+        <span className="font-mono text-[0.6875rem] text-[var(--landing-fg)]/80">agent-orchestrator.yaml</span>
         <span className="font-mono text-[0.5625rem] tracking-[0.1em] uppercase text-[var(--landing-muted-dim)]">
           7 slots
         </span>
@@ -369,9 +343,7 @@ function PluginsBack() {
           const val = s.values[(tick + i) % s.values.length];
           return (
             <div key={s.slot} className="flex items-center gap-3">
-              <span className="text-[var(--landing-muted-dim)] w-[4.5rem] shrink-0">
-                {s.slot}:
-              </span>
+              <span className="text-[var(--landing-muted-dim)] w-[4.5rem] shrink-0">{s.slot}:</span>
               <span
                 key={val}
                 className="landing-chip-swap inline-block px-2 py-[1px] rounded-md bg-[rgba(255,240,220,0.05)] text-[var(--landing-fg)]/85 border border-[var(--landing-border-subtle)]"
@@ -448,9 +420,7 @@ function DashboardBack() {
           return prev.map((c) => ({ ...c, col: 0 as 0 | 1 | 2 }));
         }
         const oldest = advanceable[0];
-        return prev.map((c) =>
-          c.id === oldest.id ? { ...c, col: (c.col + 1) as 0 | 1 | 2 } : c,
-        );
+        return prev.map((c) => (c.id === oldest.id ? { ...c, col: (c.col + 1) as 0 | 1 | 2 } : c));
       });
     }, 2400);
     return () => clearInterval(id);
@@ -459,9 +429,7 @@ function DashboardBack() {
   return (
     <div className="p-5 h-full flex flex-col">
       <div className="flex items-center justify-between mb-3 pb-3 border-b border-[var(--landing-border-subtle)]">
-        <span className="font-mono text-[0.6875rem] text-[var(--landing-fg)]/80">
-          my-saas-app · 4 sessions
-        </span>
+        <span className="font-mono text-[0.6875rem] text-[var(--landing-fg)]/80">my-saas-app · 4 sessions</span>
         <span className="font-mono text-[0.5625rem] tracking-[0.1em] uppercase text-[var(--landing-muted-dim)] flex items-center gap-1.5">
           <span className="w-1 h-1 rounded-full bg-[rgba(134,239,172,0.7)] landing-sse-pulse" />
           sse
@@ -482,13 +450,8 @@ function DashboardBack() {
                 >
                   <div className="text-[var(--landing-fg)]/85 truncate mb-1">{c.title}</div>
                   <div className="flex items-center gap-1">
-                    <span
-                      className="w-1 h-1 rounded-full shrink-0"
-                      style={{ background: c.color }}
-                    />
-                    <span className="font-mono text-[0.5rem] text-[var(--landing-muted-dim)] truncate">
-                      {c.agent}
-                    </span>
+                    <span className="w-1 h-1 rounded-full shrink-0" style={{ background: c.color }} />
+                    <span className="font-mono text-[0.5rem] text-[var(--landing-muted-dim)] truncate">{c.agent}</span>
                   </div>
                 </div>
               ))}
@@ -546,12 +509,9 @@ function DashboardFront() {
         {stream.map((l) => (
           <div
             key={l.id}
-            className={`truncate transition-opacity duration-200 ${
-              l.exiting ? "opacity-0" : "landing-stream-line"
-            }`}
+            className={`truncate transition-opacity duration-200 ${l.exiting ? "opacity-0" : "landing-stream-line"}`}
           >
-            <span className="text-[rgba(134,239,172,0.7)]">✓</span>{" "}
-            <span className="opacity-70">{l.text}</span>
+            <span className="text-[rgba(134,239,172,0.7)]">✓</span> <span className="opacity-70">{l.text}</span>
           </div>
         ))}
       </div>

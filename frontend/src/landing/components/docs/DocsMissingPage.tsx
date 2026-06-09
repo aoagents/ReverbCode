@@ -19,29 +19,19 @@ export function DocsMissingPage() {
       <DocsBody>
         <div className="not-prose docs-missing-wrap">
           <div className="docs-missing-card">
-            <div className="docs-missing-label">
-              docs / checkout failed
-            </div>
+            <div className="docs-missing-label">docs / checkout failed</div>
             <div className="docs-missing-content">
               <section className="docs-missing-copy">
-                <h2>
-                  This page checked out the wrong worktree.
-                </h2>
+                <h2>This page checked out the wrong worktree.</h2>
                 <p>
-                  The docs were rebuilt, and this URL did not survive the merge. Start from the docs
-                  index, or use search in the sidebar to find where it landed.
+                  The docs were rebuilt, and this URL did not survive the merge. Start from the docs index, or use
+                  search in the sidebar to find where it landed.
                 </p>
                 <div className="docs-missing-actions">
-                  <Link
-                    href="/docs"
-                    className="docs-missing-primary"
-                  >
+                  <Link href="/docs" className="docs-missing-primary">
                     Browse docs
                   </Link>
-                  <Link
-                    href="/"
-                    className="docs-missing-secondary"
-                  >
+                  <Link href="/" className="docs-missing-secondary">
                     Home
                   </Link>
                 </div>

@@ -4,8 +4,7 @@ import { useEffect, useState } from "react";
 
 const testimonials = [
   {
-    quote:
-      "Set up 12 agents on our backlog before lunch. By end of day, 8 PRs were merged.",
+    quote: "Set up 12 agents on our backlog before lunch. By end of day, 8 PRs were merged.",
     img: "https://i.pravatar.cc/120?img=13",
     name: "Staff Engineer",
     role: "Series B Startup",
@@ -44,10 +43,7 @@ export function LandingTestimonials() {
 
   useEffect(() => {
     if (paused) return;
-    const t = window.setTimeout(
-      () => change((active + 1) % testimonials.length),
-      ROTATE_MS,
-    );
+    const t = window.setTimeout(() => change((active + 1) % testimonials.length), ROTATE_MS);
     return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active, paused]);
@@ -65,11 +61,7 @@ export function LandingTestimonials() {
         </h2>
       </div>
 
-      <div
-        className="landing-reveal mt-16"
-        onMouseEnter={() => setPaused(true)}
-        onMouseLeave={() => setPaused(false)}
-      >
+      <div className="landing-reveal mt-16" onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
         {/* Quote — fades on change */}
         <div className="min-h-[8rem] max-w-[58rem]">
           <blockquote
@@ -128,10 +120,7 @@ export function LandingTestimonials() {
             </div>
 
             {/* Vertical divider */}
-            <div
-              className="w-px h-10 shrink-0"
-              style={{ background: "var(--landing-border-default)" }}
-            />
+            <div className="w-px h-10 shrink-0" style={{ background: "var(--landing-border-default)" }} />
 
             {/* Author — fades on change */}
             <div
@@ -140,12 +129,8 @@ export function LandingTestimonials() {
                 transition: "opacity 0.4s ease 0.05s",
               }}
             >
-              <div className="text-[0.9375rem] font-medium text-[var(--landing-fg)]">
-                {t.name}
-              </div>
-              <div className="text-[0.8125rem] text-[var(--landing-muted)] opacity-60">
-                {t.role}
-              </div>
+              <div className="text-[0.9375rem] font-medium text-[var(--landing-fg)]">{t.name}</div>
+              <div className="text-[0.8125rem] text-[var(--landing-muted)] opacity-60">{t.role}</div>
             </div>
           </div>
 

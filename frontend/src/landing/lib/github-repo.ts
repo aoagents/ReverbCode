@@ -14,16 +14,13 @@ const FALLBACK_STATS: GitHubRepoStats = {
 
 export async function getGitHubRepoStats(): Promise<GitHubRepoStats> {
   try {
-    const response = await fetch(
-      "https://api.github.com/repos/ComposioHQ/agent-orchestrator",
-      {
-        next: { revalidate: 3600 },
-        headers: {
-          Accept: "application/vnd.github+json",
-          "User-Agent": "ao-website",
-        },
+    const response = await fetch("https://api.github.com/repos/ComposioHQ/agent-orchestrator", {
+      next: { revalidate: 3600 },
+      headers: {
+        Accept: "application/vnd.github+json",
+        "User-Agent": "ao-website",
       },
-    );
+    });
 
     if (!response.ok) {
       return FALLBACK_STATS;

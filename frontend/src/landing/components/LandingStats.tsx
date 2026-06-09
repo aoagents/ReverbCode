@@ -16,16 +16,11 @@ export function LandingStats({ stats }: LandingStatsProps) {
     <section className="py-20 px-6 max-w-[72rem] mx-auto">
       <div className="landing-reveal grid grid-cols-2 md:grid-cols-4 gap-5">
         {cards.map((stat) => (
-          <div
-            key={stat.label}
-            className="landing-card rounded-2xl py-8 px-6 text-center"
-          >
+          <div key={stat.label} className="landing-card rounded-2xl py-8 px-6 text-center">
             <div className="font-sans font-[680] tracking-tight text-[clamp(2rem,4vw,3rem)] tracking-tight mb-1">
               {stat.number}
             </div>
-            <div className="text-xs text-[var(--landing-muted)] opacity-60">
-              {stat.label}
-            </div>
+            <div className="text-xs text-[var(--landing-muted)] opacity-60">{stat.label}</div>
           </div>
         ))}
       </div>

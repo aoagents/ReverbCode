@@ -78,12 +78,9 @@ export function LandingHowItWorks() {
   return (
     <section className="py-[120px] px-6 max-w-[72rem] mx-auto" id="how">
       <div className="landing-reveal">
-        <div className="text-xs tracking-[0.15em] uppercase text-[var(--landing-muted)] opacity-60 mb-6">
-          Process
-        </div>
+        <div className="text-xs tracking-[0.15em] uppercase text-[var(--landing-muted)] opacity-60 mb-6">Process</div>
         <h2 className="font-sans font-[680] tracking-tight font-normal text-[clamp(1.375rem,3vw,2rem)] leading-[1.05] tracking-[-1.5px] mb-6">
-          Three steps to{" "}
-          <em className="italic text-[var(--landing-muted)]">orchestration</em>
+          Three steps to <em className="italic text-[var(--landing-muted)]">orchestration</em>
         </h2>
       </div>
 
@@ -110,11 +107,7 @@ export function LandingHowItWorks() {
               }}
               className="relative min-w-0 cursor-pointer overflow-hidden border-l border-[var(--landing-border-subtle)] pl-7 pr-5 py-2 first:border-l-0 first:pl-0 md:first:pl-7"
               style={{
-                flex: isDesktop
-                  ? isActive
-                    ? "1 1 0%"
-                    : "0 1 15rem"
-                  : "0 0 auto",
+                flex: isDesktop ? (isActive ? "1 1 0%" : "0 1 15rem") : "0 0 auto",
                 transition: "flex 0.6s cubic-bezier(0.22,1,0.36,1)",
               }}
             >
@@ -132,17 +125,13 @@ export function LandingHowItWorks() {
               <h3
                 className="font-sans font-[680] tracking-tight text-[1.375rem] leading-[1.15]"
                 style={{
-                  color: isActive
-                    ? "var(--landing-fg)"
-                    : "var(--landing-muted)",
+                  color: isActive ? "var(--landing-fg)" : "var(--landing-muted)",
                   transition: "color 0.4s ease",
                   maxWidth: isActive ? "100%" : "11rem",
                 }}
               >
                 {step.title.replace(` ${step.titleEm}`, "")}{" "}
-                <em className="italic text-[var(--landing-muted)]">
-                  {step.titleEm}
-                </em>
+                <em className="italic text-[var(--landing-muted)]">{step.titleEm}</em>
               </h3>
 
               {/* Expanding body */}
@@ -225,7 +214,9 @@ function CliDemo() {
         <div className="text-[var(--landing-muted)] opacity-60">&nbsp;</div>
         <div>
           <span className="landing-agent-dot mr-1.5" />
-          <span className="text-[var(--landing-muted)] opacity-60">5 agents working · Dashboard → http://localhost:3000</span>
+          <span className="text-[var(--landing-muted)] opacity-60">
+            5 agents working · Dashboard → http://localhost:3000
+          </span>
         </div>
       </div>
     </div>
@@ -242,19 +233,22 @@ function DashboardDemo() {
         <span className="text-[0.6875rem] text-[var(--landing-muted)] opacity-50 ml-2">my-saas-app · 5 sessions</span>
       </div>
       <div className="grid grid-cols-4 gap-2 p-3">
-        <DashColumn title="Working" cards={[
-          { title: "Add user auth flow", meta: "#42 · feat/auth", agent: "claude-code" },
-          { title: "Fix pagination bug", meta: "#43 · fix/pagination", agent: "codex" },
-        ]} />
-        <DashColumn title="Pending" cards={[
-          { title: "Add rate limiting", meta: "#44 · PR #312", agent: "aider" },
-        ]} />
-        <DashColumn title="Review" cards={[
-          { title: "Update API tests", meta: "#45 · PR #310", agent: "claude-code", amber: true },
-        ]} />
-        <DashColumn title="Merged" cards={[
-          { title: "Refactor DB layer", meta: "#46 · PR #308", agent: "opencode", done: true },
-        ]} />
+        <DashColumn
+          title="Working"
+          cards={[
+            { title: "Add user auth flow", meta: "#42 · feat/auth", agent: "claude-code" },
+            { title: "Fix pagination bug", meta: "#43 · fix/pagination", agent: "codex" },
+          ]}
+        />
+        <DashColumn title="Pending" cards={[{ title: "Add rate limiting", meta: "#44 · PR #312", agent: "aider" }]} />
+        <DashColumn
+          title="Review"
+          cards={[{ title: "Update API tests", meta: "#45 · PR #310", agent: "claude-code", amber: true }]}
+        />
+        <DashColumn
+          title="Merged"
+          cards={[{ title: "Refactor DB layer", meta: "#46 · PR #308", agent: "opencode", done: true }]}
+        />
       </div>
     </div>
   );
@@ -269,7 +263,10 @@ function PrsDemo() {
         { branch: "feat/rate-limiting", title: "Add Redis-backed rate limiter" },
         { branch: "refactor/db-layer", title: "Extract repository pattern from services" },
       ].map((pr) => (
-        <div key={pr.branch} className="bg-[var(--landing-surface)] border border-[var(--landing-border-subtle)] rounded-xl px-5 py-4 flex items-center justify-between">
+        <div
+          key={pr.branch}
+          className="bg-[var(--landing-surface)] border border-[var(--landing-border-subtle)] rounded-xl px-5 py-4 flex items-center justify-between"
+        >
           <div className="flex flex-col gap-1">
             <div className="font-mono text-xs text-[var(--landing-fg)]/70">{pr.branch}</div>
             <div className="text-[0.8125rem] text-[var(--landing-muted)]">{pr.title}</div>
@@ -298,14 +295,20 @@ function DashColumn({ title, cards }: { title: string; cards: DashCardData[] }) 
         {title}
       </div>
       {cards.map((card) => (
-        <div key={card.meta} className="bg-[var(--landing-surface)] border border-[var(--landing-border-subtle)] rounded-lg p-2.5 mb-1.5 text-[0.6875rem]">
+        <div
+          key={card.meta}
+          className="bg-[var(--landing-surface)] border border-[var(--landing-border-subtle)] rounded-lg p-2.5 mb-1.5 text-[0.6875rem]"
+        >
           <div className="text-[var(--landing-fg)]/70 mb-1">{card.title}</div>
           <div className="font-mono text-[0.5625rem] text-[var(--landing-muted)] opacity-50">{card.meta}</div>
           <div className="flex items-center gap-1 mt-1 font-mono text-[0.5625rem] text-[var(--landing-muted)] opacity-60">
             {card.done ? (
               <span>✓</span>
             ) : (
-              <span className="inline-block w-1.5 h-1.5 rounded-full" style={{ background: card.amber ? "rgba(251,191,36,0.7)" : "rgba(134,239,172,0.7)" }} />
+              <span
+                className="inline-block w-1.5 h-1.5 rounded-full"
+                style={{ background: card.amber ? "rgba(251,191,36,0.7)" : "rgba(134,239,172,0.7)" }}
+              />
             )}
             {card.agent}
           </div>

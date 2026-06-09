@@ -199,11 +199,7 @@
 #nd-docs-layout code,
 #nd-docs-layout kbd,
 #nd-docs-layout pre {
-  font-family:
-    var(--font-jetbrains-mono),
-    ui-monospace,
-    "SFMono-Regular",
-    monospace;
+  font-family: var(--font-jetbrains-mono), ui-monospace, "SFMono-Regular", monospace;
 }
 
 /* Sidebar — smaller text like dashboard */
@@ -512,7 +508,10 @@ pre.shiki code {
   font-size: 0.875rem;
   font-weight: 600;
   text-decoration: none;
-  transition: border-color 0.15s ease, color 0.15s ease, opacity 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    color 0.15s ease,
+    opacity 0.15s ease;
 }
 
 #nd-docs-layout .docs-missing-primary {

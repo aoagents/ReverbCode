@@ -35,14 +35,8 @@ export function LandingAgentsBar() {
       <div className="flex items-center justify-center gap-6 flex-wrap">
         {agents.map((agent) => (
           <div key={agent.name} className="flex flex-col items-center gap-2">
-            <img
-              src={agent.src}
-              alt={agent.alt}
-              className="w-8 h-8 rounded-md object-contain"
-            />
-            <div className="text-[0.6875rem] font-mono text-[var(--landing-muted)] opacity-50">
-              {agent.name}
-            </div>
+            <img src={agent.src} alt={agent.alt} className="w-8 h-8 rounded-md object-contain" />
+            <div className="text-[0.6875rem] font-mono text-[var(--landing-muted)] opacity-50">{agent.name}</div>
           </div>
         ))}
       </div>

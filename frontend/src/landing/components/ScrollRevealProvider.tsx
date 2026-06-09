@@ -12,7 +12,7 @@ export function ScrollRevealProvider({ children }: { children: React.ReactNode }
           }
         });
       },
-      { threshold: 0.1, rootMargin: "-50px" }
+      { threshold: 0.1, rootMargin: "-50px" },
     );
 
     document.querySelectorAll(".landing-reveal").forEach((el) => {

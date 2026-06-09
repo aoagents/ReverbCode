@@ -27,13 +27,19 @@ export default async function LandingPage() {
         <LandingAbout />
         <LandingAgentsBar />
         <LandingFeatures />
-        <div id="workflow"><LandingWorkflow /></div>
-        <div id="usecases"><LandingUseCases /></div>
+        <div id="workflow">
+          <LandingWorkflow />
+        </div>
+        <div id="usecases">
+          <LandingUseCases />
+        </div>
         <LandingHowItWorks />
         <LandingVideo />
         <LandingStats stats={githubStats} />
         <LandingTestimonials />
-        <div id="quickstart"><LandingQuickStart /></div>
+        <div id="quickstart">
+          <LandingQuickStart />
+        </div>
         <LandingCTA />
         <footer className="py-12 px-8 text-center text-[var(--landing-muted)] opacity-30 text-[0.8125rem] border-t border-white/[0.04]">
           MIT Licensed · Open Source

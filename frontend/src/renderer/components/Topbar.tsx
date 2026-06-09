@@ -39,10 +39,11 @@ export function Topbar({
   onToggleSidebar,
 }: TopbarProps) {
   return (
-    <header className="flex h-11 shrink-0 items-center gap-2.5 border-b border-border bg-background px-3" style={dragStyle}>
-      {isMac && (
-        <span className="inline-block w-[66px] shrink-0" />
-      )}
+    <header
+      className="flex h-11 shrink-0 items-center gap-2.5 border-b border-border bg-background px-3"
+      style={dragStyle}
+    >
+      {isMac && <span className="inline-block w-[66px] shrink-0" />}
       <button
         aria-label="Toggle sidebar"
         className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-passive transition-colors hover:bg-raised hover:text-muted-foreground"
@@ -91,7 +92,11 @@ export function Topbar({
         ) : (
           <>
             <PrPill session={session} workspace={workspace} />
-            <IconToggle label="Changes" active={workbenchTab === "changes"} onClick={() => onSetWorkbenchTab("changes")}>
+            <IconToggle
+              label="Changes"
+              active={workbenchTab === "changes"}
+              onClick={() => onSetWorkbenchTab("changes")}
+            >
               <Columns2 className="h-[15px] w-[15px]" aria-hidden="true" />
             </IconToggle>
             <IconToggle label="Files" active={workbenchTab === "files"} onClick={() => onSetWorkbenchTab("files")}>
@@ -170,8 +175,7 @@ function PrPill({ session, workspace }: { session?: WorkspaceSession; workspace?
       : status === "needs_you"
         ? "border-warning/40 bg-warning/10 text-warning"
         : "border-success/40 bg-success/10 text-success";
-  const label =
-    status === "ci_failed" ? "CI failed" : status === "needs_you" ? "review requested" : "mergeable";
+  const label = status === "ci_failed" ? "CI failed" : status === "needs_you" ? "review requested" : "mergeable";
 
   return (
     <button

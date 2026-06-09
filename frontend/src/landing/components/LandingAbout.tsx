@@ -14,10 +14,16 @@ export function LandingAbout() {
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-start">
           <p className="text-[0.9375rem] text-[var(--landing-muted)] leading-[1.8] max-w-[28rem]">
-            Agent Orchestrator replaces that with one YAML file. Point it at
-            your GitHub issues, pick your agents, and walk away. Each agent
-            spawns in its own git worktree, creates PRs, fixes CI failures,
-            addresses review comments, and moves toward merge. If you are new, start with the <a href="/docs/" className="underline decoration-[var(--landing-border-default)] underline-offset-4 hover:text-white">docs quickstart and configuration guides</a>.
+            Agent Orchestrator replaces that with one YAML file. Point it at your GitHub issues, pick your agents, and
+            walk away. Each agent spawns in its own git worktree, creates PRs, fixes CI failures, addresses review
+            comments, and moves toward merge. If you are new, start with the{" "}
+            <a
+              href="/docs/"
+              className="underline decoration-[var(--landing-border-default)] underline-offset-4 hover:text-white"
+            >
+              docs quickstart and configuration guides
+            </a>
+            .
           </p>
 
           {/* Config preview — show how simple setup is */}

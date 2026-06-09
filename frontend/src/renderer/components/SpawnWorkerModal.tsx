@@ -27,7 +27,12 @@ type SpawnWorkerModalProps = {
   onOpenChange: (open: boolean) => void;
   workspaces: WorkspaceSummary[];
   defaultProjectId?: string;
-  onCreateTask: (input: { projectId: string; prompt: string; branch?: string; harness?: AgentProvider }) => Promise<void>;
+  onCreateTask: (input: {
+    projectId: string;
+    prompt: string;
+    branch?: string;
+    harness?: AgentProvider;
+  }) => Promise<void>;
 };
 
 export function SpawnWorkerModal({
@@ -150,7 +155,9 @@ export function SpawnWorkerModal({
                     <button
                       className={cn(
                         "px-2.5 py-0.5 text-[11.5px] transition-colors",
-                        basedOn === option ? "bg-raised text-foreground" : "text-muted-foreground hover:text-foreground",
+                        basedOn === option
+                          ? "bg-raised text-foreground"
+                          : "text-muted-foreground hover:text-foreground",
                       )}
                       key={option}
                       onClick={() => setBasedOn(option)}
@@ -276,10 +283,7 @@ function SelectControl({
           </option>
         ))}
       </select>
-      <ChevronDown
-        className="pointer-events-none absolute right-2 h-[13px] w-[13px] text-passive"
-        aria-hidden="true"
-      />
+      <ChevronDown className="pointer-events-none absolute right-2 h-[13px] w-[13px] text-passive" aria-hidden="true" />
     </div>
   );
 }

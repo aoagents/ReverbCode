@@ -51,10 +51,9 @@ const links: LinkItemType[] = [
 async function GitHubStars() {
   let stars: string | null = null;
   try {
-    const res = await fetch(
-      "https://api.github.com/repos/ComposioHQ/agent-orchestrator",
-      { next: { revalidate: 3600 } },
-    );
+    const res = await fetch("https://api.github.com/repos/ComposioHQ/agent-orchestrator", {
+      next: { revalidate: 3600 },
+    });
     if (res.ok) {
       const data = await res.json();
       const count = data.stargazers_count as number;
@@ -66,14 +65,7 @@ async function GitHubStars() {
 
   return stars ? (
     <span className="inline-flex items-center gap-1 text-[var(--color-text-muted)]">
-      <svg
-        width="12"
-        height="12"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-      >
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
         <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
       </svg>
       {stars}
@@ -83,24 +75,14 @@ async function GitHubStars() {
 
 export default function Layout({ children }: { children: ReactNode }) {
   return (
-    <RootProvider
-      theme={{ enabled: true, defaultTheme: "dark" }}
-      search={{ options: { type: "static" } }}
-    >
+    <RootProvider theme={{ enabled: true, defaultTheme: "dark" }} search={{ options: { type: "static" } }}>
       <DocsLayout
         tree={source.pageTree}
         links={links}
         nav={{
           title: (
             <span className="flex items-center gap-2 font-semibold">
-              <img
-                src="/ao-logo.svg"
-                alt=""
-                aria-hidden="true"
-                width={22}
-                height={22}
-                className="h-[22px] w-[22px]"
-              />
+              <img src="/ao-logo.svg" alt="" aria-hidden="true" width={22} height={22} className="h-[22px] w-[22px]" />
               <span className="text-[var(--color-text-primary)]">AO</span>
             </span>
           ),

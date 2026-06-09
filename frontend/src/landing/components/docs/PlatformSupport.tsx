@@ -45,9 +45,7 @@ function Cell({ platform, status }: { platform: "macos" | "linux" | "windows"; s
     >
       <Logo name={logoName} size={18} />
       <div style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
-        <span style={{ fontSize: "0.8125rem", fontWeight: 600, color: "var(--color-fd-foreground)" }}>
-          {title}
-        </span>
+        <span style={{ fontSize: "0.8125rem", fontWeight: 600, color: "var(--color-fd-foreground)" }}>{title}</span>
         <span
           style={{
             fontSize: "0.75rem",
@@ -73,12 +71,7 @@ function Cell({ platform, status }: { platform: "macos" | "linux" | "windows"; s
   );
 }
 
-export function PlatformSupport({
-  macos = "full",
-  linux = "full",
-  windows = "full",
-  note,
-}: PlatformSupportProps) {
+export function PlatformSupport({ macos = "full", linux = "full", windows = "full", note }: PlatformSupportProps) {
   return (
     <div style={{ margin: "1.25rem 0" }}>
       <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
