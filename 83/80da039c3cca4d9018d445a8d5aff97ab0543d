@@ -1,0 +1,38 @@
+.prettierrc
+  s_4b7b99305c1d80::t_bd53b2902371ec 1-9
+package.json
+  s_4b7b99305c1d80::t_97d6c309ccbd9a 14-17
+  s_4b7b99305c1d80::t_fa2d1075669f31 10-11
+.prettierignore
+  s_4b7b99305c1d80::t_f52cdc6bea5207 1-19
+.husky/pre-commit
+  s_4b7b99305c1d80::t_e21ae86763b046 1
+package-lock.json
+  s_db53c89ad35445::t_9f8cc9d53a7635 9-12,106-147,179-211,237-263,271-283,298-313,327-342,380-507,528-543,590-602,613-628,639-735,749-758,794-827
+.lintstagedrc
+  s_4b7b99305c1d80::t_5066e1333ad967 1-4
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "8380da039c3cca4d9018d445a8d5aff97ab0543d",
+  "prompts": {},
+  "sessions": {
+    "s_4b7b99305c1d80": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "82deee0e-ed01-450f-b208-e64845c69540",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    },
+    "s_db53c89ad35445": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e3e3a58f-21d3-4850-971d-825d42204df1",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    }
+  }
+}
