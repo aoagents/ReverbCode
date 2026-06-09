@@ -1,0 +1,83 @@
+frontend/src/landing/components/docs/PlatformSupport.tsx
+  s_4b7b99305c1d80::t_6a106386128ff6 48,74
+frontend/src/renderer/styles.css
+  s_4b7b99305c1d80::t_6a106386128ff6 11-12
+frontend/src/landing/components/LandingStats.tsx
+  s_4b7b99305c1d80::t_6a106386128ff6 19,23
+frontend/src/landing/app/docs/[[...slug]]/page.tsx
+  s_4b7b99305c1d80::t_6a106386128ff6 2,53
+frontend/src/landing/app/docs/docs.css
+  s_4b7b99305c1d80::t_6a106386128ff6 202,511-514
+frontend/src/landing/components/LandingAbout.tsx
+  s_4b7b99305c1d80::t_6a106386128ff6 17-26
+frontend/src/landing/components/LandingTestimonials.tsx
+  s_4b7b99305c1d80::t_6a106386128ff6 7,46,64,123,132-133
+frontend/src/landing/components/docs/mdx-components.tsx
+  s_4b7b99305c1d80::t_6a106386128ff6 37
+frontend/src/landing/components/ScrollRevealProvider.tsx
+  s_4b7b99305c1d80::t_6a106386128ff6 15
+frontend/src/landing/app/docs/layout.tsx
+  s_4b7b99305c1d80::t_6a106386128ff6 54-56,68,78,85,111
+frontend/src/renderer/components/Topbar.tsx
+  s_4b7b99305c1d80::t_6a106386128ff6 42-46,95-99,178
+frontend/src/landing/app/landing/page.tsx
+  s_4b7b99305c1d80::t_6a106386128ff6 30-35,40-42
+frontend/src/landing/app/page.tsx
+  s_4b7b99305c1d80::t_6a106386128ff6 9
+frontend/src/landing/components/docs/DocsMissingPage.tsx
+  s_4b7b99305c1d80::t_6a106386128ff6 22,25,27-28,31,34
+frontend/src/landing/content/docs/plugins/meta.json
+  s_4b7b99305c1d80::t_6a106386128ff6 4
+frontend/src/landing/styles/globals.css
+  s_4b7b99305c1d80::t_6a106386128ff6 106-108,160-162,420-595,598-611,616-624,627-629,632-643,648-656,658-660,662-676,678-686,688-696,698-703
+frontend/src/landing/components/PageConstellation.tsx
+  s_4b7b99305c1d80::t_6a106386128ff6 148
+frontend/src/landing/components/LandingAgentsBar.tsx
+  s_4b7b99305c1d80::t_6a106386128ff6 38-39
+frontend/src/landing/content/docs/plugins/agents/meta.json
+  s_4b7b99305c1d80::t_6a106386128ff6 3
+frontend/src/landing/content/docs/guides/meta.json
+  s_4b7b99305c1d80::t_6a106386128ff6 4
+frontend/src/landing/components/LandingNav.tsx
+  s_4b7b99305c1d80::t_6a106386128ff6 39-42,47-50,55-58
+frontend/src/renderer/components/SideRail.tsx
+  s_4b7b99305c1d80::t_6a106386128ff6 156-159
+frontend/src/landing/components/LandingDifferentiators.tsx
+  s_4b7b99305c1d80::t_6a106386128ff6 18,21-22,46-47
+frontend/src/renderer/types/workspace.test.ts
+  s_4b7b99305c1d80::t_6a106386128ff6 78-80
+frontend/src/landing/components/LandingHero.tsx
+  s_4b7b99305c1d80::t_6a106386128ff6 19-20
+frontend/src/landing/components/LandingHowItWorks.tsx
+  s_4b7b99305c1d80::t_6a106386128ff6 81,83,110,128,134,217-219,236-251,266-269,298-301,308-311
+frontend/src/landing/lib/github-repo.ts
+  s_4b7b99305c1d80::t_6a106386128ff6 17-21,23
+frontend/src/landing/components/LandingWorkflow.tsx
+  s_4b7b99305c1d80::t_6a106386128ff6 17-52,91,126,216,233-241
+frontend/src/renderer/components/ui/button.tsx
+  s_4b7b99305c1d80::t_6a106386128ff6 33
+frontend/src/landing/components/LandingQuickStart.tsx
+  s_4b7b99305c1d80::t_6a106386128ff6 2-13,25,34-35,43-46
+frontend/src/renderer/components/SpawnWorkerModal.tsx
+  s_4b7b99305c1d80::t_6a106386128ff6 30-35,158-160,286
+frontend/src/landing/components/LandingFeatures.tsx
+  s_4b7b99305c1d80::t_6a106386128ff6 148,155-156,193-194,235-236,271,289,303,308,336,346,423,432,453-454,512,514
+frontend/src/landing/components/LandingUseCases.tsx
+  s_4b7b99305c1d80::t_6a106386128ff6 138,159-160,201,215,217
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "1b4167d59b55fd5d20360ac2ae74983012a5921a",
+  "prompts": {},
+  "sessions": {
+    "s_4b7b99305c1d80": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "82deee0e-ed01-450f-b208-e64845c69540",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    }
+  }
+}
