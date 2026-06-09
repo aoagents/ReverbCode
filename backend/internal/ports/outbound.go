@@ -125,6 +125,9 @@ type WorkspaceConfig struct {
 	ProjectID domain.ProjectID
 	SessionID domain.SessionID
 	Branch    string
+	// BaseBranch is the per-project default branch new session branches are
+	// created from. Empty falls back to the workspace adapter's own default.
+	BaseBranch string
 }
 
 // WorkspaceInfo describes a created workspace — where it lives and its branch.

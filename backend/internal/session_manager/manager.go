@@ -6,7 +6,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -46,6 +50,9 @@ type runtimeController interface {
 
 // Store is the persistence surface needed by the internal session Manager.
 type Store interface {
+	// GetProject loads a project row so spawn can resolve its per-project agent
+	// config into the launch command. ok=false means the project is unknown.
+	GetProject(ctx context.Context, id string) (domain.ProjectRecord, bool, error)
 	CreateSession(ctx context.Context, rec domain.SessionRecord) (domain.SessionRecord, error)
 	GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error)
 	ListSessions(ctx context.Context, project domain.ProjectID) ([]domain.SessionRecord, error)
@@ -120,6 +127,14 @@ func New(d Deps) *Manager {
 // workspace and runtime, then reports completion to the LCM. A failure after the
 // row exists parks it as terminated and rolls back what was built.
 func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.SessionRecord, error) {
+	project, err := m.loadProject(ctx, cfg.ProjectID)
+	if err != nil {
+		return domain.SessionRecord{}, fmt.Errorf("spawn: %w", err)
+	}
+	// A per-project role override picks the harness when the spawn names none,
+	// so a project can default workers to one agent and orchestrators to another.
+	cfg.Harness = effectiveHarness(cfg.Harness, cfg.Kind, project.Config)
+
 	prompt, err := m.buildSpawnPrompt(ctx, cfg)
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("spawn: prompt: %w", err)
@@ -138,10 +153,23 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		// derived from the assigned session id.
 		branch = "ao/" + string(id)
 	}
-	ws, err := m.workspace.Create(ctx, ports.WorkspaceConfig{ProjectID: cfg.ProjectID, SessionID: id, Branch: branch})
+	ws, err := m.workspace.Create(ctx, ports.WorkspaceConfig{
+		ProjectID:  cfg.ProjectID,
+		SessionID:  id,
+		Branch:     branch,
+		BaseBranch: project.Config.WithDefaults().DefaultBranch,
+	})
 	if err != nil {
 		m.markSpawnFailedTerminated(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: workspace: %w", id, err)
+	}
+
+	// Per-project workspace provisioning: symlink shared files, then run any
+	// post-create commands (e.g. `pnpm install`) before the agent launches.
+	if err := m.provisionWorkspace(ctx, project, ws.Path); err != nil {
+		_ = m.workspace.Destroy(ctx, ws)
+		m.markSpawnFailedTerminated(ctx, id)
+		return domain.SessionRecord{}, fmt.Errorf("spawn %s: provision: %w", id, err)
 	}
 
 	agent, ok := m.agents.Agent(cfg.Harness)
@@ -160,6 +188,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		WorkspacePath: ws.Path,
 		Prompt:        prompt,
 		IssueID:       string(cfg.IssueID),
+		Config:        effectiveAgentConfig(cfg.Kind, project.Config),
 	})
 	if err != nil {
 		_ = m.workspace.Destroy(ctx, ws)
@@ -179,7 +208,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		SessionID:     id,
 		WorkspacePath: ws.Path,
 		Argv:          argv,
-		Env:           spawnEnv(id, cfg.ProjectID, cfg.IssueID, m.dataDir),
+		Env:           spawnEnv(id, cfg.ProjectID, cfg.IssueID, m.dataDir, project.Config.Env),
 	})
 	if err != nil {
 		_ = m.workspace.Destroy(ctx, ws)
@@ -195,6 +224,56 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: completed: %w", id, err)
 	}
 	return m.getRecord(ctx, id)
+}
+
+// loadProject loads the project record so spawn can resolve its per-project
+// config (harness/agent overrides, env, branch, rules, provisioning). A missing
+// project yields a zero record rather than an error: the project may be
+// unregistered yet still have live sessions, and an empty config simply means
+// every field falls back to its default.
+func (m *Manager) loadProject(ctx context.Context, projectID domain.ProjectID) (domain.ProjectRecord, error) {
+	row, ok, err := m.store.GetProject(ctx, string(projectID))
+	if err != nil {
+		return domain.ProjectRecord{}, fmt.Errorf("load project: %w", err)
+	}
+	if !ok {
+		return domain.ProjectRecord{}, nil
+	}
+	return row, nil
+}
+
+// effectiveHarness resolves the harness for a spawn: an explicit harness wins;
+// otherwise the project's role override for the session kind applies; otherwise
+// it stays empty so the daemon's global default (AO_AGENT) is used downstream.
+func effectiveHarness(explicit domain.AgentHarness, kind domain.SessionKind, cfg domain.ProjectConfig) domain.AgentHarness {
+	if explicit != "" {
+		return explicit
+	}
+	if role := roleOverride(kind, cfg).Harness; role != "" {
+		return role
+	}
+	return ""
+}
+
+// effectiveAgentConfig merges the role override's agent config over the
+// project's base agent config; set override fields win.
+func effectiveAgentConfig(kind domain.SessionKind, cfg domain.ProjectConfig) ports.AgentConfig {
+	merged := cfg.AgentConfig
+	override := roleOverride(kind, cfg).AgentConfig
+	if override.Model != "" {
+		merged.Model = override.Model
+	}
+	if override.Permissions != "" {
+		merged.Permissions = override.Permissions
+	}
+	return merged
+}
+
+func roleOverride(kind domain.SessionKind, cfg domain.ProjectConfig) domain.RoleOverride {
+	if kind == domain.KindOrchestrator {
+		return cfg.Orchestrator
+	}
+	return cfg.Worker
 }
 
 // markSpawnFailedTerminated best-effort parks an orphaned spawn as terminated.
@@ -300,7 +379,13 @@ func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.Sess
 	if err := m.prepareWorkspace(ctx, agent, id, ws.Path); err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", id, err)
 	}
-	argv, err := restoreArgv(ctx, agent, id, ws.Path, meta)
+	project, err := m.loadProject(ctx, rec.ProjectID)
+	if err != nil {
+		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", id, err)
+	}
+	// Restore re-applies the project's resolved agent config so a configured
+	// model/permissions carry across a restore, matching fresh spawn.
+	argv, err := restoreArgv(ctx, agent, id, ws.Path, meta, effectiveAgentConfig(rec.Kind, project.Config))
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", id, err)
 	}
@@ -308,7 +393,7 @@ func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.Sess
 		SessionID:     id,
 		WorkspacePath: ws.Path,
 		Argv:          argv,
-		Env:           spawnEnv(id, rec.ProjectID, rec.IssueID, m.dataDir),
+		Env:           spawnEnv(id, rec.ProjectID, rec.IssueID, m.dataDir, project.Config.Env),
 	})
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: runtime: %w", id, err)
@@ -388,21 +473,13 @@ func seedRecord(cfg ports.SpawnConfig, now time.Time) domain.SessionRecord {
 	}
 }
 
-// buildPrompt assembles the spawn prompt from the explicit config (the full
-// 3-layer assembly lands later).
 func buildPrompt(cfg ports.SpawnConfig) string {
-	switch {
-	case cfg.AgentRules == "":
-		return cfg.Prompt
-	case cfg.Prompt == "":
-		return cfg.AgentRules
-	default:
-		return cfg.Prompt + "\n\n" + cfg.AgentRules
-	}
+	return cfg.Prompt
 }
 
 func (m *Manager) buildSpawnPrompt(ctx context.Context, cfg ports.SpawnConfig) (string, error) {
 	prompt := buildPrompt(cfg)
+
 	switch cfg.Kind {
 	case domain.KindOrchestrator:
 		return appendPromptSection(orchestratorPrompt(cfg.ProjectID), prompt), nil
@@ -465,13 +542,105 @@ func appendPromptSection(prompt, section string) string {
 	}
 }
 
-func spawnEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueID, dataDir string) map[string]string {
-	return map[string]string{
-		EnvSessionID: string(id),
-		EnvProjectID: string(project),
-		EnvIssueID:   string(issue),
-		EnvDataDir:   dataDir,
+// spawnEnv builds the runtime environment: the per-project env vars first, then
+// the AO-internal vars last so they always win (a project cannot override
+// AO_SESSION_ID and friends).
+func spawnEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueID, dataDir string, projectEnv map[string]string) map[string]string {
+	env := make(map[string]string, len(projectEnv)+4)
+	for k, v := range projectEnv {
+		env[k] = v
 	}
+	env[EnvSessionID] = string(id)
+	env[EnvProjectID] = string(project)
+	env[EnvIssueID] = string(issue)
+	env[EnvDataDir] = dataDir
+	return env
+}
+
+// provisionWorkspace applies the project's per-workspace setup after the
+// worktree exists: symlink shared files from the project repo, then run any
+// post-create commands. Either failing aborts the spawn so a half-provisioned
+// workspace never launches an agent.
+func (m *Manager) provisionWorkspace(ctx context.Context, project domain.ProjectRecord, workspacePath string) error {
+	if err := applySymlinks(project.Path, workspacePath, project.Config.Symlinks); err != nil {
+		return err
+	}
+	return runPostCreate(ctx, workspacePath, project.Config.PostCreate)
+}
+
+// applySymlinks links each repo-relative path into the workspace. A source that
+// does not exist is skipped (symlinks are a convenience for optional files like
+// .env); a real link failure aborts. Paths must be repo-relative with no
+// parent traversal (no leading "/", no ".." segment) — a bad path is refused
+// up front so a project config cannot escape the project or workspace tree.
+func applySymlinks(projectPath, workspacePath string, symlinks []string) error {
+	for _, rel := range symlinks {
+		rel = strings.TrimSpace(rel)
+		if rel == "" {
+			continue
+		}
+		clean, err := safeRelPath(rel)
+		if err != nil {
+			return fmt.Errorf("symlink %q: %w", rel, err)
+		}
+		source := filepath.Join(projectPath, clean)
+		if _, err := os.Stat(source); err != nil {
+			continue
+		}
+		target := filepath.Join(workspacePath, clean)
+		if err := os.MkdirAll(filepath.Dir(target), 0o750); err != nil {
+			return fmt.Errorf("symlink %q: %w", rel, err)
+		}
+		if _, err := os.Lstat(target); err == nil {
+			continue
+		}
+		if err := os.Symlink(source, target); err != nil {
+			return fmt.Errorf("symlink %q: %w", rel, err)
+		}
+	}
+	return nil
+}
+
+// safeRelPath confines rel to a repo-relative path: no absolute paths and no
+// ".." segments (before or after Clean). The cleaned form is returned so
+// callers join it against project/workspace roots safely.
+func safeRelPath(rel string) (string, error) {
+	if filepath.IsAbs(rel) || strings.HasPrefix(rel, "/") || strings.HasPrefix(rel, `\`) {
+		return "", fmt.Errorf("path must be repo-relative")
+	}
+	clean := filepath.Clean(rel)
+	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) || clean == "." || clean == "" {
+		return "", fmt.Errorf("path must be repo-relative")
+	}
+	for _, seg := range strings.Split(filepath.ToSlash(clean), "/") {
+		if seg == ".." {
+			return "", fmt.Errorf("path must be repo-relative")
+		}
+	}
+	return clean, nil
+}
+
+// runPostCreate runs each post-create command in the workspace via the platform
+// shell, so OS-agnostic commands like "pnpm install" work. A non-zero exit
+// aborts the spawn with the command output.
+func runPostCreate(ctx context.Context, workspacePath string, commands []string) error {
+	for _, command := range commands {
+		command = strings.TrimSpace(command)
+		if command == "" {
+			continue
+		}
+		var cmd *exec.Cmd
+		if runtime.GOOS == "windows" {
+			cmd = exec.CommandContext(ctx, "cmd", "/c", command)
+		} else {
+			cmd = exec.CommandContext(ctx, "sh", "-c", command)
+		}
+		cmd.Dir = workspacePath
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("postCreate %q: %w: %s", command, err, strings.TrimSpace(string(out)))
+		}
+	}
+	return nil
 }
 
 // preLauncher is an optional Agent capability: a step the manager runs before
@@ -505,13 +674,13 @@ func (m *Manager) prepareWorkspace(ctx context.Context, agent ports.Agent, id do
 // restoreArgv builds the argv to relaunch a torn-down session: the agent's
 // native resume command when it can continue the session, else a fresh launch.
 // The agent signals via ok=false (e.g. no native session id captured yet).
-func restoreArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, workspacePath string, meta domain.SessionMetadata) ([]string, error) {
+func restoreArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, workspacePath string, meta domain.SessionMetadata, agentConfig ports.AgentConfig) ([]string, error) {
 	ref := ports.SessionRef{
 		ID:            string(id),
 		WorkspacePath: workspacePath,
 		Metadata:      map[string]string{ports.MetadataKeyAgentSessionID: meta.AgentSessionID},
 	}
-	cmd, ok, err := agent.GetRestoreCommand(ctx, ports.RestoreConfig{Session: ref})
+	cmd, ok, err := agent.GetRestoreCommand(ctx, ports.RestoreConfig{Session: ref, Config: agentConfig})
 	if err != nil {
 		return nil, fmt.Errorf("restore command: %w", err)
 	}
@@ -522,6 +691,7 @@ func restoreArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, wo
 		SessionID:     string(id),
 		WorkspacePath: workspacePath,
 		Prompt:        meta.Prompt,
+		Config:        agentConfig,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("launch command: %w", err)

@@ -62,6 +62,12 @@ func (c *commandContext) patchJSON(ctx context.Context, path string, body, out a
 	return c.doJSON(ctx, http.MethodPatch, path, body, out)
 }
 
+// putJSON sends body as JSON to PUT /api/v1/<path> on the running daemon and
+// decodes a 2xx response into out.
+func (c *commandContext) putJSON(ctx context.Context, path string, body, out any) error {
+	return c.doJSON(ctx, http.MethodPut, path, body, out)
+}
+
 // deleteJSON sends DELETE /api/v1/<path> to the running daemon and decodes a
 // 2xx response into out.
 func (c *commandContext) deleteJSON(ctx context.Context, path string, out any) error {

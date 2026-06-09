@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -13,6 +14,10 @@ import (
 
 // UpsertProject inserts or replaces a registered project row.
 func (s *Store) UpsertProject(ctx context.Context, r domain.ProjectRecord) error {
+	config, err := marshalProjectConfig(r.Config)
+	if err != nil {
+		return err
+	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	return s.qw.UpsertProject(ctx, gen.UpsertProjectParams{
@@ -22,6 +27,7 @@ func (s *Store) UpsertProject(ctx context.Context, r domain.ProjectRecord) error
 		DisplayName:   r.DisplayName,
 		RegisteredAt:  r.RegisteredAt,
 		ArchivedAt:    nullTime(r.ArchivedAt),
+		Config:        config,
 	})
 }
 
@@ -83,11 +89,42 @@ func projectRowFromGen(p gen.Project) domain.ProjectRecord {
 		RepoOriginURL: p.RepoOriginURL,
 		DisplayName:   p.DisplayName,
 		RegisteredAt:  p.RegisteredAt,
+		Config:        unmarshalProjectConfig(p.Config),
 	}
 	if p.ArchivedAt.Valid {
 		r.ArchivedAt = p.ArchivedAt.Time
 	}
 	return r
+}
+
+// marshalProjectConfig encodes the typed per-project config into the nullable
+// JSON column. An IsZero config stores SQL NULL so an unset config round-trips
+// back to a zero value rather than an empty object.
+func marshalProjectConfig(cfg domain.ProjectConfig) (sql.NullString, error) {
+	if cfg.IsZero() {
+		return sql.NullString{}, nil
+	}
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		return sql.NullString{}, fmt.Errorf("marshal project config: %w", err)
+	}
+	return sql.NullString{String: string(data), Valid: true}, nil
+}
+
+// unmarshalProjectConfig decodes the nullable JSON column back into the typed
+// struct. SQL NULL (an unset config) decodes to a zero value. A damaged config
+// (invalid JSON from a direct DB edit or migration bug) also degrades to a zero
+// config rather than erroring — a corrupt config must never block access to the
+// project row, nor fail an entire ListProjects.
+func unmarshalProjectConfig(s sql.NullString) domain.ProjectConfig {
+	if !s.Valid || s.String == "" {
+		return domain.ProjectConfig{}
+	}
+	var cfg domain.ProjectConfig
+	if err := json.Unmarshal([]byte(s.String), &cfg); err != nil {
+		return domain.ProjectConfig{}
+	}
+	return cfg
 }
 
 func nullTime(t time.Time) sql.NullTime {

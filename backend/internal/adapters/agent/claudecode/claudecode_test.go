@@ -422,6 +422,48 @@ func TestGetRestoreCommandFalseWithoutSessionID(t *testing.T) {
 	}
 }
 
+func TestGetLaunchCommandAppliesAgentConfig(t *testing.T) {
+	p := &Plugin{resolvedBinary: "claude"}
+	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Config: ports.AgentConfig{
+			Model:       "claude-opus-4-5",
+			Permissions: ports.PermissionModeAcceptEdits,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsSubsequence(cmd, []string{"--model", "claude-opus-4-5"}) {
+		t.Fatalf("command %#v missing --model flag", cmd)
+	}
+	if !containsSubsequence(cmd, []string{"--permission-mode", "acceptEdits"}) {
+		t.Fatalf("command %#v missing config-driven permission mode", cmd)
+	}
+}
+
+func TestGetLaunchCommandExplicitPermissionsOverrideConfig(t *testing.T) {
+	p := &Plugin{resolvedBinary: "claude"}
+	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Permissions: ports.PermissionModeBypassPermissions,
+		Config:      ports.AgentConfig{Permissions: ports.PermissionModeAcceptEdits},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsSubsequence(cmd, []string{"--permission-mode", "bypassPermissions"}) {
+		t.Fatalf("explicit Permissions should win; got %#v", cmd)
+	}
+}
+
+func TestGetLaunchCommandRejectsInvalidConfig(t *testing.T) {
+	p := &Plugin{resolvedBinary: "claude"}
+	if _, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Config: ports.AgentConfig{Permissions: "yolo"},
+	}); err == nil {
+		t.Fatal("expected error for invalid permission mode")
+	}
+}
+
 func TestManifestID(t *testing.T) {
 	if got := New().Manifest().ID; got != "claude-code" {
 		t.Fatalf("manifest id = %q, want claude-code", got)

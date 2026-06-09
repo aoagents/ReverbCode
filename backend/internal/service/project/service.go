@@ -26,6 +26,10 @@ type Manager interface {
 	// Add registers a new project from a git repository path.
 	Add(ctx context.Context, in AddInput) (Project, error)
 
+	// SetConfig replaces a project's per-project config, returning the updated
+	// read-model.
+	SetConfig(ctx context.Context, id domain.ProjectID, in SetConfigInput) (Project, error)
+
 	// Remove unregisters a project, stopping its sessions and reclaiming
 	// managed workspaces.
 	Remove(ctx context.Context, id domain.ProjectID) (RemoveResult, error)
@@ -54,7 +58,7 @@ func (m *Service) List(ctx context.Context) ([]Summary, error) {
 		out = append(out, Summary{
 			ID:            domain.ProjectID(row.ID),
 			Name:          displayName(row),
-			SessionPrefix: sessionPrefix(row.ID),
+			SessionPrefix: resolveSessionPrefix(row),
 		})
 	}
 	return out, nil
@@ -119,15 +123,47 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 		})
 	}
 
+	var config domain.ProjectConfig
+	if in.Config != nil {
+		if err := in.Config.Validate(); err != nil {
+			return Project{}, apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
+		}
+		config = *in.Config
+	}
+
 	row := domain.ProjectRecord{
 		ID:            string(id),
 		Path:          path,
 		RepoOriginURL: resolveGitOriginURL(path),
 		DisplayName:   name,
 		RegisteredAt:  time.Now(),
+		Config:        config,
 	}
 	if err := m.store.UpsertProject(ctx, row); err != nil {
 		return Project{}, apierr.Internal("PROJECT_ADD_FAILED", "Failed to register project")
+	}
+	return projectFromRow(row), nil
+}
+
+// SetConfig replaces the project's stored config. The typed config is validated
+// here so a bad value is rejected when set rather than surfacing at spawn.
+func (m *Service) SetConfig(ctx context.Context, id domain.ProjectID, in SetConfigInput) (Project, error) {
+	if err := validateProjectID(id); err != nil {
+		return Project{}, err
+	}
+	if err := in.Config.Validate(); err != nil {
+		return Project{}, apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
+	}
+	row, ok, err := m.store.GetProject(ctx, string(id))
+	if err != nil {
+		return Project{}, apierr.Internal("PROJECT_LOAD_FAILED", "Failed to load project")
+	}
+	if !ok || !row.ArchivedAt.IsZero() {
+		return Project{}, apierr.NotFound("PROJECT_NOT_FOUND", "Unknown project")
+	}
+	row.Config = in.Config
+	if err := m.store.UpsertProject(ctx, row); err != nil {
+		return Project{}, apierr.Internal("PROJECT_CONFIG_UPDATE_FAILED", "Failed to update project config")
 	}
 	return projectFromRow(row), nil
 }
@@ -169,13 +205,18 @@ func (m *Service) suggestID(ctx context.Context, base domain.ProjectID) domain.P
 }
 
 func projectFromRow(row domain.ProjectRecord) Project {
-	return Project{
+	p := Project{
 		ID:            domain.ProjectID(row.ID),
 		Name:          displayName(row),
 		Path:          row.Path,
 		Repo:          row.RepoOriginURL,
-		DefaultBranch: "main",
+		DefaultBranch: row.Config.WithDefaults().DefaultBranch,
 	}
+	if !row.Config.IsZero() {
+		cfg := row.Config
+		p.Config = &cfg
+	}
+	return p
 }
 
 func displayName(row domain.ProjectRecord) string {
@@ -249,6 +290,16 @@ func validateProjectID(id domain.ProjectID) error {
 		return apierr.Invalid("INVALID_PROJECT_ID", "Project id failed storage-path validation", nil)
 	}
 	return nil
+}
+
+// resolveSessionPrefix prefers an explicit per-project SessionPrefix and falls
+// back to the id-derived prefix. (Display only; session-id generation is
+// unchanged.)
+func resolveSessionPrefix(row domain.ProjectRecord) string {
+	if p := strings.TrimSpace(row.Config.SessionPrefix); p != "" {
+		return p
+	}
+	return sessionPrefix(row.ID)
 }
 
 func sessionPrefix(id string) string {

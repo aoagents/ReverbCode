@@ -27,6 +27,7 @@ func (c *ProjectsController) Register(r chi.Router) {
 	r.Get("/projects", c.list)
 	r.Post("/projects", c.add)
 	r.Get("/projects/{id}", c.get)
+	r.Put("/projects/{id}/config", c.setConfig)
 	r.Delete("/projects/{id}", c.remove)
 }
 
@@ -52,7 +53,7 @@ func (c *ProjectsController) add(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in projectsvc.AddInput
-	if err := decodeJSON(r, &in); err != nil {
+	if err := decodeJSONStrict(r, &in); err != nil {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
 		return
 	}
@@ -82,6 +83,24 @@ func (c *ProjectsController) get(w http.ResponseWriter, r *http.Request) {
 	envelope.WriteJSON(w, http.StatusOK, resp)
 }
 
+func (c *ProjectsController) setConfig(w http.ResponseWriter, r *http.Request) {
+	if c.Mgr == nil {
+		apispec.NotImplemented(w, r, "PUT", "/api/v1/projects/{id}/config")
+		return
+	}
+	var in projectsvc.SetConfigInput
+	if err := decodeJSONStrict(r, &in); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+		return
+	}
+	p, err := c.Mgr.SetConfig(r.Context(), projectID(r), in)
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, ProjectResponse{Project: p})
+}
+
 func (c *ProjectsController) remove(w http.ResponseWriter, r *http.Request) {
 	if c.Mgr == nil {
 		apispec.NotImplemented(w, r, "DELETE", "/api/v1/projects/{id}")
@@ -101,4 +120,13 @@ func projectID(r *http.Request) domain.ProjectID {
 
 func decodeJSON(r *http.Request, out any) error {
 	return json.NewDecoder(r.Body).Decode(out)
+}
+
+// decodeJSONStrict rejects request bodies that include keys outside the target
+// type. Used on project add/set-config so a misspelled or removed config field
+// surfaces as a 400 instead of being silently dropped.
+func decodeJSONStrict(r *http.Request, out any) error {
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	return dec.Decode(out)
 }

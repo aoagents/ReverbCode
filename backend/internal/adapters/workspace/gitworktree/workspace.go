@@ -15,7 +15,9 @@ import (
 
 const (
 	defaultGitBinary = "git"
-	defaultBranch    = "main"
+	// defaultBranch is the base branch used when neither the per-project config
+	// nor the adapter options name one. It shares domain's single source of truth.
+	defaultBranch = domain.DefaultBranchName
 )
 
 // ErrUnsafePath is returned when a resolved worktree path escapes the managed
@@ -122,7 +124,7 @@ func (w *Workspace) Create(ctx context.Context, cfg ports.WorkspaceConfig) (port
 	if err != nil {
 		return ports.WorkspaceInfo{}, err
 	}
-	if err := w.addWorktree(ctx, repo, path, cfg.Branch); err != nil {
+	if err := w.addWorktree(ctx, repo, path, cfg.Branch, cfg.BaseBranch); err != nil {
 		return ports.WorkspaceInfo{}, err
 	}
 	return ports.WorkspaceInfo{Path: path, Branch: cfg.Branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID}, nil
@@ -198,13 +200,13 @@ func (w *Workspace) Restore(ctx context.Context, cfg ports.WorkspaceConfig) (por
 	if err := w.validateBranch(ctx, repo, cfg.Branch); err != nil {
 		return ports.WorkspaceInfo{}, err
 	}
-	if err := w.addWorktree(ctx, repo, path, cfg.Branch); err != nil {
+	if err := w.addWorktree(ctx, repo, path, cfg.Branch, cfg.BaseBranch); err != nil {
 		return ports.WorkspaceInfo{}, err
 	}
 	return ports.WorkspaceInfo{Path: path, Branch: cfg.Branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID}, nil
 }
 
-func (w *Workspace) addWorktree(ctx context.Context, repo, path, branch string) error {
+func (w *Workspace) addWorktree(ctx context.Context, repo, path, branch, baseBranch string) error {
 	// Refuse early if the branch is already checked out in another worktree:
 	// `git worktree add` will fail, but its stderr leaks through as an opaque
 	// 500. A typed sentinel lets the HTTP layer surface a 409.
@@ -233,7 +235,7 @@ func (w *Workspace) addWorktree(ctx context.Context, repo, path, branch string) 
 	// neither origin/<branch>, the default branch, nor any tag is reachable,
 	// the branch genuinely has no base — surface ErrBranchNotFetched so callers
 	// can suggest `git fetch`.
-	baseRef, err := w.resolveBaseRef(ctx, repo, branch)
+	baseRef, err := w.resolveBaseRef(ctx, repo, branch, baseBranch)
 	if err != nil {
 		if errors.Is(err, errNoBaseRef) {
 			return fmt.Errorf("%w: %q has no local head, no remote, and no tag — run `git fetch` then retry", ErrBranchNotFetched, branch)
@@ -257,8 +259,15 @@ func (w *Workspace) validateBranch(ctx context.Context, repo, branch string) err
 // addWorktree translates it into ErrBranchNotFetched.
 var errNoBaseRef = errors.New("gitworktree: no base ref found")
 
-func (w *Workspace) resolveBaseRef(ctx context.Context, repo, branch string) (string, error) {
-	candidates := baseRefCandidates(branch, w.defaultBranch)
+func (w *Workspace) resolveBaseRef(ctx context.Context, repo, branch, baseBranch string) (string, error) {
+	// A per-project base branch (cfg.BaseBranch) overrides the adapter default,
+	// so a project that branches off e.g. "develop" materialises worktrees from
+	// there. Empty falls back to the adapter's configured default.
+	defaultBranch := w.defaultBranch
+	if strings.TrimSpace(baseBranch) != "" {
+		defaultBranch = baseBranch
+	}
+	candidates := baseRefCandidates(branch, defaultBranch)
 	for _, ref := range candidates {
 		exists, err := w.refExists(ctx, repo, ref)
 		if err != nil {

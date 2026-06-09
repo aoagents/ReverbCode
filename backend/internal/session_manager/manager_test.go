@@ -17,11 +17,16 @@ var ctx = context.Background()
 type fakeStore struct {
 	sessions map[domain.SessionID]domain.SessionRecord
 	pr       map[domain.SessionID]domain.PRFacts
+	projects map[string]domain.ProjectRecord
 	num      int
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{sessions: map[domain.SessionID]domain.SessionRecord{}, pr: map[domain.SessionID]domain.PRFacts{}}
+	return &fakeStore{sessions: map[domain.SessionID]domain.SessionRecord{}, pr: map[domain.SessionID]domain.PRFacts{}, projects: map[string]domain.ProjectRecord{}}
+}
+func (f *fakeStore) GetProject(_ context.Context, id string) (domain.ProjectRecord, bool, error) {
+	r, ok := f.projects[id]
+	return r, ok, nil
 }
 func (f *fakeStore) CreateSession(_ context.Context, rec domain.SessionRecord) (domain.SessionRecord, error) {
 	f.num++
@@ -97,12 +102,14 @@ func (l *fakeLCM) MarkTerminated(_ context.Context, id domain.SessionID) error {
 type fakeRuntime struct {
 	createErr          error
 	created, destroyed int
+	lastCfg            ports.RuntimeConfig
 }
 
-func (r *fakeRuntime) Create(context.Context, ports.RuntimeConfig) (ports.RuntimeHandle, error) {
+func (r *fakeRuntime) Create(_ context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
 	if r.createErr != nil {
 		return ports.RuntimeHandle{}, r.createErr
 	}
+	r.lastCfg = cfg
 	r.created++
 	return ports.RuntimeHandle{ID: "h1"}, nil
 }
@@ -135,13 +142,43 @@ type fakeAgents struct{}
 
 func (fakeAgents) Agent(domain.AgentHarness) (ports.Agent, bool) { return fakeAgent{}, true }
 
+// recordingAgent captures the LaunchConfig it is handed so a test can assert the
+// session manager resolved and forwarded a project's agent config.
+type recordingAgent struct {
+	fakeAgent
+	lastConfig ports.AgentConfig
+}
+
+func (a *recordingAgent) GetLaunchCommand(_ context.Context, cfg ports.LaunchConfig) ([]string, error) {
+	a.lastConfig = cfg.Config
+	return []string{"launch"}, nil
+}
+
+func (a *recordingAgent) GetRestoreCommand(_ context.Context, cfg ports.RestoreConfig) ([]string, bool, error) {
+	a.lastConfig = cfg.Config
+	return []string{"resume"}, true, nil
+}
+
+type singleAgent struct{ agent ports.Agent }
+
+func (s singleAgent) Agent(domain.AgentHarness) (ports.Agent, bool) { return s.agent, true }
+
 type fakeWorkspace struct {
 	destroyErr error
 	destroyed  int
+	lastCfg    ports.WorkspaceConfig
+	// path, when set, is returned as the workspace path so provisioning tests
+	// can point at a real temp directory.
+	path string
 }
 
 func (w *fakeWorkspace) Create(_ context.Context, cfg ports.WorkspaceConfig) (ports.WorkspaceInfo, error) {
-	return ports.WorkspaceInfo{Path: "/ws/" + string(cfg.SessionID), Branch: cfg.Branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID}, nil
+	w.lastCfg = cfg
+	path := w.path
+	if path == "" {
+		path = "/ws/" + string(cfg.SessionID)
+	}
+	return ports.WorkspaceInfo{Path: path, Branch: cfg.Branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID}, nil
 }
 func (w *fakeWorkspace) Destroy(context.Context, ports.WorkspaceInfo) error {
 	w.destroyed++
@@ -173,6 +210,52 @@ func seedTerminal(st *fakeStore, id domain.SessionID, meta domain.SessionMetadat
 }
 func mkLive(id domain.SessionID) domain.SessionRecord {
 	return domain.SessionRecord{ID: id, ProjectID: "mer", Metadata: domain.SessionMetadata{WorkspacePath: "/ws/" + string(id), RuntimeHandleID: "h1"}, Activity: domain.Activity{State: domain.ActivityActive}}
+}
+
+func TestSpawn_ResolvesProjectConfig(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
+		DefaultBranch: "develop",
+		Env:           map[string]string{"FOO": "bar"},
+		AgentConfig:   domain.AgentConfig{Model: "base-model"},
+		// A worker role override wins over the base agent config for workers.
+		Worker: domain.RoleOverride{Harness: domain.HarnessCodex, AgentConfig: domain.AgentConfig{Model: "worker-model"}},
+	}}
+	agent := &recordingAgent{}
+	rt := &fakeRuntime{}
+	ws := &fakeWorkspace{}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+
+	rec, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agent.lastConfig.Model != "worker-model" {
+		t.Fatalf("launch model = %q, want role override worker-model", agent.lastConfig.Model)
+	}
+	if rec.Harness != domain.HarnessCodex {
+		t.Fatalf("harness = %q, want codex from role override", rec.Harness)
+	}
+	if ws.lastCfg.BaseBranch != "develop" {
+		t.Fatalf("workspace base branch = %q, want develop", ws.lastCfg.BaseBranch)
+	}
+	if rt.lastCfg.Env["FOO"] != "bar" {
+		t.Fatalf("runtime env FOO = %q, want bar", rt.lastCfg.Env["FOO"])
+	}
+	if rt.lastCfg.Env[EnvSessionID] == "" {
+		t.Fatal("runtime env missing AO_SESSION_ID")
+	}
+
+	// A project with no stored config yields a zero AgentConfig (adapter defaults).
+	st.projects["bare"] = domain.ProjectRecord{ID: "bare"}
+	agent.lastConfig = ports.AgentConfig{Model: "stale"}
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "bare", Kind: domain.KindWorker}); err != nil {
+		t.Fatal(err)
+	}
+	if !agent.lastConfig.IsZero() {
+		t.Fatalf("launch config = %#v, want zero for project without config", agent.lastConfig)
+	}
 }
 
 func TestSpawn_AssignsIDAndGoesIdle(t *testing.T) {
@@ -239,6 +322,22 @@ func TestRestore_ReopensTerminal(t *testing.T) {
 		t.Fatal("restore should relaunch")
 	}
 }
+func TestRestore_AppliesProjectAgentConfig(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{AgentConfig: domain.AgentConfig{Model: "restore-model"}}}
+	seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "b", AgentSessionID: "agent-x"})
+	agent := &recordingAgent{}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+
+	if _, err := m.Restore(ctx, "mer-1"); err != nil {
+		t.Fatal(err)
+	}
+	if agent.lastConfig.Model != "restore-model" {
+		t.Fatalf("restore config model = %q, want restore-model (config must carry across restore)", agent.lastConfig.Model)
+	}
+}
+
 func TestRestore_RefusesLiveSession(t *testing.T) {
 	m, st, _, _ := newManager()
 	st.sessions["mer-1"] = mkLive("mer-1")

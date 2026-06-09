@@ -1,0 +1,104 @@
+package sessionmanager
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+)
+
+func TestSpawnEnvProjectVarsCannotOverrideInternal(t *testing.T) {
+	env := spawnEnv("mer-1", "mer", "issue-9", "/data", map[string]string{
+		"FOO":        "bar",
+		EnvSessionID: "hacked", // a project must not override AO-internal vars
+		EnvProjectID: "hacked",
+	})
+	if env["FOO"] != "bar" {
+		t.Fatalf("FOO = %q, want bar", env["FOO"])
+	}
+	if env[EnvSessionID] != "mer-1" {
+		t.Fatalf("AO_SESSION_ID = %q, want mer-1 (internal wins)", env[EnvSessionID])
+	}
+	if env[EnvProjectID] != "mer" {
+		t.Fatalf("AO_PROJECT_ID = %q, want mer (internal wins)", env[EnvProjectID])
+	}
+}
+
+func TestEffectiveHarnessAndAgentConfig(t *testing.T) {
+	cfg := domain.ProjectConfig{
+		AgentConfig:  domain.AgentConfig{Model: "base", Permissions: domain.PermissionModeAuto},
+		Worker:       domain.RoleOverride{Harness: domain.HarnessCodex, AgentConfig: domain.AgentConfig{Model: "worker"}},
+		Orchestrator: domain.RoleOverride{Harness: domain.HarnessClaudeCode},
+	}
+
+	// Explicit harness always wins.
+	if h := effectiveHarness(domain.HarnessAider, domain.KindWorker, cfg); h != domain.HarnessAider {
+		t.Fatalf("explicit harness = %q, want aider", h)
+	}
+	// Empty harness falls back to the role override per kind.
+	if h := effectiveHarness("", domain.KindWorker, cfg); h != domain.HarnessCodex {
+		t.Fatalf("worker harness = %q, want codex", h)
+	}
+	if h := effectiveHarness("", domain.KindOrchestrator, cfg); h != domain.HarnessClaudeCode {
+		t.Fatalf("orchestrator harness = %q, want claude-code", h)
+	}
+
+	// Role override merges over the base agent config (set fields win; unset keep base).
+	got := effectiveAgentConfig(domain.KindWorker, cfg)
+	if got.Model != "worker" || got.Permissions != domain.PermissionModeAuto {
+		t.Fatalf("merged worker config = %#v, want model=worker permissions=auto", got)
+	}
+	// Orchestrator has no agent-config override, so the base config is used as-is.
+	if got := effectiveAgentConfig(domain.KindOrchestrator, cfg); got.Model != "base" {
+		t.Fatalf("orchestrator config = %#v, want base", got)
+	}
+}
+
+func TestApplySymlinks(t *testing.T) {
+	project := t.TempDir()
+	workspace := t.TempDir()
+	if err := os.WriteFile(filepath.Join(project, ".env"), []byte("X=1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// A present source is linked; a missing source is skipped, not an error.
+	if err := applySymlinks(project, workspace, []string{".env", "missing.txt"}); err != nil {
+		t.Fatalf("applySymlinks: %v", err)
+	}
+	target := filepath.Join(workspace, ".env")
+	if data, err := os.ReadFile(target); err != nil || string(data) != "X=1" {
+		t.Fatalf("symlinked .env = %q err=%v", data, err)
+	}
+	if _, err := os.Lstat(filepath.Join(workspace, "missing.txt")); !os.IsNotExist(err) {
+		t.Fatal("missing source should not have been linked")
+	}
+}
+
+func TestApplySymlinksRejectsParentTraversal(t *testing.T) {
+	project := t.TempDir()
+	workspace := t.TempDir()
+	// A "..", "/" or "../" segment escapes the project tree and must be refused
+	// before any stat/link runs, so a project config cannot link in arbitrary
+	// host files.
+	for _, bad := range []string{"../escape", "/etc/passwd", "a/../../b", ".."} {
+		if err := applySymlinks(project, workspace, []string{bad}); err == nil {
+			t.Fatalf("applySymlinks(%q) accepted an unsafe path", bad)
+		}
+	}
+}
+
+func TestRunPostCreate(t *testing.T) {
+	workspace := t.TempDir()
+	if err := runPostCreate(context.Background(), workspace, []string{"echo hi > out.txt"}); err != nil {
+		t.Fatalf("runPostCreate: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(workspace, "out.txt")); err != nil {
+		t.Fatalf("post-create command did not run in workspace: %v", err)
+	}
+	// A failing command surfaces an error.
+	if err := runPostCreate(context.Background(), workspace, []string{"exit 3"}); err == nil {
+		t.Fatal("expected error from failing post-create command")
+	}
+}

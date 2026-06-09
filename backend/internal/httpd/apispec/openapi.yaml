@@ -283,6 +283,51 @@ paths:
       summary: Fetch one project; discriminates ok vs degraded
       tags:
       - projects
+  /api/v1/projects/{id}/config:
+    put:
+      operationId: setProjectConfig
+      parameters:
+      - description: Project identifier (registry key).
+        in: path
+        name: id
+        required: true
+        schema:
+          description: Project identifier (registry key).
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetProjectConfigInput'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Replace a project's per-project config
+      tags:
+      - projects
   /api/v1/prs/{id}/merge:
     post:
       operationId: mergePR
@@ -916,6 +961,8 @@ components:
       type: object
     AddProjectInput:
       properties:
+        config:
+          $ref: '#/components/schemas/ProjectConfig'
         name:
           type:
           - "null"
@@ -928,6 +975,13 @@ components:
           - string
       required:
       - path
+      type: object
+    AgentConfig:
+      properties:
+        model:
+          type: string
+        permissions:
+          type: string
       type: object
     ClaimPRRequest:
       properties:
@@ -1074,6 +1128,8 @@ components:
       properties:
         agent:
           type: string
+        config:
+          $ref: '#/components/schemas/ProjectConfig'
         defaultBranch:
           type: string
         id:
@@ -1084,16 +1140,37 @@ components:
           type: string
         repo:
           type: string
-        scm:
-          $ref: '#/components/schemas/SCMConfig'
-        tracker:
-          $ref: '#/components/schemas/TrackerConfig'
       required:
       - id
       - name
       - path
       - repo
       - defaultBranch
+      type: object
+    ProjectConfig:
+      properties:
+        agentConfig:
+          $ref: '#/components/schemas/AgentConfig'
+        defaultBranch:
+          type: string
+        env:
+          additionalProperties:
+            type: string
+          type: object
+        orchestrator:
+          $ref: '#/components/schemas/RoleOverride'
+        postCreate:
+          items:
+            type: string
+          type: array
+        sessionPrefix:
+          type: string
+        symlinks:
+          items:
+            type: string
+          type: array
+        worker:
+          $ref: '#/components/schemas/RoleOverride'
       type: object
     ProjectGetResponse:
       properties:
@@ -1189,6 +1266,13 @@ components:
       - sessionId
       - session
       type: object
+    RoleOverride:
+      properties:
+        agent:
+          type: string
+        agentConfig:
+          $ref: '#/components/schemas/AgentConfig'
+      type: object
     RollbackSessionResponse:
       properties:
         deleted:
@@ -1202,36 +1286,6 @@ components:
       required:
       - ok
       - sessionId
-      type: object
-    SCMConfig:
-      properties:
-        package:
-          type: string
-        path:
-          type: string
-        plugin:
-          type: string
-        webhook:
-          $ref: '#/components/schemas/SCMWebhookConfig'
-      type: object
-    SCMWebhookConfig:
-      properties:
-        deliveryHeader:
-          type: string
-        enabled:
-          type:
-          - "null"
-          - boolean
-        eventHeader:
-          type: string
-        maxBodyBytes:
-          type: integer
-        path:
-          type: string
-        secretEnvVar:
-          type: string
-        signatureHeader:
-          type: string
       type: object
     SendSessionMessageRequest:
       properties:
@@ -1358,6 +1412,13 @@ components:
       - sessionId
       - state
       type: object
+    SetProjectConfigInput:
+      properties:
+        config:
+          $ref: '#/components/schemas/ProjectConfig'
+      required:
+      - config
+      type: object
     SpawnOrchestratorRequest:
       properties:
         clean:
@@ -1376,8 +1437,6 @@ components:
       type: object
     SpawnSessionRequest:
       properties:
-        agentRules:
-          type: string
         branch:
           type: string
         harness:
@@ -1420,15 +1479,6 @@ components:
           type: string
       required:
       - projectId
-      type: object
-    TrackerConfig:
-      properties:
-        package:
-          type: string
-        path:
-          type: string
-        plugin:
-          type: string
       type: object
 tags:
 - description: Project registry, configuration, and lifecycle administration

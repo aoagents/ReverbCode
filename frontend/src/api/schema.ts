@@ -92,6 +92,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{id}/config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Replace a project's per-project config */
+        put: operations["setProjectConfig"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/prs/{id}/merge": {
         parameters: {
             query?: never;
@@ -312,9 +329,14 @@ export interface components {
             requestId?: string;
         };
         AddProjectInput: {
+            config?: components["schemas"]["ProjectConfig"];
             name?: null | string;
             path: string;
             projectId?: null | string;
+        };
+        AgentConfig: {
+            model?: string;
+            permissions?: string;
         };
         ClaimPRRequest: {
             allowTakeover?: null | boolean;
@@ -369,13 +391,24 @@ export interface components {
         };
         Project: {
             agent?: string;
+            config?: components["schemas"]["ProjectConfig"];
             defaultBranch: string;
             id: string;
             name: string;
             path: string;
             repo: string;
-            scm?: components["schemas"]["SCMConfig"];
-            tracker?: components["schemas"]["TrackerConfig"];
+        };
+        ProjectConfig: {
+            agentConfig?: components["schemas"]["AgentConfig"];
+            defaultBranch?: string;
+            env?: {
+                [key: string]: string;
+            };
+            orchestrator?: components["schemas"]["RoleOverride"];
+            postCreate?: string[];
+            sessionPrefix?: string;
+            symlinks?: string[];
+            worker?: components["schemas"]["RoleOverride"];
         };
         ProjectGetResponse: {
             project: components["schemas"]["ProjectOrDegraded"];
@@ -413,26 +446,15 @@ export interface components {
             session: components["schemas"]["Session"];
             sessionId: string;
         };
+        RoleOverride: {
+            agent?: string;
+            agentConfig?: components["schemas"]["AgentConfig"];
+        };
         RollbackSessionResponse: {
             deleted?: boolean;
             killed?: boolean;
             ok: boolean;
             sessionId: string;
-        };
-        SCMConfig: {
-            package?: string;
-            path?: string;
-            plugin?: string;
-            webhook?: components["schemas"]["SCMWebhookConfig"];
-        };
-        SCMWebhookConfig: {
-            deliveryHeader?: string;
-            enabled?: null | boolean;
-            eventHeader?: string;
-            maxBodyBytes?: number;
-            path?: string;
-            secretEnvVar?: string;
-            signatureHeader?: string;
         };
         SendSessionMessageRequest: {
             message: string;
@@ -484,6 +506,9 @@ export interface components {
             sessionId: string;
             state: string;
         };
+        SetProjectConfigInput: {
+            config: components["schemas"]["ProjectConfig"];
+        };
         SpawnOrchestratorRequest: {
             clean?: boolean;
             projectId: string;
@@ -492,7 +517,6 @@ export interface components {
             orchestrator: components["schemas"]["OrchestratorResponse"];
         };
         SpawnSessionRequest: {
-            agentRules?: string;
             branch?: string;
             /** @enum {string} */
             harness?: "claude-code" | "codex" | "aider" | "opencode" | "grok" | "droid" | "amp" | "agy" | "crush" | "cursor" | "qwen" | "copilot" | "goose" | "auggie" | "continue" | "devin" | "cline" | "kimi" | "kiro" | "kilocode" | "vibe" | "pi" | "autohand";
@@ -501,11 +525,6 @@ export interface components {
             kind?: "worker" | "orchestrator";
             projectId: string;
             prompt?: string;
-        };
-        TrackerConfig: {
-            package?: string;
-            path?: string;
-            plugin?: string;
         };
     };
     responses: never;
@@ -854,6 +873,60 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RemoveProjectResult"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    setProjectConfig: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project identifier (registry key). */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetProjectConfigInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectResponse"];
                 };
             };
             /** @description Bad Request */

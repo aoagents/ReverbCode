@@ -2,9 +2,11 @@ package cli
 
 import (
 	"bufio"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
+	"reflect"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -53,9 +55,55 @@ type projectDetails struct {
 	Repo           string         `json:"repo"`
 	DefaultBranch  string         `json:"defaultBranch"`
 	DefaultHarness string         `json:"agent,omitempty"`
-	Tracker        map[string]any `json:"tracker,omitempty"`
-	SCM            map[string]any `json:"scm,omitempty"`
+	Config         *projectConfig `json:"config,omitempty"`
 	ResolveError   string         `json:"resolveError,omitempty"`
+}
+
+// agentConfig mirrors the daemon's typed domain.AgentConfig for the CLI client.
+type agentConfig struct {
+	Model       string `json:"model,omitempty"`
+	Permissions string `json:"permissions,omitempty"`
+}
+
+// roleOverride mirrors domain.RoleOverride.
+type roleOverride struct {
+	Agent       string      `json:"agent,omitempty"`
+	AgentConfig agentConfig `json:"agentConfig,omitempty"`
+}
+
+// projectConfig mirrors the daemon's typed domain.ProjectConfig for the CLI
+// client. The CLI sets common fields via flags and the whole object via
+// --config-json.
+type projectConfig struct {
+	DefaultBranch string            `json:"defaultBranch,omitempty"`
+	SessionPrefix string            `json:"sessionPrefix,omitempty"`
+	Env           map[string]string `json:"env,omitempty"`
+	Symlinks      []string          `json:"symlinks,omitempty"`
+	PostCreate    []string          `json:"postCreate,omitempty"`
+	AgentConfig   agentConfig       `json:"agentConfig,omitempty"`
+	Worker        roleOverride      `json:"worker,omitempty"`
+	Orchestrator  roleOverride      `json:"orchestrator,omitempty"`
+}
+
+// setConfigRequest mirrors the daemon's SetConfigInput body for
+// PUT /api/v1/projects/{id}/config.
+type setConfigRequest struct {
+	Config projectConfig `json:"config"`
+}
+
+type projectSetConfigOptions struct {
+	defaultBranch     string
+	sessionPrefix     string
+	model             string
+	permission        string
+	workerAgent       string
+	orchestratorAgent string
+	env               []string
+	symlink           []string
+	postCreate        []string
+	configJSON        string
+	clear             bool
+	json              bool
 }
 
 type projectListResult struct {
@@ -86,6 +134,7 @@ func newProjectCommand(ctx *commandContext) *cobra.Command {
 	cmd.AddCommand(newProjectListCommand(ctx))
 	cmd.AddCommand(newProjectGetCommand(ctx))
 	cmd.AddCommand(newProjectAddCommand(ctx))
+	cmd.AddCommand(newProjectSetConfigCommand(ctx))
 	cmd.AddCommand(newProjectRemoveCommand(ctx))
 	return cmd
 }
@@ -179,6 +228,112 @@ func newProjectAddCommand(ctx *commandContext) *cobra.Command {
 	return cmd
 }
 
+func newProjectSetConfigCommand(ctx *commandContext) *cobra.Command {
+	var opts projectSetConfigOptions
+	cmd := &cobra.Command{
+		Use:   "set-config <id>",
+		Short: "Set the per-project config",
+		Long: "Replace a project's per-project config (branch, session prefix, env, " +
+			"symlinks, post-create, agent model/permissions, role overrides). The config " +
+			"is resolved when a session spawns.\n\n" +
+			"Set fields via flags, pass the whole object with --config-json, or --clear " +
+			"to remove all config.",
+		Args: func(cmd *cobra.Command, args []string) error {
+			if err := cobra.ExactArgs(1)(cmd, args); err != nil {
+				return usageError{err}
+			}
+			if strings.TrimSpace(args[0]) == "" {
+				return usageError{errors.New("usage: project id is required")}
+			}
+			return nil
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id := strings.TrimSpace(args[0])
+			config, err := buildProjectConfig(opts)
+			if err != nil {
+				return err
+			}
+			req := setConfigRequest{Config: config}
+			var res projectResult
+			if err := ctx.putJSON(cmd.Context(), "projects/"+url.PathEscape(id)+"/config", req, &res); err != nil {
+				return err
+			}
+			if opts.json {
+				return writeJSON(cmd.OutOrStdout(), res)
+			}
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "updated config for project %s\n", res.Project.ID)
+			return err
+		},
+	}
+	f := cmd.Flags()
+	f.StringVar(&opts.defaultBranch, "default-branch", "", "Base branch new session worktrees are created from")
+	f.StringVar(&opts.sessionPrefix, "session-prefix", "", "Displayed session-id prefix")
+	f.StringVar(&opts.model, "model", "", "Agent model override (e.g. claude-opus-4-5)")
+	f.StringVar(&opts.permission, "permission", "", "Permission mode: default, accept-edits, auto, bypass-permissions")
+	f.StringVar(&opts.workerAgent, "worker-agent", "", "Harness override for worker sessions")
+	f.StringVar(&opts.orchestratorAgent, "orchestrator-agent", "", "Harness override for orchestrator sessions")
+	f.StringArrayVar(&opts.env, "env", nil, "Env var KEY=VALUE forwarded into sessions (repeatable)")
+	f.StringArrayVar(&opts.symlink, "symlink", nil, "Repo-relative path to symlink into workspaces (repeatable)")
+	f.StringArrayVar(&opts.postCreate, "post-create", nil, "Command to run after workspace creation (repeatable)")
+	f.StringVar(&opts.configJSON, "config-json", "", "Full config as a JSON object (overrides field flags)")
+	f.BoolVar(&opts.clear, "clear", false, "Clear all config")
+	f.BoolVar(&opts.json, "json", false, "Output the updated project as JSON")
+	return cmd
+}
+
+// buildProjectConfig turns the set-config flags into the typed config sent to
+// the daemon. --clear empties the config; --config-json supplies the whole
+// object; otherwise the field flags form the config. The daemon validates the
+// values.
+func buildProjectConfig(opts projectSetConfigOptions) (projectConfig, error) {
+	if opts.clear {
+		return projectConfig{}, nil
+	}
+	if opts.configJSON != "" {
+		var cfg projectConfig
+		if err := json.Unmarshal([]byte(opts.configJSON), &cfg); err != nil {
+			return projectConfig{}, usageError{fmt.Errorf("--config-json is not a valid JSON object: %w", err)}
+		}
+		return cfg, nil
+	}
+
+	env, err := parseEnvPairs(opts.env)
+	if err != nil {
+		return projectConfig{}, err
+	}
+	cfg := projectConfig{
+		DefaultBranch: opts.defaultBranch,
+		SessionPrefix: opts.sessionPrefix,
+		Env:           env,
+		Symlinks:      opts.symlink,
+		PostCreate:    opts.postCreate,
+		AgentConfig:   agentConfig{Model: opts.model, Permissions: opts.permission},
+		Worker:        roleOverride{Agent: opts.workerAgent},
+		Orchestrator:  roleOverride{Agent: opts.orchestratorAgent},
+	}
+	if reflect.DeepEqual(cfg, projectConfig{}) {
+		return projectConfig{}, usageError{errors.New("usage: provide at least one config flag, --config-json, or --clear")}
+	}
+	return cfg, nil
+}
+
+// parseEnvPairs turns repeated KEY=VALUE flags into a map.
+func parseEnvPairs(pairs []string) (map[string]string, error) {
+	if len(pairs) == 0 {
+		return nil, nil
+	}
+	env := make(map[string]string, len(pairs))
+	for _, pair := range pairs {
+		key, value, ok := strings.Cut(pair, "=")
+		key = strings.TrimSpace(key)
+		if !ok || key == "" {
+			return nil, usageError{fmt.Errorf("invalid --env %q: expected KEY=VALUE", pair)}
+		}
+		env[key] = value
+	}
+	return env, nil
+}
+
 func newProjectRemoveCommand(ctx *commandContext) *cobra.Command {
 	var opts projectRemoveOptions
 	cmd := &cobra.Command{
@@ -270,6 +425,7 @@ func writeProjectDetails(cmd *cobra.Command, res projectGetResult) error {
 		{label: "repo", value: p.Repo},
 		{label: "default branch", value: p.DefaultBranch},
 		{label: "default harness", value: p.DefaultHarness},
+		{label: "config", value: formatProjectConfig(p.Config)},
 		{label: "resolve error", value: p.ResolveError},
 	}
 	for _, f := range fields {
@@ -281,6 +437,19 @@ func writeProjectDetails(cmd *cobra.Command, res projectGetResult) error {
 		}
 	}
 	return nil
+}
+
+// formatProjectConfig renders the per-project config as compact JSON for the
+// `project get` text view. A nil config returns "" so the row is skipped.
+func formatProjectConfig(config *projectConfig) string {
+	if config == nil {
+		return ""
+	}
+	data, err := json.Marshal(config)
+	if err != nil {
+		return ""
+	}
+	return string(data)
 }
 
 func confirmProjectRemoval(cmd *cobra.Command, id string) (bool, error) {

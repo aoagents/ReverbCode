@@ -17,7 +17,6 @@ type spawnOptions struct {
 	branch     string
 	prompt     string
 	issue      string
-	rules      string
 	claimPR    string
 	noTakeover bool
 }
@@ -25,12 +24,11 @@ type spawnOptions struct {
 // spawnRequest mirrors the daemon's SpawnSessionRequest body for
 // POST /api/v1/sessions. The CLI keeps its own copy so it need not import httpd.
 type spawnRequest struct {
-	ProjectID  string `json:"projectId"`
-	IssueID    string `json:"issueId,omitempty"`
-	Harness    string `json:"harness,omitempty"`
-	Branch     string `json:"branch,omitempty"`
-	Prompt     string `json:"prompt,omitempty"`
-	AgentRules string `json:"agentRules,omitempty"`
+	ProjectID string `json:"projectId"`
+	IssueID   string `json:"issueId,omitempty"`
+	Harness   string `json:"harness,omitempty"`
+	Branch    string `json:"branch,omitempty"`
+	Prompt    string `json:"prompt,omitempty"`
 }
 
 type spawnResult struct {
@@ -68,12 +66,11 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 				}
 			}
 			req := spawnRequest{
-				ProjectID:  opts.project,
-				IssueID:    opts.issue,
-				Harness:    opts.harness,
-				Branch:     opts.branch,
-				Prompt:     opts.prompt,
-				AgentRules: opts.rules,
+				ProjectID: opts.project,
+				IssueID:   opts.issue,
+				Harness:   opts.harness,
+				Branch:    opts.branch,
+				Prompt:    opts.prompt,
 			}
 			var res spawnResult
 			if err := ctx.postJSON(cmd.Context(), "sessions", req, &res); err != nil {
@@ -127,7 +124,6 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 	f.StringVar(&opts.branch, "branch", "", "Branch for the session worktree (default: ao/<session-id>)")
 	f.StringVar(&opts.prompt, "prompt", "", "Initial prompt for the agent")
 	f.StringVar(&opts.issue, "issue", "", "Issue id to associate with the session")
-	f.StringVar(&opts.rules, "rules", "", "Agent rules appended to the prompt")
 	f.StringVar(&opts.claimPR, "claim-pr", "", "Immediately claim an existing PR for the spawned session")
 	f.BoolVar(&opts.noTakeover, "no-takeover", false, "Refuse if another active session owns the claimed PR (requires --claim-pr)")
 	return cmd

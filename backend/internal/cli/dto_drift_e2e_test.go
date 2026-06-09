@@ -128,6 +128,11 @@ func (f *fakeProjectManager) Add(_ context.Context, in projectsvc.AddInput) (pro
 	return projectsvc.Project{ID: id, Path: in.Path}, nil
 }
 
+func (f *fakeProjectManager) SetConfig(_ context.Context, id domain.ProjectID, in projectsvc.SetConfigInput) (projectsvc.Project, error) {
+	cfg := in.Config
+	return projectsvc.Project{ID: id, Config: &cfg}, nil
+}
+
 func (f *fakeProjectManager) Remove(context.Context, domain.ProjectID) (projectsvc.RemoveResult, error) {
 	return projectsvc.RemoveResult{}, nil
 }

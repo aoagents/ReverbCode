@@ -10,4 +10,7 @@ type ProjectRecord struct {
 	DisplayName   string
 	RegisteredAt  time.Time
 	ArchivedAt    time.Time
+	// Config holds the typed per-project configuration AO resolves at spawn. An
+	// IsZero value means unset.
+	Config ProjectConfig
 }

@@ -74,13 +74,37 @@ func (p *Plugin) Manifest() adapters.Manifest {
 	}
 }
 
-// GetConfigSpec reports the agent-specific config keys. Claude Code exposes
-// none yet.
+// permissionConfigEnum lists the permission modes the "permissions" config key
+// accepts. It mirrors the ports.PermissionMode constants so a project's stored
+// config validates against the same vocabulary the launch command maps.
+var permissionConfigEnum = []string{
+	string(ports.PermissionModeDefault),
+	string(ports.PermissionModeAcceptEdits),
+	string(ports.PermissionModeAuto),
+	string(ports.PermissionModeBypassPermissions),
+}
+
+// GetConfigSpec reports the per-project agent config keys Claude Code
+// understands: a model override and a starting permission mode.
 func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
 	if err := ctx.Err(); err != nil {
 		return ports.ConfigSpec{}, err
 	}
-	return ports.ConfigSpec{}, nil
+	return ports.ConfigSpec{
+		Fields: []ports.ConfigField{
+			{
+				Key:         "model",
+				Type:        ports.ConfigFieldString,
+				Description: "Model override passed to `claude --model` (e.g. claude-opus-4-5).",
+			},
+			{
+				Key:         "permissions",
+				Type:        ports.ConfigFieldEnum,
+				Description: "Starting permission mode.",
+				Enum:        permissionConfigEnum,
+			},
+		},
+	}, nil
 }
 
 // GetLaunchCommand builds the argv to start an interactive Claude Code
@@ -103,6 +127,12 @@ func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
 // The prompt is passed after `--` so a prompt beginning with "-" is not
 // mistaken for a flag.
 func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (cmd []string, err error) {
+	// Defense-in-depth: the project service validates on write, but re-check
+	// here so a config written by any other path can't launch a bad command.
+	if err := cfg.Config.Validate(); err != nil {
+		return nil, fmt.Errorf("claude-code: %w", err)
+	}
+
 	binary, err := p.claudeBinary(ctx)
 	if err != nil {
 		return nil, err
@@ -112,7 +142,18 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	if cfg.SessionID != "" {
 		cmd = append(cmd, "--session-id", claudeSessionUUID(cfg.SessionID))
 	}
-	appendPermissionFlags(&cmd, cfg.Permissions)
+	// A project's configured permissions drive the starting mode; the explicit
+	// LaunchConfig.Permissions wins when set so a per-spawn override still takes
+	// precedence over the stored project default.
+	permissions := cfg.Permissions
+	if permissions == "" {
+		permissions = cfg.Config.Permissions
+	}
+	appendPermissionFlags(&cmd, permissions)
+
+	if model := strings.TrimSpace(cfg.Config.Model); model != "" {
+		cmd = append(cmd, "--model", model)
+	}
 
 	systemPrompt, err := resolveSystemPrompt(cfg)
 	if err != nil {

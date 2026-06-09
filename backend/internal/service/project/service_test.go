@@ -95,6 +95,87 @@ func TestManager_AddListGetRemove(t *testing.T) {
 	wantCode(t, err, "PROJECT_NOT_FOUND")
 }
 
+func TestManager_DefaultsWhenUnconfigured(t *testing.T) {
+	ctx := context.Background()
+	m := newManager(t)
+	repo := gitRepo(t)
+
+	if _, err := m.Add(ctx, project.AddInput{Path: repo, ProjectID: ptr("ao")}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	// Get on a project that set no config still reports the default branch and a
+	// derived session prefix, and omits the (empty) config object.
+	got, err := m.Get(ctx, "ao")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Project == nil {
+		t.Fatalf("Get returned no project: %#v", got)
+	}
+	if got.Project.DefaultBranch != domain.DefaultBranchName {
+		t.Fatalf("default branch = %q, want %q", got.Project.DefaultBranch, domain.DefaultBranchName)
+	}
+	if got.Project.Config != nil {
+		t.Fatalf("unconfigured project should omit config, got %#v", got.Project.Config)
+	}
+
+	list, err := m.List(ctx)
+	if err != nil || len(list) != 1 {
+		t.Fatalf("List = %v, %v", list, err)
+	}
+	if list[0].SessionPrefix != "ao" {
+		t.Fatalf("default session prefix = %q, want derived 'ao'", list[0].SessionPrefix)
+	}
+}
+
+func TestManager_SetConfig(t *testing.T) {
+	ctx := context.Background()
+	m := newManager(t)
+	repo := gitRepo(t)
+
+	if _, err := m.Add(ctx, project.AddInput{Path: repo, ProjectID: ptr("ao")}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	cfg := domain.ProjectConfig{
+		DefaultBranch: "develop",
+		Env:           map[string]string{"FOO": "bar"},
+		AgentConfig:   domain.AgentConfig{Model: "claude-opus-4-5"},
+	}
+	proj, err := m.SetConfig(ctx, "ao", project.SetConfigInput{Config: cfg})
+	if err != nil {
+		t.Fatalf("SetConfig: %v", err)
+	}
+	if proj.Config == nil || proj.Config.AgentConfig.Model != "claude-opus-4-5" {
+		t.Fatalf("returned config = %#v", proj.Config)
+	}
+	if proj.DefaultBranch != "develop" {
+		t.Fatalf("DefaultBranch = %q, want develop", proj.DefaultBranch)
+	}
+
+	// The config persists and shows up on a fresh Get.
+	got, err := m.Get(ctx, "ao")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Project == nil || got.Project.Config == nil || got.Project.Config.Env["FOO"] != "bar" {
+		t.Fatalf("Get config = %#v", got.Project)
+	}
+
+	// An invalid permission value is rejected when set.
+	_, err = m.SetConfig(ctx, "ao", project.SetConfigInput{Config: domain.ProjectConfig{AgentConfig: domain.AgentConfig{Permissions: "yolo"}}})
+	wantCode(t, err, "INVALID_PROJECT_CONFIG")
+
+	// An unknown role-override harness is rejected too.
+	_, err = m.SetConfig(ctx, "ao", project.SetConfigInput{Config: domain.ProjectConfig{Worker: domain.RoleOverride{Harness: "nope"}}})
+	wantCode(t, err, "INVALID_PROJECT_CONFIG")
+
+	// Setting on an unknown project is a clean not-found.
+	_, err = m.SetConfig(ctx, "ghost", project.SetConfigInput{Config: cfg})
+	wantCode(t, err, "PROJECT_NOT_FOUND")
+}
+
 func TestManager_ReaddAfterRemove(t *testing.T) {
 	ctx := context.Background()
 	m := newManager(t)

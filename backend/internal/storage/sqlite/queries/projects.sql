@@ -1,22 +1,23 @@
 -- name: UpsertProject :exec
-INSERT INTO projects (id, path, repo_origin_url, display_name, registered_at, archived_at)
-VALUES (?, ?, ?, ?, ?, ?)
+INSERT INTO projects (id, path, repo_origin_url, display_name, registered_at, archived_at, config)
+VALUES (?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (id) DO UPDATE SET
     path = excluded.path,
     repo_origin_url = excluded.repo_origin_url,
     display_name = excluded.display_name,
-    archived_at = excluded.archived_at;
+    archived_at = excluded.archived_at,
+    config = excluded.config;
 
 -- name: GetProject :one
-SELECT id, path, repo_origin_url, display_name, registered_at, archived_at
+SELECT id, path, repo_origin_url, display_name, registered_at, archived_at, config
 FROM projects WHERE id = ?;
 
 -- name: ListProjects :many
-SELECT id, path, repo_origin_url, display_name, registered_at, archived_at
+SELECT id, path, repo_origin_url, display_name, registered_at, archived_at, config
 FROM projects WHERE archived_at IS NULL ORDER BY id;
 
 -- name: FindProjectByPath :one
-SELECT id, path, repo_origin_url, display_name, registered_at, archived_at
+SELECT id, path, repo_origin_url, display_name, registered_at, archived_at, config
 FROM projects WHERE path = ? AND archived_at IS NULL;
 
 -- name: ArchiveProject :execrows

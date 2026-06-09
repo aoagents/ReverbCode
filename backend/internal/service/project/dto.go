@@ -11,9 +11,16 @@ type GetResult struct {
 
 // AddInput is the body shape for POST /api/v1/projects.
 type AddInput struct {
-	Path      string  `json:"path"`
-	ProjectID *string `json:"projectId,omitempty"`
-	Name      *string `json:"name,omitempty"`
+	Path      string                `json:"path"`
+	ProjectID *string               `json:"projectId,omitempty"`
+	Name      *string               `json:"name,omitempty"`
+	Config    *domain.ProjectConfig `json:"config,omitempty"`
+}
+
+// SetConfigInput is the body shape for PUT /api/v1/projects/{id}/config. Config
+// replaces the project's stored config wholesale; a zero-value config clears it.
+type SetConfigInput struct {
+	Config domain.ProjectConfig `json:"config"`
 }
 
 // RemoveResult reports what DELETE /api/v1/projects/{id} actually did.
