@@ -1,16 +1,16 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect } from "react";
-import { Group, Panel, Separator } from "react-resizable-panels";
+import { useEffect, useMemo, useState } from "react";
+import { CenterPane } from "./components/CenterPane";
+import { SideRail } from "./components/SideRail";
 import { Sidebar } from "./components/Sidebar";
-import { TerminalPane } from "./components/TerminalPane";
-import { Badge } from "./components/ui/badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs";
+import { SpawnWorkerModal } from "./components/SpawnWorkerModal";
+import { Topbar } from "./components/Topbar";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { useDaemonStatus } from "./hooks/useDaemonStatus";
 import { useWorkspaceQuery, workspaceQueryKey } from "./hooks/useWorkspaceQuery";
 import { apiClient } from "./lib/api-client";
 import { Theme, useUiStore } from "./stores/ui-store";
-import { toAgentProvider, type AgentProvider, type WorkspaceSession, type WorkspaceSummary } from "./types/workspace";
+import { toAgentProvider, type AgentProvider, type WorkspaceSummary } from "./types/workspace";
 
 type AppProps = {
   routeSessionId?: string;
@@ -23,21 +23,49 @@ function systemTheme(): Theme {
 
 export function App({ routeSessionId, routeWorkspaceId }: AppProps) {
   const queryClient = useQueryClient();
-  const { selectedSessionId, selectedWorkspaceId, isSidebarOpen, theme, layout, selectWorkspace, setLayout, setSystemTheme, toggleSidebar } = useUiStore();
+  const {
+    view,
+    workbenchTab,
+    selectedSessionId,
+    selectedWorkspaceId,
+    theme,
+    setSystemTheme,
+    setWorkbenchTab,
+    toggleSidebar,
+    selectWorkspace,
+    selectSession,
+  } = useUiStore();
   const { data: workspaces = [] } = useWorkspaceQuery();
   const daemonStatus = useDaemonStatus(queryClient);
+  const [spawnOpen, setSpawnOpen] = useState(false);
+  const [spawnProjectId, setSpawnProjectId] = useState<string | undefined>(undefined);
+
+  const openSpawn = (projectId?: string) => {
+    setSpawnProjectId(projectId);
+    setSpawnOpen(true);
+  };
+
+  const selectedWorkspace = workspaces.find((workspace) => workspace.id === selectedWorkspaceId) ?? workspaces[0];
   const selectedSession =
-    workspaces.flatMap((workspace) => workspace.sessions).find((session) => session.id === selectedSessionId) ??
-    workspaces[0]?.sessions[0];
+    view === "session"
+      ? workspaces.flatMap((workspace) => workspace.sessions).find((session) => session.id === selectedSessionId)
+      : undefined;
+  const sessionWorkspace = selectedSession
+    ? (workspaces.find((workspace) => workspace.id === selectedSession.workspaceId) ?? selectedWorkspace)
+    : selectedWorkspace;
+
+  const fleet = useMemo(() => {
+    const sessions = workspaces.flatMap((workspace) => workspace.sessions);
+    return {
+      agents: sessions.filter((session) => session.status !== "stopped").length,
+      needYou: sessions.filter((session) => session.status === "needs_input" || session.status === "failed").length,
+    };
+  }, [workspaces]);
 
   useEffect(() => {
-    if (routeWorkspaceId) {
-      selectWorkspace(routeWorkspaceId);
-    }
-    if (routeSessionId) {
-      useUiStore.getState().selectSession(routeSessionId);
-    }
-  }, [routeSessionId, routeWorkspaceId, selectWorkspace]);
+    if (routeWorkspaceId) selectWorkspace(routeWorkspaceId);
+    if (routeSessionId) selectSession(routeSessionId, routeWorkspaceId);
+  }, [routeSessionId, routeWorkspaceId, selectWorkspace, selectSession]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -67,34 +95,19 @@ export function App({ routeSessionId, routeWorkspaceId }: AppProps) {
           event.preventDefault();
           selectWorkspace(workspace.id);
         }
-        return;
-      }
-
-      if ((event.metaKey || event.ctrlKey) && event.altKey && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
-        const currentIndex = Math.max(0, workspaces.findIndex((workspace) => workspace.id === selectedWorkspaceId));
-        const delta = event.key === "ArrowDown" ? 1 : -1;
-        const nextWorkspace = workspaces[(currentIndex + delta + workspaces.length) % workspaces.length];
-        if (nextWorkspace) {
-          event.preventDefault();
-          selectWorkspace(nextWorkspace.id);
-        }
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [selectWorkspace, selectedWorkspaceId, toggleSidebar, workspaces]);
+  }, [selectWorkspace, toggleSidebar, workspaces]);
 
   const updateWorkspaces = (updater: (workspaces: WorkspaceSummary[]) => WorkspaceSummary[]) => {
     queryClient.setQueryData<WorkspaceSummary[]>(workspaceQueryKey, (current = workspaces) => updater(current));
   };
 
   const createProject = async (input: { path: string }) => {
-    const { data, error } = await apiClient.POST("/api/v1/projects", {
-      body: {
-        path: input.path,
-      },
-    });
+    const { data, error } = await apiClient.POST("/api/v1/projects", { body: { path: input.path } });
 
     if (error) throw error;
     if (!data?.project) throw new Error("Project creation returned no project");
@@ -123,137 +136,67 @@ export function App({ routeSessionId, routeWorkspaceId }: AppProps) {
     });
 
     if (error || !data?.session) {
-      console.error("Task creation failed:", error ?? "no session returned");
-      return;
+      throw new Error(
+        error instanceof Error ? error.message : error ? String(error) : "No session returned",
+      );
     }
 
     const session = data.session;
 
     updateWorkspaces((current) =>
-      current.map((workspace) =>
-        workspace.id === input.projectId
+      current.map((item) =>
+        item.id === input.projectId
           ? {
-              ...workspace,
+              ...item,
               sessions: [
                 {
                   id: session.id,
-                  workspaceId: workspace.id,
-                  workspaceName: workspace.name,
+                  workspaceId: item.id,
+                  workspaceName: item.name,
                   title: input.prompt,
                   provider: toAgentProvider(session.harness),
                   branch: input.branch ?? "",
                   status: session.isTerminated ? "stopped" : "running",
                   updatedAt: "now",
                 },
-                ...workspace.sessions.filter((existing) => existing.id !== session.id),
+                ...item.sessions.filter((existing) => existing.id !== session.id),
               ],
             }
-          : workspace,
+          : item,
       ),
     );
-    selectWorkspace(input.projectId);
-    useUiStore.getState().selectSession(session.id);
+    selectSession(session.id, input.projectId);
   };
 
-  const sidebar = (
-    <Sidebar
-      daemonStatus={daemonStatus}
-      onCreateProject={createProject}
-      onCreateTask={createTask}
-      workspaces={workspaces}
-    />
-  );
+  const showSideRail = !(view === "session" && workbenchTab === "terminal");
 
   return (
     <TooltipProvider>
-      <div className="flex h-screen bg-background text-foreground">
-        {isSidebarOpen ? (
-          <Group orientation="horizontal" className="h-screen w-full" defaultLayout={layout} onLayoutChanged={setLayout}>
-            <Panel id="sidebar" minSize="14rem" maxSize="26rem" defaultSize="17.25rem" className="min-w-0">
-              {sidebar}
-            </Panel>
-            <Separator className="w-px cursor-col-resize bg-border transition-colors hover:bg-ring data-[resizing]:bg-ring" />
-            <Panel id="main" minSize="24rem" className="min-w-0">
-              <WorkbenchMain session={selectedSession} theme={theme} />
-            </Panel>
-          </Group>
-        ) : (
-          <>
-            <div className="w-14 shrink-0 overflow-hidden">{sidebar}</div>
-            <WorkbenchMain session={selectedSession} theme={theme} />
-          </>
-        )}
+      <div className="flex h-screen flex-col bg-background text-foreground">
+        <Topbar
+          onNewWorker={() => openSpawn()}
+          onSetWorkbenchTab={setWorkbenchTab}
+          onToggleSidebar={toggleSidebar}
+          session={selectedSession}
+          view={view}
+          workbenchTab={workbenchTab}
+          workspace={sessionWorkspace}
+        />
+        <div className="flex min-h-0 flex-1">
+          <Sidebar daemonStatus={daemonStatus} onCreateProject={createProject} onNewWorker={openSpawn} workspaces={workspaces} />
+          <CenterPane fleet={fleet} session={selectedSession} theme={theme} view={view} />
+          {showSideRail && (
+            <SideRail onSelectSession={selectSession} session={selectedSession} view={view} workspaces={workspaces} />
+          )}
+        </div>
       </div>
+      <SpawnWorkerModal
+        defaultProjectId={spawnProjectId ?? selectedWorkspace?.id}
+        onCreateTask={createTask}
+        onOpenChange={setSpawnOpen}
+        open={spawnOpen}
+        workspaces={workspaces}
+      />
     </TooltipProvider>
-  );
-}
-
-function statusLabel(status: WorkspaceSession["status"]): string {
-  switch (status) {
-    case "running":
-      return "Running";
-    case "needs_input":
-      return "Needs input";
-    case "failed":
-      return "Failed";
-    default:
-      return "Stopped";
-  }
-}
-
-function SessionStatusBadge({ status }: { status: WorkspaceSession["status"] }) {
-  const variant = status === "running" ? "success" : status === "needs_input" ? "warning" : status === "failed" ? "outline" : "muted";
-  return <Badge variant={variant}>{statusLabel(status)}</Badge>;
-}
-
-function SessionDetails({ session }: { session?: WorkspaceSession }) {
-  if (!session) {
-    return <p className="text-sm text-muted-foreground">No session selected.</p>;
-  }
-  return (
-    <dl className="grid grid-cols-[7rem_1fr] gap-y-2 text-sm">
-      <dt className="text-muted-foreground">Provider</dt>
-      <dd>{session.provider}</dd>
-      <dt className="text-muted-foreground">Branch</dt>
-      <dd className="font-mono text-xs">{session.branch || "—"}</dd>
-      <dt className="text-muted-foreground">Status</dt>
-      <dd>
-        <SessionStatusBadge status={session.status} />
-      </dd>
-      <dt className="text-muted-foreground">Workspace</dt>
-      <dd className="truncate">{session.workspaceName}</dd>
-      <dt className="text-muted-foreground">Updated</dt>
-      <dd>{session.updatedAt}</dd>
-    </dl>
-  );
-}
-
-function WorkbenchMain({ session, theme }: { session?: WorkspaceSession; theme: Theme }) {
-  return (
-    <Tabs defaultValue="terminal" className="flex h-full min-h-0 min-w-0 flex-1 flex-col">
-      <header className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-border px-4">
-        <div className="min-w-0">
-          <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-            {session?.workspaceName ?? "No workspace"}
-          </p>
-          <h1 className="truncate text-sm font-semibold">{session?.title ?? "Open a session"}</h1>
-        </div>
-        <div className="flex shrink-0 items-center gap-3">
-          {session ? <SessionStatusBadge status={session.status} /> : null}
-          <TabsList>
-            <TabsTrigger value="terminal">Terminal</TabsTrigger>
-            <TabsTrigger value="details">Details</TabsTrigger>
-          </TabsList>
-        </div>
-      </header>
-      {/* forceMount keeps the terminal (and its live PTY WebSocket) alive when the
-          Details tab is active; Radix sets hidden on the inactive content. */}
-      <TabsContent value="terminal" forceMount className="min-h-0 flex-1 data-[state=inactive]:hidden">
-        <TerminalPane session={session} theme={theme} />
-      </TabsContent>
-      <TabsContent value="details" className="min-h-0 flex-1 overflow-auto p-4">
-        <SessionDetails session={session} />
-      </TabsContent>
-    </Tabs>
   );
 }

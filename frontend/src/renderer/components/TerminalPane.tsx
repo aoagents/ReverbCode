@@ -18,11 +18,13 @@ type TerminalPaneProps = {
 export function TerminalPane({ session, theme }: TerminalPaneProps) {
   if (!window.ao) {
     return (
-      <pre className="h-full overflow-auto bg-terminal p-4 font-mono text-sm leading-6 text-foreground">
-        Agent Orchestrator terminal scaffold{"\n\n"}
-        session: {session?.id ?? "none"}{"\n"}
-        provider: {session?.provider ?? "unassigned"}{"\n\n"}
-        Browser preview uses a static terminal surface. Electron loads @xterm/xterm.
+      <pre className="h-full overflow-auto bg-terminal p-4 font-mono text-[13px] leading-relaxed text-[var(--term-fg)]">
+        <span className="text-[var(--term-dim)]">~/{session?.workspaceName ?? "reverbcode"}</span>{" "}
+        <span className="text-[var(--term-blue)]">{session?.branch || "main"}</span> $ {session?.provider ?? "claude"}
+        {"\n"}
+        <span className="text-[var(--term-green)]">✻ Welcome to the agent CLI</span>
+        {"\n\n"}
+        <span className="text-[var(--term-dim)]">Browser preview renders a static terminal surface. Electron attaches the live PTY.</span>
       </pre>
     );
   }
@@ -70,7 +72,7 @@ function XtermTerminal({ session, theme }: TerminalPaneProps) {
     const terminal = new Terminal({
       allowProposedApi: false,
       cursorBlink: true,
-      fontFamily: '"SF Mono", Menlo, Monaco, Consolas, monospace',
+      fontFamily: 'Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
       fontSize: 13,
       lineHeight: 1.35,
       theme: terminalTheme(theme),
@@ -148,20 +150,15 @@ function XtermTerminal({ session, theme }: TerminalPaneProps) {
   return <div ref={containerRef} className="h-full min-h-0 bg-terminal p-3" />;
 }
 
-function terminalTheme(theme: Theme) {
-  if (theme === "light") {
-    return {
-      background: "#fbfcfd",
-      foreground: "#1f2328",
-      cursor: "#1f2328",
-      selectionBackground: "#bfdbfe",
-    };
-  }
-
+// The terminal is the agent CLI; it keeps the emdash dark palette (green cursor) in
+// both themes — see DESIGN.md → Color. The `theme` arg is kept for the signature the
+// caller uses on theme change.
+function terminalTheme(_theme: Theme) {
   return {
-    background: "#0f1014",
-    foreground: "#f4f4f5",
-    cursor: "#f4f4f5",
-    selectionBackground: "#334155",
+    background: "#161616",
+    foreground: "#d7d7d2",
+    cursor: "#7bd88f",
+    cursorAccent: "#161616",
+    selectionBackground: "rgba(63, 142, 247, 0.35)",
   };
 }

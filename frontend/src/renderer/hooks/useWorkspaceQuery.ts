@@ -23,7 +23,7 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
   return (projectsData?.projects ?? []).map((project) => ({
     id: project.id,
     name: project.name,
-    path: project.resolveError ?? project.id,
+    path: project.id,
     sessions: (sessionsData?.sessions ?? [])
       .filter((session) => session.projectId === project.id)
       .map((session) => ({

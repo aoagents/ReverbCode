@@ -1,43 +1,37 @@
 import { create } from "zustand";
-import type { Layout } from "react-resizable-panels";
 
-export type ActivePane = "sessions" | "terminal";
 export type Theme = "light" | "dark";
+/** Orchestrator-led: the app lands on the orchestrator; a worker row drills in. */
+export type WorkbenchView = "orchestrator" | "session";
+/** Worker topbar view toggles — Changes (Git rail) is the default. */
+export type WorkbenchTab = "changes" | "files" | "terminal";
 
 type UiState = {
-  activePane: ActivePane;
+  view: WorkbenchView;
+  workbenchTab: WorkbenchTab;
   isSidebarOpen: boolean;
   selectedSessionId: string | null;
   selectedWorkspaceId: string | null;
   theme: Theme;
-  /** Persisted resizable-panel layout (Panel id → flexGrow), undefined until first drag. */
-  layout: Layout | undefined;
-  setActivePane: (pane: ActivePane) => void;
+  setView: (view: WorkbenchView) => void;
+  setWorkbenchTab: (tab: WorkbenchTab) => void;
   setSidebarOpen: (isSidebarOpen: boolean) => void;
   setSystemTheme: (theme: Theme) => void;
-  setLayout: (layout: Layout) => void;
   toggleSidebar: () => void;
+  selectOrchestrator: () => void;
   selectWorkspace: (workspaceId: string) => void;
-  selectSession: (sessionId: string) => void;
+  selectSession: (sessionId: string, workspaceId?: string) => void;
 };
 
 const sidebarStorageKey = "ao.sidebar.open";
-const layoutStorageKey = "ao.layout";
 
-function initialSidebarOpen() {
-  if (typeof window === "undefined") return true;
-  return window.localStorage.getItem(sidebarStorageKey) !== "false";
+function getLocalStorage() {
+  if (typeof window === "undefined" || !window.localStorage) return null;
+  return window.localStorage;
 }
 
-function initialLayout(): Layout | undefined {
-  if (typeof window === "undefined") return undefined;
-  const raw = window.localStorage.getItem(layoutStorageKey);
-  if (!raw) return undefined;
-  try {
-    return JSON.parse(raw) as Layout;
-  } catch {
-    return undefined;
-  }
+function initialSidebarOpen() {
+  return getLocalStorage()?.getItem(sidebarStorageKey) !== "false";
 }
 
 function initialTheme(): Theme {
@@ -47,28 +41,32 @@ function initialTheme(): Theme {
 }
 
 export const useUiStore = create<UiState>((set) => ({
-  activePane: "sessions",
+  view: "orchestrator",
+  workbenchTab: "changes",
   isSidebarOpen: initialSidebarOpen(),
   selectedSessionId: null,
   selectedWorkspaceId: null,
   theme: initialTheme(),
-  layout: initialLayout(),
-  setActivePane: (activePane) => set({ activePane }),
-  setLayout: (layout) => {
-    window.localStorage.setItem(layoutStorageKey, JSON.stringify(layout));
-    set({ layout });
-  },
+  setView: (view) => set({ view }),
+  setWorkbenchTab: (workbenchTab) => set({ workbenchTab }),
   setSidebarOpen: (isSidebarOpen) => {
-    window.localStorage.setItem(sidebarStorageKey, String(isSidebarOpen));
+    getLocalStorage()?.setItem(sidebarStorageKey, String(isSidebarOpen));
     set({ isSidebarOpen });
   },
   setSystemTheme: (theme) => set({ theme }),
   toggleSidebar: () =>
     set((state) => {
       const isSidebarOpen = !state.isSidebarOpen;
-      window.localStorage.setItem(sidebarStorageKey, String(isSidebarOpen));
+      getLocalStorage()?.setItem(sidebarStorageKey, String(isSidebarOpen));
       return { isSidebarOpen };
     }),
-  selectWorkspace: (selectedWorkspaceId) => set({ selectedWorkspaceId, activePane: "terminal" }),
-  selectSession: (selectedSessionId) => set({ selectedSessionId, activePane: "terminal" }),
+  selectOrchestrator: () => set({ view: "orchestrator" }),
+  selectWorkspace: (selectedWorkspaceId) => set({ selectedWorkspaceId }),
+  selectSession: (selectedSessionId, workspaceId) =>
+    set((state) => ({
+      selectedSessionId,
+      selectedWorkspaceId: workspaceId ?? state.selectedWorkspaceId,
+      view: "session",
+      workbenchTab: "changes",
+    })),
 }));

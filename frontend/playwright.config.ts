@@ -6,11 +6,10 @@ export default defineConfig({
     baseURL: "http://127.0.0.1:5173",
   },
   webServer: {
-    command: "npm run dev",
+    // dev:web serves the renderer alone (VITE_NO_ELECTRON=1) — no Electron child to
+    // launch, which is all the browser-based e2e suite needs.
+    command: "npm run dev:web -- --port 5173",
     port: 5173,
     reuseExistingServer: !process.env.CI,
-    // vite-plugin-electron launches the Electron app on dev-server start; the e2e
-    // suite only needs the renderer served in a browser, so suppress the launch.
-    env: { ELECTRON_STARTUP_PREVENT: "1" },
   },
 });

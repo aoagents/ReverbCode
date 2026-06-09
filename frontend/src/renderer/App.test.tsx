@@ -1,7 +1,7 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, vi } from "vitest";
+import { beforeEach, expect, test, vi } from "vitest";
 import { App } from "./App";
 import { useUiStore } from "./stores/ui-store";
 
@@ -21,35 +21,39 @@ vi.mock("./components/TerminalPane", () => ({
   TerminalPane: () => <div>Terminal scaffold</div>,
 }));
 
+function renderApp() {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <App />
+    </QueryClientProvider>,
+  );
+}
+
 beforeEach(() => {
   postMock.mockReset();
   window.localStorage.clear();
   useUiStore.setState({
-    activePane: "sessions",
+    view: "orchestrator",
+    workbenchTab: "changes",
     isSidebarOpen: true,
-    selectedSessionId: "ao-shell-scaffold",
+    selectedSessionId: null,
     selectedWorkspaceId: "agent-orchestrator",
     theme: "dark",
   });
 });
 
-test("renders the desktop workbench scaffold", async () => {
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
+test("renders the orchestrator-first workbench", async () => {
+  renderApp();
 
-  render(
-    <QueryClientProvider client={queryClient}>
-      <App />
-    </QueryClientProvider>,
-  );
-
-  expect(await screen.findAllByText("Desktop shell scaffold")).toHaveLength(2);
-  expect(screen.queryByRole("button", { name: "New task" })).not.toBeInTheDocument();
+  // The single pinned Orchestrator anchor + a name-only worker row from the fleet.
+  expect(await screen.findByRole("button", { name: "Orchestrator" })).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "fix-webgl-fallback" })).toBeInTheDocument();
+  // No legacy theme toggle.
   expect(screen.queryByRole("button", { name: /switch to .* theme/i })).not.toBeInTheDocument();
 });
 
-test("adds a project from the sidebar", async () => {
+test("adds a project from the rail", async () => {
   const user = userEvent.setup();
   window.ao.app.chooseDirectory = vi.fn(async () => "/Users/me/new-project");
   postMock.mockResolvedValueOnce({
@@ -63,95 +67,66 @@ test("adds a project from the sidebar", async () => {
       },
     },
   });
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
 
-  render(
-    <QueryClientProvider client={queryClient}>
-      <App />
-    </QueryClientProvider>,
-  );
+  renderApp();
 
   await user.click(await screen.findByRole("button", { name: "New project" }));
 
   expect(window.ao.app.chooseDirectory).toHaveBeenCalled();
-  expect(postMock).toHaveBeenCalledWith("/api/v1/projects", {
-    body: {
-      path: "/Users/me/new-project",
-    },
-  });
+  expect(postMock).toHaveBeenCalledWith("/api/v1/projects", { body: { path: "/Users/me/new-project" } });
   expect(await screen.findByText("New Project")).toBeInTheDocument();
 });
 
-test("starts a new task from a project", async () => {
+test("spawns a worker from the New worker modal", async () => {
   const user = userEvent.setup();
   postMock.mockResolvedValueOnce({
     data: {
       session: {
         id: "new-task",
         projectId: "agent-orchestrator",
-        harness: "codex",
-        branch: "codex/electron-stack-scaffold",
+        harness: "claude-code",
+        branch: "main",
         isTerminated: false,
       },
     },
   });
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
 
-  render(
-    <QueryClientProvider client={queryClient}>
-      <App />
-    </QueryClientProvider>,
-  );
+  renderApp();
 
-  await user.click(await screen.findByRole("button", { name: "Start task in agent-orchestrator-1" }));
-  fireEvent.change(screen.getByLabelText("Prompt"), { target: { value: "Make task creation work" } });
-  fireEvent.change(screen.getByLabelText("Branch"), { target: { value: "codex/electron-stack-scaffold" } });
-  await user.click(screen.getByRole("button", { name: "Start task" }));
+  await user.click(await screen.findByRole("button", { name: "New worker" }));
+  await user.type(await screen.findByLabelText("Prompt"), "Make task creation work");
+  await user.click(screen.getByRole("button", { name: /Spawn worker/ }));
 
   expect(postMock).toHaveBeenCalledWith("/api/v1/sessions", {
     body: {
       projectId: "agent-orchestrator",
       kind: "worker",
-      harness: "codex",
+      harness: "claude-code",
       prompt: "Make task creation work",
-      branch: "codex/electron-stack-scaffold",
+      branch: "main",
     },
   });
   expect(await screen.findAllByText("Make task creation work")).toHaveLength(2);
 });
 
-test("does not create a session when the API call fails", async () => {
+test("surfaces an error when spawning fails", async () => {
   const user = userEvent.setup();
-  const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
   postMock.mockResolvedValueOnce({ error: new TypeError("Failed to fetch") });
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
 
-  render(
-    <QueryClientProvider client={queryClient}>
-      <App />
-    </QueryClientProvider>,
-  );
+  renderApp();
 
-  await user.click(await screen.findByRole("button", { name: "Start task in agent-orchestrator-1" }));
-  fireEvent.change(screen.getByLabelText("Prompt"), { target: { value: "Failing task" } });
-  await user.click(screen.getByRole("button", { name: "Start task" }));
+  await user.click(await screen.findByRole("button", { name: "New worker" }));
+  await user.type(await screen.findByLabelText("Prompt"), "Failing task");
+  await user.click(screen.getByRole("button", { name: /Spawn worker/ }));
 
   expect(postMock).toHaveBeenCalledWith("/api/v1/sessions", {
     body: {
       projectId: "agent-orchestrator",
       kind: "worker",
-      harness: "codex",
+      harness: "claude-code",
       prompt: "Failing task",
-      branch: undefined,
+      branch: "main",
     },
   });
-  expect(consoleSpy).toHaveBeenCalledWith("Task creation failed:", expect.anything());
-  expect(screen.queryAllByText("Failing task")).toHaveLength(0);
-  consoleSpy.mockRestore();
+  expect(await screen.findByText("Failed to fetch")).toBeInTheDocument();
 });

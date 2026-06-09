@@ -27,6 +27,22 @@ Object.defineProperty(window, "matchMedia", {
   }),
 });
 
+const localStorageStub = (() => {
+  const values = new Map<string, string>();
+  return {
+    clear: () => values.clear(),
+    getItem: (key: string) => values.get(key) ?? null,
+    removeItem: (key: string) => values.delete(key),
+    setItem: (key: string, value: string) => values.set(key, value),
+  };
+})();
+
+Object.defineProperty(window, "localStorage", {
+  configurable: true,
+  writable: true,
+  value: localStorageStub,
+});
+
 HTMLCanvasElement.prototype.getContext = (() => ({})) as unknown as typeof HTMLCanvasElement.prototype.getContext;
 
 window.ao = {

@@ -13,7 +13,7 @@
 // The renderer connects directly to the loopback daemon (same host/port as the
 // REST API, path `/mux`); it is not proxied through the Electron main process.
 
-export type ServerFrame = {
+type ServerFrame = {
   ch: string;
   id?: string;
   type: string;
@@ -58,7 +58,7 @@ export function closeFrame(id: string): string {
   return JSON.stringify({ ch: "terminal", type: "close", id });
 }
 
-export function pingFrame(): string {
+function pingFrame(): string {
   return JSON.stringify({ ch: "system", type: "ping" });
 }
 

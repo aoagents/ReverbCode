@@ -5,22 +5,26 @@ import { expect, test } from "@playwright/test";
 // deterministic mock UI; they run in Chromium (no window.ao), so the terminal
 // shows its browser-preview surface.
 
-test("renders the workbench shell with the default session", async ({ page }) => {
+test("renders the orchestrator-first workbench shell", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Desktop shell scaffold" })).toBeVisible();
-  await expect(page.getByText("agent-orchestrator-1").first()).toBeVisible();
-  await expect(page.getByRole("tab", { name: "Terminal" })).toBeVisible();
-  await expect(page.getByRole("tab", { name: "Details" })).toBeVisible();
+  // The single pinned Orchestrator anchor + the Projects group + a name-only worker row.
+  await expect(page.getByRole("button", { name: "Orchestrator", exact: true })).toBeVisible();
+  await expect(page.getByText("Projects")).toBeVisible();
+  await expect(page.getByRole("button", { name: "fix-webgl-fallback", exact: true })).toBeVisible();
+  // Orchestrator side rail = the quiet Workers list.
+  await expect(page.getByText("Workers", { exact: true })).toBeVisible();
 });
 
-test("deep-links to a session route", async ({ page }) => {
-  await page.goto("/#/workspaces/agent-orchestrator/sessions/ao-api-contract");
-  await expect(page.getByRole("heading", { name: "Daemon bridge wiring" })).toBeVisible();
+test("deep-links into a worker session", async ({ page }) => {
+  await page.goto("/#/workspaces/api-gateway/sessions/refactor-mux");
+  // Worker view = emdash three-pane with the Git review rail.
+  await expect(page.getByText("Changed")).toBeVisible();
+  await expect(page.getByRole("button", { name: /Commit & Push/ })).toBeVisible();
 });
 
-test("Details tab shows session metadata", async ({ page }) => {
+test("drilling into a worker opens its Git review rail", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("tab", { name: "Details" }).click();
-  await expect(page.getByText("Provider", { exact: true })).toBeVisible();
-  await expect(page.getByText("Branch", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "refactor-mux", exact: true }).click();
+  await expect(page.getByRole("button", { name: /Commit & Push/ })).toBeVisible();
+  await expect(page.getByText("internal/mux/terminal_mux.go")).toBeVisible();
 });
