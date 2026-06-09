@@ -1,0 +1,123 @@
+frontend/src/preload.ts
+  s_741b29b355e81f::t_b81f6fdfdc67c7 2
+frontend/src/renderer/components/TerminalPane.tsx
+  s_3ee81be208890e::t_9da607de91455a 10,15,18,32,65-71,74,96,99-100,110,112-113,128,137,145-156
+frontend/src/renderer/hooks/useWorkspaceQuery.test.tsx
+  s_741b29b355e81f::t_19d7341c21f970 1-135
+frontend/src/main.ts
+  s_db53c89ad35445::t_7c4a66b6d5d011 4-5,8-9,122-135,168-194,196-198,202-204,207-227,231,233,236,243
+frontend/src/renderer/App.test.tsx
+  s_741b29b355e81f::t_f8cddd09048456 26-28
+frontend/src/renderer/hooks/useEventsConnection.ts
+  s_741b29b355e81f::t_242cd39ae10a71 1-11
+frontend/src/renderer/hooks/useDaemonStatus.ts
+  s_741b29b355e81f::t_ef26343ccaf1cb 17-18,25-36
+frontend/src/renderer/lib/event-transport.test.ts
+  s_741b29b355e81f::t_fdaa523bfd9879 131-192
+  s_741b29b355e81f::t_cb57f4d5eabff0 3-10,20,24,30-32,44
+  s_741b29b355e81f::t_d79bdcbc3885d8 57-59
+frontend/src/renderer/components/CenterPane.tsx
+  s_3ee81be208890e::t_60c58f0e220b1a 44
+  s_72e20717433c99::t_a01840be0388bd 1
+  s_3ee81be208890e::t_a5575de365ec97 10,13
+frontend/src/renderer/hooks/useTerminalSession.ts
+  s_3ee81be208890e::t_23712d4691d8c7 1-218
+frontend/vite.config.ts
+  s_741b29b355e81f::t_ed7ecdc53bd781 60
+  s_741b29b355e81f::t_95d0078339cbc9 2,7-36
+frontend/src/shared/daemon-discovery.ts
+  s_741b29b355e81f::t_e87ee376f9338c 103,107,109,111
+  s_741b29b355e81f::t_5f014471f409d9 7-10,12-16
+  s_741b29b355e81f::t_bdc8b898189d67 1-6,11,17-102,104-106,108,110,112
+frontend/src/shared/daemon-discovery.test.ts
+  s_741b29b355e81f::t_74e6090717029e 1-123
+frontend/src/renderer/components/Sidebar.tsx
+  s_741b29b355e81f::t_84b3a89f71ccec 6
+  s_741b29b355e81f::t_ded754c197540e 29
+  s_741b29b355e81f::t_ebcc4f6cda9e33 144
+frontend/src/renderer/lib/events-connection.ts
+  s_741b29b355e81f::t_e3ac4cab175923 1-27
+frontend/src/renderer/lib/terminal-mux.ts
+  s_3ee81be208890e::t_66909a461ef20f 81-85,96-105,112-118,121-123,131-134,138-144
+  s_3ee81be208890e::t_a9a6512e20077b 166,169-171,180-190,195-196,206-208
+  s_3ee81be208890e::t_bb9559456fd286 221-227
+.claude/launch.json
+  s_f3f1984aea090e::t_a8aacfa6116cfd 1-11
+frontend/src/renderer/lib/terminal-mux.test.ts
+  s_3ee81be208890e::t_570bcbe9b06d56 121-178
+  s_3ee81be208890e::t_dcbb1d7465e589 77-82
+frontend/src/renderer/App.tsx
+  s_72e20717433c99::t_c58d44d9a70cce 2
+  s_72e20717433c99::t_6faf2efd3cca1b 13
+  s_3ee81be208890e::t_cca30faf0b99ce 191
+frontend/src/renderer/hooks/useWorkspaceQuery.ts
+  s_0c082f5b4de73c::t_17033cdc1cee03 3,7,10-13
+frontend/src/renderer/lib/mock-data.ts
+  s_0c082f5b4de73c::t_17033cdc1cee03 1-47
+frontend/src/renderer/lib/event-transport.ts
+  s_741b29b355e81f::t_ade263b42cf14a 46,56-63,68-70,76-87,92-93,103-105,110,112,114
+  s_741b29b355e81f::t_7a754e069a67df 3-4,12-17
+frontend/src/renderer/hooks/useDaemonStatus.test.tsx
+  s_741b29b355e81f::t_1aafa3534d5b35 1-60,62,64-69,72-82,84,86-91,94-101
+  s_741b29b355e81f::t_e8efbc13be51e9 61,63,70-71,83,85,92-93
+frontend/src/renderer/hooks/useTerminalSession.test.tsx
+  s_3ee81be208890e::t_6804f8ef002746 1-239
+frontend/src/shared/daemon-status.ts
+  s_741b29b355e81f::t_3d71b6e8153b89 1-8
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "c01cf7ad6a810ba56b15277bc9e0f3dcf408f59c",
+  "prompts": {},
+  "sessions": {
+    "s_0c082f5b4de73c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019eadda-379e-7c53-9938-6428b4cf234c",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    },
+    "s_3ee81be208890e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8e901055-7248-4209-b437-73d9c0a5dd3e",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    },
+    "s_72e20717433c99": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "65a21849-b97c-4f00-a47e-f2f13f6bfbc5",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    },
+    "s_741b29b355e81f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5d26f8ef-e63d-420d-a502-448a0b291231",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    },
+    "s_db53c89ad35445": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e3e3a58f-21d3-4850-971d-825d42204df1",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    },
+    "s_f3f1984aea090e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b53e217a-edb1-4801-a12d-02cbb66c4af6",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    }
+  }
+}
