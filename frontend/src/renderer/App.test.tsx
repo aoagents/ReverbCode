@@ -39,7 +39,7 @@ test("renders the desktop workbench scaffold", async () => {
 
   render(
     <QueryClientProvider client={queryClient}>
-      <App queryClient={queryClient} />
+      <App />
     </QueryClientProvider>,
   );
 
@@ -68,7 +68,7 @@ test("adds a project from the sidebar", async () => {
 
   render(
     <QueryClientProvider client={queryClient}>
-      <App queryClient={queryClient} />
+      <App />
     </QueryClientProvider>,
   );
 
@@ -102,7 +102,7 @@ test("starts a new task from a project", async () => {
 
   render(
     <QueryClientProvider client={queryClient}>
-      <App queryClient={queryClient} />
+      <App />
     </QueryClientProvider>,
   );
 
@@ -132,7 +132,7 @@ test("starts a dummy task when session creation cannot reach the daemon", async 
 
   render(
     <QueryClientProvider client={queryClient}>
-      <App queryClient={queryClient} />
+      <App />
     </QueryClientProvider>,
   );
 

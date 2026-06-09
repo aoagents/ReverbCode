@@ -1,4 +1,4 @@
-import { QueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { Sidebar } from "./components/Sidebar";
 import { TerminalPane } from "./components/TerminalPane";
@@ -10,7 +10,6 @@ import { Theme, useUiStore } from "./stores/ui-store";
 import { toAgentProvider, type AgentProvider, type WorkspaceSummary } from "./types/workspace";
 
 type AppProps = {
-  queryClient?: QueryClient;
   routeSessionId?: string;
   routeWorkspaceId?: string;
 };
@@ -19,7 +18,8 @@ function systemTheme(): Theme {
   return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
 }
 
-export function App({ queryClient, routeSessionId, routeWorkspaceId }: AppProps) {
+export function App({ routeSessionId, routeWorkspaceId }: AppProps) {
+  const queryClient = useQueryClient();
   const { selectedSessionId, selectedWorkspaceId, isSidebarOpen, theme, selectWorkspace, setSystemTheme, toggleSidebar } = useUiStore();
   const { data: workspaces = [] } = useWorkspaceQuery();
   const daemonStatus = useDaemonStatus(queryClient);
@@ -83,7 +83,7 @@ export function App({ queryClient, routeSessionId, routeWorkspaceId }: AppProps)
   }, [selectWorkspace, selectedWorkspaceId, toggleSidebar, workspaces]);
 
   const updateWorkspaces = (updater: (workspaces: WorkspaceSummary[]) => WorkspaceSummary[]) => {
-    queryClient?.setQueryData<WorkspaceSummary[]>(workspaceQueryKey, (current = workspaces) => updater(current));
+    queryClient.setQueryData<WorkspaceSummary[]>(workspaceQueryKey, (current = workspaces) => updater(current));
   };
 
   const createProject = async (input: { path: string }) => {
