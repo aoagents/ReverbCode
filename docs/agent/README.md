@@ -40,6 +40,7 @@ Implementation layout:
 
 - Agent-specific hook installation should live beside the agent adapter in `backend/internal/adapters/agent/<agent>/hooks.go`; the hook commands are defined in code, not embedded template files.
 - Launch, restore, and session-info behavior can stay in the main agent implementation unless the file grows enough to justify another split.
+- Every file an adapter writes into the session worktree must be covered by a sibling self-ignoring `.gitignore` written via `hookutil.EnsureWorkspaceGitignore`. Hook files are untracked, and `git worktree remove` (never run with `--force`) refuses on any untracked file — an uncovered hook file makes every session workspace permanently undeletable. The registry conformance test (`registry.TestGetAgentHooksFootprintIsGitignored`) enforces this for all adapters.
 
 ## Metadata Keys
 

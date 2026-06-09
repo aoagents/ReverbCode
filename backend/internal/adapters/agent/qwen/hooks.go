@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/hookutil"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -111,6 +112,9 @@ func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfi
 
 	if err := writeQwenSettings(settingsPath, topLevel, rawHooks); err != nil {
 		return fmt.Errorf("qwen.GetAgentHooks: %w", err)
+	}
+	if err := hookutil.EnsureWorkspaceGitignore(filepath.Dir(settingsPath), qwenSettingsFileName); err != nil {
+		return fmt.Errorf("qwen.GetAgentHooks: gitignore: %w", err)
 	}
 	return nil
 }

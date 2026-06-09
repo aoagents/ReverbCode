@@ -94,6 +94,9 @@ func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfi
 	if err := hookutil.AtomicWriteFile(pluginPath, []byte(opencodePluginSource), 0o600); err != nil {
 		return fmt.Errorf("opencode.GetAgentHooks: write plugin: %w", err)
 	}
+	if err := hookutil.EnsureWorkspaceGitignore(filepath.Dir(pluginPath), opencodePluginFileName); err != nil {
+		return fmt.Errorf("opencode.GetAgentHooks: gitignore: %w", err)
+	}
 	return nil
 }
 

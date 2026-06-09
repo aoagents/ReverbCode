@@ -33,6 +33,7 @@ func TestCommandArgs(t *testing.T) {
 		{"remove", worktreeRemoveArgs(repo, path), []string{"-C", repo, "worktree", "remove", path}},
 		{"prune", worktreePruneArgs(repo), []string{"-C", repo, "worktree", "prune"}},
 		{"list", worktreeListPorcelainArgs(repo), []string{"-C", repo, "worktree", "list", "--porcelain"}},
+		{"status", statusPorcelainArgs(path), []string{"-C", path, "status", "--porcelain"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -216,6 +217,12 @@ func TestDestroyRefusesStillRegisteredPathAndPreservesDirectory(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "still registered") {
 		t.Fatalf("destroy error = %v", err)
 	}
+	// The stub reports a clean `git status`, so the refusal must NOT be typed as
+	// a dirty workspace — Kill/Cleanup would otherwise silently skip a refusal
+	// that has a different cause (e.g. a locked worktree).
+	if errors.Is(err, ports.ErrWorkspaceDirty) {
+		t.Fatalf("destroy error = %v, want non-dirty refusal for clean status", err)
+	}
 	if _, statErr := os.Stat(filepath.Join(path, "keep.txt")); statErr != nil {
 		t.Fatalf("expected directory to be preserved: %v", statErr)
 	}
@@ -226,6 +233,46 @@ func TestDestroyRefusesStillRegisteredPathAndPreservesDirectory(t *testing.T) {
 		if a == "--force" || a == "-f" {
 			t.Fatalf("git worktree remove was called with %q; --force must never be passed", a)
 		}
+	}
+}
+
+// TestDestroyClassifiesDirtyWorktree covers the typed dirty refusal: when
+// `git worktree remove` fails, the path stays registered, and `git status`
+// reports uncommitted work, Destroy must wrap ports.ErrWorkspaceDirty so the
+// Session Manager can preserve the workspace (Kill freed=false, Cleanup
+// skipped-with-reason) instead of surfacing an opaque 500.
+func TestDestroyClassifiesDirtyWorktree(t *testing.T) {
+	root := t.TempDir()
+	repo := t.TempDir()
+	ws, err := New(Options{ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	path := filepath.Join(ws.managedRoot, "proj", "sess")
+	if err := mkdirFile(path, "keep.txt"); err != nil {
+		t.Fatalf("seed path: %v", err)
+	}
+	ws.run = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.Contains(joined, "worktree remove"):
+			return []byte("contains modified or untracked files"), errors.New("remove failed")
+		case strings.Contains(joined, "worktree prune"):
+			return nil, nil
+		case strings.Contains(joined, "worktree list --porcelain"):
+			return []byte("worktree " + path + "\nbranch refs/heads/feature/one\n"), nil
+		case strings.Contains(joined, "status --porcelain"):
+			return []byte("?? keep.txt\n"), nil
+		default:
+			return nil, nil
+		}
+	}
+	err = ws.Destroy(context.Background(), ports.WorkspaceInfo{Path: path, ProjectID: "proj", SessionID: "sess", Branch: "feature/one"})
+	if !errors.Is(err, ports.ErrWorkspaceDirty) {
+		t.Fatalf("destroy error = %v, want ports.ErrWorkspaceDirty", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(path, "keep.txt")); statErr != nil {
+		t.Fatalf("expected dirty worktree to be preserved: %v", statErr)
 	}
 }
 

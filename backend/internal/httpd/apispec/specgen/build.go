@@ -139,6 +139,7 @@ var schemaNames = map[string]string{
 	"ControllersRenameSessionResponse":      "RenameSessionResponse",
 	"ControllersRestoreSessionResponse":     "RestoreSessionResponse",
 	"ControllersCleanupSessionsResponse":    "CleanupSessionsResponse",
+	"ControllersCleanupSkippedSession":      "CleanupSkippedSession",
 	"ControllersKillSessionResponse":        "KillSessionResponse",
 	"ControllersRollbackSessionResponse":    "RollbackSessionResponse",
 	"ControllersSendSessionMessageRequest":  "SendSessionMessageRequest",

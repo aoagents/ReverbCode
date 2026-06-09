@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5/middleware"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
 )
 
 // requestLogger emits one structured access-log line per request via the
@@ -18,13 +20,18 @@ import (
 // is accurate even when the handler returns without calling WriteHeader. The
 // request id is read off the context populated by middleware.RequestID, so
 // this middleware must be mounted after it.
+//
+// A 5xx line additionally carries the raw service error recorded by
+// envelope.WriteError: the wire envelope hides internals ("Internal server
+// error"), so without this the cause of a 500 was lost entirely.
 func requestLogger(log *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
+			r, capturedErr := envelope.WithErrorCapture(r)
 			start := time.Now()
 			defer func() {
-				log.Info("http request",
+				attrs := []any{
 					"id", middleware.GetReqID(r.Context()),
 					"method", r.Method,
 					"path", r.URL.Path,
@@ -32,7 +39,11 @@ func requestLogger(log *slog.Logger) func(http.Handler) http.Handler {
 					"bytes", ww.BytesWritten(),
 					"duration", time.Since(start),
 					"remote", r.RemoteAddr,
-				)
+				}
+				if err := capturedErr(); err != nil && ww.Status() >= http.StatusInternalServerError {
+					attrs = append(attrs, "error", err)
+				}
+				log.Info("http request", attrs...)
 			}()
 			next.ServeHTTP(ww, r)
 		})

@@ -308,6 +308,41 @@ func TestKill_RefusesIncompleteHandle(t *testing.T) {
 		t.Fatalf("want ErrIncompleteHandle, got %v", err)
 	}
 }
+
+// TestKill_DirtyWorkspaceTerminatesAndPreserves: a workspace teardown refused
+// because of uncommitted work must NOT fail the kill — the session terminates,
+// the runtime is gone, and freed=false reports the preserved worktree. This is
+// the normal path for any session with in-progress changes, so an error here
+// would turn every such kill into a 500.
+func TestKill_DirtyWorkspaceTerminatesAndPreserves(t *testing.T) {
+	m, st, rt, ws := newManager()
+	st.sessions["mer-1"] = mkLive("mer-1")
+	ws.destroyErr = fmt.Errorf("gitworktree: refusing to remove: %w", ports.ErrWorkspaceDirty)
+	freed, err := m.Kill(ctx, "mer-1")
+	if err != nil {
+		t.Fatalf("kill dirty workspace err = %v, want nil", err)
+	}
+	if freed {
+		t.Fatal("freed = true, want false for preserved workspace")
+	}
+	if rt.destroyed != 1 {
+		t.Fatal("runtime should be destroyed")
+	}
+	if !st.sessions["mer-1"].IsTerminated {
+		t.Fatal("session should be terminated")
+	}
+}
+
+// TestKill_OtherWorkspaceErrorStillFails: only the typed dirty refusal is a
+// success-with-preserved-workspace; any other teardown failure keeps erroring.
+func TestKill_OtherWorkspaceErrorStillFails(t *testing.T) {
+	m, st, _, ws := newManager()
+	st.sessions["mer-1"] = mkLive("mer-1")
+	ws.destroyErr = errors.New("disk on fire")
+	if _, err := m.Kill(ctx, "mer-1"); err == nil || !strings.Contains(err.Error(), "disk on fire") {
+		t.Fatalf("kill err = %v, want workspace error surfaced", err)
+	}
+}
 func TestRestore_ReopensTerminal(t *testing.T) {
 	m, st, rt, _ := newManager()
 	seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "b", AgentSessionID: "agent-x"})
@@ -349,15 +384,50 @@ func TestCleanup_ReclaimsTerminalWorkspaces(t *testing.T) {
 	m, st, _, ws := newManager()
 	seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/mer-1"})
 	st.sessions["mer-2"] = mkLive("mer-2")
-	cleaned, err := m.Cleanup(ctx, "mer")
+	res, err := m.Cleanup(ctx, "mer")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(cleaned) != 1 || cleaned[0] != "mer-1" {
-		t.Fatalf("got %v", cleaned)
+	if len(res.Cleaned) != 1 || res.Cleaned[0] != "mer-1" {
+		t.Fatalf("got %v", res.Cleaned)
+	}
+	if len(res.Skipped) != 0 {
+		t.Fatalf("skipped = %v, want none", res.Skipped)
 	}
 	if ws.destroyed != 1 {
 		t.Fatal("live workspace must not be destroyed")
+	}
+}
+
+// TestCleanup_ReportsSkippedWorkspaces: a refused teardown must be visible in
+// the result with a reason — a silent skip leaves users staring at
+// "Would clean N … 0 sessions cleaned" with no explanation.
+func TestCleanup_ReportsSkippedWorkspaces(t *testing.T) {
+	m, st, _, ws := newManager()
+	seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/mer-1"})
+	ws.destroyErr = fmt.Errorf("gitworktree: refusing to remove: %w", ports.ErrWorkspaceDirty)
+	res, err := m.Cleanup(ctx, "mer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Cleaned) != 0 {
+		t.Fatalf("cleaned = %v, want none", res.Cleaned)
+	}
+	if len(res.Skipped) != 1 || res.Skipped[0].SessionID != "mer-1" {
+		t.Fatalf("skipped = %v, want mer-1", res.Skipped)
+	}
+	if res.Skipped[0].Reason != "workspace has uncommitted changes" {
+		t.Fatalf("reason = %q", res.Skipped[0].Reason)
+	}
+
+	// A non-dirty teardown failure is reported too, with the cause.
+	ws.destroyErr = errors.New("disk on fire")
+	res, err = m.Cleanup(ctx, "mer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Skipped) != 1 || !strings.Contains(res.Skipped[0].Reason, "workspace teardown failed") || !strings.Contains(res.Skipped[0].Reason, "disk on fire") {
+		t.Fatalf("skipped = %v, want teardown-failed reason with cause", res.Skipped)
 	}
 }
 

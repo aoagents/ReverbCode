@@ -40,7 +40,7 @@ type commander interface {
 	Restore(ctx context.Context, id domain.SessionID) (domain.SessionRecord, error)
 	Kill(ctx context.Context, id domain.SessionID) (bool, error)
 	Send(ctx context.Context, id domain.SessionID, message string) error
-	Cleanup(ctx context.Context, project domain.ProjectID) ([]domain.SessionID, error)
+	Cleanup(ctx context.Context, project domain.ProjectID) (sessionmanager.CleanupResult, error)
 	RollbackSpawn(ctx context.Context, id domain.SessionID) (deleted, killed bool, err error)
 }
 
@@ -50,6 +50,19 @@ type commander interface {
 type RollbackOutcome struct {
 	Deleted bool `json:"deleted"`
 	Killed  bool `json:"killed"`
+}
+
+// CleanupOutcome reports what session cleanup reclaimed and what it preserved.
+type CleanupOutcome struct {
+	Cleaned []domain.SessionID `json:"cleaned"`
+	Skipped []CleanupSkipped   `json:"skipped"`
+}
+
+// CleanupSkipped is one terminal session whose workspace was preserved by
+// cleanup (never force-deleted), with the user-facing reason.
+type CleanupSkipped struct {
+	SessionID domain.SessionID `json:"sessionId"`
+	Reason    string           `json:"reason"`
 }
 
 type scmProvider interface {
@@ -202,9 +215,21 @@ func (s *Service) Rename(ctx context.Context, id domain.SessionID, displayName s
 	return nil
 }
 
-// Cleanup delegates terminal workspace cleanup to the internal manager.
-func (s *Service) Cleanup(ctx context.Context, project domain.ProjectID) ([]domain.SessionID, error) {
-	return s.manager.Cleanup(ctx, project)
+// Cleanup delegates terminal workspace cleanup to the internal manager and
+// reports both reclaimed and preserved (skipped) workspaces.
+func (s *Service) Cleanup(ctx context.Context, project domain.ProjectID) (CleanupOutcome, error) {
+	res, err := s.manager.Cleanup(ctx, project)
+	if err != nil {
+		return CleanupOutcome{}, err
+	}
+	out := CleanupOutcome{Cleaned: res.Cleaned, Skipped: make([]CleanupSkipped, 0, len(res.Skipped))}
+	if out.Cleaned == nil {
+		out.Cleaned = []domain.SessionID{}
+	}
+	for _, skip := range res.Skipped {
+		out.Skipped = append(out.Skipped, CleanupSkipped{SessionID: skip.SessionID, Reason: skip.Reason})
+	}
+	return out, nil
 }
 
 // List returns sessions as enriched display models after applying API filters.

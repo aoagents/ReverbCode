@@ -101,6 +101,9 @@ func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfi
 	if err := ensureCodexHooksFeatureEnabled(cfg.WorkspacePath); err != nil {
 		return fmt.Errorf("codex.GetAgentHooks: enable hooks feature: %w", err)
 	}
+	if err := hookutil.EnsureWorkspaceGitignore(filepath.Join(cfg.WorkspacePath, codexHooksDirName), codexHooksFileName, codexConfigFileName); err != nil {
+		return fmt.Errorf("codex.GetAgentHooks: gitignore: %w", err)
+	}
 	return nil
 }
 

@@ -352,6 +352,11 @@ export interface components {
         CleanupSessionsResponse: {
             cleaned: string[];
             ok: boolean;
+            skipped: components["schemas"]["CleanupSkippedSession"][];
+        };
+        CleanupSkippedSession: {
+            reason: string;
+            sessionId: string;
         };
         DegradedProject: {
             id: string;

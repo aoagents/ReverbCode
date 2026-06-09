@@ -4,9 +4,54 @@
 package hookutil
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
+
+// GitignoreSentinel marks a workspace .gitignore as AO-managed so
+// EnsureWorkspaceGitignore can rewrite its own file idempotently while never
+// touching a user- or repo-provided .gitignore at the same path.
+const GitignoreSentinel = "# managed by agent-orchestrator: AO hook files stay out of git status"
+
+// EnsureWorkspaceGitignore writes a self-ignoring .gitignore into dir covering
+// the named AO-installed files. Hook files land in fresh session worktrees as
+// untracked files, and `git worktree remove` (without --force) refuses on ANY
+// untracked file — without this ignore, AO's own hook files would make every
+// session workspace permanently undeletable. The patterns are anchored to dir
+// and name only AO's files, so anything else an agent drops in the same
+// directory still counts as dirt and keeps blocking teardown.
+//
+// A .gitignore at the same path that lacks the sentinel is left untouched and
+// the install proceeds: the worktree then simply stays dirty and teardown
+// preserves it, which is the safe degradation.
+func EnsureWorkspaceGitignore(dir string, names ...string) error {
+	path := filepath.Join(dir, ".gitignore")
+	existing, err := os.ReadFile(path) //nolint:gosec // path built from caller-owned workspace dir
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("read %s: %w", path, err)
+	}
+	if err == nil && !strings.Contains(string(existing), GitignoreSentinel) {
+		return nil
+	}
+	var b strings.Builder
+	b.WriteString(GitignoreSentinel)
+	b.WriteString("\n/.gitignore\n")
+	for _, name := range names {
+		b.WriteString("/")
+		b.WriteString(filepath.ToSlash(name))
+		b.WriteString("\n")
+	}
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return fmt.Errorf("create %s: %w", dir, err)
+	}
+	if err := AtomicWriteFile(path, []byte(b.String()), 0o600); err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	return nil
+}
 
 // AtomicWriteFile writes data to path via a temp file in the same directory
 // followed by a rename, so a crash or signal mid-write can't leave a truncated

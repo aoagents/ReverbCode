@@ -82,8 +82,8 @@ func (f *fakeSessionService) RollbackSpawn(context.Context, domain.SessionID) (s
 	return sessionsvc.RollbackOutcome{}, nil
 }
 
-func (f *fakeSessionService) Cleanup(context.Context, domain.ProjectID) ([]domain.SessionID, error) {
-	return nil, nil
+func (f *fakeSessionService) Cleanup(context.Context, domain.ProjectID) (sessionsvc.CleanupOutcome, error) {
+	return sessionsvc.CleanupOutcome{}, nil
 }
 
 func (f *fakeSessionService) Rename(context.Context, domain.SessionID, string) error {

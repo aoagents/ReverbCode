@@ -1026,9 +1026,24 @@ components:
           type: array
         ok:
           type: boolean
+        skipped:
+          items:
+            $ref: '#/components/schemas/CleanupSkippedSession'
+          type: array
       required:
       - ok
       - cleaned
+      - skipped
+      type: object
+    CleanupSkippedSession:
+      properties:
+        reason:
+          type: string
+        sessionId:
+          type: string
+      required:
+      - sessionId
+      - reason
       type: object
     DegradedProject:
       properties:

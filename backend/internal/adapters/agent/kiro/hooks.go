@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/hookutil"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -98,6 +99,9 @@ func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfi
 
 	if err := writeKiroHooks(hooksPath, topLevel, rawHooks); err != nil {
 		return fmt.Errorf("kiro.GetAgentHooks: %w", err)
+	}
+	if err := hookutil.EnsureWorkspaceGitignore(filepath.Dir(hooksPath), kiroAgentFileName); err != nil {
+		return fmt.Errorf("kiro.GetAgentHooks: gitignore: %w", err)
 	}
 	return nil
 }

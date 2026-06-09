@@ -10,6 +10,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
 )
 
 type fakeStore struct {
@@ -144,11 +145,30 @@ func (f *fakeCommander) Kill(_ context.Context, id domain.SessionID) (bool, erro
 	return true, nil
 }
 func (f *fakeCommander) Send(context.Context, domain.SessionID, string) error { return nil }
-func (f *fakeCommander) Cleanup(context.Context, domain.ProjectID) ([]domain.SessionID, error) {
-	return nil, nil
+func (f *fakeCommander) Cleanup(context.Context, domain.ProjectID) (sessionmanager.CleanupResult, error) {
+	return sessionmanager.CleanupResult{
+		Cleaned: []domain.SessionID{"mer-1"},
+		Skipped: []sessionmanager.CleanupSkip{{SessionID: "mer-2", Reason: "workspace has uncommitted changes"}},
+	}, nil
 }
 func (f *fakeCommander) RollbackSpawn(context.Context, domain.SessionID) (bool, bool, error) {
 	return false, false, nil
+}
+
+// TestCleanupMapsManagerResult: the service forwards both reclaimed and
+// skipped sessions, with non-nil slices so the wire shape stays stable.
+func TestCleanupMapsManagerResult(t *testing.T) {
+	svc := &Service{manager: &fakeCommander{}}
+	out, err := svc.Cleanup(context.Background(), "mer")
+	if err != nil {
+		t.Fatalf("Cleanup: %v", err)
+	}
+	if len(out.Cleaned) != 1 || out.Cleaned[0] != "mer-1" {
+		t.Fatalf("cleaned = %#v", out.Cleaned)
+	}
+	if len(out.Skipped) != 1 || out.Skipped[0].SessionID != "mer-2" || out.Skipped[0].Reason != "workspace has uncommitted changes" {
+		t.Fatalf("skipped = %#v", out.Skipped)
+	}
 }
 
 func TestSpawnOrchestratorCleanKillsActiveOrchestratorsBeforeSpawn(t *testing.T) {

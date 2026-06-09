@@ -31,6 +31,13 @@ func worktreePruneArgs(repo string) []string {
 	return []string{"-C", repo, "worktree", "prune"}
 }
 
+// statusPorcelainArgs probes the worktree at path for uncommitted changes or
+// untracked files — the condition `git worktree remove` (without --force)
+// refuses on — so Destroy can classify a refusal as ports.ErrWorkspaceDirty.
+func statusPorcelainArgs(path string) []string {
+	return []string{"-C", path, "status", "--porcelain"}
+}
+
 func worktreeListPorcelainArgs(repo string) []string {
 	return []string{"-C", repo, "worktree", "list", "--porcelain"}
 }

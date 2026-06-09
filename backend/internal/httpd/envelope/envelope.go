@@ -1,6 +1,7 @@
 package envelope
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -9,6 +10,30 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 )
+
+// errCapture is a request-scoped slot WriteError records the raw service error
+// into. The wire envelope deliberately hides internals behind "Internal server
+// error", which previously meant a 500's cause was lost entirely — the access
+// log reads the captured error back so the daemon log keeps the diagnosis.
+type errCapture struct{ err error }
+
+type errCaptureKey struct{}
+
+// WithErrorCapture returns a copy of the request whose context carries an
+// error-capture slot, plus a getter for the error recorded by WriteError while
+// handling it. The request logger installs it and reads it after the handler.
+func WithErrorCapture(r *http.Request) (*http.Request, func() error) {
+	capture := &errCapture{}
+	req := r.WithContext(context.WithValue(r.Context(), errCaptureKey{}, capture))
+	return req, func() error { return capture.err }
+}
+
+// captureError records err for the request if a capture slot is present.
+func captureError(r *http.Request, err error) {
+	if c, ok := r.Context().Value(errCaptureKey{}).(*errCapture); ok {
+		c.err = err
+	}
+}
 
 // APIError is the locked wire shape for every non-2xx response.
 type APIError struct {
@@ -42,6 +67,7 @@ func WriteAPIError(w http.ResponseWriter, r *http.Request, status int, kind, cod
 // back to a 500 for any other error so internal details never leak. This is the
 // only place an apierr.Kind is translated into an HTTP status and wire word.
 func WriteError(w http.ResponseWriter, r *http.Request, err error) {
+	captureError(r, err)
 	var e *apierr.Error
 	if errors.As(err, &e) {
 		status, kind := httpStatus(e.Kind)

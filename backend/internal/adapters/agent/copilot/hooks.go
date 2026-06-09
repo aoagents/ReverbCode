@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/hookutil"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -120,6 +121,9 @@ func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfi
 
 	if err := writeCopilotHooks(hooksPath, file); err != nil {
 		return fmt.Errorf("copilot.GetAgentHooks: %w", err)
+	}
+	if err := hookutil.EnsureWorkspaceGitignore(filepath.Dir(hooksPath), copilotHooksFileName); err != nil {
+		return fmt.Errorf("copilot.GetAgentHooks: gitignore: %w", err)
 	}
 	return nil
 }

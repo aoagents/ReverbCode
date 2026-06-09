@@ -113,6 +113,9 @@ func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfi
 	if err := writeDroidHooks(hooksPath, topLevel, rawHooks); err != nil {
 		return fmt.Errorf("droid.GetAgentHooks: %w", err)
 	}
+	if err := hookutil.EnsureWorkspaceGitignore(filepath.Dir(hooksPath), droidHooksFileName); err != nil {
+		return fmt.Errorf("droid.GetAgentHooks: gitignore: %w", err)
+	}
 	return nil
 }
 

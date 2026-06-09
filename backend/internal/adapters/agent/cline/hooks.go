@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/hookutil"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -75,6 +76,10 @@ func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfi
 		return fmt.Errorf("cline.GetAgentHooks: create hook dir: %w", err)
 	}
 
+	// Only scripts AO actually wrote go into the workspace .gitignore: a
+	// user-authored script at one of these paths must keep counting as dirt so
+	// workspace teardown preserves it.
+	written := make([]string, 0, len(clineManagedHooks))
 	for _, spec := range clineManagedHooks {
 		scriptPath := filepath.Join(hooksDir, spec.Event)
 		// Never clobber a user-authored hook with the same event name.
@@ -85,6 +90,10 @@ func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfi
 		if err := atomicWriteFile(scriptPath, []byte(script), 0o700); err != nil {
 			return fmt.Errorf("cline.GetAgentHooks: write %s: %w", spec.Event, err)
 		}
+		written = append(written, spec.Event)
+	}
+	if err := hookutil.EnsureWorkspaceGitignore(hooksDir, written...); err != nil {
+		return fmt.Errorf("cline.GetAgentHooks: gitignore: %w", err)
 	}
 	return nil
 }

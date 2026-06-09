@@ -157,6 +157,12 @@ func (w *Workspace) Destroy(ctx context.Context, info ports.WorkspaceInfo) error
 	}
 	if _, ok := findWorktree(records, path); ok {
 		if removeErr != nil {
+			// Distinguish the dirty-worktree refusal (uncommitted agent work)
+			// from other registration leftovers (e.g. a locked worktree) so the
+			// Session Manager can preserve the workspace without erroring.
+			if dirty, statusErr := w.isDirty(ctx, path); statusErr == nil && dirty {
+				return fmt.Errorf("gitworktree: refusing to remove %q: %w (worktree remove: %w)", path, ports.ErrWorkspaceDirty, removeErr)
+			}
 			return fmt.Errorf("gitworktree: refusing to remove %q: path is still registered after git worktree prune (worktree remove: %w)", path, removeErr)
 		}
 		return fmt.Errorf("gitworktree: refusing to remove %q: path is still registered after git worktree prune", path)
@@ -300,6 +306,17 @@ func (w *Workspace) refExists(ctx context.Context, repo, ref string) (bool, erro
 		return false, nil
 	}
 	return false, fmt.Errorf("gitworktree: verify ref %q: %w", ref, err)
+}
+
+// isDirty reports whether the worktree at path has uncommitted changes or
+// untracked files — the same check `git worktree remove` performs before
+// refusing without --force.
+func (w *Workspace) isDirty(ctx context.Context, path string) (bool, error) {
+	out, err := w.run(ctx, w.binary, statusPorcelainArgs(path)...)
+	if err != nil {
+		return false, fmt.Errorf("gitworktree: status %q: %w", path, err)
+	}
+	return strings.TrimSpace(string(out)) != "", nil
 }
 
 func (w *Workspace) listRecords(ctx context.Context, repo string) ([]worktreeRecord, error) {

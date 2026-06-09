@@ -92,6 +92,68 @@ func TestWorkspaceIntegrationDestroyRefusesLockedWorktree(t *testing.T) {
 	}
 }
 
+// TestWorkspaceIntegrationDestroyDirtyWorktree proves the two halves of the
+// dirty-teardown contract against real git:
+//
+//  1. A worktree whose only untracked files are covered by a self-ignoring
+//     .gitignore (the shape agent adapters install for their hook files) is
+//     clean in git's eyes, so Destroy succeeds without --force.
+//  2. Real uncommitted work makes Destroy refuse with ports.ErrWorkspaceDirty
+//     and preserves the worktree.
+func TestWorkspaceIntegrationDestroyDirtyWorktree(t *testing.T) {
+	git := requireGit(t)
+	tmp := t.TempDir()
+	repo := setupOriginClone(t, git, tmp)
+	root := filepath.Join(tmp, "managed")
+	ws, err := New(Options{Binary: git, ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	ctx := context.Background()
+	info, err := ws.Create(ctx, ports.WorkspaceConfig{ProjectID: "proj", SessionID: "sess", Branch: "feature/dirty"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	// AO-managed hook files behind a self-ignoring .gitignore: invisible to git
+	// status, so they must not block teardown.
+	hookDir := filepath.Join(info.Path, ".codex")
+	if err := os.MkdirAll(hookDir, 0o750); err != nil {
+		t.Fatalf("mkdir hook dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(hookDir, "hooks.json"), []byte("{}\n"), 0o600); err != nil {
+		t.Fatalf("write hooks.json: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(hookDir, ".gitignore"), []byte(".gitignore\nhooks.json\n"), 0o600); err != nil {
+		t.Fatalf("write .gitignore: %v", err)
+	}
+
+	// Real agent work must keep blocking teardown, typed as ErrWorkspaceDirty.
+	wip := filepath.Join(info.Path, "wip.txt")
+	if err := os.WriteFile(wip, []byte("uncommitted\n"), 0o600); err != nil {
+		t.Fatalf("write wip: %v", err)
+	}
+	err = ws.Destroy(ctx, info)
+	if !errors.Is(err, ports.ErrWorkspaceDirty) {
+		t.Fatalf("destroy dirty error = %v, want ports.ErrWorkspaceDirty", err)
+	}
+	if _, statErr := os.Stat(wip); statErr != nil {
+		t.Fatalf("dirty worktree was not preserved: %v", statErr)
+	}
+
+	// With the real work gone, only the ignored AO files remain — git considers
+	// the worktree clean and Destroy succeeds without --force.
+	if err := os.Remove(wip); err != nil {
+		t.Fatalf("remove wip: %v", err)
+	}
+	if err := ws.Destroy(ctx, info); err != nil {
+		t.Fatalf("destroy with ignored-only files: %v", err)
+	}
+	if _, err := os.Stat(info.Path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("path after destroy stat err = %v, want not exist", err)
+	}
+}
+
 func requireGit(t *testing.T) string {
 	t.Helper()
 	git, err := exec.LookPath("git")
