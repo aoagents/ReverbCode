@@ -1,16 +1,26 @@
 {
-  "name": "agent-orchestrator-frontend",
+  "name": "@aoagents/frontend",
   "version": "0.0.0",
   "private": true,
-  "description": "Electron + TypeScript frontend for the agent-orchestrator rewrite",
-  "main": "dist/main.js",
+  "type": "module",
+  "packageManager": "pnpm@9.15.4",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
-    "build": "tsc",
-    "typecheck": "tsc --noEmit",
-    "start": "npm run build && electron ."
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "typecheck": "pnpm -r typecheck",
+    "build": "pnpm -r build"
   },
   "devDependencies": {
-    "electron": "^33.0.0",
-    "typescript": "^5.6.0"
+    "@eslint/js": "10.0.1",
+    "@types/node": "25.9.2",
+    "eslint": "10.4.1",
+    "globals": "17.6.0",
+    "prettier": "3.8.3",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.61.0"
   }
 }

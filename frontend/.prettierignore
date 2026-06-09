@@ -1,0 +1,6 @@
+**/dist/
+**/node_modules/
+**/.tanstack/
+pnpm-lock.yaml
+# Legacy reference UI — tooled separately (see eslint.config.js).
+src/

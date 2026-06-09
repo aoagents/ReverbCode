@@ -15,6 +15,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/daemonmeta"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
 	"github.com/aoagents/agent-orchestrator/backend/internal/terminal"
+	"github.com/aoagents/agent-orchestrator/backend/internal/webui"
 )
 
 // ControlDeps carries the daemon-control hooks the router exposes, such as the
@@ -56,8 +57,23 @@ func NewRouterWithControl(cfg config.Config, log *slog.Logger, termMgr *terminal
 	mountTerminalMux(r, termMgr, log)
 	mountControl(r, control)
 	NewAPI(cfg, deps).Register(r)
+	// The embedded web UI mounts last: it is the catch-all fallback, so every
+	// API, health, control, and terminal route claims its path first. Only
+	// paths that match none of them fall through to the static SPA shell. API
+	// 404s stay JSON because they resolve inside the /api/v1 subrouter and
+	// never reach this root-level wildcard.
+	mountWebUI(r)
 
 	return r
+}
+
+// mountWebUI registers the embedded single-page app as the root catch-all.
+// It only handles GET/HEAD; other verbs on unmatched paths keep falling through
+// to the JSON method/route handlers rather than being answered with the shell.
+func mountWebUI(r chi.Router) {
+	h := webui.Handler()
+	r.Get("/*", h.ServeHTTP)
+	r.Head("/*", h.ServeHTTP)
 }
 
 // mountHealth registers the liveness and readiness probes the Electron
