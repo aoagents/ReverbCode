@@ -1,0 +1,28 @@
+frontend/src/renderer/components/TerminalPane.tsx
+  s_f07fce4e39e8b4::t_704f5e00dfce7e 77,94-103,105,108,118
+  s_f07fce4e39e8b4::t_3f22c1f38a5875 4,10-11,33-48,69-76,78,83,88-93,104,106-107,109-112,120-121
+frontend/src/renderer/lib/terminal-mux.ts
+  s_f07fce4e39e8b4::t_25f06dea2e3eb3 126
+  s_f07fce4e39e8b4::t_d81d1b225d9328 1-67,72-125,127-179
+  s_f07fce4e39e8b4::t_7045537629bf58 68-71
+frontend/src/renderer/lib/api-client.ts
+  s_f07fce4e39e8b4::t_0125eee302607e 4
+frontend/src/renderer/lib/terminal-mux.test.ts
+  s_f07fce4e39e8b4::t_1c393e22c7bc9d 1-107
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "8ae0c7e10ff2535124e0ae5030cb318741d011ef",
+  "prompts": {},
+  "sessions": {
+    "s_f07fce4e39e8b4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "39e48354-c55c-48fb-b3bc-74212ba86dfd",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    }
+  }
+}
