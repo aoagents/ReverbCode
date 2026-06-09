@@ -1,0 +1,65 @@
+frontend/src/renderer/lib/api-client.test.ts
+  s_741b29b355e81f::t_04832a16f09b2d 2
+  s_741b29b355e81f::t_23b8ef567e9999 104-143
+  s_db53c89ad35445::t_1892cfbd1acab7 72-74
+  s_db53c89ad35445::t_5c9c10a1ea1bc7 29-71,75-82
+backend/internal/config/config.go
+  s_db53c89ad35445::t_7995ac5950110c 137-155
+  s_db53c89ad35445::t_1e2117af264e6c 13
+  s_db53c89ad35445::t_3c729df67f00cb 37-44
+  s_db53c89ad35445::t_8e589212b73f38 45-48
+  s_db53c89ad35445::t_6e719cdc89aced 70-72
+  s_db53c89ad35445::t_356bade16dfb9a 93,103
+frontend/src/main.ts
+  s_db53c89ad35445::t_544dcee91aa0a4 245
+  s_db53c89ad35445::t_d02d7a7cc65a95 19-59
+  s_db53c89ad35445::t_b9548919ed9921 1,5
+frontend/src/renderer/lib/api-client.ts
+  s_db53c89ad35445::t_b4e10a30070b9b 46-61,68
+  s_741b29b355e81f::t_f297430076cf2a 13-14,19-30,32-35
+  s_db53c89ad35445::t_183a084ff87cae 62-67
+backend/internal/httpd/cors.go
+  s_db53c89ad35445::t_708c147b63347b 47
+  s_db53c89ad35445::t_bd4f9520ae69ca 75-94
+  s_db53c89ad35445::t_da0ba4f8d108c5 8-9
+  s_db53c89ad35445::t_ae4701525c3b80 44-45,48-49
+  s_db53c89ad35445::t_81fa831ce140bb 1-3,5,7,10-19,27-43,46,50-74
+  s_db53c89ad35445::t_232a8a6b13ff1f 4,6
+  s_db53c89ad35445::t_91de7bfaef68cf 20-26
+backend/internal/httpd/router.go
+  s_db53c89ad35445::t_1f237cc3ed09d5 37,49
+backend/internal/httpd/cors_test.go
+  s_db53c89ad35445::t_60752cc477868b 96,102
+  s_db53c89ad35445::t_17a44248b6b64a 61-64,67,71,74
+  s_db53c89ad35445::t_c3c62cdd29e636 15
+  s_db53c89ad35445::t_c46465b574079b 1-14,16-34,39,41,59-60,65-66,68-70,72-73,75-95,97-101,103-173
+  s_db53c89ad35445::t_4e14b90e4e47fa 35-38,40,42-58
+frontend/e2e/workbench.spec.ts
+  s_db53c89ad35445::t_50f652d544873b 3-6
+backend/internal/config/config_test.go
+  s_db53c89ad35445::t_943114ce8bc89a 88-89,102-136
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "6d29a2ea77f8dd94a368f5dc6fc592fc19fab8bd",
+  "prompts": {},
+  "sessions": {
+    "s_741b29b355e81f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5d26f8ef-e63d-420d-a502-448a0b291231",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    },
+    "s_db53c89ad35445": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e3e3a58f-21d3-4850-971d-825d42204df1",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    }
+  }
+}
