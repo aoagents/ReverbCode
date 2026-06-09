@@ -4,8 +4,8 @@ Operational guidance for coding agents working in this repository. Keep changes 
 
 ## Repo layout
 
-- `backend/` — Go rewrite of Agent Orchestrator: Cobra `ao` CLI, loopback HTTP daemon, services, SQLite storage, lifecycle/reaper, runtime/workspace/agent/tracker adapters, terminal mux, and tests.
-- `frontend/` — placeholder Electron + TypeScript shell. Treat it as a thin supervisor/UI surface; do not move daemon logic into it.
+- `backend/` — Go rewrite of Agent Orchestrator: Cobra `ao` CLI, loopback HTTP daemon, services, SQLite storage, lifecycle/reaper, runtime/workspace/agent/tracker adapters, terminal mux, and tests. The built web UI is embedded at `backend/internal/webui` (`//go:embed dist`) and served as the daemon's catch-all SPA fallback.
+- `frontend/` — pnpm workspace (`packageManager: pnpm@9.15.4`) for the React web UI rewrite. Packages: `apps/web` (the main SPA — Vite + React 19 + TanStack Router/Query + Tailwind v4), `apps/landing` (Vite landing scaffold), `packages/core` (pure TS, no React — types + API client), `packages/runtime` (React contexts/hooks, depends on `core`). `frontend/src/` is the legacy reference UI retained only for the `api-drift` (`src/api/schema.ts`) and `react-doctor` (`src/landing`) CI jobs — do not extend it; new UI lands under `apps/`/`packages/`. Treat the frontend as a thin UI surface; do not move daemon logic into it.
 - `docs/` — current architecture/status notes. Start here before changing lifecycle, CLI, agents, storage, or daemon behavior.
 - `test/` — external smoke/e2e assets, including the CLI fresh-install container check.
 - `.github/workflows/` — CI definitions. Mirror these commands locally when possible.
@@ -15,11 +15,27 @@ Operational guidance for coding agents working in this repository. Keep changes 
 From the repo root unless noted:
 
 ```bash
-npm run lint                         # backend go test ./... + golangci-lint v2.12.2
-npm run frontend:typecheck           # frontend TypeScript check
+npm run lint                         # lint:backend (go test + golangci-lint v2.12.2) then lint:web (frontend eslint)
+npm run lint:backend                 # backend go test ./... + golangci-lint v2.12.2 only
+npm run frontend:typecheck           # frontend workspace TypeScript check (delegates to pnpm)
 npm run sqlc                         # regenerate backend/internal/storage/sqlite/gen from queries/schema
 npm run api                          # regenerate OpenAPI spec + frontend TS types (see API contract changes below)
 npx @redwoodjs/agent-ci run --all    # local workflow validation; requires Docker socket
+```
+
+### Package managers: npm at the root, pnpm inside `frontend/`
+
+The repo root stays on **npm** (`package-lock.json`, the `api`/`sqlc` toolchain).
+The `frontend/` workspace is **pnpm only** (`pnpm@9.15.4`) — never run `npm` or
+`yarn` inside `frontend/`. Root scripts are thin delegators into the workspace:
+
+```bash
+npm run web:dev          # pnpm -C frontend --filter @aoagents/ao-web dev (boots the SPA)
+npm run web:build        # build the ao-web SPA
+npm run web:test         # ao-web unit tests (vitest)
+npm run build:frontend   # build ao-web + copy dist into backend/internal/webui/dist for go:embed
+npm run lint:web         # eslint across the frontend workspace
+npm run format           # prettier --write across the frontend workspace
 ```
 
 Backend-specific checks:
@@ -33,12 +49,14 @@ go vet ./...
 go run ./cmd/ao start
 ```
 
-Frontend-specific checks:
+Frontend-specific checks (pnpm only — run from `frontend/`):
 
 ```bash
 cd frontend
-npm run typecheck
-npm run build
+pnpm install          # restore the workspace (writes pnpm-lock.yaml)
+pnpm typecheck        # tsc --noEmit across every workspace package
+pnpm build            # build all apps
+pnpm --filter @aoagents/ao-web dev   # boot the SPA dev server
 ```
 
 ## Where to look first
