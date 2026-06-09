@@ -660,3 +660,49 @@ func TestConcurrentSessionCreateAssignsUniqueNums(t *testing.T) {
 		t.Fatalf("created %d sessions, want %d", len(all), n)
 	}
 }
+
+func TestSessionWorktreesRoundTrip(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "ws")
+	rec, err := s.CreateSession(ctx, sampleRecord("ws"))
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	rows := []domain.SessionWorktreeRecord{
+		{SessionID: rec.ID, RepoName: domain.RootWorkspaceRepoName, Branch: "ao/ws-1", BaseSHA: "root-base", WorktreePath: "/managed/ws/ws-1", State: "active"},
+		{SessionID: rec.ID, RepoName: "api", Branch: "ao/ws-1", BaseSHA: "api-base", WorktreePath: "/managed/ws/ws-1/api", PreservedRef: "refs/ao/preserved/ws-1", State: "removed"},
+	}
+	for _, row := range rows {
+		if err := s.UpsertSessionWorktree(ctx, row); err != nil {
+			t.Fatalf("upsert worktree %s: %v", row.RepoName, err)
+		}
+	}
+	got, err := s.ListSessionWorktrees(ctx, rec.ID)
+	if err != nil {
+		t.Fatalf("list worktrees: %v", err)
+	}
+	if !reflect.DeepEqual(got, rows) {
+		t.Fatalf("worktrees = %#v, want %#v", got, rows)
+	}
+	one, ok, err := s.GetSessionWorktree(ctx, rec.ID, "api")
+	if err != nil || !ok || one.PreservedRef != "refs/ao/preserved/ws-1" {
+		t.Fatalf("get api = %#v ok=%v err=%v", one, ok, err)
+	}
+	rows[1].State = "active"
+	rows[1].PreservedRef = ""
+	if err := s.UpsertSessionWorktree(ctx, rows[1]); err != nil {
+		t.Fatalf("update api worktree: %v", err)
+	}
+	one, ok, err = s.GetSessionWorktree(ctx, rec.ID, "api")
+	if err != nil || !ok || one.State != "active" || one.PreservedRef != "" {
+		t.Fatalf("updated api = %#v ok=%v err=%v", one, ok, err)
+	}
+	if err := s.DeleteSessionWorktrees(ctx, rec.ID); err != nil {
+		t.Fatalf("delete worktrees: %v", err)
+	}
+	got, err = s.ListSessionWorktrees(ctx, rec.ID)
+	if err != nil || len(got) != 0 {
+		t.Fatalf("after delete = %#v err=%v", got, err)
+	}
+}

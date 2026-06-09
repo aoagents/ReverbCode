@@ -59,6 +59,7 @@ func (m *Service) List(ctx context.Context) ([]Summary, error) {
 			ID:            domain.ProjectID(row.ID),
 			Name:          displayName(row),
 			Path:          row.Path,
+			Kind:          row.Kind.WithDefault(),
 			SessionPrefix: resolveSessionPrefix(row),
 		})
 	}
@@ -78,6 +79,13 @@ func (m *Service) Get(ctx context.Context, id domain.ProjectID) (GetResult, erro
 		return GetResult{}, apierr.NotFound("PROJECT_NOT_FOUND", "Unknown project")
 	}
 	p := projectFromRow(row)
+	if row.Kind.WithDefault() == domain.ProjectKindWorkspace {
+		repos, err := m.store.ListWorkspaceRepos(ctx, row.ID)
+		if err != nil {
+			return GetResult{}, apierr.Internal("PROJECT_LOAD_FAILED", "Failed to load workspace repositories")
+		}
+		p.WorkspaceRepos = workspaceReposFromRecords(repos)
+	}
 	return GetResult{Status: "ok", Project: &p}, nil
 }
 
@@ -87,10 +95,6 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 	if err != nil {
 		return Project{}, err
 	}
-	if !isGitRepo(path) {
-		return Project{}, apierr.Invalid("NOT_A_GIT_REPO", "Repository path must point to a git repository", nil)
-	}
-
 	id := defaultProjectID(path)
 	if in.ProjectID != nil {
 		id = domain.ProjectID(strings.TrimSpace(*in.ProjectID))
@@ -132,13 +136,32 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 		config = *in.Config
 	}
 
+	registeredAt := time.Now()
 	row := domain.ProjectRecord{
 		ID:            string(id),
 		Path:          path,
 		RepoOriginURL: resolveGitOriginURL(path),
 		DisplayName:   name,
-		RegisteredAt:  time.Now(),
+		RegisteredAt:  registeredAt,
+		Kind:          domain.ProjectKindSingleRepo,
 		Config:        config,
+	}
+	if in.AsWorkspace {
+		repos, err := prepareWorkspaceProject(ctx, path, domain.ProjectID(row.ID), registeredAt)
+		if err != nil {
+			return Project{}, err
+		}
+		row.Kind = domain.ProjectKindWorkspace
+		row.RepoOriginURL = resolveGitOriginURL(path)
+		if err := m.store.UpsertWorkspaceProject(ctx, row, repos); err != nil {
+			return Project{}, apierr.Internal("PROJECT_ADD_FAILED", "Failed to register workspace project")
+		}
+		p := projectFromRow(row)
+		p.WorkspaceRepos = workspaceReposFromRecords(repos)
+		return p, nil
+	}
+	if !isGitRepo(path) {
+		return Project{}, apierr.Invalid("NOT_A_GIT_REPO", "Repository path must point to a git repository", nil)
 	}
 	if err := m.store.UpsertProject(ctx, row); err != nil {
 		return Project{}, apierr.Internal("PROJECT_ADD_FAILED", "Failed to register project")
@@ -209,6 +232,7 @@ func projectFromRow(row domain.ProjectRecord) Project {
 	p := Project{
 		ID:            domain.ProjectID(row.ID),
 		Name:          displayName(row),
+		Kind:          row.Kind.WithDefault(),
 		Path:          row.Path,
 		Repo:          row.RepoOriginURL,
 		DefaultBranch: row.Config.WithDefaults().DefaultBranch,

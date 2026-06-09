@@ -329,6 +329,7 @@ export interface components {
             requestId?: string;
         };
         AddProjectInput: {
+            asWorkspace?: boolean;
             config?: components["schemas"]["ProjectConfig"];
             name?: null | string;
             path: string;
@@ -355,6 +356,7 @@ export interface components {
         };
         DegradedProject: {
             id: string;
+            kind: string;
             name: string;
             path: string;
             resolveError: string;
@@ -394,9 +396,11 @@ export interface components {
             config?: components["schemas"]["ProjectConfig"];
             defaultBranch: string;
             id: string;
+            kind: string;
             name: string;
             path: string;
             repo: string;
+            workspaceRepos?: components["schemas"]["WorkspaceRepo"][];
         };
         ProjectConfig: {
             agentConfig?: components["schemas"]["AgentConfig"];
@@ -421,6 +425,7 @@ export interface components {
         };
         ProjectSummary: {
             id: string;
+            kind: string;
             name: string;
             path: string;
             resolveError?: string;
@@ -527,6 +532,11 @@ export interface components {
             kind?: "worker" | "orchestrator";
             projectId: string;
             prompt?: string;
+        };
+        WorkspaceRepo: {
+            name: string;
+            relativePath: string;
+            repo: string;
         };
     };
     responses: never;

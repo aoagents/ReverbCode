@@ -108,6 +108,7 @@ type Project struct {
 	RegisteredAt  time.Time
 	ArchivedAt    sql.NullTime
 	Config        sql.NullString
+	Kind          string
 }
 
 type Session struct {
@@ -128,4 +129,22 @@ type Session struct {
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
 	DisplayName     string
+}
+
+type SessionWorktree struct {
+	SessionID    domain.SessionID
+	RepoName     string
+	Branch       string
+	BaseSha      string
+	WorktreePath string
+	PreservedRef string
+	State        string
+}
+
+type WorkspaceRepo struct {
+	ProjectID     domain.ProjectID
+	Name          string
+	RelativePath  string
+	RepoOriginURL string
+	RegisteredAt  time.Time
 }

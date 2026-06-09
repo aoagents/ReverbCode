@@ -60,6 +60,14 @@ sql:
             go_type:
               import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
               type: "ProjectID"
+          - column: "workspace_repos.project_id"
+            go_type:
+              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
+              type: "ProjectID"
+          - column: "session_worktrees.session_id"
+            go_type:
+              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
+              type: "SessionID"
           - column: "sessions.id"
             go_type:
               import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"

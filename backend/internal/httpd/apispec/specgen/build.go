@@ -163,6 +163,7 @@ var schemaNames = map[string]string{
 	"ProjectAddInput":       "AddProjectInput",
 	"ProjectRemoveResult":   "RemoveProjectResult",
 	"ProjectSetConfigInput": "SetProjectConfigInput",
+	"ProjectWorkspaceRepo":  "WorkspaceRepo",
 }
 
 // markRequestBodyRequired sets requestBody.required: true on the operation's

@@ -20,7 +20,62 @@ func (s *Store) UpsertProject(ctx context.Context, r domain.ProjectRecord) error
 	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	return s.qw.UpsertProject(ctx, gen.UpsertProjectParams{
+	return upsertProject(ctx, s.qw, r, config)
+}
+
+// UpsertWorkspaceProject inserts or replaces a workspace project and its child
+// repository registry in one transaction. The child set is authoritative.
+func (s *Store) UpsertWorkspaceProject(ctx context.Context, r domain.ProjectRecord, repos []domain.WorkspaceRepoRecord) error {
+	config, err := marshalProjectConfig(r.Config)
+	if err != nil {
+		return err
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	return s.inTx(ctx, "upsert workspace project", func(q *gen.Queries) error {
+		if err := upsertProject(ctx, q, r, config); err != nil {
+			return err
+		}
+		if err := q.DeleteWorkspaceReposByProject(ctx, domain.ProjectID(r.ID)); err != nil {
+			return err
+		}
+		for _, repo := range repos {
+			if err := q.UpsertWorkspaceRepo(ctx, gen.UpsertWorkspaceRepoParams{
+				ProjectID:     domain.ProjectID(r.ID),
+				Name:          repo.Name,
+				RelativePath:  repo.RelativePath,
+				RepoOriginURL: repo.RepoOriginURL,
+				RegisteredAt:  repo.RegisteredAt,
+			}); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// ListWorkspaceRepos returns the registered direct child repos for a workspace project.
+func (s *Store) ListWorkspaceRepos(ctx context.Context, projectID string) ([]domain.WorkspaceRepoRecord, error) {
+	rows, err := s.qr.ListWorkspaceRepos(ctx, domain.ProjectID(projectID))
+	if err != nil {
+		return nil, fmt.Errorf("list workspace repos for %s: %w", projectID, err)
+	}
+	out := make([]domain.WorkspaceRepoRecord, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, domain.WorkspaceRepoRecord{
+			ProjectID:     row.ProjectID,
+			Name:          row.Name,
+			RelativePath:  row.RelativePath,
+			RepoOriginURL: row.RepoOriginURL,
+			RegisteredAt:  row.RegisteredAt,
+		})
+	}
+	return out, nil
+}
+
+func upsertProject(ctx context.Context, q *gen.Queries, r domain.ProjectRecord, config sql.NullString) error {
+	kind := r.Kind.WithDefault()
+	return q.UpsertProject(ctx, gen.UpsertProjectParams{
 		ID:            domain.ProjectID(r.ID),
 		Path:          r.Path,
 		RepoOriginURL: r.RepoOriginURL,
@@ -28,6 +83,7 @@ func (s *Store) UpsertProject(ctx context.Context, r domain.ProjectRecord) error
 		RegisteredAt:  r.RegisteredAt,
 		ArchivedAt:    nullTime(r.ArchivedAt),
 		Config:        config,
+		Kind:          string(kind),
 	})
 }
 
@@ -89,6 +145,7 @@ func projectRowFromGen(p gen.Project) domain.ProjectRecord {
 		RepoOriginURL: p.RepoOriginURL,
 		DisplayName:   p.DisplayName,
 		RegisteredAt:  p.RegisteredAt,
+		Kind:          domain.ProjectKind(p.Kind).WithDefault(),
 		Config:        unmarshalProjectConfig(p.Config),
 	}
 	if p.ArchivedAt.Valid {

@@ -3,7 +3,10 @@ package project_test
 import (
 	"context"
 	"errors"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -287,4 +290,93 @@ func TestManager_GetUpdateRemoveErrors(t *testing.T) {
 	if _, err := m.Add(ctx, project.AddInput{Path: repo, ProjectID: ptr("p")}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
+}
+
+func configureCommitter(t *testing.T) {
+	t.Helper()
+	t.Setenv("GIT_AUTHOR_NAME", "AO Test")
+	t.Setenv("GIT_AUTHOR_EMAIL", "ao@example.com")
+	t.Setenv("GIT_COMMITTER_NAME", "AO Test")
+	t.Setenv("GIT_COMMITTER_EMAIL", "ao@example.com")
+}
+
+func gitRepoWithCommit(t *testing.T, dir string) string {
+	t.Helper()
+	if out, err := exec.Command("git", "init", "-b", "main", dir).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v (%s)", err, out)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatalf("write readme: %v", err)
+	}
+	if out, err := exec.Command("git", "-C", dir, "add", "README.md").CombinedOutput(); err != nil {
+		t.Fatalf("git add: %v (%s)", err, out)
+	}
+	if out, err := exec.Command("git", "-C", dir, "commit", "-m", "initial").CombinedOutput(); err != nil {
+		t.Fatalf("git commit: %v (%s)", err, out)
+	}
+	return dir
+}
+
+func TestManager_AddWorkspaceInitializesPlainParent(t *testing.T) {
+	configureCommitter(t)
+	ctx := context.Background()
+	m := newManager(t)
+	parent := t.TempDir()
+	if err := os.WriteFile(filepath.Join(parent, "package.json"), []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitRepoWithCommit(t, filepath.Join(parent, "cli"))
+	gitRepoWithCommit(t, filepath.Join(parent, "api"))
+
+	proj, err := m.Add(ctx, project.AddInput{Path: parent, ProjectID: ptr("ws"), AsWorkspace: true})
+	if err != nil {
+		t.Fatalf("Add workspace: %v", err)
+	}
+	if proj.Kind != domain.ProjectKindWorkspace {
+		t.Fatalf("Kind = %q, want workspace", proj.Kind)
+	}
+	if len(proj.WorkspaceRepos) != 2 || proj.WorkspaceRepos[0].Name != "api" || proj.WorkspaceRepos[1].Name != "cli" {
+		t.Fatalf("WorkspaceRepos = %#v", proj.WorkspaceRepos)
+	}
+	ignored, err := os.ReadFile(filepath.Join(parent, ".gitignore"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"/api/", "/cli/", "node_modules/", "dist/"} {
+		if !strings.Contains(string(ignored), want) {
+			t.Fatalf(".gitignore missing %q:\n%s", want, ignored)
+		}
+	}
+	out, err := exec.Command("git", "-C", parent, "ls-files", "-s").CombinedOutput()
+	if err != nil {
+		t.Fatalf("git ls-files: %v (%s)", err, out)
+	}
+	if strings.Contains(string(out), "160000") {
+		t.Fatalf("parent tracked a child repo as a gitlink:\n%s", out)
+	}
+	if !strings.Contains(string(out), "package.json") || !strings.Contains(string(out), ".gitignore") {
+		t.Fatalf("parent root files not committed:\n%s", out)
+	}
+
+	got, err := m.Get(ctx, "ws")
+	if err != nil {
+		t.Fatalf("Get workspace: %v", err)
+	}
+	if got.Project == nil || got.Project.Kind != domain.ProjectKindWorkspace || len(got.Project.WorkspaceRepos) != 2 {
+		t.Fatalf("Get = %#v", got)
+	}
+}
+
+func TestManager_AddWorkspaceRejectsUncommittedChild(t *testing.T) {
+	configureCommitter(t)
+	ctx := context.Background()
+	m := newManager(t)
+	parent := t.TempDir()
+	child := filepath.Join(parent, "cli")
+	if out, err := exec.Command("git", "init", "-b", "main", child).CombinedOutput(); err != nil {
+		t.Fatalf("git init child: %v (%s)", err, out)
+	}
+
+	_, err := m.Add(ctx, project.AddInput{Path: parent, ProjectID: ptr("ws"), AsWorkspace: true})
+	wantCode(t, err, "WORKSPACE_CHILD_UNBORN")
 }
