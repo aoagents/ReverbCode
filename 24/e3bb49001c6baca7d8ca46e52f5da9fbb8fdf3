@@ -1,0 +1,19 @@
+frontend/src/main.ts
+  s_f07fce4e39e8b4::t_dc7a2516098f96 98-101,106,108,112,116-117,124-125,130-131
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "24e3bb49001c6baca7d8ca46e52f5da9fbb8fdf3",
+  "prompts": {},
+  "sessions": {
+    "s_f07fce4e39e8b4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "39e48354-c55c-48fb-b3bc-74212ba86dfd",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    }
+  }
+}
