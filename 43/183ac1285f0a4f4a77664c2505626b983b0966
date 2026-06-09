@@ -1,0 +1,23 @@
+frontend/src/renderer/lib/api-client.ts
+  s_f07fce4e39e8b4::t_447eeafa0590da 7
+frontend/src/renderer/hooks/useWorkspaceQuery.ts
+  s_f07fce4e39e8b4::t_447eeafa0590da 48-52
+frontend/src/main.ts
+  s_f07fce4e39e8b4::t_447eeafa0590da 1,48,52-65
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "43183ac1285f0a4f4a77664c2505626b983b0966",
+  "prompts": {},
+  "sessions": {
+    "s_f07fce4e39e8b4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "39e48354-c55c-48fb-b3bc-74212ba86dfd",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    }
+  }
+}
