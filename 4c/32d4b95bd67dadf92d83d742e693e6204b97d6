@@ -1,0 +1,164 @@
+backend/internal/service/project/types.go
+  s_02ba3500e8cf5f::t_81b5179d6e112e 9
+frontend/src/main.ts
+  s_29d8ffb0a1465d::t_0f72caf559fe39 148-160,167
+  s_29d8ffb0a1465d::t_606e5e33a7abfb 215
+  s_02ba3500e8cf5f::t_872d9a1ab3080e 55
+  s_29d8ffb0a1465d::t_8f265d4ed625a8 101-105,110
+  s_02ba3500e8cf5f::t_81b5179d6e112e 115,119
+frontend/src/api/schema.ts
+  s_511acdfe204906::t_9b792144a31e33 480
+  s_02ba3500e8cf5f::t_b3948ea65648cf 425
+frontend/src/renderer/lib/api-client.ts
+  s_511acdfe204906::t_e2e8eca6c35729 8,11-30,34
+  s_511acdfe204906::t_f680e3d4097bcc 4-7,9,33
+backend/internal/service/project/service.go
+  s_02ba3500e8cf5f::t_a31164d4e2113b 61
+backend/internal/domain/session.go
+  s_511acdfe204906::t_e2e8eca6c35729 56-57
+frontend/src/renderer/App.test.tsx
+  s_374b9078d8e727::t_b67e9457a5b939 8,10,12-22,30,33
+  s_e5be4b1769aeeb::t_ce69ca95611876 11,29,56,75-81,83-84
+  s_374b9078d8e727::t_72cbc392fc9d8e 27-28,31-32,34-36,90-97,99,150
+  s_374b9078d8e727::t_e844313c0576a7 65,70,74,85-87,98,100-102,104,140,152-154,160,178,184
+  s_e5be4b1769aeeb::t_0e9c7ec3d12c06 82
+  s_374b9078d8e727::t_e30f76b5b3c5a6 151
+  s_374b9078d8e727::t_b382d1e12fae05 57-58
+  s_374b9078d8e727::t_7f9fa82376bf3a 88-89
+  s_374b9078d8e727::t_3253e9c7b6c4d9 103
+  s_374b9078d8e727::t_4c3c3ee5f8049b 171
+  s_374b9078d8e727::t_85550e6c187119 176
+  s_374b9078d8e727::t_fcdec557b433df 135
+  s_02ba3500e8cf5f::t_385372c41058a9 109-111,128
+frontend/src/renderer/lib/api-client.test.ts
+  s_511acdfe204906::t_7555b1701219bf 1-12,14-27,49
+  s_511acdfe204906::t_ee019861b0dd83 13
+  s_29d8ffb0a1465d::t_447e6f7f3d6caf 28-48
+frontend/vite.config.ts
+  s_0e3faa10bd08c8::t_9e3d382f8c7bcd 12-17,23-24
+  s_0e3faa10bd08c8::t_d233c5427cb02e 18-22
+backend/internal/httpd/controllers/projects_test.go
+  s_02ba3500e8cf5f::t_89077a00b9644f 189-197,419
+frontend/src/renderer/lib/event-transport.ts
+  s_511acdfe204906::t_33990049877174 39-40,48-55,57,66-72
+  s_511acdfe204906::t_e2e8eca6c35729 3
+frontend/src/renderer/types/workspace.test.ts
+  s_29d8ffb0a1465d::t_4d0b939a9da8bf 1-10,12-109
+backend/internal/service/session/service.go
+  s_511acdfe204906::t_e2e8eca6c35729 304,306
+frontend/src/renderer/lib/event-transport.test.ts
+  s_29d8ffb0a1465d::t_23ccec2e3bd3c2 1-119
+frontend/src/renderer/hooks/useWorkspaceQuery.ts
+  s_374b9078d8e727::t_78b130530eb08e 38-40
+  s_511acdfe204906::t_e2e8eca6c35729 23
+  s_02ba3500e8cf5f::t_81b5179d6e112e 18
+  s_02ba3500e8cf5f::t_541117d9bd7872 3,29
+frontend/src/renderer/global.d.ts
+  s_02ba3500e8cf5f::t_665c09623be451 5
+frontend/src/renderer/App.tsx
+  s_02ba3500e8cf5f::t_a7fedf12b68f77 13-20,72-73,172
+  s_374b9078d8e727::t_b4866f8f193493 60
+  s_e5be4b1769aeeb::t_ce69ca95611876 31-34,49-50,199-205
+  s_511acdfe204906::t_e2e8eca6c35729 166
+backend/internal/httpd/controllers/sessions_test.go
+  s_511acdfe204906::t_7555b1701219bf 31,177,362-369
+frontend/src/renderer/components/SideRail.tsx
+  s_374b9078d8e727::t_357b28806e0c0e 88-111
+frontend/src/renderer/components/Topbar.tsx
+  s_bd8b86543cee28::t_739719d093b55f 42-43,50
+  s_bd8b86543cee28::t_5aae7c557107a7 158
+  s_bd8b86543cee28::t_25ad93ff20f5c4 18-20
+  s_bd8b86543cee28::t_16f0e4b103311e 182
+  s_bd8b86543cee28::t_d025878454ee09 44-45
+  s_bd8b86543cee28::t_d8d437aaf3cbc5 139
+  s_bd8b86543cee28::t_355f4065815907 78
+frontend/src/renderer/lib/terminal-mux.ts
+  s_0e3faa10bd08c8::t_22ce0e745af5d9 67-71
+frontend/src/renderer/components/TerminalPane.tsx
+  s_511acdfe204906::t_e2e8eca6c35729 10,90-91,99,105-108,117-118
+  s_29d8ffb0a1465d::t_0a9244572734e7 143
+frontend/src/renderer/lib/terminal-mux.test.ts
+  s_0e3faa10bd08c8::t_eab5e7a20e7731 44-47
+  s_02ba3500e8cf5f::t_81b5179d6e112e 1,80-83
+backend/internal/httpd/apispec/openapi.yaml
+  s_02ba3500e8cf5f::t_9d367a29f2fcaa 1206-1207,1215
+  s_511acdfe204906::t_9b792144a31e33 1338-1339
+frontend/src/renderer/hooks/useDaemonStatus.ts
+  s_511acdfe204906::t_06f8e468a327ae 16
+  s_511acdfe204906::t_b0ca304c4add5d 26-28
+  s_511acdfe204906::t_e2e8eca6c35729 6,17-19,21-23,31
+  s_511acdfe204906::t_84f7762195572c 7,20
+frontend/src/renderer/types/workspace.ts
+  s_511acdfe204906::t_e2e8eca6c35729 70
+  s_02ba3500e8cf5f::t_b1bb52166fa279 101,121-126
+  s_02ba3500e8cf5f::t_7b138d338936fe 1-33,100,103,105-109,111-112,116-120
+frontend/src/renderer/components/Sidebar.tsx
+  s_02ba3500e8cf5f::t_e08f8c6f2f35df 57
+  s_02ba3500e8cf5f::t_b7ad13600743ed 3,19-20
+  s_374b9078d8e727::t_ff6621c47ca0a0 72-87,90-92,95-96,98-126
+  s_e5be4b1769aeeb::t_ce69ca95611876 11,24,66-71
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "4c32d4b95bd67dadf92d83d742e693e6204b97d6",
+  "prompts": {},
+  "sessions": {
+    "s_02ba3500e8cf5f": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019ead44-505b-7921-a13c-081580fd1e8c",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    },
+    "s_0e3faa10bd08c8": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019eadaa-9528-7b20-bcc3-dcb8cbbb85cb",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    },
+    "s_29d8ffb0a1465d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f0b43e82-92a7-49ac-8a4d-85fc54b7ccc7",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    },
+    "s_374b9078d8e727": {
+      "agent_id": {
+        "tool": "droid",
+        "id": "67fc2ebf-053b-43e4-9ee8-eace8207a96e",
+        "model": "custom:GLM-5.1-0"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    },
+    "s_511acdfe204906": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019eadb7-92ae-7ce0-8fc4-9ff3d75cbccc",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    },
+    "s_bd8b86543cee28": {
+      "agent_id": {
+        "tool": "droid",
+        "id": "3e93bccc-fedb-4f76-8dd9-5d43e03f0874",
+        "model": "custom:GLM-5.1-0"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    },
+    "s_e5be4b1769aeeb": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019eadbc-5ef5-7263-a59d-4fdc1e8f68e8",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    }
+  }
+}
