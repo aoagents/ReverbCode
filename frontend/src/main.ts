@@ -95,33 +95,40 @@ function startDaemon(): DaemonStatus {
 
   setDaemonStatus({ state: "starting" });
 
-  daemonProcess = spawn(command, [], {
+  // Capture the spawned handle locally so the async lifecycle listeners act only
+  // on THIS process. Without this, a stale exit from an already-stopped daemon
+  // could null out a newer daemonProcess started in the meantime, orphaning it.
+  const child = spawn(command, [], {
     cwd: app.getAppPath(),
     env: process.env,
     shell: true,
   });
+  daemonProcess = child;
 
-  daemonProcess.stdout.on("data", (chunk: Buffer) => {
+  child.stdout.on("data", (chunk: Buffer) => {
     mainWindow?.webContents.send("daemon:stdout", chunk.toString("utf8"));
   });
 
-  daemonProcess.stderr.on("data", (chunk: Buffer) => {
+  child.stderr.on("data", (chunk: Buffer) => {
     mainWindow?.webContents.send("daemon:stderr", chunk.toString("utf8"));
   });
 
-  daemonProcess.once("spawn", () => {
+  child.once("spawn", () => {
+    if (daemonProcess !== child) return;
     setDaemonStatus({
       state: "ready",
       port: process.env.AO_PORT ? Number(process.env.AO_PORT) : undefined,
     });
   });
 
-  daemonProcess.once("error", (error) => {
+  child.once("error", (error) => {
+    if (daemonProcess !== child) return;
     daemonProcess = null;
     setDaemonStatus({ state: "error", message: error.message });
   });
 
-  daemonProcess.once("exit", (code, signal) => {
+  child.once("exit", (code, signal) => {
+    if (daemonProcess !== child) return;
     daemonProcess = null;
     setDaemonStatus({
       state: "stopped",
