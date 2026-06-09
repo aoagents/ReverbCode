@@ -2,6 +2,9 @@
 node_modules/
 .pnpm/
 dist/
+frontend/dist-electron/
+frontend/release/
+frontend/test-results/
 out/
 build/
 *.log
@@ -46,3 +49,4 @@ session-events.jsonl.*
 # OS
 .DS_Store
 Thumbs.db
+.gstack/
