@@ -39,6 +39,7 @@ type Manager interface {
 // Service implements project registration and lookup use-cases for controllers.
 type Service struct {
 	store Store
+	git   GitChecker
 	// addMu serialises the whole body of Add. Workspace registration performs
 	// filesystem mutations (git init, .gitignore writes, commits) that are not
 	// covered by the store's own writeMu, so path/id conflict checks plus the
@@ -48,9 +49,16 @@ type Service struct {
 
 var _ Manager = (*Service)(nil)
 
-// New returns a project service backed by the given durable store.
+// New returns a project service backed by the given durable store, using the
+// production GitChecker that shells out to git.
 func New(store Store) *Service {
-	return &Service{store: store}
+	return NewWithGitChecker(store, execGitChecker{})
+}
+
+// NewWithGitChecker returns a project service with an injectable GitChecker,
+// letting tests substitute a fake for the repo check.
+func NewWithGitChecker(store Store, git GitChecker) *Service {
+	return &Service{store: store, git: git}
 }
 
 // List returns every active registered project.
@@ -173,7 +181,7 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 		p.WorkspaceRepos = workspaceReposFromRecords(repos)
 		return p, nil
 	}
-	if !isGitRepo(path) {
+	if !m.git.IsRepo(path) {
 		return Project{}, apierr.Invalid("NOT_A_GIT_REPO", "Repository path must point to a git repository", nil)
 	}
 	row.RepoOriginURL = resolveGitOriginURL(path)
@@ -286,29 +294,6 @@ func normalizePath(raw string) (string, error) {
 		return "", apierr.Invalid("INVALID_PATH", "Repository path is invalid", nil)
 	}
 	return filepath.Clean(abs), nil
-}
-
-func isGitRepo(path string) bool {
-	cmd := exec.Command("git", "-C", path, "rev-parse", "--show-toplevel")
-	out, err := cmd.Output()
-	if err != nil {
-		return false
-	}
-	top := filepath.Clean(strings.TrimSpace(string(out)))
-	path = filepath.Clean(path)
-	top, err = filepath.EvalSymlinks(top)
-	if err != nil {
-		return false
-	}
-	path, err = filepath.EvalSymlinks(path)
-	if err != nil {
-		return false
-	}
-
-	if strings.EqualFold(top, path) {
-		return true
-	}
-	return top == path
 }
 
 func defaultProjectID(path string) domain.ProjectID {
