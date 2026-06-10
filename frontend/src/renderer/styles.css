@@ -57,7 +57,9 @@
   --color-border: var(--border);
   --color-border-strong: var(--border-1);
 
-  /* Status — map 1:1 to the daemon's derived statuses */
+  /* Status — map 1:1 to the daemon's derived statuses (agent-orchestrator
+   * palette): working=orange, needs-you=amber, mergeable=green, fail=red. */
+  --color-working: var(--orange);
   --color-success: var(--green);
   --color-success-strong: var(--green-strong);
   --color-warning: var(--amber);
@@ -78,31 +80,34 @@
 }
 
 :root {
-  /* Dark — primary. sRGB approximations of emdash's display-p3 neutral ramp. */
-  --bg: #111111;
-  --bg-1: #191919;
-  --bg-2: #222222;
-  --bg-3: #2a2a2a;
-  --fg: #eeeeee;
-  --fg-muted: #b4b4b4;
-  --fg-passive: #6e6e6e;
-  --border: #3a3a3a;
-  --border-1: #484848;
-  --accent: #5b9dff;
-  --accent-fg: #0b0d12;
-  --accent-weak: rgb(91 157 255 / 0.16);
-  --accent-dim: #2a4a7a;
-  --green: #6cb16c;
-  --green-strong: #7bd88f;
-  --amber: #ffcc4a;
-  --red: #d4544f;
-  --term-bg: #161616;
+  /* Dark — cloned from the agent-orchestrator web app (packages/web). #0a0b0d
+   * base, #15171b is the only bordered surface, hairline white-alpha lines,
+   * blue accent, orange=working / amber=needs-you / green=mergeable / red=fail. */
+  --bg: #0a0b0d;
+  --bg-1: #15171b;
+  --bg-2: #1b1d22;
+  --bg-3: #212329;
+  --fg: #f4f5f7;
+  --fg-muted: #9ba1aa;
+  --fg-passive: #646a73;
+  --border: rgb(255 255 255 / 0.06);
+  --border-1: rgb(255 255 255 / 0.1);
+  --accent: #4d8dff;
+  --accent-fg: #ffffff;
+  --accent-weak: rgb(77 141 255 / 0.16);
+  --accent-dim: #24406e;
+  --orange: #f59f4c;
+  --green: #74b98a;
+  --green-strong: #74b98a;
+  --amber: #e8c14a;
+  --red: #ef6b6b;
+  --term-bg: #15171b;
   --term-fg: #d7d7d2;
-  --term-green: #7bd88f;
+  --term-green: #74b98a;
   --term-dim: #7c7c7c;
-  --term-blue: #5b9dff;
-  --term-amber: #ffcc4a;
-  --shadow: 0 1px 0 rgb(0 0 0 / 0.4), 0 12px 32px rgb(0 0 0 / 0.45);
+  --term-blue: #4d8dff;
+  --term-amber: #e8c14a;
+  --shadow: 0 1px 0 rgb(0 0 0 / 0.4), 0 12px 32px rgb(0 0 0 / 0.5);
 }
 
 :root[data-theme="light"] {
