@@ -50,3 +50,6 @@ session-events.jsonl.*
 .DS_Store
 Thumbs.db
 .gstack/
+
+# Personal local overrides (not for the team)
+.envrc.local

@@ -152,11 +152,11 @@ If you want to expose AO over a domain name with TLS, or place it behind an auth
 
 ### Environment variables for proxied setups
 
-| Variable | Purpose |
-|----------|---------|
-| `HOST=0.0.0.0` | Bind the Next.js dashboard to all interfaces |
-| `TERMINAL_PORT` | Override the tmux WS server port (server-side) |
-| `DIRECT_TERMINAL_PORT` | Override the direct PTY WS server port (server-side) |
+| Variable                       | Purpose                                                                                               |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------- |
+| `HOST=0.0.0.0`                 | Bind the Next.js dashboard to all interfaces                                                          |
+| `TERMINAL_PORT`                | Override the tmux WS server port (server-side)                                                        |
+| `DIRECT_TERMINAL_PORT`         | Override the direct PTY WS server port (server-side)                                                  |
 | `NEXT_PUBLIC_TERMINAL_WS_PATH` | Override the WebSocket base path the browser client dials — required when the proxy rewrites the path |
 
 ### nginx
@@ -269,11 +269,11 @@ For more on project identity, local config, and runtime data, see [Configuration
 
 ## Port reference
 
-| Port | Default | Config key | Env var override | Purpose |
-|------|---------|------------|-----------------|---------|
-| `3000` | dashboard HTTP | `port` | `PORT` | Next.js app + API routes |
-| `14800` | tmux terminal WS | `terminalPort` | `TERMINAL_PORT` | WebSocket for tmux-attached terminal |
-| `14801` | direct terminal WS | `directTerminalPort` | `DIRECT_TERMINAL_PORT` | WebSocket for direct PTY terminal |
+| Port    | Default            | Config key           | Env var override       | Purpose                              |
+| ------- | ------------------ | -------------------- | ---------------------- | ------------------------------------ |
+| `3000`  | dashboard HTTP     | `port`               | `PORT`                 | Next.js app + API routes             |
+| `14800` | tmux terminal WS   | `terminalPort`       | `TERMINAL_PORT`        | WebSocket for tmux-attached terminal |
+| `14801` | direct terminal WS | `directTerminalPort` | `DIRECT_TERMINAL_PORT` | WebSocket for direct PTY terminal    |
 
 If you run multiple AO instances on the same machine, change all three ports to avoid `EADDRINUSE` errors:
 

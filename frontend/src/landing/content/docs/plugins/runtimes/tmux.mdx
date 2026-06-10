@@ -4,13 +4,24 @@ description: Default runtime on macOS and Linux. Each agent gets its own tmux wi
 ---
 
 <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", margin: "0.5rem 0 1.25rem" }}>
-  <Logo name="tmux" size={28} />
-  <span style={{ fontSize: "0.8125rem", color: "var(--color-fd-muted-foreground)" }}>Slot: <code>runtime</code> · Name: <code>tmux</code></span>
+	<Logo name="tmux" size={28} />
+	<span style={{ fontSize: "0.8125rem", color: "var(--color-fd-muted-foreground)" }}>
+		Slot: <code>runtime</code> · Name: <code>tmux</code>
+	</span>
 </div>
 
 AO uses [tmux](https://github.com/tmux/tmux) as the default runtime on macOS and Linux. Each session lives in its own tmux window under a single AO-managed session, and you can attach to any of them interactively.
 
-<PlatformSupport macos="full" linux="full" windows="none" note={<>Windows has no tmux. Use <a href="/docs/plugins/runtimes/process">process</a> instead.</>} />
+<PlatformSupport
+	macos="full"
+	linux="full"
+	windows="none"
+	note={
+		<>
+			Windows has no tmux. Use <a href="/docs/plugins/runtimes/process">process</a> instead.
+		</>
+	}
+/>
 
 ## Install
 

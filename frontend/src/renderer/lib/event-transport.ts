@@ -5,7 +5,7 @@ import { setEventsConnectionState } from "./events-connection";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 
 export type EventTransport = {
-  connect: () => () => void;
+	connect: () => () => void;
 };
 
 const INVALIDATE_DEBOUNCE_MS = 150;
@@ -22,14 +22,14 @@ const EVENTSOURCE_CLOSED = 2;
 // subscribed explicitly. Every one of these can change the project/session list
 // the sidebar renders, so they all trigger a (debounced) workspace refetch.
 const CDC_EVENT_TYPES = [
-  "session_created",
-  "session_updated",
-  "pr_created",
-  "pr_updated",
-  "pr_check_recorded",
-  "pr_session_changed",
-  "pr_review_thread_added",
-  "pr_review_thread_resolved",
+	"session_created",
+	"session_updated",
+	"pr_created",
+	"pr_updated",
+	"pr_check_recorded",
+	"pr_session_changed",
+	"pr_review_thread_added",
+	"pr_review_thread_resolved",
 ] as const;
 
 /**
@@ -40,79 +40,79 @@ const CDC_EVENT_TYPES = [
  * debounced because a single user action can emit a burst of CDC events.
  */
 export function createEventTransport(queryClient: QueryClient): EventTransport {
-  return {
-    connect() {
-      let debounce: ReturnType<typeof setTimeout> | undefined;
-      let retryTimer: ReturnType<typeof setTimeout> | undefined;
-      let source: EventSource | undefined;
-      let sourceBaseUrl: string | undefined;
-      const refreshWorkspaces = () => {
-        if (debounce) clearTimeout(debounce);
-        debounce = setTimeout(() => {
-          void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
-        }, INVALIDATE_DEBOUNCE_MS);
-      };
+	return {
+		connect() {
+			let debounce: ReturnType<typeof setTimeout> | undefined;
+			let retryTimer: ReturnType<typeof setTimeout> | undefined;
+			let source: EventSource | undefined;
+			let sourceBaseUrl: string | undefined;
+			const refreshWorkspaces = () => {
+				if (debounce) clearTimeout(debounce);
+				debounce = setTimeout(() => {
+					void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+				}, INVALIDATE_DEBOUNCE_MS);
+			};
 
-      const scheduleRetry = () => {
-        if (retryTimer) return;
-        retryTimer = setTimeout(() => {
-          retryTimer = undefined;
-          connectSource();
-        }, SSE_RETRY_MS);
-      };
+			const scheduleRetry = () => {
+				if (retryTimer) return;
+				retryTimer = setTimeout(() => {
+					retryTimer = undefined;
+					connectSource();
+				}, SSE_RETRY_MS);
+			};
 
-      const connectSource = () => {
-        // EventSource is unavailable in jsdom (tests) and some preview surfaces; guard it.
-        if (typeof EventSource === "undefined") return;
-        const baseUrl = getApiBaseUrl();
-        // Keep a still-usable source on the same base URL; replace one the
-        // browser abandoned (CLOSED) or one bound to a stale port.
-        if (source && sourceBaseUrl === baseUrl && source.readyState !== EVENTSOURCE_CLOSED) return;
-        source?.close();
-        source = undefined;
-        sourceBaseUrl = baseUrl;
-        try {
-          source = new EventSource(`${baseUrl.replace(/\/+$/, "")}/api/v1/events`);
-          source.onopen = () => {
-            setEventsConnectionState("connected");
-            // Events emitted during the gap were lost; refetch once on (re)open.
-            refreshWorkspaces();
-          };
-          source.onerror = () => {
-            // While readyState is CONNECTING the browser retries on its own;
-            // either way the stream is not delivering, so surface it instead
-            // of looping silently against a dead daemon.
-            setEventsConnectionState("disconnected");
-            if (source?.readyState === EVENTSOURCE_CLOSED) scheduleRetry();
-          };
-          source.onmessage = refreshWorkspaces; // unnamed events, if any
-          for (const type of CDC_EVENT_TYPES) {
-            source.addEventListener(type, refreshWorkspaces);
-          }
-          // EventSource auto-reconnects and resumes via Last-Event-ID while
-          // CONNECTING; scheduleRetry only covers the terminal CLOSED state.
-        } catch {
-          source = undefined;
-        }
-      };
+			const connectSource = () => {
+				// EventSource is unavailable in jsdom (tests) and some preview surfaces; guard it.
+				if (typeof EventSource === "undefined") return;
+				const baseUrl = getApiBaseUrl();
+				// Keep a still-usable source on the same base URL; replace one the
+				// browser abandoned (CLOSED) or one bound to a stale port.
+				if (source && sourceBaseUrl === baseUrl && source.readyState !== EVENTSOURCE_CLOSED) return;
+				source?.close();
+				source = undefined;
+				sourceBaseUrl = baseUrl;
+				try {
+					source = new EventSource(`${baseUrl.replace(/\/+$/, "")}/api/v1/events`);
+					source.onopen = () => {
+						setEventsConnectionState("connected");
+						// Events emitted during the gap were lost; refetch once on (re)open.
+						refreshWorkspaces();
+					};
+					source.onerror = () => {
+						// While readyState is CONNECTING the browser retries on its own;
+						// either way the stream is not delivering, so surface it instead
+						// of looping silently against a dead daemon.
+						setEventsConnectionState("disconnected");
+						if (source?.readyState === EVENTSOURCE_CLOSED) scheduleRetry();
+					};
+					source.onmessage = refreshWorkspaces; // unnamed events, if any
+					for (const type of CDC_EVENT_TYPES) {
+						source.addEventListener(type, refreshWorkspaces);
+					}
+					// EventSource auto-reconnects and resumes via Last-Event-ID while
+					// CONNECTING; scheduleRetry only covers the terminal CLOSED state.
+				} catch {
+					source = undefined;
+				}
+			};
 
-      const removeDaemonListener = aoBridge.daemon.onStatus(() => {
-        connectSource();
-        refreshWorkspaces();
-      });
-      // Rebind when the daemon comes back on a different port, independent of
-      // status-event ordering.
-      const removeBaseUrlListener = subscribeApiBaseUrl(connectSource);
-      connectSource();
+			const removeDaemonListener = aoBridge.daemon.onStatus(() => {
+				connectSource();
+				refreshWorkspaces();
+			});
+			// Rebind when the daemon comes back on a different port, independent of
+			// status-event ordering.
+			const removeBaseUrlListener = subscribeApiBaseUrl(connectSource);
+			connectSource();
 
-      return () => {
-        if (debounce) clearTimeout(debounce);
-        if (retryTimer) clearTimeout(retryTimer);
-        removeDaemonListener();
-        removeBaseUrlListener();
-        source?.close();
-        setEventsConnectionState("idle");
-      };
-    },
-  };
+			return () => {
+				if (debounce) clearTimeout(debounce);
+				if (retryTimer) clearTimeout(retryTimer);
+				removeDaemonListener();
+				removeBaseUrlListener();
+				source?.close();
+				setEventsConnectionState("idle");
+			};
+		},
+	};
 }

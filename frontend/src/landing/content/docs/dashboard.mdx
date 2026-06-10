@@ -21,13 +21,13 @@ http://localhost:3000
 
 The main dashboard groups sessions by what you need to do next.
 
-| Column | What it means | What you usually do |
-|--------|---------------|---------------------|
-| **Working** | Agent is actively coding or running commands | Let it run |
-| **Pending** | Session exists but has not started useful work yet | Check if it stays here too long |
-| **Review** | PR is open and waiting for review | Review the PR or wait for CI |
-| **Respond** | Agent needs input or hit a blocker | Open the session and reply |
-| **Merge** | PR is approved and checks are green | Merge or let your merge workflow continue |
+| Column      | What it means                                      | What you usually do                       |
+| ----------- | -------------------------------------------------- | ----------------------------------------- |
+| **Working** | Agent is actively coding or running commands       | Let it run                                |
+| **Pending** | Session exists but has not started useful work yet | Check if it stays here too long           |
+| **Review**  | PR is open and waiting for review                  | Review the PR or wait for CI              |
+| **Respond** | Agent needs input or hit a blocker                 | Open the session and reply                |
+| **Merge**   | PR is approved and checks are green                | Merge or let your merge workflow continue |
 
 Completed and terminated sessions appear in the **Done / Terminated** area. Restore a session from there when you need to inspect or continue it.
 
@@ -58,12 +58,12 @@ Open `/prs` to see every PR created by AO-managed sessions.
 
 The PR page lets you filter by:
 
-| Tab | Shows |
-|-----|-------|
-| **All** | Open, merged, and closed PRs |
-| **Open** | PRs still in progress |
-| **Merged** | Completed PRs |
-| **Closed** | Closed but unmerged PRs |
+| Tab        | Shows                        |
+| ---------- | ---------------------------- |
+| **All**    | Open, merged, and closed PRs |
+| **Open**   | PRs still in progress        |
+| **Merged** | Completed PRs                |
+| **Closed** | Closed but unmerged PRs      |
 
 Each PR shows its size, CI state, review decision, and unresolved threads. Use this page when you want a repository-level review queue instead of a session-by-session view.
 
@@ -83,10 +83,10 @@ Use the terminal to inspect what the agent is doing, recover from stuck prompts,
 
 AO has two terminal backends:
 
-| Backend | Used when | Default port |
-|---------|-----------|--------------|
-| tmux WebSocket mux | `runtime: tmux` | `14800` |
-| direct PTY WebSocket | `runtime: process` | `14801` |
+| Backend              | Used when          | Default port |
+| -------------------- | ------------------ | ------------ |
+| tmux WebSocket mux   | `runtime: tmux`    | `14800`      |
+| direct PTY WebSocket | `runtime: process` | `14801`      |
 
 The terminal reconnects automatically when the WebSocket drops. If terminal output works but input feels awkward on mobile, send messages from the session controls instead.
 
@@ -119,15 +119,15 @@ The favicon and document title also change when sessions need attention, so you 
 
 ## Routes
 
-| Route | Use for |
-|-------|---------|
-| `/` | Project overview or current project board |
-| `/projects/{projectId}` | One project's board |
-| `/projects/{projectId}/settings` | Project behavior settings |
-| `/prs` | PR review queue |
-| `/sessions/{id}` | Session detail and terminal |
-| `/projects/{projectId}/sessions/{id}` | Project-scoped session detail |
-| `/orchestrators?project={projectId}` | Pick or start an orchestrator session |
+| Route                                 | Use for                                   |
+| ------------------------------------- | ----------------------------------------- |
+| `/`                                   | Project overview or current project board |
+| `/projects/{projectId}`               | One project's board                       |
+| `/projects/{projectId}/settings`      | Project behavior settings                 |
+| `/prs`                                | PR review queue                           |
+| `/sessions/{id}`                      | Session detail and terminal               |
+| `/projects/{projectId}/sessions/{id}` | Project-scoped session detail             |
+| `/orchestrators?project={projectId}`  | Pick or start an orchestrator session     |
 
 Internal API routes such as `/api/events`, `/api/sessions`, `/api/projects`, and `/api/spawn` are used by the dashboard. They are not a stable public API yet.
 
@@ -135,11 +135,11 @@ Internal API routes such as `/api/events`, `/api/sessions`, `/api/projects`, and
 
 The full dashboard experience uses three ports:
 
-| Service | Default | Config |
-|---------|---------|--------|
-| Dashboard HTTP | `3000` | `port` or `PORT` |
-| tmux terminal WebSocket | auto from `14800` | `terminalPort` or `TERMINAL_PORT` |
-| direct PTY WebSocket | auto from `14801` | `directTerminalPort` or `DIRECT_TERMINAL_PORT` |
+| Service                 | Default           | Config                                         |
+| ----------------------- | ----------------- | ---------------------------------------------- |
+| Dashboard HTTP          | `3000`            | `port` or `PORT`                               |
+| tmux terminal WebSocket | auto from `14800` | `terminalPort` or `TERMINAL_PORT`              |
+| direct PTY WebSocket    | auto from `14801` | `directTerminalPort` or `DIRECT_TERMINAL_PORT` |
 
 For remote access, prefer Tailscale and keep AO off the public internet. See [Remote access](/docs/configuration/remote-access).
 
@@ -163,7 +163,15 @@ Open the session detail page and send a short, direct instruction. The agent rec
 ## Next Steps
 
 <Cards>
-  <Card title="Quickstart" href="/docs/quickstart" description="Start AO, spawn a session, and handle the first PR." />
-  <Card title="Configuration" href="/docs/configuration" description="Understand global registry and local project settings." />
-  <Card title="Remote access" href="/docs/configuration/remote-access" description="Open the dashboard from another device safely." />
+	<Card title="Quickstart" href="/docs/quickstart" description="Start AO, spawn a session, and handle the first PR." />
+	<Card
+		title="Configuration"
+		href="/docs/configuration"
+		description="Understand global registry and local project settings."
+	/>
+	<Card
+		title="Remote access"
+		href="/docs/configuration/remote-access"
+		description="Open the dashboard from another device safely."
+	/>
 </Cards>

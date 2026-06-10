@@ -27,96 +27,96 @@ const RENDERER_ORIGIN = `${RENDERER_SCHEME}://${RENDERER_HOST}`;
 // asset URLs (/assets/…) and history-API routing resolve, which file:// breaks.
 // Must run before app ready.
 protocol.registerSchemesAsPrivileged([
-  {
-    scheme: RENDERER_SCHEME,
-    privileges: { standard: true, secure: true, supportFetchAPI: true },
-  },
+	{
+		scheme: RENDERER_SCHEME,
+		privileges: { standard: true, secure: true, supportFetchAPI: true },
+	},
 ]);
 
 // Maps app://renderer/<path> to the built renderer in dist/. Paths without a
 // file extension are client-side routes and fall back to index.html (SPA).
 function registerRendererProtocol(): void {
-  const distRoot = path.join(__dirname, "../dist");
-  protocol.handle(RENDERER_SCHEME, async (request) => {
-    const url = new URL(request.url);
-    if (url.host !== RENDERER_HOST) {
-      return new Response("Not found", { status: 404 });
-    }
-    const resolved = path.resolve(path.join(distRoot, decodeURIComponent(url.pathname)));
-    if (resolved !== distRoot && !resolved.startsWith(distRoot + path.sep)) {
-      return new Response("Forbidden", { status: 403 });
-    }
-    const target = path.extname(resolved) === "" ? path.join(distRoot, "index.html") : resolved;
-    try {
-      return await net.fetch(pathToFileURL(target).toString());
-    } catch {
-      return new Response("Not found", { status: 404 });
-    }
-  });
+	const distRoot = path.join(__dirname, "../dist");
+	protocol.handle(RENDERER_SCHEME, async (request) => {
+		const url = new URL(request.url);
+		if (url.host !== RENDERER_HOST) {
+			return new Response("Not found", { status: 404 });
+		}
+		const resolved = path.resolve(path.join(distRoot, decodeURIComponent(url.pathname)));
+		if (resolved !== distRoot && !resolved.startsWith(distRoot + path.sep)) {
+			return new Response("Forbidden", { status: 403 });
+		}
+		const target = path.extname(resolved) === "" ? path.join(distRoot, "index.html") : resolved;
+		try {
+			return await net.fetch(pathToFileURL(target).toString());
+		} catch {
+			return new Response("Not found", { status: 404 });
+		}
+	});
 }
 
 function rendererUrl(): string {
-  if (process.env.VITE_DEV_SERVER_URL) {
-    return process.env.VITE_DEV_SERVER_URL;
-  }
+	if (process.env.VITE_DEV_SERVER_URL) {
+		return process.env.VITE_DEV_SERVER_URL;
+	}
 
-  return `${RENDERER_ORIGIN}/index.html`;
+	return `${RENDERER_ORIGIN}/index.html`;
 }
 
 function preloadPath(): string {
-  return path.join(__dirname, "preload.js");
+	return path.join(__dirname, "preload.js");
 }
 
 function setDaemonStatus(nextStatus: DaemonStatus): void {
-  daemonStatus = nextStatus;
-  mainWindow?.webContents.send("daemon:status", daemonStatus);
+	daemonStatus = nextStatus;
+	mainWindow?.webContents.send("daemon:status", daemonStatus);
 }
 
 function createWindow(): void {
-  mainWindow = new BrowserWindow({
-    width: 1320,
-    height: 860,
-    minWidth: 960,
-    minHeight: 640,
-    title: "Agent Orchestrator",
-    backgroundColor: "#0f1014",
-    titleBarStyle: "hiddenInset",
-    trafficLightPosition: { x: 14, y: 14 },
-    webPreferences: {
-      preload: preloadPath(),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-    },
-  });
+	mainWindow = new BrowserWindow({
+		width: 1320,
+		height: 860,
+		minWidth: 960,
+		minHeight: 640,
+		title: "Agent Orchestrator",
+		backgroundColor: "#0f1014",
+		titleBarStyle: "hiddenInset",
+		trafficLightPosition: { x: 14, y: 14 },
+		webPreferences: {
+			preload: preloadPath(),
+			contextIsolation: true,
+			nodeIntegration: false,
+			sandbox: true,
+		},
+	});
 
-  // Harden navigation: never let renderer/terminal content open in-app windows or
-  // navigate the privileged window away from the app origin. External links go to
-  // the OS browser. Keep this in place before exposing any daemon output to the renderer.
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:\/\//.test(url)) {
-      void shell.openExternal(url);
-    }
-    return { action: "deny" };
-  });
+	// Harden navigation: never let renderer/terminal content open in-app windows or
+	// navigate the privileged window away from the app origin. External links go to
+	// the OS browser. Keep this in place before exposing any daemon output to the renderer.
+	mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+		if (/^https?:\/\//.test(url)) {
+			void shell.openExternal(url);
+		}
+		return { action: "deny" };
+	});
 
-  mainWindow.webContents.on("will-navigate", (event, url) => {
-    if (url !== mainWindow?.webContents.getURL()) {
-      event.preventDefault();
-    }
-  });
+	mainWindow.webContents.on("will-navigate", (event, url) => {
+		if (url !== mainWindow?.webContents.getURL()) {
+			event.preventDefault();
+		}
+	});
 
-  void mainWindow.loadURL(rendererUrl());
+	void mainWindow.loadURL(rendererUrl());
 
-  if (isDev && process.env.AO_OPEN_DEVTOOLS === "1") {
-    mainWindow.webContents.once("did-frame-finish-load", () => {
-      mainWindow?.webContents.openDevTools({ mode: "detach" });
-    });
-  }
+	if (isDev && process.env.AO_OPEN_DEVTOOLS === "1") {
+		mainWindow.webContents.once("did-frame-finish-load", () => {
+			mainWindow?.webContents.openDevTools({ mode: "detach" });
+		});
+	}
 
-  mainWindow.on("closed", () => {
-    mainWindow = null;
-  });
+	mainWindow.on("closed", () => {
+		mainWindow = null;
+	});
 }
 
 // How long the supervisor waits for the daemon to confirm its bound port (via
@@ -129,127 +129,127 @@ const RUN_FILE_POLL_MS = 300;
 const RUN_FILE_FRESHNESS_SKEW_MS = 2_000;
 
 function runFilePath(): string | null {
-  if (process.env.AO_RUN_FILE) return process.env.AO_RUN_FILE;
-  return defaultRunFilePath(process.platform, process.env, os.homedir());
+	if (process.env.AO_RUN_FILE) return process.env.AO_RUN_FILE;
+	return defaultRunFilePath(process.platform, process.env, os.homedir());
 }
 
 function startDaemon(): DaemonStatus {
-  if (daemonProcess) {
-    return daemonStatus;
-  }
+	if (daemonProcess) {
+		return daemonStatus;
+	}
 
-  const command = process.env.AO_DAEMON_COMMAND;
-  if (!command) {
-    setDaemonStatus({
-      state: "stopped",
-      message: "AO_DAEMON_COMMAND is not configured; renderer uses loopback REST when available.",
-    });
-    return daemonStatus;
-  }
+	const command = process.env.AO_DAEMON_COMMAND;
+	if (!command) {
+		setDaemonStatus({
+			state: "stopped",
+			message: "AO_DAEMON_COMMAND is not configured; renderer uses loopback REST when available.",
+		});
+		return daemonStatus;
+	}
 
-  setDaemonStatus({ state: "starting" });
+	setDaemonStatus({ state: "starting" });
 
-  // Capture the spawned handle locally so the async lifecycle listeners act only
-  // on THIS process. Without this, a stale exit from an already-stopped daemon
-  // could null out a newer daemonProcess started in the meantime, orphaning it.
-  //
-  // `detached` makes the child its own process-group leader. Because shell:true
-  // runs the command through /bin/sh, a plain kill() would only signal the shell
-  // wrapper and orphan the real daemon (which keeps holding the port). Killing
-  // the whole group via killDaemon() reaches the daemon and any PTY children.
-  const child = spawn(command, [], {
-    cwd: app.getAppPath(),
-    env: process.env,
-    shell: true,
-    detached: true,
-  });
-  daemonProcess = child;
+	// Capture the spawned handle locally so the async lifecycle listeners act only
+	// on THIS process. Without this, a stale exit from an already-stopped daemon
+	// could null out a newer daemonProcess started in the meantime, orphaning it.
+	//
+	// `detached` makes the child its own process-group leader. Because shell:true
+	// runs the command through /bin/sh, a plain kill() would only signal the shell
+	// wrapper and orphan the real daemon (which keeps holding the port). Killing
+	// the whole group via killDaemon() reaches the daemon and any PTY children.
+	const child = spawn(command, [], {
+		cwd: app.getAppPath(),
+		env: process.env,
+		shell: true,
+		detached: true,
+	});
+	daemonProcess = child;
 
-  // Discover the port the daemon ACTUALLY bound rather than trusting AO_PORT:
-  // the daemon may fall back to a different port than the one requested. Two
-  // confirmed sources race — the "daemon listening" slog line (stderr, but both
-  // streams are scanned) and the running.json handshake — first one wins.
-  const spawnedAtMs = Date.now();
-  let portConfirmed = false;
-  let runFileTimer: ReturnType<typeof setInterval> | undefined;
-  let fallbackTimer: ReturnType<typeof setTimeout> | undefined;
+	// Discover the port the daemon ACTUALLY bound rather than trusting AO_PORT:
+	// the daemon may fall back to a different port than the one requested. Two
+	// confirmed sources race — the "daemon listening" slog line (stderr, but both
+	// streams are scanned) and the running.json handshake — first one wins.
+	const spawnedAtMs = Date.now();
+	let portConfirmed = false;
+	let runFileTimer: ReturnType<typeof setInterval> | undefined;
+	let fallbackTimer: ReturnType<typeof setTimeout> | undefined;
 
-  const stopDiscovery = () => {
-    if (runFileTimer) clearInterval(runFileTimer);
-    runFileTimer = undefined;
-    if (fallbackTimer) clearTimeout(fallbackTimer);
-    fallbackTimer = undefined;
-  };
+	const stopDiscovery = () => {
+		if (runFileTimer) clearInterval(runFileTimer);
+		runFileTimer = undefined;
+		if (fallbackTimer) clearTimeout(fallbackTimer);
+		fallbackTimer = undefined;
+	};
 
-  const reportBoundPort = (port: number) => {
-    if (portConfirmed || daemonProcess !== child) return;
-    portConfirmed = true;
-    stopDiscovery();
-    setDaemonStatus({ state: "ready", port });
-  };
+	const reportBoundPort = (port: number) => {
+		if (portConfirmed || daemonProcess !== child) return;
+		portConfirmed = true;
+		stopDiscovery();
+		setDaemonStatus({ state: "ready", port });
+	};
 
-  // One scanner per stream: each keeps its own partial-line buffer.
-  const scanStdout = createListenPortScanner(reportBoundPort);
-  const scanStderr = createListenPortScanner(reportBoundPort);
+	// One scanner per stream: each keeps its own partial-line buffer.
+	const scanStdout = createListenPortScanner(reportBoundPort);
+	const scanStderr = createListenPortScanner(reportBoundPort);
 
-  child.stdout.on("data", (chunk: Buffer) => {
-    const text = chunk.toString("utf8");
-    console.log(text.trimEnd());
-    scanStdout(text);
-  });
+	child.stdout.on("data", (chunk: Buffer) => {
+		const text = chunk.toString("utf8");
+		console.log(text.trimEnd());
+		scanStdout(text);
+	});
 
-  child.stderr.on("data", (chunk: Buffer) => {
-    const text = chunk.toString("utf8");
-    console.error(text.trimEnd());
-    scanStderr(text);
-  });
+	child.stderr.on("data", (chunk: Buffer) => {
+		const text = chunk.toString("utf8");
+		console.error(text.trimEnd());
+		scanStderr(text);
+	});
 
-  const handshakePath = runFilePath();
-  if (handshakePath) {
-    runFileTimer = setInterval(() => {
-      readFile(handshakePath, "utf8")
-        .then((contents) => {
-          const info = parseRunFile(contents);
-          // Ignore a stale handshake left by a previous daemon: only trust a
-          // file written at/after this spawn.
-          if (info && info.startedAtMs >= spawnedAtMs - RUN_FILE_FRESHNESS_SKEW_MS) {
-            reportBoundPort(info.port);
-          }
-        })
-        .catch(() => undefined); // absent until the daemon binds; keep polling
-    }, RUN_FILE_POLL_MS);
-  }
+	const handshakePath = runFilePath();
+	if (handshakePath) {
+		runFileTimer = setInterval(() => {
+			readFile(handshakePath, "utf8")
+				.then((contents) => {
+					const info = parseRunFile(contents);
+					// Ignore a stale handshake left by a previous daemon: only trust a
+					// file written at/after this spawn.
+					if (info && info.startedAtMs >= spawnedAtMs - RUN_FILE_FRESHNESS_SKEW_MS) {
+						reportBoundPort(info.port);
+					}
+				})
+				.catch(() => undefined); // absent until the daemon binds; keep polling
+		}, RUN_FILE_POLL_MS);
+	}
 
-  // Last resort: neither source confirmed (e.g. an older daemon build). Report
-  // the configured port so the renderer is not stuck on "starting" forever.
-  fallbackTimer = setTimeout(() => {
-    if (portConfirmed || daemonProcess !== child) return;
-    stopDiscovery();
-    setDaemonStatus({
-      state: "ready",
-      port: process.env.AO_PORT ? Number(process.env.AO_PORT) : undefined,
-      message: "Daemon port not confirmed from logs or running.json; assuming the configured port.",
-    });
-  }, PORT_DISCOVERY_TIMEOUT_MS);
+	// Last resort: neither source confirmed (e.g. an older daemon build). Report
+	// the configured port so the renderer is not stuck on "starting" forever.
+	fallbackTimer = setTimeout(() => {
+		if (portConfirmed || daemonProcess !== child) return;
+		stopDiscovery();
+		setDaemonStatus({
+			state: "ready",
+			port: process.env.AO_PORT ? Number(process.env.AO_PORT) : undefined,
+			message: "Daemon port not confirmed from logs or running.json; assuming the configured port.",
+		});
+	}, PORT_DISCOVERY_TIMEOUT_MS);
 
-  child.once("error", (error) => {
-    stopDiscovery();
-    if (daemonProcess !== child) return;
-    daemonProcess = null;
-    setDaemonStatus({ state: "error", message: error.message });
-  });
+	child.once("error", (error) => {
+		stopDiscovery();
+		if (daemonProcess !== child) return;
+		daemonProcess = null;
+		setDaemonStatus({ state: "error", message: error.message });
+	});
 
-  child.once("exit", (code, signal) => {
-    stopDiscovery();
-    if (daemonProcess !== child) return;
-    daemonProcess = null;
-    setDaemonStatus({
-      state: "stopped",
-      message: signal ? `Daemon exited with ${signal}` : `Daemon exited with code ${code ?? "unknown"}`,
-    });
-  });
+	child.once("exit", (code, signal) => {
+		stopDiscovery();
+		if (daemonProcess !== child) return;
+		daemonProcess = null;
+		setDaemonStatus({
+			state: "stopped",
+			message: signal ? `Daemon exited with ${signal}` : `Daemon exited with code ${code ?? "unknown"}`,
+		});
+	});
 
-  return daemonStatus;
+	return daemonStatus;
 }
 
 // Signal the daemon's whole process group so the kill reaches the real daemon
@@ -257,24 +257,24 @@ function startDaemon(): DaemonStatus {
 // shell. Falls back to a direct kill if the group signal can't be delivered
 // (e.g. the process already exited).
 function killDaemon(child: ChildProcessWithoutNullStreams): void {
-  if (child.pid === undefined) return;
-  try {
-    process.kill(-child.pid, "SIGTERM");
-  } catch {
-    child.kill("SIGTERM");
-  }
+	if (child.pid === undefined) return;
+	try {
+		process.kill(-child.pid, "SIGTERM");
+	} catch {
+		child.kill("SIGTERM");
+	}
 }
 
 function stopDaemon(): DaemonStatus {
-  if (!daemonProcess) {
-    setDaemonStatus({ state: "stopped" });
-    return daemonStatus;
-  }
+	if (!daemonProcess) {
+		setDaemonStatus({ state: "stopped" });
+		return daemonStatus;
+	}
 
-  killDaemon(daemonProcess);
-  daemonProcess = null;
-  setDaemonStatus({ state: "stopped" });
-  return daemonStatus;
+	killDaemon(daemonProcess);
+	daemonProcess = null;
+	setDaemonStatus({ state: "stopped" });
+	return daemonStatus;
 }
 
 ipcMain.handle("daemon:getStatus", () => daemonStatus);
@@ -282,14 +282,14 @@ ipcMain.handle("daemon:start", () => startDaemon());
 ipcMain.handle("daemon:stop", () => stopDaemon());
 ipcMain.handle("app:getVersion", () => app.getVersion());
 ipcMain.handle("app:chooseDirectory", async () => {
-  const options: OpenDialogOptions = {
-    properties: ["openDirectory"],
-    title: "Choose a git repository",
-  };
-  const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
+	const options: OpenDialogOptions = {
+		properties: ["openDirectory"],
+		title: "Choose a git repository",
+	};
+	const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
 
-  if (result.canceled) return null;
-  return result.filePaths[0] ?? null;
+	if (result.canceled) return null;
+	return result.filePaths[0] ?? null;
 });
 
 // Auto-update only runs for packaged builds reading a published feed (see
@@ -297,35 +297,35 @@ ipcMain.handle("app:chooseDirectory", async () => {
 // throws, so it is skipped. A live updater additionally requires a signed +
 // notarized build — see frontend/docs/desktop-release.md.
 function initAutoUpdates(): void {
-  if (!app.isPackaged) return;
+	if (!app.isPackaged) return;
 
-  autoUpdater.on("error", (error) => console.error("auto-update: error", error));
-  autoUpdater.on("update-available", (info) => console.log("auto-update: available", info.version));
-  autoUpdater.on("update-downloaded", (info) => console.log("auto-update: downloaded", info.version));
+	autoUpdater.on("error", (error) => console.error("auto-update: error", error));
+	autoUpdater.on("update-available", (info) => console.log("auto-update: available", info.version));
+	autoUpdater.on("update-downloaded", (info) => console.log("auto-update: downloaded", info.version));
 
-  autoUpdater.checkForUpdatesAndNotify().catch((error) => console.error("auto-update: check failed", error));
+	autoUpdater.checkForUpdatesAndNotify().catch((error) => console.error("auto-update: check failed", error));
 }
 
 app.whenReady().then(() => {
-  registerRendererProtocol();
-  createWindow();
-  initAutoUpdates();
+	registerRendererProtocol();
+	createWindow();
+	initAutoUpdates();
 
-  app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow();
-    }
-  });
+	app.on("activate", () => {
+		if (BrowserWindow.getAllWindows().length === 0) {
+			createWindow();
+		}
+	});
 });
 
 app.on("before-quit", () => {
-  if (daemonProcess) {
-    killDaemon(daemonProcess);
-  }
+	if (daemonProcess) {
+		killDaemon(daemonProcess);
+	}
 });
 
 app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") {
-    app.quit();
-  }
+	if (process.platform !== "darwin") {
+		app.quit();
+	}
 });

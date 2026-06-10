@@ -4,8 +4,10 @@ description: Linear issues. Direct API key or Composio-mediated — AO picks the
 ---
 
 <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", margin: "0.5rem 0 1.25rem" }}>
-  <Logo name="linear" size={28} color />
-  <span style={{ fontSize: "0.8125rem", color: "var(--color-fd-muted-foreground)" }}>Slot: <code>tracker</code> · Name: <code>linear</code></span>
+	<Logo name="linear" size={28} color />
+	<span style={{ fontSize: "0.8125rem", color: "var(--color-fd-muted-foreground)" }}>
+		Slot: <code>tracker</code> · Name: <code>linear</code>
+	</span>
 </div>
 
 <PlatformSupport macos="full" linux="full" windows="full" />
@@ -31,8 +33,8 @@ The Linear tracker supports two transports and auto-picks between them:
      api:
        tracker: linear
        trackerConfig:
-         teamId: TEAM-123          # required for issue creation
-         workspaceSlug: myteam     # optional, used to build issue URLs
+         teamId: TEAM-123 # required for issue creation
+         workspaceSlug: myteam # optional, used to build issue URLs
    ```
 
 ### Composio-mediated
@@ -48,10 +50,10 @@ AO detects this and routes Linear calls through Composio — no separate Linear 
 
 ## Per-project config
 
-| Key | Required | What it does |
-|---|---|---|
-| `teamId` | ✓ (for `createIssue`) | Linear team the issue lives in |
-| `workspaceSlug` | optional | Used to render `https://linear.app/{slug}/issue/{id}` URLs |
+| Key             | Required              | What it does                                               |
+| --------------- | --------------------- | ---------------------------------------------------------- |
+| `teamId`        | ✓ (for `createIssue`) | Linear team the issue lives in                             |
+| `workspaceSlug` | optional              | Used to render `https://linear.app/{slug}/issue/{id}` URLs |
 
 ## Branch names
 

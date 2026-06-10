@@ -6,8 +6,10 @@ description: Cursor Agent CLI — IDE-like editing from the terminal, with PATH-
 import { Accordions, Accordion } from "fumadocs-ui/components/accordion";
 
 <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", margin: "0.5rem 0 1.25rem" }}>
-  <Logo name="cursor" size={28} />
-  <span style={{ fontSize: "0.8125rem", color: "var(--color-fd-muted-foreground)" }}>Slot: <code>agent</code> · Name: <code>cursor</code> · Binary: <code>agent</code></span>
+	<Logo name="cursor" size={28} />
+	<span style={{ fontSize: "0.8125rem", color: "var(--color-fd-muted-foreground)" }}>
+		Slot: <code>agent</code> · Name: <code>cursor</code> · Binary: <code>agent</code>
+	</span>
 </div>
 
 The [Cursor Agent CLI](https://cursor.com/docs) brings Cursor's editing model to a terminal. AO spawns it per session, wraps `gh`/`git`, and tracks activity via the AO activity log.
@@ -49,20 +51,22 @@ The plugin's `detect()` checks `agent --help` output for the strings `Cursor Age
 
 ## Environment variables
 
-| Variable | Set by AO | Purpose |
-|---|---|---|
-| `AO_SESSION_ID` | ✓ | AO session id |
-| `AO_ISSUE_ID` | ✓ | Issue identifier |
-| `PATH` | ✓ | Prepends `~/.ao/bin` |
-| `GH_PATH` | ✓ | Absolute path to real `gh` |
+| Variable        | Set by AO | Purpose                    |
+| --------------- | --------- | -------------------------- |
+| `AO_SESSION_ID` | ✓         | AO session id              |
+| `AO_ISSUE_ID`   | ✓         | Issue identifier           |
+| `PATH`          | ✓         | Prepends `~/.ao/bin`       |
+| `GH_PATH`       | ✓         | Absolute path to real `gh` |
 
 ## Troubleshooting
 
 <Accordions>
-  <Accordion title="AO says Cursor Agent isn't detected">
-    The plugin only recognises the real Cursor binary by its help output. Run `agent --help` — if you see a different tool's help, remove or shadow it, or reinstall Cursor Agent.
-  </Accordion>
-  <Accordion title="Dashboard never leaves `active`">
-    Cursor doesn't emit its own session JSONL. AO classifies based on terminal output — if your terminal is being captured by another tool, the classification can drift. `ao doctor` will flag this.
-  </Accordion>
+	<Accordion title="AO says Cursor Agent isn't detected">
+		The plugin only recognises the real Cursor binary by its help output. Run `agent --help` — if you see a different
+		tool's help, remove or shadow it, or reinstall Cursor Agent.
+	</Accordion>
+	<Accordion title="Dashboard never leaves `active`">
+		Cursor doesn't emit its own session JSONL. AO classifies based on terminal output — if your terminal is being
+		captured by another tool, the classification can drift. `ao doctor` will flag this.
+	</Accordion>
 </Accordions>

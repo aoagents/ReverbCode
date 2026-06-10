@@ -8,28 +8,32 @@ touch a developer's real AO installation.
 
 ## Two tiers
 
-| Tier | What | Where |
-|------|------|-------|
-| **Comprehensive (primary)** | A cross-platform Go suite that builds `ao` and exercises the full behaviour. Runs natively on **ubuntu + macOS + windows** — the only way to cover the OS-specific process-detach paths (`setsid` vs `CREATE_NEW_PROCESS_GROUP`) and `os.UserConfigDir()` resolution. | `backend/internal/cli/e2e_test.go` (build tag `e2e`) |
-| **Fresh-install (hardening)** | Proves a freshly installed binary works on a clean machine with no Go toolchain and no developer state. | `test/cli/Dockerfile` + `test/cli/install-check.sh` |
+| Tier                          | What                                                                                                                                                                                                                                                                  | Where                                                |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| **Comprehensive (primary)**   | A cross-platform Go suite that builds `ao` and exercises the full behaviour. Runs natively on **ubuntu + macOS + windows** — the only way to cover the OS-specific process-detach paths (`setsid` vs `CREATE_NEW_PROCESS_GROUP`) and `os.UserConfigDir()` resolution. | `backend/internal/cli/e2e_test.go` (build tag `e2e`) |
+| **Fresh-install (hardening)** | Proves a freshly installed binary works on a clean machine with no Go toolchain and no developer state.                                                                                                                                                               | `test/cli/Dockerfile` + `test/cli/install-check.sh`  |
 
 ## Run it
 
 **The Go suite (fastest, cross-platform):**
+
 ```bash
 cd backend
 go test -tags e2e ./internal/cli/...              # run it
 go test -tags e2e -v -run TestE2E ./internal/cli/...   # verbose: prints every command + output
 ```
+
 It builds its own `ao` binary; `git` must be on PATH (required by `doctor`).
 `-v` logs each `ao` invocation and its full output, which is the audit trail you
 get for free from `go test`.
 
 **Fresh-machine install, in a clean container:**
+
 ```bash
 docker build -f test/cli/Dockerfile -t ao-cli-smoke .
 docker run --rm --init ao-cli-smoke
 ```
+
 > `--init` gives the container a real PID-1 reaper (tini) so the daemon the
 > check starts is reaped after `stop` instead of lingering as a zombie.
 

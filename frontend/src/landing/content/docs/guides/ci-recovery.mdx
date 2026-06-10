@@ -11,7 +11,7 @@ When your PR's CI goes red, AO notices before you do and tells the agent to fix 
 
 1. The **SCM plugin** polls the PR's check runs via `gh pr checks` (or `glab`).
 2. The **lifecycle manager** transitions the session to `ci_failed` when any required check fails.
-3. The **agent plugin** is woken with a prompt like *"CI failed on PR #42. The failing checks are X and Y. Investigate and push a fix."*
+3. The **agent plugin** is woken with a prompt like _"CI failed on PR #42. The failing checks are X and Y. Investigate and push a fix."_
 4. The **notifier plugin** pings you (desktop, Slack, Discord, whatever you configured).
 
 No webhooks, no CI integration to install. The `gh` CLI you already authenticated with is doing the work.
@@ -32,9 +32,9 @@ The agent's next response usually inspects the log, reproduces the failure local
 ```yaml title="agent-orchestrator.yaml"
 reactions:
   ciFailed:
-    enabled: true              # default
-    maxRetries: 3              # stop after 3 automatic rounds
-    cooldownSeconds: 30        # wait before nudging the agent again
+    enabled: true # default
+    maxRetries: 3 # stop after 3 automatic rounds
+    cooldownSeconds: 30 # wait before nudging the agent again
 ```
 
 If the agent has tried three times and CI is still red, the session transitions to `blocked` and AO stops nudging — you take it from there.
@@ -74,7 +74,7 @@ This creates a session, points it at PR #123, and (with `--assign-on-github`) as
 
 When CI goes red, AO sends two distinct messages to the agent in sequence:
 
-1. **Reaction message (poll cycle N).** The lifecycle manager detects that CI transitioned to `ci_failed` and fires the `ci-failed` reaction. This sends the configured `message` (or the default: *"CI failed on PR #42…"*) to the agent via `ao send`.
+1. **Reaction message (poll cycle N).** The lifecycle manager detects that CI transitioned to `ci_failed` and fires the `ci-failed` reaction. This sends the configured `message` (or the default: _"CI failed on PR #42…"_) to the agent via `ao send`.
 
 2. **Detailed follow-up (poll cycle N+1, ~30 s later).** On the next poll cycle, AO calls `formatCIFailureMessage()` with the actual failing checks and sends a second message with each check's name, conclusion status, and a direct link to the run log. This is delivered via `sessionManager.send()` directly — it does **not** go through `executeReaction()`, so it does not consume the `ci-failed` reaction's retry budget.
 
@@ -89,7 +89,7 @@ AO fingerprints the set of failing checks (name + status + conclusion). If the s
 ```yaml title="agent-orchestrator.yaml"
 reactions:
   ci-failed:
-    retries: 3          # escalate after 3 failed attempts (default: unlimited)
+    retries: 3 # escalate after 3 failed attempts (default: unlimited)
     escalateAfter: "1h" # …or after a wall-clock duration, whichever comes first
 ```
 

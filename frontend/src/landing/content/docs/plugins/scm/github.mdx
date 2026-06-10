@@ -4,8 +4,10 @@ description: PRs, reviews, and CI status via the gh CLI. Optional webhook for re
 ---
 
 <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", margin: "0.5rem 0 1.25rem" }}>
-  <Logo name="github" size={28} />
-  <span style={{ fontSize: "0.8125rem", color: "var(--color-fd-muted-foreground)" }}>Slot: <code>scm</code> · Name: <code>github</code></span>
+	<Logo name="github" size={28} />
+	<span style={{ fontSize: "0.8125rem", color: "var(--color-fd-muted-foreground)" }}>
+		Slot: <code>scm</code> · Name: <code>github</code>
+	</span>
 </div>
 
 <PlatformSupport macos="full" linux="full" windows="full" />
@@ -53,20 +55,20 @@ projects:
     repo: owner/repo
     scm:
       webhook:
-        secretEnvVar: GITHUB_WEBHOOK_SECRET    # env var holding the HMAC secret
+        secretEnvVar: GITHUB_WEBHOOK_SECRET # env var holding the HMAC secret
 ```
 
 Full `webhook.*` sub-object:
 
-| Field | Default | Description |
-|---|---|---|
-| `enabled` | `true` | Enable or disable webhook processing |
-| `path` | `/api/webhooks` | Override the receive path |
-| `secretEnvVar` | — | Name of the env var holding the HMAC secret |
-| `signatureHeader` | `x-hub-signature-256` | Header carrying the HMAC-SHA256 signature |
-| `eventHeader` | `x-github-event` | Header carrying the event type |
-| `deliveryHeader` | `x-github-delivery` | Header carrying the delivery UUID |
-| `maxBodyBytes` | unlimited | Reject payloads larger than this (bytes) |
+| Field             | Default               | Description                                 |
+| ----------------- | --------------------- | ------------------------------------------- |
+| `enabled`         | `true`                | Enable or disable webhook processing        |
+| `path`            | `/api/webhooks`       | Override the receive path                   |
+| `secretEnvVar`    | —                     | Name of the env var holding the HMAC secret |
+| `signatureHeader` | `x-hub-signature-256` | Header carrying the HMAC-SHA256 signature   |
+| `eventHeader`     | `x-github-event`      | Header carrying the event type              |
+| `deliveryHeader`  | `x-github-delivery`   | Header carrying the delivery UUID           |
+| `maxBodyBytes`    | unlimited             | Reject payloads larger than this (bytes)    |
 
 **Signature**: HMAC-SHA256 over the raw request body. AO compares the computed digest against the value in `x-hub-signature-256` using a constant-time comparison.
 

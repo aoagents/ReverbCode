@@ -6,8 +6,10 @@ description: Anthropic's CLI coding agent. The default agent in AO.
 import { Callout } from "fumadocs-ui/components/callout";
 
 <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", margin: "0.5rem 0 1.25rem" }}>
-  <Logo name="claude-code" size={28} />
-  <span style={{ fontSize: "0.8125rem", color: "var(--color-fd-muted-foreground)" }}>Slot: <code>agent</code> · Name: <code>claude-code</code> · Binary: <code>claude</code></span>
+	<Logo name="claude-code" size={28} />
+	<span style={{ fontSize: "0.8125rem", color: "var(--color-fd-muted-foreground)" }}>
+		Slot: <code>agent</code> · Name: <code>claude-code</code> · Binary: <code>claude</code>
+	</span>
 </div>
 
 [Claude Code](https://docs.anthropic.com/en/docs/claude-code) is Anthropic's CLI coding agent. It's AO's default because it has first-class session resume, rich JSONL event logs, and a native hook system AO can register against.
@@ -43,11 +45,11 @@ That's it — there are no plugin-level config keys.
 
 ## Environment variables
 
-| Variable | Set by AO | Purpose |
-|---|---|---|
-| `AO_SESSION_ID` | ✓ | Unique AO session identifier |
-| `AO_ISSUE_ID` | ✓ (when spawned from an issue) | Issue identifier |
-| `CLAUDECODE` | ✓ | Signals to Claude that it's running under a harness |
+| Variable        | Set by AO                      | Purpose                                             |
+| --------------- | ------------------------------ | --------------------------------------------------- |
+| `AO_SESSION_ID` | ✓                              | Unique AO session identifier                        |
+| `AO_ISSUE_ID`   | ✓ (when spawned from an issue) | Issue identifier                                    |
+| `CLAUDECODE`    | ✓                              | Signals to Claude that it's running under a harness |
 
 Your Anthropic API key comes from wherever `claude` normally reads it — `~/.claude/`, env, etc. AO doesn't touch it.
 

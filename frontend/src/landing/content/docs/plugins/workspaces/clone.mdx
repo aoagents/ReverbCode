@@ -4,8 +4,10 @@ description: Full per-session git clone. Use when worktrees fight your tooling.
 ---
 
 <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", margin: "0.5rem 0 1.25rem" }}>
-  <Logo name="github" size={28} />
-  <span style={{ fontSize: "0.8125rem", color: "var(--color-fd-muted-foreground)" }}>Slot: <code>workspace</code> · Name: <code>clone</code></span>
+	<Logo name="github" size={28} />
+	<span style={{ fontSize: "0.8125rem", color: "var(--color-fd-muted-foreground)" }}>
+		Slot: <code>workspace</code> · Name: <code>clone</code>
+	</span>
 </div>
 
 Every session gets a full `git clone`. Heavier on disk than `worktree`, but simpler for any tooling that gets confused by the worktree layout.
@@ -17,11 +19,11 @@ Every session gets a full `git clone`. Heavier on disk than `worktree`, but simp
 ```yaml title="agent-orchestrator.yaml"
 workspace: clone
 workspaceConfig:
-  cloneDir: ~/.ao-clones       # default
+  cloneDir: ~/.ao-clones # default
 ```
 
-| Config key | Default | What it does |
-|---|---|---|
+| Config key | Default        | What it does                  |
+| ---------- | -------------- | ----------------------------- |
 | `cloneDir` | `~/.ao-clones` | Base directory for all clones |
 
 ## How it works

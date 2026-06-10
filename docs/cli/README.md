@@ -7,17 +7,17 @@ call runtime, workspace, tracker, or agent adapters in-process.
 
 ## Current commands
 
-| Command | Purpose |
-|---|---|
-| `ao start` | Start the daemon in the background and wait for `/readyz`. |
-| `ao status` | Report daemon state from `running.json`, process liveness, `/healthz`, and `/readyz`. |
-| `ao status --json` | Emit the same daemon state as machine-readable JSON. |
-| `ao stop` | Gracefully stop the daemon via loopback `POST /shutdown` after verifying daemon identity. |
-| `ao doctor` | Check config, data directory, DB-file presence, daemon state, `git`, and optional `zellij`. |
-| `ao doctor --json` | Emit doctor checks as JSON. |
-| `ao completion <shell>` | Generate completions for `bash`, `zsh`, `fish`, or `powershell`. |
-| `ao version` / `ao --version` | Print build metadata. |
-| `ao daemon` | Hidden internal daemon entrypoint used by `ao start`. |
+| Command                       | Purpose                                                                                     |
+| ----------------------------- | ------------------------------------------------------------------------------------------- |
+| `ao start`                    | Start the daemon in the background and wait for `/readyz`.                                  |
+| `ao status`                   | Report daemon state from `running.json`, process liveness, `/healthz`, and `/readyz`.       |
+| `ao status --json`            | Emit the same daemon state as machine-readable JSON.                                        |
+| `ao stop`                     | Gracefully stop the daemon via loopback `POST /shutdown` after verifying daemon identity.   |
+| `ao doctor`                   | Check config, data directory, DB-file presence, daemon state, `git`, and optional `zellij`. |
+| `ao doctor --json`            | Emit doctor checks as JSON.                                                                 |
+| `ao completion <shell>`       | Generate completions for `bash`, `zsh`, `fish`, or `powershell`.                            |
+| `ao version` / `ao --version` | Print build metadata.                                                                       |
+| `ao daemon`                   | Hidden internal daemon entrypoint used by `ao start`.                                       |
 
 `go run .` in `backend/` remains a compatibility wrapper around the daemon.
 
@@ -25,13 +25,13 @@ call runtime, workspace, tracker, or agent adapters in-process.
 
 The CLI and daemon share the same environment-driven config:
 
-| Var | Default | Purpose |
-|---|---|---|
-| `AO_PORT` | `3001` | Loopback daemon port. |
-| `AO_RUN_FILE` | `<UserConfigDir>/agent-orchestrator/running.json` | PID/port handshake. |
-| `AO_DATA_DIR` | `<UserConfigDir>/agent-orchestrator/data` | SQLite data directory. |
-| `AO_REQUEST_TIMEOUT` | `60s` | REST request timeout. |
-| `AO_SHUTDOWN_TIMEOUT` | `10s` | Graceful shutdown cap. |
+| Var                   | Default                                           | Purpose                |
+| --------------------- | ------------------------------------------------- | ---------------------- |
+| `AO_PORT`             | `3001`                                            | Loopback daemon port.  |
+| `AO_RUN_FILE`         | `<UserConfigDir>/agent-orchestrator/running.json` | PID/port handshake.    |
+| `AO_DATA_DIR`         | `<UserConfigDir>/agent-orchestrator/data`         | SQLite data directory. |
+| `AO_REQUEST_TIMEOUT`  | `60s`                                             | REST request timeout.  |
+| `AO_SHUTDOWN_TIMEOUT` | `10s`                                             | Graceful shutdown cap. |
 
 The daemon always binds `127.0.0.1`.
 

@@ -26,7 +26,8 @@ A single structured prompt with:
 - A pointer to the PR head SHA
 
 <Callout type="info">
-  AO reads unresolved review threads. Once you resolve a thread on GitHub, it drops out of the next nudge — so you can thumbs-up the ones the agent addressed and only the remaining ones make it back to the agent.
+	AO reads unresolved review threads. Once you resolve a thread on GitHub, it drops out of the next nudge — so you can
+	thumbs-up the ones the agent addressed and only the remaining ones make it back to the agent.
 </Callout>
 
 ## Configurable behavior
@@ -34,8 +35,8 @@ A single structured prompt with:
 ```yaml title="agent-orchestrator.yaml"
 reactions:
   reviewRequested:
-    enabled: true           # default
-    includeResolved: false  # default: only unresolved threads
+    enabled: true # default
+    includeResolved: false # default: only unresolved threads
     maxRetries: 3
 ```
 
@@ -70,31 +71,31 @@ Not every review comment is from a human. AO recognises a hardcoded list of know
 
 **GitHub** (`scm-github`) treats the following as bots:
 
-| Login | Tool |
-|---|---|
-| `cursor[bot]` | Cursor AI |
-| `github-actions[bot]` | GitHub Actions |
-| `codecov[bot]` | Codecov |
-| `sonarcloud[bot]` | SonarCloud |
-| `dependabot[bot]` | Dependabot |
-| `renovate[bot]` | Renovate |
-| `codeclimate[bot]` | Code Climate |
-| `deepsource-autofix[bot]` | DeepSource |
-| `snyk-bot` | Snyk |
-| `lgtm-com[bot]` | LGTM |
+| Login                     | Tool           |
+| ------------------------- | -------------- |
+| `cursor[bot]`             | Cursor AI      |
+| `github-actions[bot]`     | GitHub Actions |
+| `codecov[bot]`            | Codecov        |
+| `sonarcloud[bot]`         | SonarCloud     |
+| `dependabot[bot]`         | Dependabot     |
+| `renovate[bot]`           | Renovate       |
+| `codeclimate[bot]`        | Code Climate   |
+| `deepsource-autofix[bot]` | DeepSource     |
+| `snyk-bot`                | Snyk           |
+| `lgtm-com[bot]`           | LGTM           |
 
 **GitLab** (`scm-gitlab`) treats the following as bots (in addition to any username matching `project_\d+_bot` or ending in `[bot]`):
 
-| Login | Tool |
-|---|---|
-| `gitlab-bot` | GitLab built-in |
-| `ghost` | Deleted / system user |
-| `dependabot[bot]` | Dependabot |
-| `renovate[bot]` | Renovate |
-| `sast-bot` | GitLab SAST |
-| `codeclimate[bot]` | Code Climate |
-| `sonarcloud[bot]` | SonarCloud |
-| `snyk-bot` | Snyk |
+| Login              | Tool                  |
+| ------------------ | --------------------- |
+| `gitlab-bot`       | GitLab built-in       |
+| `ghost`            | Deleted / system user |
+| `dependabot[bot]`  | Dependabot            |
+| `renovate[bot]`    | Renovate              |
+| `sast-bot`         | GitLab SAST           |
+| `codeclimate[bot]` | Code Climate          |
+| `sonarcloud[bot]`  | SonarCloud            |
+| `snyk-bot`         | Snyk                  |
 
 A typical configuration pairing:
 
@@ -102,11 +103,11 @@ A typical configuration pairing:
 reactions:
   changes-requested:
     auto: true
-    priority: "action"       # human review comment — act immediately
+    priority: "action" # human review comment — act immediately
 
   bugbot-comments:
     auto: true
-    priority: "info"         # advisory bot feedback — log and proceed
+    priority: "info" # advisory bot feedback — log and proceed
 ```
 
 The bot list is hardcoded in each SCM plugin and is not currently configurable via `agent-orchestrator.yaml`.

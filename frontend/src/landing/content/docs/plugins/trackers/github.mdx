@@ -4,8 +4,10 @@ description: Issues via the gh CLI. Zero API tokens to manage — gh auth login 
 ---
 
 <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", margin: "0.5rem 0 1.25rem" }}>
-  <Logo name="github" size={28} />
-  <span style={{ fontSize: "0.8125rem", color: "var(--color-fd-muted-foreground)" }}>Slot: <code>tracker</code> · Name: <code>github</code></span>
+	<Logo name="github" size={28} />
+	<span style={{ fontSize: "0.8125rem", color: "var(--color-fd-muted-foreground)" }}>
+		Slot: <code>tracker</code> · Name: <code>github</code>
+	</span>
 </div>
 
 <PlatformSupport macos="full" linux="full" windows="full" />
@@ -31,13 +33,13 @@ projects:
 
 ## How it's used
 
-| Operation | `gh` command invoked |
-|---|---|
-| Fetch issue | `gh issue view <num> --json title,body,...` |
-| Create issue | `gh issue create` |
-| Comment on issue | `gh issue comment` |
-| Close issue | `gh issue close` |
-| List issues | `gh issue list` |
+| Operation        | `gh` command invoked                        |
+| ---------------- | ------------------------------------------- |
+| Fetch issue      | `gh issue view <num> --json title,body,...` |
+| Create issue     | `gh issue create`                           |
+| Comment on issue | `gh issue comment`                          |
+| Close issue      | `gh issue close`                            |
+| List issues      | `gh issue list`                             |
 
 ## Config
 

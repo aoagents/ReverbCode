@@ -5,23 +5,23 @@ import { cn } from "../../lib/utils";
 type BadgeVariant = "neutral" | "outline" | "accent" | "success" | "warning" | "error";
 
 export function Badge({
-  className,
-  variant = "neutral",
-  ...props
+	className,
+	variant = "neutral",
+	...props
 }: React.HTMLAttributes<HTMLSpanElement> & { variant?: BadgeVariant }) {
-  return (
-    <span
-      className={cn(
-        "inline-flex h-[18px] shrink-0 items-center gap-1 rounded-full border border-transparent px-2 font-mono text-[10px] font-medium",
-        variant === "neutral" && "bg-raised text-muted-foreground",
-        variant === "outline" && "border-border text-foreground",
-        variant === "accent" && "border-accent-dim text-accent",
-        variant === "success" && "border-success/40 text-success",
-        variant === "warning" && "border-warning/40 text-warning",
-        variant === "error" && "border-error/40 text-error",
-        className,
-      )}
-      {...props}
-    />
-  );
+	return (
+		<span
+			className={cn(
+				"inline-flex h-[18px] shrink-0 items-center gap-1 rounded-full border border-transparent px-2 font-mono text-[10px] font-medium",
+				variant === "neutral" && "bg-raised text-muted-foreground",
+				variant === "outline" && "border-border text-foreground",
+				variant === "accent" && "border-accent-dim text-accent",
+				variant === "success" && "border-success/40 text-success",
+				variant === "warning" && "border-warning/40 text-warning",
+				variant === "error" && "border-error/40 text-error",
+				className,
+			)}
+			{...props}
+		/>
+	);
 }

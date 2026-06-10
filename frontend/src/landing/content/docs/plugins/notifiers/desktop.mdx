@@ -4,11 +4,18 @@ description: Native macOS / Linux notifications. Silent no-op on Windows.
 ---
 
 <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", margin: "0.5rem 0 1.25rem" }}>
-  <Logo name="apple" size={28} color />
-  <span style={{ fontSize: "0.8125rem", color: "var(--color-fd-muted-foreground)" }}>Slot: <code>notifier</code> · Name: <code>desktop</code></span>
+	<Logo name="apple" size={28} color />
+	<span style={{ fontSize: "0.8125rem", color: "var(--color-fd-muted-foreground)" }}>
+		Slot: <code>notifier</code> · Name: <code>desktop</code>
+	</span>
 </div>
 
-<PlatformSupport macos="full" linux="full" windows="none" note="On Windows this notifier logs a warning and does nothing — use Discord, Slack, or webhook instead." />
+<PlatformSupport
+	macos="full"
+	linux="full"
+	windows="none"
+	note="On Windows this notifier logs a warning and does nothing — use Discord, Slack, or webhook instead."
+/>
 
 ## Setup
 
@@ -36,11 +43,11 @@ notificationRouting:
   action: [desktop]
 ```
 
-| Config key | Default | What it does |
-|---|---|---|
-| `backend` | `auto` | `ao-app`, `terminal-notifier`, `osascript`, or auto fallback |
-| `dashboardUrl` | dashboard port | URL opened from desktop notification actions |
-| `appPath` | macOS app install path | Custom AO Notifier.app path |
+| Config key     | Default                | What it does                                                 |
+| -------------- | ---------------------- | ------------------------------------------------------------ |
+| `backend`      | `auto`                 | `ao-app`, `terminal-notifier`, `osascript`, or auto fallback |
+| `dashboardUrl` | dashboard port         | URL opened from desktop notification actions                 |
+| `appPath`      | macOS app install path | Custom AO Notifier.app path                                  |
 
 ## How it works
 

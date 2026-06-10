@@ -6,8 +6,10 @@ description: OpenAI's Codex CLI. Full session resume and native JSONL event stre
 import { Accordions, Accordion } from "fumadocs-ui/components/accordion";
 
 <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", margin: "0.5rem 0 1.25rem" }}>
-  <Logo name="codex" size={28} />
-  <span style={{ fontSize: "0.8125rem", color: "var(--color-fd-muted-foreground)" }}>Slot: <code>agent</code> · Name: <code>codex</code> · Binary: <code>codex</code></span>
+	<Logo name="codex" size={28} />
+	<span style={{ fontSize: "0.8125rem", color: "var(--color-fd-muted-foreground)" }}>
+		Slot: <code>agent</code> · Name: <code>codex</code> · Binary: <code>codex</code>
+	</span>
 </div>
 
 [OpenAI Codex CLI](https://github.com/openai/codex) is a terminal coding agent from OpenAI. AO hooks into it via PATH wrappers and reads its native session JSONL for activity + cost.
@@ -37,13 +39,13 @@ No plugin-level config.
 
 ## Environment variables
 
-| Variable | Set by AO | Purpose |
-|---|---|---|
-| `AO_SESSION_ID` | ✓ | AO session id |
-| `AO_ISSUE_ID` | ✓ | Issue identifier |
-| `PATH` | ✓ | Prepends `~/.ao/bin` for the wrappers |
-| `GH_PATH` | ✓ | Absolute path to the real `gh`, used by the wrapper |
-| `CODEX_DISABLE_UPDATE_CHECK` | ✓ (`1`) | Skip version check |
+| Variable                     | Set by AO | Purpose                                             |
+| ---------------------------- | --------- | --------------------------------------------------- |
+| `AO_SESSION_ID`              | ✓         | AO session id                                       |
+| `AO_ISSUE_ID`                | ✓         | Issue identifier                                    |
+| `PATH`                       | ✓         | Prepends `~/.ao/bin` for the wrappers               |
+| `GH_PATH`                    | ✓         | Absolute path to the real `gh`, used by the wrapper |
+| `CODEX_DISABLE_UPDATE_CHECK` | ✓ (`1`)   | Skip version check                                  |
 
 OpenAI API credentials come from wherever `codex` reads them — AO doesn't set them.
 

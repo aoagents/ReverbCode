@@ -92,21 +92,25 @@ For code entry points:
 The daemon API is code-first. The OpenAPI spec and frontend TypeScript types are generated artifacts — edit the source, then regenerate.
 
 **Source files to edit:**
+
 - `backend/internal/httpd/controllers/dto.go` — request/response shapes.
 - `backend/internal/httpd/apispec/specgen/build.go` — operation registry; add a `schemaNames` entry for any new named type.
 
 **Regenerate after editing:**
+
 ```bash
 npm run api          # runs api:spec then api:ts in sequence
 ```
 
 This is equivalent to running:
+
 ```bash
 npm run api:spec     # cd backend && go generate ./internal/httpd/apispec/...
 npm run api:ts       # npx openapi-typescript@7.4.4 backend/internal/httpd/apispec/openapi.yaml -o frontend/src/api/schema.ts
 ```
 
 **Verify:**
+
 ```bash
 cd backend && go test ./internal/httpd/...    # spec drift + route/spec parity tests (does not cover schema.ts — that is checked by the api-drift CI job)
 ```
