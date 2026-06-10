@@ -98,7 +98,7 @@ const listWorkspaceRepos = `-- name: ListWorkspaceRepos :many
 SELECT project_id, name, relative_path, repo_origin_url, registered_at
 FROM workspace_repos
 WHERE project_id = ?
-ORDER BY CASE WHEN name = '__root__' THEN 0 ELSE 1 END, name
+ORDER BY name
 `
 
 func (q *Queries) ListWorkspaceRepos(ctx context.Context, projectID domain.ProjectID) ([]WorkspaceRepo, error) {

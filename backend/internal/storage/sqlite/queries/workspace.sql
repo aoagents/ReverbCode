@@ -13,7 +13,7 @@ ON CONFLICT (project_id, name) DO UPDATE SET
 SELECT project_id, name, relative_path, repo_origin_url, registered_at
 FROM workspace_repos
 WHERE project_id = ?
-ORDER BY CASE WHEN name = '__root__' THEN 0 ELSE 1 END, name;
+ORDER BY name;
 
 -- name: UpsertSessionWorktree :exec
 INSERT INTO session_worktrees (session_id, repo_name, branch, base_sha, worktree_path, preserved_ref, state)

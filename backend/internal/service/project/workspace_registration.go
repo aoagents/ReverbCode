@@ -29,6 +29,9 @@ var workspaceRootIgnoreDenylist = []string{
 }
 
 func prepareWorkspaceProject(ctx context.Context, parent string, projectID domain.ProjectID, registeredAt time.Time) ([]domain.WorkspaceRepoRecord, error) {
+	if err := validateWorkspaceParent(ctx, parent); err != nil {
+		return nil, err
+	}
 	children, err := detectWorkspaceChildren(ctx, parent, projectID, registeredAt)
 	if err != nil {
 		return nil, err
@@ -53,6 +56,88 @@ func prepareWorkspaceProject(ctx context.Context, parent string, projectID domai
 	return children, nil
 }
 
+// validateWorkspaceParent checks that the parent folder is not a linked
+// worktree of another repository and not a bare repo. These edge cases slip
+// past isGitRepo but would corrupt an external repo or fail with a confusing
+// error partway through mutation.
+func validateWorkspaceParent(ctx context.Context, parent string) error {
+	// Linked-worktree detection: a linked worktree has a .git FILE, not a dir.
+	// However, a repo created with `git init --separate-git-dir=<elsewhere>`
+	// also has .git as a file (containing "gitdir: <path>"). We must distinguish
+	// the two: in a linked worktree, --git-dir points into .git/worktrees/<name>
+	// which differs from --git-common-dir (the main .git). In a separate-git-dir
+	// repo, both resolve to the same directory.
+	gitPath := filepath.Join(parent, ".git")
+	info, err := os.Lstat(gitPath)
+	if err == nil && !info.IsDir() {
+		// Probe git to tell us whether this is a worktree or a separate-git-dir repo.
+		gitDir, errGD := gitOutput(ctx, parent, "rev-parse", "--git-dir")
+		gitCommonDir, errCD := gitOutput(ctx, parent, "rev-parse", "--git-common-dir")
+		if errGD != nil || errCD != nil {
+			// Cannot interrogate — conservatively reject; we don't know what this is.
+			probeErr := errGD
+			if probeErr == nil {
+				probeErr = errCD
+			}
+			return apierr.Invalid("WORKSPACE_PARENT_IS_WORKTREE",
+				"Workspace parent has a .git file that could not be inspected; it may be a linked worktree of another repository",
+				map[string]any{
+					"path":         parent,
+					"probeError":   probeErr.Error(),
+					"suggestedFix": "Use the repository's main checkout directory, not a linked worktree.",
+				})
+		}
+		// Resolve both paths to absolute, clean forms so the comparison is reliable
+		// whether git returns relative or absolute paths.
+		absGitDir := filepath.Clean(gitDir)
+		if !filepath.IsAbs(absGitDir) {
+			absGitDir = filepath.Clean(filepath.Join(parent, strings.TrimSpace(gitDir)))
+		} else {
+			absGitDir = filepath.Clean(strings.TrimSpace(gitDir))
+		}
+		absCommonDir := filepath.Clean(gitCommonDir)
+		if !filepath.IsAbs(absCommonDir) {
+			absCommonDir = filepath.Clean(filepath.Join(parent, strings.TrimSpace(gitCommonDir)))
+		} else {
+			absCommonDir = filepath.Clean(strings.TrimSpace(gitCommonDir))
+		}
+		// Resolve symlinks consistent with how isGitRepo normalises paths.
+		if resolved, err := filepath.EvalSymlinks(absGitDir); err == nil {
+			absGitDir = resolved
+		}
+		if resolved, err := filepath.EvalSymlinks(absCommonDir); err == nil {
+			absCommonDir = resolved
+		}
+		// In a linked worktree --git-dir != --git-common-dir; in a separate-git-dir
+		// repo they are the same (both point to the external git directory).
+		if absGitDir != absCommonDir {
+			return apierr.Invalid("WORKSPACE_PARENT_IS_WORKTREE",
+				"Workspace parent must be a standalone repository or plain folder, not a worktree of another repository",
+				map[string]any{
+					"path":         parent,
+					"suggestedFix": "Use the repository's main checkout directory, not a linked worktree.",
+				})
+		}
+		// Same dir → separate-git-dir repo; fall through and allow it.
+	}
+
+	// Bare-repo detection: git init --bare creates a repo with no .git subdir at
+	// all; --show-toplevel fails, so isGitRepo returns false, then git init
+	// re-initialises the bare repo and git add -A fails with an opaque error.
+	// Only reject on a definite "true" — if git can't run, keep the normal path.
+	if out, err := gitOutput(ctx, parent, "rev-parse", "--is-bare-repository"); err == nil {
+		if strings.TrimSpace(out) == "true" {
+			return apierr.Invalid("WORKSPACE_PARENT_BARE",
+				"Workspace parent must not be a bare repository",
+				map[string]any{
+					"path":         parent,
+					"suggestedFix": "Create a non-bare clone or plain folder as the workspace parent.",
+				})
+		}
+	}
+	return nil
+}
+
 func detectWorkspaceChildren(ctx context.Context, parent string, projectID domain.ProjectID, registeredAt time.Time) ([]domain.WorkspaceRepoRecord, error) {
 	entries, err := os.ReadDir(parent)
 	if err != nil {
@@ -70,6 +155,18 @@ func detectWorkspaceChildren(ctx context.Context, parent string, projectID domai
 		child := filepath.Join(parent, name)
 		if !isGitRepo(child) {
 			continue
+		}
+		// Reject a child directory whose name collides with the reserved root name.
+		// Plain folders with this name are fine (they fall through before here);
+		// only a real git repo named __root__ would create a PK collision in
+		// session_worktrees.
+		if name == domain.RootWorkspaceRepoName {
+			return nil, apierr.Invalid("WORKSPACE_CHILD_RESERVED_NAME",
+				"Child repository name is reserved for internal use",
+				map[string]any{
+					"path":         child,
+					"suggestedFix": fmt.Sprintf("Rename the directory %q — the name %q is reserved by AO for the workspace root.", child, domain.RootWorkspaceRepoName),
+				})
 		}
 		if err := validateWorkspaceChild(ctx, child); err != nil {
 			return nil, err
@@ -139,10 +236,31 @@ func adoptWorkspaceParent(ctx context.Context, parent string, repos []domain.Wor
 	return nil
 }
 
-func initWorkspaceParent(ctx context.Context, parent string, repos []domain.WorkspaceRepoRecord) error {
+func initWorkspaceParent(ctx context.Context, parent string, repos []domain.WorkspaceRepoRecord) (retErr error) {
+	// Snapshot the original .gitignore so we can restore it on failure.
+	// If the file doesn't exist, originalGitignore is nil.
+	gitignorePath := filepath.Join(parent, ".gitignore")
+	originalGitignore, readErr := os.ReadFile(gitignorePath)
+	gitignoreExisted := readErr == nil
+
 	if _, err := gitOutput(ctx, parent, "init", "-b", domain.DefaultBranchName); err != nil {
 		return apierr.Invalid("WORKSPACE_PARENT_INIT_FAILED", "Failed to initialize workspace parent git repository", map[string]any{"error": err.Error()})
 	}
+
+	// Rollback helper: remove the .git dir we just created and restore the
+	// original .gitignore state. Only runs when we return an error after init.
+	defer func() {
+		if retErr == nil {
+			return
+		}
+		_ = os.RemoveAll(filepath.Join(parent, ".git"))
+		if gitignoreExisted {
+			_ = os.WriteFile(gitignorePath, originalGitignore, 0o600)
+		} else {
+			_ = os.Remove(gitignorePath)
+		}
+	}()
+
 	if _, err := ensureWorkspaceGitignore(parent, repos); err != nil {
 		return apierr.Invalid("WORKSPACE_PARENT_GITIGNORE_FAILED", "Failed to write workspace parent .gitignore", map[string]any{"error": err.Error()})
 	}
@@ -218,7 +336,15 @@ func guardNoGitlinks(ctx context.Context, repo string) error {
 		return apierr.Invalid("WORKSPACE_PARENT_INDEX_FAILED", "Failed to inspect workspace parent index", map[string]any{"error": err.Error()})
 	}
 	if len(paths) > 0 {
-		return apierr.Invalid("WORKSPACE_PARENT_GITLINK", "Workspace parent index contains embedded gitlinks; child repos must be gitignored before committing", map[string]any{"paths": paths})
+		return apierr.Invalid("WORKSPACE_PARENT_GITLINK",
+			"Workspace parent index contains embedded gitlinks; child repos must be gitignored before committing",
+			map[string]any{
+				"paths": paths,
+				"suggestedFix": fmt.Sprintf(
+					"Run `git rm --cached %s` for each listed path and add them to .gitignore, or remove nested repositories not directly under the workspace root.",
+					strings.Join(paths, " "),
+				),
+			})
 	}
 	return nil
 }

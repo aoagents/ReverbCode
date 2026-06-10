@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -38,6 +39,11 @@ type Manager interface {
 // Service implements project registration and lookup use-cases for controllers.
 type Service struct {
 	store Store
+	// addMu serialises the whole body of Add. Workspace registration performs
+	// filesystem mutations (git init, .gitignore writes, commits) that are not
+	// covered by the store's own writeMu, so path/id conflict checks plus the
+	// subsequent mutation must be atomic from the perspective of concurrent callers.
+	addMu sync.Mutex
 }
 
 var _ Manager = (*Service)(nil)
@@ -90,6 +96,11 @@ func (m *Service) Get(ctx context.Context, id domain.ProjectID) (GetResult, erro
 }
 
 // Add registers a local git repository as a project.
+//
+// The whole method body is serialised by addMu because workspace registration
+// mutates the filesystem (git init, .gitignore, commits) between the conflict
+// check and the store write — two concurrent calls for the same path would both
+// pass FindProjectByPath and then race on those mutations.
 func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 	path, err := normalizePath(in.Path)
 	if err != nil {
@@ -102,6 +113,9 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 	if err := validateProjectID(id); err != nil {
 		return Project{}, err
 	}
+
+	m.addMu.Lock()
+	defer m.addMu.Unlock()
 
 	name := string(id)
 	if in.Name != nil {
@@ -138,13 +152,12 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 
 	registeredAt := time.Now()
 	row := domain.ProjectRecord{
-		ID:            string(id),
-		Path:          path,
-		RepoOriginURL: resolveGitOriginURL(path),
-		DisplayName:   name,
-		RegisteredAt:  registeredAt,
-		Kind:          domain.ProjectKindSingleRepo,
-		Config:        config,
+		ID:           string(id),
+		Path:         path,
+		DisplayName:  name,
+		RegisteredAt: registeredAt,
+		Kind:         domain.ProjectKindSingleRepo,
+		Config:       config,
 	}
 	if in.AsWorkspace {
 		repos, err := prepareWorkspaceProject(ctx, path, domain.ProjectID(row.ID), registeredAt)
@@ -163,6 +176,7 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 	if !isGitRepo(path) {
 		return Project{}, apierr.Invalid("NOT_A_GIT_REPO", "Repository path must point to a git repository", nil)
 	}
+	row.RepoOriginURL = resolveGitOriginURL(path)
 	if err := m.store.UpsertProject(ctx, row); err != nil {
 		return Project{}, apierr.Internal("PROJECT_ADD_FAILED", "Failed to register project")
 	}
