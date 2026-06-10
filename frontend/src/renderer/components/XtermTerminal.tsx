@@ -105,7 +105,14 @@ export function XtermTerminal(props: XtermTerminalProps) {
         // Required for the Unicode 11 width addon below.
         allowProposedApi: true,
         cursorBlink: true,
-        fontFamily: 'Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+        // Resolve the Nerd Font stack from --font-mono (styles.css) at
+        // construction so terminal glyphs follow the app's font tokens. The
+        // box-drawing grid is rasterized by the WebGL/canvas renderer itself,
+        // but powerline separators and file-type icons are real PUA codepoints
+        // that must come from a system-installed Nerd Font.
+        fontFamily:
+          getComputedStyle(host).getPropertyValue("--font-mono").trim() ||
+          'ui-monospace, Menlo, Monaco, "Courier New", monospace',
         fontSize: 13,
         lineHeight: 1.35,
         // Agent TUIs leave SGR bold active while using ANSI black for

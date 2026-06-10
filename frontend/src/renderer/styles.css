@@ -10,7 +10,16 @@
   --font-sans:
     -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Fira Sans", "Helvetica Neue",
     sans-serif;
-  --font-mono: Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  /* Nerd Font stack (ported from yyork): the terminal reads --font-mono so
+   * agent TUIs get powerline separators and file-type icons. These are
+   * system-installed fonts — the app bundles none — and the browser picks the
+   * first one present, falling back to plain monospace (no icon glyphs) if a
+   * user has no Nerd Font. JetBrainsMono Nerd Font is the primary target. */
+  --font-mono:
+    "JetBrainsMono Nerd Font Mono", "JetBrainsMono Nerd Font", "FiraCode Nerd Font Mono", "FiraCode Nerd Font",
+    "MesloLGS NF", "CaskaydiaCove Nerd Font Mono", "CaskaydiaCove Nerd Font", "Hack Nerd Font Mono", "Hack Nerd Font",
+    "Symbols Nerd Font Mono", "Symbols Nerd Font", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
 
   /* Surfaces */
   --color-background: var(--bg);
