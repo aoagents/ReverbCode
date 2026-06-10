@@ -1,24 +1,22 @@
 import { create } from "zustand";
 
 export type Theme = "light" | "dark";
-/** Orchestrator-led: the app lands on the orchestrator; a worker row drills in. */
+/** Whether a terminal pane shows the orchestrator or a worker session. */
 export type WorkbenchView = "orchestrator" | "session";
-/** Worker topbar view toggles — Changes (Git rail) is the default. */
+/** Worker detail view toggles — Changes (Git rail) is the default. */
 export type WorkbenchTab = "changes" | "files" | "terminal";
 
+// Selection (which project/session is open) now lives in the URL — the router
+// is the single source of truth, read via route params. This store holds only
+// ephemeral, route-independent UI: theme, sidebar collapse, and the active
+// workbench tab within a session.
 type UiState = {
-  view: WorkbenchView;
   workbenchTab: WorkbenchTab;
   isSidebarOpen: boolean;
-  selectedSessionId: string | null;
-  selectedWorkspaceId: string | null;
   theme: Theme;
   setWorkbenchTab: (tab: WorkbenchTab) => void;
   setSystemTheme: (theme: Theme) => void;
   toggleSidebar: () => void;
-  selectOrchestrator: () => void;
-  selectWorkspace: (workspaceId: string) => void;
-  selectSession: (sessionId: string, workspaceId?: string) => void;
 };
 
 const sidebarStorageKey = "ao.sidebar.open";
@@ -39,11 +37,8 @@ function initialTheme(): Theme {
 }
 
 export const useUiStore = create<UiState>((set) => ({
-  view: "orchestrator",
   workbenchTab: "changes",
   isSidebarOpen: initialSidebarOpen(),
-  selectedSessionId: null,
-  selectedWorkspaceId: null,
   theme: initialTheme(),
   setWorkbenchTab: (workbenchTab) => set({ workbenchTab }),
   setSystemTheme: (theme) => set({ theme }),
@@ -53,13 +48,4 @@ export const useUiStore = create<UiState>((set) => ({
       getLocalStorage()?.setItem(sidebarStorageKey, String(isSidebarOpen));
       return { isSidebarOpen };
     }),
-  selectOrchestrator: () => set({ view: "orchestrator" }),
-  selectWorkspace: (selectedWorkspaceId) => set({ selectedWorkspaceId }),
-  selectSession: (selectedSessionId, workspaceId) =>
-    set((state) => ({
-      selectedSessionId,
-      selectedWorkspaceId: workspaceId ?? state.selectedWorkspaceId,
-      view: "session",
-      workbenchTab: "changes",
-    })),
 }));

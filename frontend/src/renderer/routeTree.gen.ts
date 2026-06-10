@@ -9,98 +9,143 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as IndexRouteImport } from './routes/index'
-import { Route as WorkspacesWorkspaceIdRouteImport } from './routes/workspaces.$workspaceId'
-import { Route as WorkspacesWorkspaceIdSessionsSessionIdRouteImport } from './routes/workspaces.$workspaceId_.sessions.$sessionId'
+import { Route as ShellRouteImport } from './routes/_shell'
+import { Route as ShellIndexRouteImport } from './routes/_shell.index'
+import { Route as ShellSessionsSessionIdRouteImport } from './routes/_shell.sessions.$sessionId'
+import { Route as ShellProjectsProjectIdRouteImport } from './routes/_shell.projects.$projectId'
+import { Route as ShellProjectsProjectIdSessionsSessionIdRouteImport } from './routes/_shell.projects.$projectId_.sessions.$sessionId'
 
-const IndexRoute = IndexRouteImport.update({
+const ShellRoute = ShellRouteImport.update({
+  id: '/_shell',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ShellIndexRoute = ShellIndexRouteImport.update({
   id: '/',
   path: '/',
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => ShellRoute,
 } as any)
-const WorkspacesWorkspaceIdRoute = WorkspacesWorkspaceIdRouteImport.update({
-  id: '/workspaces/$workspaceId',
-  path: '/workspaces/$workspaceId',
-  getParentRoute: () => rootRouteImport,
+const ShellSessionsSessionIdRoute = ShellSessionsSessionIdRouteImport.update({
+  id: '/sessions/$sessionId',
+  path: '/sessions/$sessionId',
+  getParentRoute: () => ShellRoute,
 } as any)
-const WorkspacesWorkspaceIdSessionsSessionIdRoute =
-  WorkspacesWorkspaceIdSessionsSessionIdRouteImport.update({
-    id: '/workspaces/$workspaceId_/sessions/$sessionId',
-    path: '/workspaces/$workspaceId/sessions/$sessionId',
-    getParentRoute: () => rootRouteImport,
+const ShellProjectsProjectIdRoute = ShellProjectsProjectIdRouteImport.update({
+  id: '/projects/$projectId',
+  path: '/projects/$projectId',
+  getParentRoute: () => ShellRoute,
+} as any)
+const ShellProjectsProjectIdSessionsSessionIdRoute =
+  ShellProjectsProjectIdSessionsSessionIdRouteImport.update({
+    id: '/projects/$projectId_/sessions/$sessionId',
+    path: '/projects/$projectId/sessions/$sessionId',
+    getParentRoute: () => ShellRoute,
   } as any)
 
 export interface FileRoutesByFullPath {
-  '/': typeof IndexRoute
-  '/workspaces/$workspaceId': typeof WorkspacesWorkspaceIdRoute
-  '/workspaces/$workspaceId/sessions/$sessionId': typeof WorkspacesWorkspaceIdSessionsSessionIdRoute
+  '/': typeof ShellIndexRoute
+  '/projects/$projectId': typeof ShellProjectsProjectIdRoute
+  '/sessions/$sessionId': typeof ShellSessionsSessionIdRoute
+  '/projects/$projectId/sessions/$sessionId': typeof ShellProjectsProjectIdSessionsSessionIdRoute
 }
 export interface FileRoutesByTo {
-  '/': typeof IndexRoute
-  '/workspaces/$workspaceId': typeof WorkspacesWorkspaceIdRoute
-  '/workspaces/$workspaceId/sessions/$sessionId': typeof WorkspacesWorkspaceIdSessionsSessionIdRoute
+  '/': typeof ShellIndexRoute
+  '/projects/$projectId': typeof ShellProjectsProjectIdRoute
+  '/sessions/$sessionId': typeof ShellSessionsSessionIdRoute
+  '/projects/$projectId/sessions/$sessionId': typeof ShellProjectsProjectIdSessionsSessionIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
-  '/': typeof IndexRoute
-  '/workspaces/$workspaceId': typeof WorkspacesWorkspaceIdRoute
-  '/workspaces/$workspaceId_/sessions/$sessionId': typeof WorkspacesWorkspaceIdSessionsSessionIdRoute
+  '/_shell': typeof ShellRouteWithChildren
+  '/_shell/': typeof ShellIndexRoute
+  '/_shell/projects/$projectId': typeof ShellProjectsProjectIdRoute
+  '/_shell/sessions/$sessionId': typeof ShellSessionsSessionIdRoute
+  '/_shell/projects/$projectId_/sessions/$sessionId': typeof ShellProjectsProjectIdSessionsSessionIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
-    | '/workspaces/$workspaceId'
-    | '/workspaces/$workspaceId/sessions/$sessionId'
+    | '/projects/$projectId'
+    | '/sessions/$sessionId'
+    | '/projects/$projectId/sessions/$sessionId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
-    | '/workspaces/$workspaceId'
-    | '/workspaces/$workspaceId/sessions/$sessionId'
+    | '/projects/$projectId'
+    | '/sessions/$sessionId'
+    | '/projects/$projectId/sessions/$sessionId'
   id:
     | '__root__'
-    | '/'
-    | '/workspaces/$workspaceId'
-    | '/workspaces/$workspaceId_/sessions/$sessionId'
+    | '/_shell'
+    | '/_shell/'
+    | '/_shell/projects/$projectId'
+    | '/_shell/sessions/$sessionId'
+    | '/_shell/projects/$projectId_/sessions/$sessionId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
-  IndexRoute: typeof IndexRoute
-  WorkspacesWorkspaceIdRoute: typeof WorkspacesWorkspaceIdRoute
-  WorkspacesWorkspaceIdSessionsSessionIdRoute: typeof WorkspacesWorkspaceIdSessionsSessionIdRoute
+  ShellRoute: typeof ShellRouteWithChildren
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/': {
-      id: '/'
+    '/_shell': {
+      id: '/_shell'
+      path: ''
+      fullPath: '/'
+      preLoaderRoute: typeof ShellRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/_shell/': {
+      id: '/_shell/'
       path: '/'
       fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
-      parentRoute: typeof rootRouteImport
+      preLoaderRoute: typeof ShellIndexRouteImport
+      parentRoute: typeof ShellRoute
     }
-    '/workspaces/$workspaceId': {
-      id: '/workspaces/$workspaceId'
-      path: '/workspaces/$workspaceId'
-      fullPath: '/workspaces/$workspaceId'
-      preLoaderRoute: typeof WorkspacesWorkspaceIdRouteImport
-      parentRoute: typeof rootRouteImport
+    '/_shell/sessions/$sessionId': {
+      id: '/_shell/sessions/$sessionId'
+      path: '/sessions/$sessionId'
+      fullPath: '/sessions/$sessionId'
+      preLoaderRoute: typeof ShellSessionsSessionIdRouteImport
+      parentRoute: typeof ShellRoute
     }
-    '/workspaces/$workspaceId_/sessions/$sessionId': {
-      id: '/workspaces/$workspaceId_/sessions/$sessionId'
-      path: '/workspaces/$workspaceId/sessions/$sessionId'
-      fullPath: '/workspaces/$workspaceId/sessions/$sessionId'
-      preLoaderRoute: typeof WorkspacesWorkspaceIdSessionsSessionIdRouteImport
-      parentRoute: typeof rootRouteImport
+    '/_shell/projects/$projectId': {
+      id: '/_shell/projects/$projectId'
+      path: '/projects/$projectId'
+      fullPath: '/projects/$projectId'
+      preLoaderRoute: typeof ShellProjectsProjectIdRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/projects/$projectId_/sessions/$sessionId': {
+      id: '/_shell/projects/$projectId_/sessions/$sessionId'
+      path: '/projects/$projectId/sessions/$sessionId'
+      fullPath: '/projects/$projectId/sessions/$sessionId'
+      preLoaderRoute: typeof ShellProjectsProjectIdSessionsSessionIdRouteImport
+      parentRoute: typeof ShellRoute
     }
   }
 }
 
+interface ShellRouteChildren {
+  ShellIndexRoute: typeof ShellIndexRoute
+  ShellProjectsProjectIdRoute: typeof ShellProjectsProjectIdRoute
+  ShellSessionsSessionIdRoute: typeof ShellSessionsSessionIdRoute
+  ShellProjectsProjectIdSessionsSessionIdRoute: typeof ShellProjectsProjectIdSessionsSessionIdRoute
+}
+
+const ShellRouteChildren: ShellRouteChildren = {
+  ShellIndexRoute: ShellIndexRoute,
+  ShellProjectsProjectIdRoute: ShellProjectsProjectIdRoute,
+  ShellSessionsSessionIdRoute: ShellSessionsSessionIdRoute,
+  ShellProjectsProjectIdSessionsSessionIdRoute:
+    ShellProjectsProjectIdSessionsSessionIdRoute,
+}
+
+const ShellRouteWithChildren = ShellRoute._addFileChildren(ShellRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
-  IndexRoute: IndexRoute,
-  WorkspacesWorkspaceIdRoute: WorkspacesWorkspaceIdRoute,
-  WorkspacesWorkspaceIdSessionsSessionIdRoute:
-    WorkspacesWorkspaceIdSessionsSessionIdRoute,
+  ShellRoute: ShellRouteWithChildren,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

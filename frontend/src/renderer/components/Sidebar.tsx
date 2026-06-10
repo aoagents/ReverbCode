@@ -1,3 +1,4 @@
+import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
 import { ChevronsUpDown, Folder, Plus, Search, Settings, Waypoints } from "lucide-react";
 import { useState } from "react";
 import { sessionIsActive, sessionNeedsAttention, type WorkspaceSummary } from "../types/workspace";
@@ -15,6 +16,23 @@ type SidebarProps = {
   onNewWorker: (projectId: string) => void;
 };
 
+// Selection state comes from the URL: which project/session is active is the
+// route params, and clicks navigate rather than mutate a store.
+function useSelection() {
+  const navigate = useNavigate();
+  const params = useParams({ strict: false }) as { projectId?: string; sessionId?: string };
+  const pathname = useRouterState({ select: (state) => state.location.pathname });
+  return {
+    isHome: pathname === "/",
+    activeProjectId: params.projectId,
+    activeSessionId: params.sessionId,
+    goHome: () => void navigate({ to: "/" }),
+    goProject: (projectId: string) => void navigate({ to: "/projects/$projectId", params: { projectId } }),
+    goSession: (projectId: string, sessionId: string) =>
+      void navigate({ to: "/projects/$projectId/sessions/$sessionId", params: { projectId, sessionId } }),
+  };
+}
+
 function fleetSummary(workspaces: WorkspaceSummary[]) {
   const sessions = workspaces.flatMap((workspace) => workspace.sessions);
   const agents = sessions.filter(sessionIsActive).length;
@@ -23,41 +41,32 @@ function fleetSummary(workspaces: WorkspaceSummary[]) {
 }
 
 export function Sidebar({ daemonStatus, workspaceError, workspaces, onCreateProject, onNewWorker }: SidebarProps) {
-  const { isSidebarOpen, view, selectedSessionId, selectedWorkspaceId, selectOrchestrator, selectSession, selectWorkspace } =
-    useUiStore();
+  const { isSidebarOpen } = useUiStore();
+  const { isHome, activeProjectId, activeSessionId, goHome, goProject, goSession } = useSelection();
   const { agents, needYou } = fleetSummary(workspaces);
   const eventsConnection = useEventsConnection();
 
   if (!isSidebarOpen) {
-    return (
-      <CollapsedRail
-        agents={agents}
-        needYou={needYou}
-        onCreateProject={onCreateProject}
-        workspaces={workspaces}
-      />
-    );
+    return <CollapsedRail agents={agents} needYou={needYou} onCreateProject={onCreateProject} workspaces={workspaces} />;
   }
 
   return (
     <aside className="flex h-full w-60 shrink-0 flex-col border-r border-border bg-sidebar text-sidebar-foreground">
       <div className="min-h-0 flex-1 overflow-y-auto p-2">
-        {/* Orchestrator anchor — ReverbCode's one addition over emdash. */}
+        {/* Home board anchor — ReverbCode's one addition over emdash. */}
         <button
           aria-label="Orchestrator"
           className={cn(
             "group relative mb-2 flex h-[38px] w-full items-center gap-2.5 rounded-lg pl-3 pr-2.5 text-left transition-colors",
             "before:absolute before:left-0 before:top-2 before:bottom-2 before:w-0.5 before:rounded-r before:bg-accent",
-            view === "orchestrator" ? "bg-overlay" : "bg-raised hover:bg-overlay",
+            isHome ? "bg-overlay" : "bg-raised hover:bg-overlay",
           )}
-          onClick={selectOrchestrator}
+          onClick={goHome}
           type="button"
         >
           <Waypoints className="h-4 w-4 shrink-0 text-accent" aria-hidden="true" />
           <span className="text-[13.5px] font-semibold text-foreground">Orchestrator</span>
-          <span className="ml-auto whitespace-nowrap font-mono text-[10px] text-passive">
-            {agents} agents
-          </span>
+          <span className="ml-auto whitespace-nowrap font-mono text-[10px] text-passive">{agents} agents</span>
         </button>
 
         <div className="flex h-[34px] items-center gap-1.5 px-2">
@@ -78,53 +87,54 @@ export function Sidebar({ daemonStatus, workspaceError, workspaces, onCreateProj
             </p>
           </div>
         ) : (
-          workspaces.map((workspace) => (
-            <section key={workspace.id} className="mb-1">
-              <div
-                className={cn(
-                  "group flex h-8 w-full items-center rounded-lg pr-1 transition-colors",
-                  selectedWorkspaceId === workspace.id && view !== "session"
-                    ? "bg-raised text-foreground"
-                    : "text-muted-foreground hover:bg-surface",
-                )}
-              >
-                <button
-                  aria-label={`Select ${workspace.name}`}
-                  className="flex h-full min-w-0 flex-1 items-center gap-2 rounded-lg px-2 text-left"
-                  onClick={() => selectWorkspace(workspace.id)}
-                  type="button"
+          workspaces.map((workspace) => {
+            const projectActive = activeProjectId === workspace.id && !activeSessionId;
+            return (
+              <section key={workspace.id} className="mb-1">
+                <div
+                  className={cn(
+                    "group flex h-8 w-full items-center rounded-lg pr-1 transition-colors",
+                    projectActive ? "bg-raised text-foreground" : "text-muted-foreground hover:bg-surface",
+                  )}
                 >
-                  <Folder className="h-3.5 w-3.5 shrink-0 text-passive" aria-hidden="true" />
-                  <span className="min-w-0 flex-1 truncate text-[13.5px]">{workspace.name}</span>
-                </button>
-                <NewWorkerButton
-                  onClick={() => onNewWorker(workspace.id)}
-                  projectName={workspace.name}
-                  visible={selectedWorkspaceId === workspace.id && view !== "session"}
-                />
-              </div>
-
-              {workspace.sessions.map((session) => {
-                const active = view === "session" && selectedSessionId === session.id;
-                return (
                   <button
-                    aria-label={session.title}
-                    className={cn(
-                      "relative flex h-8 w-full items-center rounded-lg pl-[30px] pr-2 text-left transition-colors",
-                      active
-                        ? "bg-raised text-foreground before:absolute before:left-5 before:top-2 before:bottom-2 before:w-0.5 before:rounded before:bg-accent"
-                        : "text-muted-foreground hover:bg-surface",
-                    )}
-                    key={session.id}
-                    onClick={() => selectSession(session.id, workspace.id)}
+                    aria-label={`Select ${workspace.name}`}
+                    className="flex h-full min-w-0 flex-1 items-center gap-2 rounded-lg px-2 text-left"
+                    onClick={() => goProject(workspace.id)}
                     type="button"
                   >
-                    <span className="min-w-0 flex-1 truncate text-[13.5px]">{session.title}</span>
+                    <Folder className="h-3.5 w-3.5 shrink-0 text-passive" aria-hidden="true" />
+                    <span className="min-w-0 flex-1 truncate text-[13.5px]">{workspace.name}</span>
                   </button>
-                );
-              })}
-            </section>
-          ))
+                  <NewWorkerButton
+                    onClick={() => onNewWorker(workspace.id)}
+                    projectName={workspace.name}
+                    visible={projectActive}
+                  />
+                </div>
+
+                {workspace.sessions.map((session) => {
+                  const active = activeSessionId === session.id;
+                  return (
+                    <button
+                      aria-label={session.title}
+                      className={cn(
+                        "relative flex h-8 w-full items-center rounded-lg pl-[30px] pr-2 text-left transition-colors",
+                        active
+                          ? "bg-raised text-foreground before:absolute before:left-5 before:top-2 before:bottom-2 before:w-0.5 before:rounded before:bg-accent"
+                          : "text-muted-foreground hover:bg-surface",
+                      )}
+                      key={session.id}
+                      onClick={() => goSession(workspace.id, session.id)}
+                      type="button"
+                    >
+                      <span className="min-w-0 flex-1 truncate text-[13.5px]">{session.title}</span>
+                    </button>
+                  );
+                })}
+              </section>
+            );
+          })
         )}
       </div>
 
@@ -205,15 +215,7 @@ function CreateProjectButton({ onCreateProject }: Pick<SidebarProps, "onCreatePr
   );
 }
 
-function NewWorkerButton({
-  onClick,
-  projectName,
-  visible,
-}: {
-  onClick: () => void;
-  projectName: string;
-  visible: boolean;
-}) {
+function NewWorkerButton({ onClick, projectName, visible }: { onClick: () => void; projectName: string; visible: boolean }) {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -245,7 +247,7 @@ function CollapsedRail({
   workspaces: WorkspaceSummary[];
   onCreateProject: SidebarProps["onCreateProject"];
 }) {
-  const { view, selectedWorkspaceId, selectOrchestrator, selectWorkspace } = useUiStore();
+  const { isHome, activeProjectId, activeSessionId, goHome, goProject } = useSelection();
   return (
     <aside className="flex h-full w-12 shrink-0 flex-col items-center border-r border-border bg-sidebar py-2">
       <Tooltip>
@@ -255,9 +257,9 @@ function CollapsedRail({
             className={cn(
               "relative grid h-9 w-9 place-items-center rounded-lg transition-colors",
               "before:absolute before:left-0 before:top-2 before:bottom-2 before:w-0.5 before:rounded-r before:bg-accent",
-              view === "orchestrator" ? "bg-overlay" : "bg-raised hover:bg-overlay",
+              isHome ? "bg-overlay" : "bg-raised hover:bg-overlay",
             )}
-            onClick={selectOrchestrator}
+            onClick={goHome}
             type="button"
           >
             <Waypoints className="h-4 w-4 text-accent" aria-hidden="true" />
@@ -276,11 +278,11 @@ function CollapsedRail({
                 aria-label={workspace.name}
                 className={cn(
                   "grid h-9 w-9 place-items-center rounded-lg transition-colors",
-                  selectedWorkspaceId === workspace.id && view !== "session"
+                  activeProjectId === workspace.id && !activeSessionId
                     ? "bg-raised text-foreground"
                     : "text-muted-foreground hover:bg-surface",
                 )}
-                onClick={() => selectWorkspace(workspace.id)}
+                onClick={() => goProject(workspace.id)}
                 type="button"
               >
                 <Folder className="h-4 w-4" aria-hidden="true" />
