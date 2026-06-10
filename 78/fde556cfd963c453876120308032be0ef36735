@@ -1,0 +1,115 @@
+backend/internal/session_manager/manager_test.go
+  s_da07233999a5c2::t_7e3e8bbd58be25 311-345
+  s_da07233999a5c2::t_86e1e7cdad2564 387,391-395,402-430
+backend/internal/adapters/workspace/gitworktree/workspace_integration_test.go
+  s_da07233999a5c2::t_a165fc35555f8b 95-156
+backend/internal/httpd/log.go
+  s_da07233999a5c2::t_3d637d09b93a38 9-10
+  s_da07233999a5c2::t_581f8b4bbd7a69 23-26,31,34,42-46
+backend/internal/adapters/agent/qwen/hooks.go
+  s_da07233999a5c2::t_b7e69e4af0c09c 12
+  s_da07233999a5c2::t_3bc7b71aaeebba 116-118
+backend/internal/session_manager/manager.go
+  s_da07233999a5c2::t_b522131236e220 319-320,341-343
+  s_da07233999a5c2::t_7130f0c8ae9fd6 432-444,446-448,451,453,466-467,469-478,480
+backend/internal/adapters/agent/droid/hooks.go
+  s_da07233999a5c2::t_3142356d9ec117 116-118
+backend/internal/httpd/controllers/sessions_test.go
+  s_da07233999a5c2::t_f5eb954bd2abfe 25
+  s_da07233999a5c2::t_e3a1fe7caeebfe 104,106-108,110
+  s_da07233999a5c2::t_daab098913839a 323,333-336,342-343
+backend/internal/adapters/agent/registry/registry_test.go
+  s_da07233999a5c2::t_9c339f410b1f77 1-85
+backend/internal/httpd/controllers/dto.go
+  s_da07233999a5c2::t_5a8490fa2bb6ed 170-177,180-182
+backend/internal/adapters/agent/cursor/hooks.go
+  s_da07233999a5c2::t_d94f77e54a5e33 96-98
+backend/internal/httpd/apispec/openapi.yaml
+  s_da07233999a5c2::t_8ba42a1dfa2994 1029-1032,1036-1046
+backend/internal/adapters/agent/codex/hooks.go
+  s_da07233999a5c2::t_9034634a109671 104-106
+backend/internal/adapters/workspace/gitworktree/workspace_test.go
+  s_da07233999a5c2::t_e90c9638f59d9a 36
+  s_da07233999a5c2::t_45ed1880bf36e7 220-225,239-275
+backend/internal/adapters/workspace/gitworktree/commands.go
+  s_da07233999a5c2::t_bdf4e8bcd4f926 34-40
+backend/internal/adapters/agent/copilot/hooks.go
+  s_da07233999a5c2::t_7adee4e564f4f1 12
+  s_da07233999a5c2::t_ebc9968be1b3a6 125-127
+backend/internal/adapters/agent/hookutil/hookutil.go
+  s_da07233999a5c2::t_a67b29a1013e2e 7-8,11,14-54
+backend/internal/cli/session.go
+  s_da07233999a5c2::t_aeebf407a4491d 71
+  s_da07233999a5c2::t_ebaacc090195cd 84-88,90-91
+  s_da07233999a5c2::t_fa29c083a89b5f 441-447
+  s_da07233999a5c2::t_8c200dfd39d576 546-559
+frontend/src/api/schema.ts
+  s_da07233999a5c2::t_7d28f13bfbed26 355-359
+backend/internal/adapters/agent/hookutil/hookutil_test.go
+  s_da07233999a5c2::t_04ff96b4a7ad9d 1-73
+backend/internal/service/session/service_test.go
+  s_da07233999a5c2::t_9805e39f8f6b69 13
+  s_da07233999a5c2::t_2c28056b2ebfde 148-152
+  s_da07233999a5c2::t_762eb40ba45170 158-173
+backend/internal/httpd/envelope/envelope.go
+  s_da07233999a5c2::t_a65e2e2afa593b 4,14-36
+  s_da07233999a5c2::t_029f2305bb4af2 70
+backend/internal/ports/outbound.go
+  s_da07233999a5c2::t_023cc915e12efe 111,121-124
+backend/internal/adapters/agent/cline/hooks.go
+  s_da07233999a5c2::t_da5ed0ee02e2f4 11
+  s_da07233999a5c2::t_4228e27c095765 79-82,93-96
+backend/internal/adapters/agent/goose/hooks.go
+  s_da07233999a5c2::t_071b947556883e 12
+  s_da07233999a5c2::t_711d2b91ce6d96 103-105
+backend/internal/httpd/log_test.go
+  s_da07233999a5c2::t_e54df97f6e6af3 1-53
+backend/internal/adapters/agent/kilocode/hooks.go
+  s_da07233999a5c2::t_1c41f00d31afda 13
+  s_da07233999a5c2::t_c4dd974501c718 98-100
+backend/internal/adapters/workspace/gitworktree/workspace.go
+  s_da07233999a5c2::t_eb3974de5a8ddc 160-163,165
+  s_da07233999a5c2::t_c33ddbcc9919ca 164
+  s_da07233999a5c2::t_e9e8dcd58b042c 311-321
+backend/internal/adapters/agent/agy/hooks.go
+  s_da07233999a5c2::t_b965eabb556315 87-89
+backend/internal/cli/session_test.go
+  s_da07233999a5c2::t_fb3bf46e191f4d 72
+  s_da07233999a5c2::t_e984748e39d2e4 228-254
+  s_da07233999a5c2::t_75b475293b2b08 304-342
+backend/internal/adapters/agent/claudecode/hooks.go
+  s_da07233999a5c2::t_a1a806a455ad4b 110-112
+backend/internal/cli/dto_drift_e2e_test.go
+  s_da07233999a5c2::t_7178921eaff385 85-86
+backend/internal/service/session/service.go
+  s_da07233999a5c2::t_f901dd1930ca91 43,55-65
+  s_da07233999a5c2::t_b066f00bd8c5d2 218-232
+backend/internal/adapters/agent/opencode/hooks.go
+  s_da07233999a5c2::t_f49a930fc78909 97-99
+docs/agent/README.md
+  s_da07233999a5c2::t_7541f87b0ec25d 43
+backend/internal/adapters/agent/kiro/hooks.go
+  s_da07233999a5c2::t_3e00df5ed5703c 12
+  s_da07233999a5c2::t_18bc60ec7b4a19 103-105
+backend/internal/httpd/apispec/specgen/build.go
+  s_da07233999a5c2::t_38e569fb47ded2 142
+backend/internal/httpd/controllers/sessions.go
+  s_da07233999a5c2::t_c98610bd12378d 34
+  s_da07233999a5c2::t_334d6bb887eed5 247,252-256
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "78fde556cfd963c453876120308032be0ef36735",
+  "prompts": {},
+  "sessions": {
+    "s_da07233999a5c2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aa881282-e2d7-4f23-bf4a-81304c814a3a",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    }
+  }
+}
