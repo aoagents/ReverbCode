@@ -11,6 +11,9 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as ShellRouteImport } from './routes/_shell'
 import { Route as ShellIndexRouteImport } from './routes/_shell.index'
+import { Route as ShellReviewsRouteImport } from './routes/_shell.reviews'
+import { Route as ShellReviewRouteImport } from './routes/_shell.review'
+import { Route as ShellPrsRouteImport } from './routes/_shell.prs'
 import { Route as ShellSessionsSessionIdRouteImport } from './routes/_shell.sessions.$sessionId'
 import { Route as ShellProjectsProjectIdRouteImport } from './routes/_shell.projects.$projectId'
 import { Route as ShellProjectsProjectIdSettingsRouteImport } from './routes/_shell.projects.$projectId_.settings'
@@ -23,6 +26,21 @@ const ShellRoute = ShellRouteImport.update({
 const ShellIndexRoute = ShellIndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => ShellRoute,
+} as any)
+const ShellReviewsRoute = ShellReviewsRouteImport.update({
+  id: '/reviews',
+  path: '/reviews',
+  getParentRoute: () => ShellRoute,
+} as any)
+const ShellReviewRoute = ShellReviewRouteImport.update({
+  id: '/review',
+  path: '/review',
+  getParentRoute: () => ShellRoute,
+} as any)
+const ShellPrsRoute = ShellPrsRouteImport.update({
+  id: '/prs',
+  path: '/prs',
   getParentRoute: () => ShellRoute,
 } as any)
 const ShellSessionsSessionIdRoute = ShellSessionsSessionIdRouteImport.update({
@@ -50,12 +68,18 @@ const ShellProjectsProjectIdSessionsSessionIdRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof ShellIndexRoute
+  '/prs': typeof ShellPrsRoute
+  '/review': typeof ShellReviewRoute
+  '/reviews': typeof ShellReviewsRoute
   '/projects/$projectId': typeof ShellProjectsProjectIdRoute
   '/sessions/$sessionId': typeof ShellSessionsSessionIdRoute
   '/projects/$projectId/settings': typeof ShellProjectsProjectIdSettingsRoute
   '/projects/$projectId/sessions/$sessionId': typeof ShellProjectsProjectIdSessionsSessionIdRoute
 }
 export interface FileRoutesByTo {
+  '/prs': typeof ShellPrsRoute
+  '/review': typeof ShellReviewRoute
+  '/reviews': typeof ShellReviewsRoute
   '/': typeof ShellIndexRoute
   '/projects/$projectId': typeof ShellProjectsProjectIdRoute
   '/sessions/$sessionId': typeof ShellSessionsSessionIdRoute
@@ -65,6 +89,9 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_shell': typeof ShellRouteWithChildren
+  '/_shell/prs': typeof ShellPrsRoute
+  '/_shell/review': typeof ShellReviewRoute
+  '/_shell/reviews': typeof ShellReviewsRoute
   '/_shell/': typeof ShellIndexRoute
   '/_shell/projects/$projectId': typeof ShellProjectsProjectIdRoute
   '/_shell/sessions/$sessionId': typeof ShellSessionsSessionIdRoute
@@ -75,12 +102,18 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/prs'
+    | '/review'
+    | '/reviews'
     | '/projects/$projectId'
     | '/sessions/$sessionId'
     | '/projects/$projectId/settings'
     | '/projects/$projectId/sessions/$sessionId'
   fileRoutesByTo: FileRoutesByTo
   to:
+    | '/prs'
+    | '/review'
+    | '/reviews'
     | '/'
     | '/projects/$projectId'
     | '/sessions/$sessionId'
@@ -89,6 +122,9 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/_shell'
+    | '/_shell/prs'
+    | '/_shell/review'
+    | '/_shell/reviews'
     | '/_shell/'
     | '/_shell/projects/$projectId'
     | '/_shell/sessions/$sessionId'
@@ -114,6 +150,27 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof ShellIndexRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/reviews': {
+      id: '/_shell/reviews'
+      path: '/reviews'
+      fullPath: '/reviews'
+      preLoaderRoute: typeof ShellReviewsRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/review': {
+      id: '/_shell/review'
+      path: '/review'
+      fullPath: '/review'
+      preLoaderRoute: typeof ShellReviewRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/prs': {
+      id: '/_shell/prs'
+      path: '/prs'
+      fullPath: '/prs'
+      preLoaderRoute: typeof ShellPrsRouteImport
       parentRoute: typeof ShellRoute
     }
     '/_shell/sessions/$sessionId': {
@@ -148,6 +205,9 @@ declare module '@tanstack/react-router' {
 }
 
 interface ShellRouteChildren {
+  ShellPrsRoute: typeof ShellPrsRoute
+  ShellReviewRoute: typeof ShellReviewRoute
+  ShellReviewsRoute: typeof ShellReviewsRoute
   ShellIndexRoute: typeof ShellIndexRoute
   ShellProjectsProjectIdRoute: typeof ShellProjectsProjectIdRoute
   ShellSessionsSessionIdRoute: typeof ShellSessionsSessionIdRoute
@@ -156,6 +216,9 @@ interface ShellRouteChildren {
 }
 
 const ShellRouteChildren: ShellRouteChildren = {
+  ShellPrsRoute: ShellPrsRoute,
+  ShellReviewRoute: ShellReviewRoute,
+  ShellReviewsRoute: ShellReviewsRoute,
   ShellIndexRoute: ShellIndexRoute,
   ShellProjectsProjectIdRoute: ShellProjectsProjectIdRoute,
   ShellSessionsSessionIdRoute: ShellSessionsSessionIdRoute,

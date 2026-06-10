@@ -1,5 +1,5 @@
 import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
-import { ChevronsUpDown, Folder, Plus, Search, Settings, Waypoints } from "lucide-react";
+import { ChevronsUpDown, ClipboardCheck, Folder, GitPullRequest, Plus, Search, Settings, Waypoints } from "lucide-react";
 import { useState } from "react";
 import { sessionIsActive, sessionNeedsAttention, type WorkspaceSummary } from "../types/workspace";
 import { useUiStore } from "../stores/ui-store";
@@ -24,9 +24,13 @@ function useSelection() {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   return {
     isHome: pathname === "/",
+    isPrs: pathname === "/prs",
+    isReview: pathname === "/review",
     activeProjectId: params.projectId,
     activeSessionId: params.sessionId,
     goHome: () => void navigate({ to: "/" }),
+    goPrs: () => void navigate({ to: "/prs" }),
+    goReview: () => void navigate({ to: "/review" }),
     goProject: (projectId: string) => void navigate({ to: "/projects/$projectId", params: { projectId } }),
     goSession: (projectId: string, sessionId: string) =>
       void navigate({ to: "/projects/$projectId/sessions/$sessionId", params: { projectId, sessionId } }),
@@ -42,7 +46,8 @@ function fleetSummary(workspaces: WorkspaceSummary[]) {
 
 export function Sidebar({ daemonStatus, workspaceError, workspaces, onCreateProject, onNewWorker }: SidebarProps) {
   const { isSidebarOpen } = useUiStore();
-  const { isHome, activeProjectId, activeSessionId, goHome, goProject, goSession } = useSelection();
+  const { isHome, isPrs, isReview, activeProjectId, activeSessionId, goHome, goPrs, goReview, goProject, goSession } =
+    useSelection();
   const { agents, needYou } = fleetSummary(workspaces);
   const eventsConnection = useEventsConnection();
 
@@ -139,6 +144,18 @@ export function Sidebar({ daemonStatus, workspaceError, workspaces, onCreateProj
       </div>
 
       <div className="border-t border-border p-2">
+        <FooterRow
+          icon={<GitPullRequest className="h-[15px] w-[15px]" aria-hidden="true" />}
+          label="Pull requests"
+          onClick={goPrs}
+          active={isPrs}
+        />
+        <FooterRow
+          icon={<ClipboardCheck className="h-[15px] w-[15px]" aria-hidden="true" />}
+          label="Review"
+          onClick={goReview}
+          active={isReview}
+        />
         <FooterRow icon={<Search className="h-[15px] w-[15px]" aria-hidden="true" />} label="Search" shortcut="⌘K" />
         <FooterRow icon={<Settings className="h-[15px] w-[15px]" aria-hidden="true" />} label="Settings" shortcut="⌘," />
       </div>
@@ -160,15 +177,31 @@ export function Sidebar({ daemonStatus, workspaceError, workspaces, onCreateProj
   );
 }
 
-function FooterRow({ icon, label, shortcut }: { icon: React.ReactNode; label: string; shortcut: string }) {
+function FooterRow({
+  icon,
+  label,
+  shortcut,
+  onClick,
+  active,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  shortcut?: string;
+  onClick?: () => void;
+  active?: boolean;
+}) {
   return (
     <button
-      className="flex h-7 w-full items-center gap-2.5 rounded-lg px-2 text-left text-[13px] text-muted-foreground transition-colors hover:bg-surface [&_svg]:text-passive"
+      className={cn(
+        "flex h-7 w-full items-center gap-2.5 rounded-lg px-2 text-left text-[13px] transition-colors [&_svg]:text-passive",
+        active ? "bg-raised text-foreground" : "text-muted-foreground hover:bg-surface",
+      )}
+      onClick={onClick}
       type="button"
     >
       {icon}
       <span className="min-w-0 flex-1 truncate">{label}</span>
-      <span className="font-mono text-[10px] text-passive">{shortcut}</span>
+      {shortcut && <span className="font-mono text-[10px] text-passive">{shortcut}</span>}
     </button>
   );
 }
