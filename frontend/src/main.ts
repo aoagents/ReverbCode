@@ -1,5 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, net, protocol, shell, type OpenDialogOptions } from "electron";
-import updateElectronApp from "update-electron-app";
+import { updateElectronApp } from "update-electron-app";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import os from "node:os";

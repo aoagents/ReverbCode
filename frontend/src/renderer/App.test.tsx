@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, test, vi } from "vitest";
 import { App } from "./App";
 import { useUiStore } from "./stores/ui-store";
+import { TooltipProvider } from "./components/ui/tooltip";
 
 const { postMock, mockData } = vi.hoisted(() => ({
   postMock: vi.fn(),
@@ -47,9 +48,13 @@ vi.mock("./components/TerminalPane", () => ({
 
 function renderApp() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  // TooltipProvider mirrors the root route (routes/__root.tsx), which owns the
+  // provider in the real tree.
   return render(
     <QueryClientProvider client={queryClient}>
-      <App />
+      <TooltipProvider>
+        <App />
+      </TooltipProvider>
     </QueryClientProvider>,
   );
 }

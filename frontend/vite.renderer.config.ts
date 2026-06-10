@@ -1,4 +1,7 @@
-import { defineConfig } from "vite";
+// defineConfig comes from vitest/config (a superset of vite's) so the `test`
+// block typechecks; vitest itself must be pointed at this file explicitly
+// (package.json test script) because it only auto-discovers vite.config.*.
+import { defineConfig } from "vitest/config";
 import type { Plugin } from "vite";
 import { TanStackRouterVite } from "@tanstack/router-plugin/vite";
 import react from "@vitejs/plugin-react";

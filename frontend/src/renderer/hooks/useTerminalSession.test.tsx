@@ -167,7 +167,18 @@ describe("useTerminalSession", () => {
     terminal.typeKeys("ls\r");
     expect(muxes[0].inputs).toEqual([["handle-1", "ls\r"]]);
     terminal.emitResize(120, 40);
+    act(() => void vi.advanceTimersByTime(100));
     expect(muxes[0].resizes).toContainEqual(["handle-1", 120, 40]);
+  });
+
+  it("collapses a drag's burst of grid changes into one trailing PTY resize", () => {
+    const { terminal, muxes } = setup();
+    const initialResizes = muxes[0].resizes.length; // connect() sends the opening size
+    terminal.emitResize(100, 30);
+    terminal.emitResize(110, 34);
+    terminal.emitResize(120, 40);
+    act(() => void vi.advanceTimersByTime(100));
+    expect(muxes[0].resizes.slice(initialResizes)).toEqual([["handle-1", 120, 40]]);
   });
 
   it("marks exit in the terminal and refetches workspace state instead of writing status", () => {
