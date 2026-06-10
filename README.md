@@ -62,30 +62,30 @@ The CLI is intentionally thin: every product command resolves to a daemon HTTP
 route. Run `ao <command> --help` for the authoritative flag shape; the table
 below groups what's on `main` today.
 
-| Lane | Command | Purpose |
-|---|---|---|
-| Daemon | `ao start` | Start the daemon in the background and wait for `/readyz`. |
-| Daemon | `ao stop` | Graceful shutdown via loopback `POST /shutdown`. |
-| Daemon | `ao status` | Report PID/port/health/readiness from `running.json`. |
-| Daemon | `ao daemon` | Hidden internal entrypoint used by `ao start`. |
-| Project | `ao project add` | Register a local git repo as a project. |
-| Project | `ao project ls` | List registered projects. |
-| Project | `ao project get <id>` | Fetch one project. |
-| Project | `ao project rm <id>` | Remove a project. |
-| Session | `ao spawn` | Spawn a worker session in a registered project. |
-| Session | `ao session ls` | List sessions (filter by project, include terminated). |
-| Session | `ao session get <id>` | Fetch one session. |
-| Session | `ao session kill <id>` | Terminate a session. |
-| Session | `ao session rename <id> <name>` | Rename a session. |
-| Session | `ao session restore <id>` | Relaunch a terminated session. |
-| Session | `ao session cleanup` | Reclaim eligible workspaces for terminated sessions. |
-| Session | `ao session claim-pr <session> <pr>` | Attach an existing PR to a session. |
-| Orchestrator | `ao orchestrator ls` | List orchestrator sessions. |
-| Messaging | `ao send` | Send a message to a running agent session. |
-| Utility | `ao doctor` | Local health checks (config, data dir, DB, `git`, `zellij`). |
-| Utility | `ao completion <shell>` | Generate bash/zsh/fish/powershell completions. |
-| Utility | `ao version` | Print build metadata. |
-| Internal | `ao hooks <agent> <event>` | Hidden adapter hook callback. |
+| Lane         | Command                              | Purpose                                                      |
+| ------------ | ------------------------------------ | ------------------------------------------------------------ |
+| Daemon       | `ao start`                           | Start the daemon in the background and wait for `/readyz`.   |
+| Daemon       | `ao stop`                            | Graceful shutdown via loopback `POST /shutdown`.             |
+| Daemon       | `ao status`                          | Report PID/port/health/readiness from `running.json`.        |
+| Daemon       | `ao daemon`                          | Hidden internal entrypoint used by `ao start`.               |
+| Project      | `ao project add`                     | Register a local git repo as a project.                      |
+| Project      | `ao project ls`                      | List registered projects.                                    |
+| Project      | `ao project get <id>`                | Fetch one project.                                           |
+| Project      | `ao project rm <id>`                 | Remove a project.                                            |
+| Session      | `ao spawn`                           | Spawn a worker session in a registered project.              |
+| Session      | `ao session ls`                      | List sessions (filter by project, include terminated).       |
+| Session      | `ao session get <id>`                | Fetch one session.                                           |
+| Session      | `ao session kill <id>`               | Terminate a session.                                         |
+| Session      | `ao session rename <id> <name>`      | Rename a session.                                            |
+| Session      | `ao session restore <id>`            | Relaunch a terminated session.                               |
+| Session      | `ao session cleanup`                 | Reclaim eligible workspaces for terminated sessions.         |
+| Session      | `ao session claim-pr <session> <pr>` | Attach an existing PR to a session.                          |
+| Orchestrator | `ao orchestrator ls`                 | List orchestrator sessions.                                  |
+| Messaging    | `ao send`                            | Send a message to a running agent session.                   |
+| Utility      | `ao doctor`                          | Local health checks (config, data dir, DB, `git`, `zellij`). |
+| Utility      | `ao completion <shell>`              | Generate bash/zsh/fish/powershell completions.               |
+| Utility      | `ao version`                         | Print build metadata.                                        |
+| Internal     | `ao hooks <agent> <event>`           | Hidden adapter hook callback.                                |
 
 See [`docs/cli/`](docs/cli/) for the daemon-control intent and command shape.
 
@@ -95,16 +95,16 @@ All configuration is env-driven; the daemon takes no config file. The bind
 host is hard-coded to `127.0.0.1` — the daemon has no auth, CORS, or TLS, and
 exposing it beyond loopback would be a security regression.
 
-| Var | Default | Purpose |
-|---|---|---|
-| `AO_PORT` | `3001` | Bind port; daemon fails fast if taken. |
-| `AO_REQUEST_TIMEOUT` | `60s` | Per-request timeout (Go duration). |
-| `AO_SHUTDOWN_TIMEOUT` | `10s` | Graceful-shutdown hard cap. |
-| `AO_RUN_FILE` | `<UserConfigDir>/agent-orchestrator/running.json` | PID + port handshake path. |
-| `AO_DATA_DIR` | `<UserConfigDir>/agent-orchestrator/data` | SQLite DB, WAL files, managed state. |
-| `AO_AGENT` | `claude-code` | Default agent adapter id used by `ao spawn`. |
-| `AO_SESSION_ID` | _(unset)_ | Set inside spawned sessions; read by `ao send` and `ao hooks`. |
-| `GITHUB_TOKEN` | _(unset)_ | Used by the GitHub SCM and tracker adapters. Falls back to `gh auth token`. |
+| Var                   | Default                                           | Purpose                                                                     |
+| --------------------- | ------------------------------------------------- | --------------------------------------------------------------------------- |
+| `AO_PORT`             | `3001`                                            | Bind port; daemon fails fast if taken.                                      |
+| `AO_REQUEST_TIMEOUT`  | `60s`                                             | Per-request timeout (Go duration).                                          |
+| `AO_SHUTDOWN_TIMEOUT` | `10s`                                             | Graceful-shutdown hard cap.                                                 |
+| `AO_RUN_FILE`         | `<UserConfigDir>/agent-orchestrator/running.json` | PID + port handshake path.                                                  |
+| `AO_DATA_DIR`         | `<UserConfigDir>/agent-orchestrator/data`         | SQLite DB, WAL files, managed state.                                        |
+| `AO_AGENT`            | `claude-code`                                     | Default agent adapter id used by `ao spawn`.                                |
+| `AO_SESSION_ID`       | _(unset)_                                         | Set inside spawned sessions; read by `ao send` and `ao hooks`.              |
+| `GITHUB_TOKEN`        | _(unset)_                                         | Used by the GitHub SCM and tracker adapters. Falls back to `gh auth token`. |
 
 Health check:
 

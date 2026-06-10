@@ -40,24 +40,24 @@ rather than an escape-hatch map.
 
 ## Field catalog (legacy `projects.<id>`) and target home
 
-| YAML field | Type | Storage today | Target |
-|---|---|---|---|
-| `name` | string | `projects.display_name` | done |
-| `repo` | string | `projects.repo_origin_url` | done |
-| `path` | string | `projects.path` | done |
-| `defaultBranch` | string | hardcoded `"main"` | `projects.default_branch` |
-| `sessionPrefix` | string | derived | `projects.session_prefix` |
-| `agentConfig` | `{model, permissions}` | **`projects.agent_config` (typed)** | **done (this PR)** |
-| `orchestrator`/`worker` overrides | `{agent, agentConfig}` | — | typed role-override columns/blob |
-| `env` | `map[string]string` | — | `project_env` table (key/value rows) |
-| `symlinks` | `[]string` | — | `projects.symlinks` (JSON) |
-| `postCreate` | `[]string` | — | `projects.post_create` (JSON) |
-| `agentRules` / `agentRulesFile` | string | partial (`SpawnConfig.AgentRules`) | `projects.agent_rules*` |
-| `orchestratorRules` | string | — | `projects.orchestrator_rules` |
-| `tracker` | `{plugin, …}` | DTO stub only | `projects.tracker` (typed blob) + adapter validation |
-| `scm` | `{plugin, webhook{…}}` | DTO stub only | `projects.scm` (typed blob) + adapter validation |
-| `opencodeIssueSessionStrategy` | enum | — | `projects.opencode_session_strategy` |
-| `reactions` | per-project overrides | — | `project_reactions` (own slice) |
+| YAML field                        | Type                   | Storage today                       | Target                                               |
+| --------------------------------- | ---------------------- | ----------------------------------- | ---------------------------------------------------- |
+| `name`                            | string                 | `projects.display_name`             | done                                                 |
+| `repo`                            | string                 | `projects.repo_origin_url`          | done                                                 |
+| `path`                            | string                 | `projects.path`                     | done                                                 |
+| `defaultBranch`                   | string                 | hardcoded `"main"`                  | `projects.default_branch`                            |
+| `sessionPrefix`                   | string                 | derived                             | `projects.session_prefix`                            |
+| `agentConfig`                     | `{model, permissions}` | **`projects.agent_config` (typed)** | **done (this PR)**                                   |
+| `orchestrator`/`worker` overrides | `{agent, agentConfig}` | —                                   | typed role-override columns/blob                     |
+| `env`                             | `map[string]string`    | —                                   | `project_env` table (key/value rows)                 |
+| `symlinks`                        | `[]string`             | —                                   | `projects.symlinks` (JSON)                           |
+| `postCreate`                      | `[]string`             | —                                   | `projects.post_create` (JSON)                        |
+| `agentRules` / `agentRulesFile`   | string                 | partial (`SpawnConfig.AgentRules`)  | `projects.agent_rules*`                              |
+| `orchestratorRules`               | string                 | —                                   | `projects.orchestrator_rules`                        |
+| `tracker`                         | `{plugin, …}`          | DTO stub only                       | `projects.tracker` (typed blob) + adapter validation |
+| `scm`                             | `{plugin, webhook{…}}` | DTO stub only                       | `projects.scm` (typed blob) + adapter validation     |
+| `opencodeIssueSessionStrategy`    | enum                   | —                                   | `projects.opencode_session_strategy`                 |
+| `reactions`                       | per-project overrides  | —                                   | `project_reactions` (own slice)                      |
 
 ## Typed model
 
@@ -112,7 +112,7 @@ agent adapter.
 
 ## Sequencing (one slice per PR)
 
-1. **agentConfig (typed)** — *this PR*. Establishes the typed+validated+surfaced
+1. **agentConfig (typed)** — _this PR_. Establishes the typed+validated+surfaced
    pattern end to end.
 2. **Project identity scalars** — `default_branch`, `session_prefix` (stop
    hardcoding/deriving them).

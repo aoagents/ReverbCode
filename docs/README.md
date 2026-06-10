@@ -10,13 +10,13 @@ Start with [architecture.md](architecture.md) for the current backend model and
 
 ## Reference docs
 
-| Doc | What it covers |
-|-----|----------------|
-| [architecture.md](architecture.md) | Current backend model, package layout, status derivation, persistence/CDC, and load-bearing rules. |
+| Doc                                                    | What it covers                                                                                                        |
+| ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------- |
+| [architecture.md](architecture.md)                     | Current backend model, package layout, status derivation, persistence/CDC, and load-bearing rules.                    |
 | [backend-code-structure.md](backend-code-structure.md) | Package ownership rules for the Go backend: domain, services, ports, adapters, storage, HTTP, CLI, and daemon wiring. |
-| [cli/README.md](cli/README.md) | CLI commands and daemon control surface. |
-| [status.md](status.md) | Current implementation shape, build/test command, and next integration work. |
-| [stack.md](stack.md) | Accepted library/runtime choices, pending stack decisions, and dependencies explicitly avoided for V1. |
+| [cli/README.md](cli/README.md)                         | CLI commands and daemon control surface.                                                                              |
+| [status.md](status.md)                                 | Current implementation shape, build/test command, and next integration work.                                          |
+| [stack.md](stack.md)                                   | Accepted library/runtime choices, pending stack decisions, and dependencies explicitly avoided for V1.                |
 
 ## Mental model
 

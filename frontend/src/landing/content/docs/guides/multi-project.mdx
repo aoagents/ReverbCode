@@ -10,7 +10,7 @@ One `agent-orchestrator.yaml` can drive many projects. Each project gets its own
 ## Config shape
 
 ```yaml title="agent-orchestrator.yaml"
-runtime: tmux           # global default
+runtime: tmux # global default
 agent: claude-code
 
 projects:
@@ -20,7 +20,7 @@ projects:
 
   api:
     repo: myorg/api
-    agent: codex          # per-project override
+    agent: codex # per-project override
     tracker: linear
     trackerConfig:
       teamId: TEAM-123
@@ -28,7 +28,7 @@ projects:
   marketing:
     repo: myorg/site
     agent: cursor
-    workspace: clone      # full clone instead of worktree
+    workspace: clone # full clone instead of worktree
 ```
 
 Project IDs (`web`, `api`, `marketing`) are what you pass to `--project` / `-p`.
@@ -58,7 +58,7 @@ Or pass no project and AO will prompt.
 Anything defined at the top level is a default. Override per project:
 
 ```yaml
-tracker: github           # default
+tracker: github # default
 notifier:
   - type: slack
     webhookUrl: ${SLACK_GLOBAL}
@@ -93,5 +93,6 @@ ao stop --all        # stop everything
 ```
 
 <Callout type="info">
-  Each project can have a different agent, tracker, notifier, and workspace — that's the whole point of the plugin system. Don't force uniformity; let teams use what fits.
+	Each project can have a different agent, tracker, notifier, and workspace — that's the whole point of the plugin
+	system. Don't force uniformity; let teams use what fits.
 </Callout>

@@ -9,19 +9,21 @@ Agent Orchestrator (AO) is a Node.js orchestrator that spawns and manages parall
 
 Each abstraction in AO is a named interface defined in `packages/core/src/types.ts`. Seven of the eight slots are pluggable at runtime; the eighth (Lifecycle) is built into core and cannot be replaced.
 
-| Slot | Default | Purpose | Interface |
-|------|---------|---------|-----------|
-| Runtime | [tmux](/docs/plugins/runtimes/tmux) | Where agent sessions execute (tmux, process, docker, k8s) | `Runtime` |
-| Agent | [claude-code](/docs/plugins/agents/claude-code) | Which AI coding tool is launched | `Agent` |
-| Workspace | [worktree](/docs/plugins/workspaces/worktree) | Code isolation — each session gets its own git worktree or clone | `Workspace` |
-| Tracker | [github](/docs/plugins/trackers/github) | Issue tracking (GitHub Issues, Linear, GitLab) | `Tracker` |
-| SCM | [github](/docs/plugins/scm/github) | PR lifecycle, CI checks, and code reviews | `SCM` |
-| Notifier | [desktop](/docs/plugins/notifiers/desktop) | Push notifications to the human (desktop, Slack, webhook) | `Notifier` |
-| Terminal | [iterm2](/docs/plugins/terminals/iterm2) | How humans view and interact with running sessions | `Terminal` |
-| Lifecycle | core (non-pluggable) | State machine, poll loop, and reaction engine | `LifecycleManager` |
+| Slot      | Default                                         | Purpose                                                          | Interface          |
+| --------- | ----------------------------------------------- | ---------------------------------------------------------------- | ------------------ |
+| Runtime   | [tmux](/docs/plugins/runtimes/tmux)             | Where agent sessions execute (tmux, process, docker, k8s)        | `Runtime`          |
+| Agent     | [claude-code](/docs/plugins/agents/claude-code) | Which AI coding tool is launched                                 | `Agent`            |
+| Workspace | [worktree](/docs/plugins/workspaces/worktree)   | Code isolation — each session gets its own git worktree or clone | `Workspace`        |
+| Tracker   | [github](/docs/plugins/trackers/github)         | Issue tracking (GitHub Issues, Linear, GitLab)                   | `Tracker`          |
+| SCM       | [github](/docs/plugins/scm/github)              | PR lifecycle, CI checks, and code reviews                        | `SCM`              |
+| Notifier  | [desktop](/docs/plugins/notifiers/desktop)      | Push notifications to the human (desktop, Slack, webhook)        | `Notifier`         |
+| Terminal  | [iterm2](/docs/plugins/terminals/iterm2)        | How humans view and interact with running sessions               | `Terminal`         |
+| Lifecycle | core (non-pluggable)                            | State machine, poll loop, and reaction engine                    | `LifecycleManager` |
 
 <Callout type="info">
-The Lifecycle slot is not pluggable. It is instantiated by core and wired to all other plugins automatically. You configure its behaviour (poll interval, reactions, thresholds) through `agent-orchestrator.yaml` rather than by replacing the implementation.
+	The Lifecycle slot is not pluggable. It is instantiated by core and wired to all other plugins automatically. You
+	configure its behaviour (poll interval, reactions, thresholds) through `agent-orchestrator.yaml` rather than by
+	replacing the implementation.
 </Callout>
 
 ---
@@ -56,25 +58,25 @@ pr_open ────────────────────────
 
 Terminal statuses (session is dead and will no longer be polled): `killed`, `terminated`, `done`, `cleanup`, `errored`, `merged`.
 
-| Status | Description |
-|--------|-------------|
-| `spawning` | Session is being created — worktree, branch, and tmux window are initialising |
-| `working` | Agent is active; no PR yet |
-| `pr_open` | Agent has pushed a PR; CI and reviews are pending |
-| `ci_failed` | One or more CI checks on the PR are failing |
-| `review_pending` | PR has been submitted for review; waiting for a decision |
-| `changes_requested` | Reviewer(s) have requested changes |
-| `approved` | PR is approved but not yet mergeable (e.g. still behind base) |
-| `mergeable` | PR is approved, CI is green, and it can be merged |
-| `merged` | PR has been merged (terminal) |
-| `cleanup` | Post-merge cleanup in progress (terminal) |
-| `done` | Session completed cleanly (terminal) |
-| `needs_input` | Agent is waiting for a permission prompt or human input |
-| `stuck` | Agent has been idle beyond the configured `agent-stuck` threshold |
-| `errored` | Unexpected error — session is dead (terminal) |
-| `killed` | Session was explicitly killed or the PR was closed (terminal) |
-| `idle` | Agent process is alive but has not produced activity for an extended period |
-| `terminated` | Session was terminated externally (terminal) |
+| Status              | Description                                                                   |
+| ------------------- | ----------------------------------------------------------------------------- |
+| `spawning`          | Session is being created — worktree, branch, and tmux window are initialising |
+| `working`           | Agent is active; no PR yet                                                    |
+| `pr_open`           | Agent has pushed a PR; CI and reviews are pending                             |
+| `ci_failed`         | One or more CI checks on the PR are failing                                   |
+| `review_pending`    | PR has been submitted for review; waiting for a decision                      |
+| `changes_requested` | Reviewer(s) have requested changes                                            |
+| `approved`          | PR is approved but not yet mergeable (e.g. still behind base)                 |
+| `mergeable`         | PR is approved, CI is green, and it can be merged                             |
+| `merged`            | PR has been merged (terminal)                                                 |
+| `cleanup`           | Post-merge cleanup in progress (terminal)                                     |
+| `done`              | Session completed cleanly (terminal)                                          |
+| `needs_input`       | Agent is waiting for a permission prompt or human input                       |
+| `stuck`             | Agent has been idle beyond the configured `agent-stuck` threshold             |
+| `errored`           | Unexpected error — session is dead (terminal)                                 |
+| `killed`            | Session was explicitly killed or the PR was closed (terminal)                 |
+| `idle`              | Agent process is alive but has not produced activity for an extended period   |
+| `terminated`        | Session was terminated externally (terminal)                                  |
 
 ### How transitions are determined
 
@@ -99,37 +101,37 @@ Priority is inferred by `inferPriority()` in `lifecycle-manager.ts`:
 - **warning** — events containing `fail`, `changes_requested`, or `conflicts`
 - **info** — everything else, including all `summary.*` events
 
-| `event.type` | Priority | When emitted |
-|---|---|---|
-| `session.spawned` | info | Session transitions out of `spawning` |
-| `session.working` | info | Session enters `working` |
-| `session.exited` | info | Agent process exits |
-| `session.killed` | info | Session is killed |
-| `session.idle` | info | Session enters `idle` |
-| `session.stuck` | urgent | Session exceeds the `agent-stuck` threshold |
-| `session.needs_input` | urgent | Agent is waiting on a permission prompt |
-| `session.errored` | urgent | Session enters `errored` |
-| `pr.created` | info | Session transitions to `pr_open` |
-| `pr.updated` | info | PR title or state changes |
-| `pr.merged` | action | PR is merged |
-| `pr.closed` | info | PR is closed without merging |
-| `ci.passing` | action | CI checks recover from failing to passing |
-| `ci.failing` | warning | Session enters `ci_failed` |
-| `ci.fix_sent` | info | CI fix message sent to agent |
-| `ci.fix_failed` | warning | CI fix attempt failed |
-| `review.pending` | info | Session enters `review_pending` |
-| `review.approved` | action | Session enters `approved` |
-| `review.changes_requested` | warning | Session enters `changes_requested` |
-| `review.comments_sent` | info | Review comments forwarded to agent |
-| `review.comments_unresolved` | warning | Unresolved review comments still present |
-| `automated_review.found` | warning | Bot/automated review comments detected |
-| `automated_review.fix_sent` | info | Automated review fix sent to agent |
-| `merge.ready` | action | Session enters `mergeable` |
-| `merge.conflicts` | warning | PR has merge conflicts |
-| `merge.completed` | action | Session enters `merged` |
-| `reaction.triggered` | info | A configured reaction fired |
-| `reaction.escalated` | urgent | A reaction exceeded its retry/escalation threshold |
-| `summary.all_complete` | info | All sessions have reached terminal statuses |
+| `event.type`                 | Priority | When emitted                                       |
+| ---------------------------- | -------- | -------------------------------------------------- |
+| `session.spawned`            | info     | Session transitions out of `spawning`              |
+| `session.working`            | info     | Session enters `working`                           |
+| `session.exited`             | info     | Agent process exits                                |
+| `session.killed`             | info     | Session is killed                                  |
+| `session.idle`               | info     | Session enters `idle`                              |
+| `session.stuck`              | urgent   | Session exceeds the `agent-stuck` threshold        |
+| `session.needs_input`        | urgent   | Agent is waiting on a permission prompt            |
+| `session.errored`            | urgent   | Session enters `errored`                           |
+| `pr.created`                 | info     | Session transitions to `pr_open`                   |
+| `pr.updated`                 | info     | PR title or state changes                          |
+| `pr.merged`                  | action   | PR is merged                                       |
+| `pr.closed`                  | info     | PR is closed without merging                       |
+| `ci.passing`                 | action   | CI checks recover from failing to passing          |
+| `ci.failing`                 | warning  | Session enters `ci_failed`                         |
+| `ci.fix_sent`                | info     | CI fix message sent to agent                       |
+| `ci.fix_failed`              | warning  | CI fix attempt failed                              |
+| `review.pending`             | info     | Session enters `review_pending`                    |
+| `review.approved`            | action   | Session enters `approved`                          |
+| `review.changes_requested`   | warning  | Session enters `changes_requested`                 |
+| `review.comments_sent`       | info     | Review comments forwarded to agent                 |
+| `review.comments_unresolved` | warning  | Unresolved review comments still present           |
+| `automated_review.found`     | warning  | Bot/automated review comments detected             |
+| `automated_review.fix_sent`  | info     | Automated review fix sent to agent                 |
+| `merge.ready`                | action   | Session enters `mergeable`                         |
+| `merge.conflicts`            | warning  | PR has merge conflicts                             |
+| `merge.completed`            | action   | Session enters `merged`                            |
+| `reaction.triggered`         | info     | A configured reaction fired                        |
+| `reaction.escalated`         | urgent   | A reaction exceeded its retry/escalation threshold |
+| `summary.all_complete`       | info     | All sessions have reached terminal statuses        |
 
 For the webhook wire format, see [Webhook Notifier](/docs/plugins/notifiers/webhook). For configuring which events trigger automated reactions, see [Reactions](/docs/configuration/reactions).
 
@@ -204,14 +206,14 @@ Every agent plugin must implement `getActivityState(session, readyThresholdMs?)`
 
 ### The 6 activity states
 
-| State | Meaning | When |
-|---|---|---|
-| `active` | Agent is processing — thinking, writing code, running tools | Activity within the last 30 seconds |
-| `ready` | Agent finished its turn and is alive, waiting for input | 30 seconds – 5 minutes since last activity |
-| `idle` | Agent has been quiet for an extended period | More than 5 minutes since last activity (default threshold) |
-| `waiting_input` | Agent is at a permission prompt or asking a question | Permission request detected |
-| `blocked` | Agent hit an error it cannot recover from on its own | Error state detected |
-| `exited` | Agent process is no longer running | `isProcessRunning` returns false |
+| State           | Meaning                                                     | When                                                        |
+| --------------- | ----------------------------------------------------------- | ----------------------------------------------------------- |
+| `active`        | Agent is processing — thinking, writing code, running tools | Activity within the last 30 seconds                         |
+| `ready`         | Agent finished its turn and is alive, waiting for input     | 30 seconds – 5 minutes since last activity                  |
+| `idle`          | Agent has been quiet for an extended period                 | More than 5 minutes since last activity (default threshold) |
+| `waiting_input` | Agent is at a permission prompt or asking a question        | Permission request detected                                 |
+| `blocked`       | Agent hit an error it cannot recover from on its own        | Error state detected                                        |
+| `exited`        | Agent process is no longer running                          | `isProcessRunning` returns false                            |
 
 ### The `getActivityState` cascade
 
@@ -237,23 +239,25 @@ Every agent plugin must implement this cascade in order:
 ```
 
 <Callout type="warn">
-Step 4 (the JSONL entry fallback) is mandatory. Skipping it means `getActivityState` returns `null` whenever the native API fails — the dashboard shows no activity state and stuck-detection breaks for the entire session lifetime. This was a real bug in the OpenCode plugin.
+	Step 4 (the JSONL entry fallback) is mandatory. Skipping it means `getActivityState` returns `null` whenever the
+	native API fails — the dashboard shows no activity state and stuck-detection breaks for the entire session lifetime.
+	This was a real bug in the OpenCode plugin.
 </Callout>
 
 ### Two JSONL patterns
 
-| Pattern | Used by | How it works |
-|---|---|---|
-| **Agent-native JSONL** | Claude Code, Codex | The agent writes its own JSONL with rich state entries (`permission_request`, `tool_call`, `error`, etc.). `getActivityState` reads the last entry and maps it to activity states. |
-| **AO activity JSONL** | Aider, OpenCode, new agents | The agent implements `recordActivity`, which calls `recordTerminalActivity()` → `classifyTerminalActivity()` → `appendActivityEntry()` to write to `{workspacePath}/.ao/activity.jsonl`. `getActivityState` reads from this file. |
+| Pattern                | Used by                     | How it works                                                                                                                                                                                                                      |
+| ---------------------- | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Agent-native JSONL** | Claude Code, Codex          | The agent writes its own JSONL with rich state entries (`permission_request`, `tool_call`, `error`, etc.). `getActivityState` reads the last entry and maps it to activity states.                                                |
+| **AO activity JSONL**  | Aider, OpenCode, new agents | The agent implements `recordActivity`, which calls `recordTerminalActivity()` → `classifyTerminalActivity()` → `appendActivityEntry()` to write to `{workspacePath}/.ao/activity.jsonl`. `getActivityState` reads from this file. |
 
 ### Thresholds
 
-| Constant | Value | Purpose |
-|---|---|---|
-| `DEFAULT_ACTIVE_WINDOW_MS` | 30 seconds | Activity newer than this is `active`; older is `ready` |
-| `DEFAULT_READY_THRESHOLD_MS` | 5 minutes | `ready` sessions older than this become `idle` |
-| `ACTIVITY_INPUT_STALENESS_MS` | 5 minutes | Deprecated compatibility export. `waiting_input` / `blocked` entries no longer expire by wallclock; they persist until process death or a newer entry overrides them. |
+| Constant                      | Value      | Purpose                                                                                                                                                               |
+| ----------------------------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DEFAULT_ACTIVE_WINDOW_MS`    | 30 seconds | Activity newer than this is `active`; older is `ready`                                                                                                                |
+| `DEFAULT_READY_THRESHOLD_MS`  | 5 minutes  | `ready` sessions older than this become `idle`                                                                                                                        |
+| `ACTIVITY_INPUT_STALENESS_MS` | 5 minutes  | Deprecated compatibility export. `waiting_input` / `blocked` entries no longer expire by wallclock; they persist until process death or a newer entry overrides them. |
 
 ---
 
@@ -270,6 +274,7 @@ Claude Code writes `.claude/settings.json` with a `PostToolUse` hook that fires 
 Agents without a native hook system (Codex, Aider, OpenCode, custom agents) use `~/.ao/bin/gh` and `~/.ao/bin/git` shell wrappers. These wrappers are installed to `~/.ao/bin/` by `setupPathWrapperWorkspace(workspacePath)` from `packages/core/src/agent-workspace-hooks.ts`. The function also writes session context to `{workspacePath}/.ao/AGENTS.md` (gitignored — does not touch tracked files).
 
 The wrappers intercept:
+
 - `gh pr create` — captures the PR URL from stdout and writes `pr=<url>` and `status=pr_open`
 - `gh pr merge` — writes `status=merged`
 - `git checkout -b <branch>` / `git switch -c <branch>` — writes `branch=<name>`
@@ -333,8 +338,24 @@ agent-orchestrator.yaml ──► Config Loader (Zod) ──► Plugin Registry
 ## Next Steps
 
 <Cards>
-  <Card title="Project Configuration" href="/docs/configuration/projects" description="Configure projects, agents, trackers, and reactions in agent-orchestrator.yaml." />
-  <Card title="Authoring Plugins" href="/docs/plugins/authoring" description="Build custom runtime, agent, tracker, SCM, notifier, or terminal plugins." />
-  <Card title="Reactions" href="/docs/configuration/reactions" description="Set up automated reactions to CI failures, review comments, and merge events." />
-  <Card title="Configuration" href="/docs/configuration" description="Understand the global registry, local project config, and where AO stores runtime data." />
+	<Card
+		title="Project Configuration"
+		href="/docs/configuration/projects"
+		description="Configure projects, agents, trackers, and reactions in agent-orchestrator.yaml."
+	/>
+	<Card
+		title="Authoring Plugins"
+		href="/docs/plugins/authoring"
+		description="Build custom runtime, agent, tracker, SCM, notifier, or terminal plugins."
+	/>
+	<Card
+		title="Reactions"
+		href="/docs/configuration/reactions"
+		description="Set up automated reactions to CI failures, review comments, and merge events."
+	/>
+	<Card
+		title="Configuration"
+		href="/docs/configuration"
+		description="Understand the global registry, local project config, and where AO stores runtime data."
+	/>
 </Cards>

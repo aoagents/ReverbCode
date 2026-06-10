@@ -35,7 +35,9 @@ reactions:
 ```
 
 <Callout type="warning">
-The `auto-merge` action currently calls `notifyHuman()` internally — it does not perform a real merge. Actual merging still depends on your repository's branch protection rules and the "Allow auto-merge" setting on GitHub. AO does not bypass these gates. Treat `auto-merge` as an opt-in signal for when the SCM plugin adds real merge support.
+	The `auto-merge` action currently calls `notifyHuman()` internally — it does not perform a real merge. Actual merging
+	still depends on your repository's branch protection rules and the "Allow auto-merge" setting on GitHub. AO does not
+	bypass these gates. Treat `auto-merge` as an opt-in signal for when the SCM plugin adds real merge support.
 </Callout>
 
 ## Recipe: Custom CI failure message
@@ -95,7 +97,7 @@ projects:
     path: ~/code/myapp
     reactions:
       all-complete:
-        auto: false   # suppress the "all sessions done" notification for this project
+        auto: false # suppress the "all sessions done" notification for this project
 
   otherproj:
     repo: org/otherproj
@@ -120,13 +122,13 @@ The `threshold` field is used exclusively by `agent-stuck`. A session must be co
 ## Where to go next
 
 <Cards>
-  <Card title="Reactions reference" href="/docs/configuration/reactions">
-    Full schema, default values, escalation semantics, and the two-pass CI design.
-  </Card>
-  <Card title="CI recovery guide" href="/docs/guides/ci-recovery">
-    Step-by-step walkthrough of AO's CI failure recovery loop.
-  </Card>
-  <Card title="Review loop guide" href="/docs/guides/review-loop">
-    How AO handles review comments and the changes-requested reaction.
-  </Card>
+	<Card title="Reactions reference" href="/docs/configuration/reactions">
+		Full schema, default values, escalation semantics, and the two-pass CI design.
+	</Card>
+	<Card title="CI recovery guide" href="/docs/guides/ci-recovery">
+		Step-by-step walkthrough of AO's CI failure recovery loop.
+	</Card>
+	<Card title="Review loop guide" href="/docs/guides/review-loop">
+		How AO handles review comments and the changes-requested reaction.
+	</Card>
 </Cards>

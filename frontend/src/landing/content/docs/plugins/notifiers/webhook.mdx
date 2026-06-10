@@ -4,10 +4,10 @@ description: Generic HTTP POST. Retries, exponential backoff, custom headers.
 ---
 
 <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", margin: "0.5rem 0 1.25rem" }}>
-  <Logo name="webhook" size={28} />
-  <span style={{ fontSize: "0.8125rem", color: "var(--color-fd-muted-foreground)" }}>
-    Slot: <code>notifier</code> · Name: <code>webhook</code>
-  </span>
+	<Logo name="webhook" size={28} />
+	<span style={{ fontSize: "0.8125rem", color: "var(--color-fd-muted-foreground)" }}>
+		Slot: <code>notifier</code> · Name: <code>webhook</code>
+	</span>
 </div>
 
 <PlatformSupport macos="full" linux="full" windows="full" />
@@ -64,17 +64,17 @@ Every POST has a `type` discriminant. Most events use `notification`:
 
 ```json
 {
-  "type": "notification",
-  "event": {
-    "id": "3f6a1b2c-...",
-    "type": "pr.created",
-    "priority": "info",
-    "sessionId": "sess_01HXY...",
-    "projectId": "myproject",
-    "timestamp": "2026-04-17T15:00:00.000Z",
-    "message": "PR opened: fix(auth): handle token expiry",
-    "data": {}
-  }
+	"type": "notification",
+	"event": {
+		"id": "3f6a1b2c-...",
+		"type": "pr.created",
+		"priority": "info",
+		"sessionId": "sess_01HXY...",
+		"projectId": "myproject",
+		"timestamp": "2026-04-17T15:00:00.000Z",
+		"message": "PR opened: fix(auth): handle token expiry",
+		"data": {}
+	}
 }
 ```
 
@@ -82,9 +82,9 @@ When actions are attached (e.g. approve/retry buttons in supported notifiers):
 
 ```json
 {
-  "type": "notification_with_actions",
-  "event": { "...": "same fields as above" },
-  "actions": [{ "label": "View PR", "url": "https://github.com/owner/repo/pull/123" }]
+	"type": "notification_with_actions",
+	"event": { "...": "same fields as above" },
+	"actions": [{ "label": "View PR", "url": "https://github.com/owner/repo/pull/123" }]
 }
 ```
 
@@ -92,9 +92,9 @@ Free-form messages sent via `ao send` arrive as:
 
 ```json
 {
-  "type": "message",
-  "message": "Hello from AO",
-  "context": {}
+	"type": "message",
+	"message": "Hello from AO",
+	"context": {}
 }
 ```
 

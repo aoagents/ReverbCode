@@ -4,8 +4,10 @@ description: Merge requests, discussions, and pipelines via the glab CLI.
 ---
 
 <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", margin: "0.5rem 0 1.25rem" }}>
-  <Logo name="gitlab" size={28} color />
-  <span style={{ fontSize: "0.8125rem", color: "var(--color-fd-muted-foreground)" }}>Slot: <code>scm</code> · Name: <code>gitlab</code></span>
+	<Logo name="gitlab" size={28} color />
+	<span style={{ fontSize: "0.8125rem", color: "var(--color-fd-muted-foreground)" }}>
+		Slot: <code>scm</code> · Name: <code>gitlab</code>
+	</span>
 </div>
 
 <PlatformSupport macos="full" linux="full" windows="full" />
@@ -19,16 +21,16 @@ glab auth login
 ```yaml title="agent-orchestrator.yaml"
 scm: gitlab
 scmConfig:
-  host: gitlab.com       # default; override for self-hosted
+  host: gitlab.com # default; override for self-hosted
 ```
 
 ## Mapping
 
-| Concept | GitHub term | GitLab term |
-|---|---|---|
-| Review request | Pull request | Merge request |
-| Review | Review | Discussion / note |
-| CI status | Check runs | Pipelines / jobs |
+| Concept        | GitHub term  | GitLab term       |
+| -------------- | ------------ | ----------------- |
+| Review request | Pull request | Merge request     |
+| Review         | Review       | Discussion / note |
+| CI status      | Check runs   | Pipelines / jobs  |
 
 AO normalises these internally — the dashboard and lifecycle state machine don't know which you use.
 
@@ -59,20 +61,20 @@ projects:
     repo: group/project
     scm:
       webhook:
-        secretEnvVar: GITLAB_WEBHOOK_TOKEN    # env var holding the token
+        secretEnvVar: GITLAB_WEBHOOK_TOKEN # env var holding the token
 ```
 
 Full `webhook.*` sub-object:
 
-| Field | Default | Description |
-|---|---|---|
-| `enabled` | `true` | Enable or disable webhook processing |
-| `path` | `/api/webhooks` | Override the receive path |
-| `secretEnvVar` | — | Name of the env var holding the token |
-| `signatureHeader` | `x-gitlab-token` | Header carrying the secret token |
-| `eventHeader` | `x-gitlab-event` | Header carrying the event type |
-| `deliveryHeader` | `x-gitlab-event-uuid` | Header carrying the delivery UUID |
-| `maxBodyBytes` | unlimited | Reject payloads larger than this (bytes) |
+| Field             | Default               | Description                              |
+| ----------------- | --------------------- | ---------------------------------------- |
+| `enabled`         | `true`                | Enable or disable webhook processing     |
+| `path`            | `/api/webhooks`       | Override the receive path                |
+| `secretEnvVar`    | —                     | Name of the env var holding the token    |
+| `signatureHeader` | `x-gitlab-token`      | Header carrying the secret token         |
+| `eventHeader`     | `x-gitlab-event`      | Header carrying the event type           |
+| `deliveryHeader`  | `x-gitlab-event-uuid` | Header carrying the delivery UUID        |
+| `maxBodyBytes`    | unlimited             | Reject payloads larger than this (bytes) |
 
 **Verification**: GitLab sends the configured secret as a literal string in `X-Gitlab-Token`. AO compares this value directly (no HMAC — unlike GitHub's SHA-256 approach).
 
@@ -84,16 +86,16 @@ AO ignores review comments from known bot accounts so they don't block the merge
 
 **Hardcoded bots:**
 
-| Username |
-|---|
-| `gitlab-bot` |
-| `ghost` |
-| `dependabot[bot]` |
-| `renovate[bot]` |
-| `sast-bot` |
+| Username           |
+| ------------------ |
+| `gitlab-bot`       |
+| `ghost`            |
+| `dependabot[bot]`  |
+| `renovate[bot]`    |
+| `sast-bot`         |
 | `codeclimate[bot]` |
-| `sonarcloud[bot]` |
-| `snyk-bot` |
+| `sonarcloud[bot]`  |
+| `snyk-bot`         |
 
 **Runtime catch-all:** any username matching `/^project_\d+_bot/` (GitLab project access tokens) or ending in `[bot]`.
 

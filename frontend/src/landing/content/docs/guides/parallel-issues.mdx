@@ -37,12 +37,12 @@ AO creates two distinct sessions. Compare the PRs side by side.
 
 ## Isolation guarantees
 
-| What's isolated | How |
-|---|---|
-| File edits | Each session has its own worktree under `~/.worktrees/{projectId}/{sessionId}/`. Session metadata lives under `~/.agent-orchestrator/{hash}-{projectId}/sessions/{sessionId}` — the worktree itself is in `~/.worktrees/`. |
-| Branch name | AO names the branch after the session ID, avoiding collisions |
-| Agent state | Each agent's native session files (Claude JSONL, Codex session, etc.) are session-scoped |
-| Terminal | Each session owns its own tmux window (or child process) |
+| What's isolated | How                                                                                                                                                                                                                        |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| File edits      | Each session has its own worktree under `~/.worktrees/{projectId}/{sessionId}/`. Session metadata lives under `~/.agent-orchestrator/{hash}-{projectId}/sessions/{sessionId}` — the worktree itself is in `~/.worktrees/`. |
+| Branch name     | AO names the branch after the session ID, avoiding collisions                                                                                                                                                              |
+| Agent state     | Each agent's native session files (Claude JSONL, Codex session, etc.) are session-scoped                                                                                                                                   |
+| Terminal        | Each session owns its own tmux window (or child process)                                                                                                                                                                   |
 
 ## What isn't isolated
 
@@ -79,6 +79,4 @@ ao status -p my-repo --json
 - `ao session cleanup` — kill everything whose PR merged or issue closed (safe; archives metadata)
 - `ao session cleanup --dry-run` — preview first
 
-<Callout type="info">
-  Need them all gone? `ao stop --all` halts every running AO instance on this machine.
-</Callout>
+<Callout type="info">Need them all gone? `ao stop --all` halts every running AO instance on this machine.</Callout>

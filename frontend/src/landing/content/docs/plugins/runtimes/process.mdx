@@ -4,8 +4,10 @@ description: Cross-platform child-process runtime. Required on Windows.
 ---
 
 <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", margin: "0.5rem 0 1.25rem" }}>
-  <Logo name="windows" size={28} color />
-  <span style={{ fontSize: "0.8125rem", color: "var(--color-fd-muted-foreground)" }}>Slot: <code>runtime</code> · Name: <code>process</code></span>
+	<Logo name="windows" size={28} color />
+	<span style={{ fontSize: "0.8125rem", color: "var(--color-fd-muted-foreground)" }}>
+		Slot: <code>runtime</code> · Name: <code>process</code>
+	</span>
 </div>
 
 Spawns agents as plain child processes — no tmux involved. Use this on Windows (where tmux isn't available) and in any environment where you'd rather not depend on tmux.

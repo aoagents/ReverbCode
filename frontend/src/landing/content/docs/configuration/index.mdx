@@ -11,7 +11,9 @@ AO uses configuration in two layers:
 Most users should let `ao start` create the registry entry, then edit the local `agent-orchestrator.yaml` in the project when they want to change behavior.
 
 <Callout type="info">
-The old wrapped format with a top-level `projects:` block is still understood for compatibility, but new project-local configs should be flat. Do not put identity fields like `path`, `projectId`, `storageKey`, or `originUrl` in a local project config.
+	The old wrapped format with a top-level `projects:` block is still understood for compatibility, but new project-local
+	configs should be flat. Do not put identity fields like `path`, `projectId`, `storageKey`, or `originUrl` in a local
+	project config.
 </Callout>
 
 ## What AO Creates
@@ -72,15 +74,15 @@ agentRules: |
 
 ## What To Edit
 
-| Goal | Edit |
-|------|------|
-| Change the default agent or model | Local `agent-orchestrator.yaml` |
-| Add `.env` or tool config files to each worktree | Local `symlinks` |
-| Run setup commands before the agent starts | Local `postCreate` |
-| Disable or tune automated recovery | Local or global `reactions` |
-| Change notification routing for all projects | Global registry |
-| Rename, remove, or relink a registered project | Use AO commands/dashboard project settings |
-| Change where AO stores sessions | Do not hand-edit; re-register/relink if needed |
+| Goal                                             | Edit                                           |
+| ------------------------------------------------ | ---------------------------------------------- |
+| Change the default agent or model                | Local `agent-orchestrator.yaml`                |
+| Add `.env` or tool config files to each worktree | Local `symlinks`                               |
+| Run setup commands before the agent starts       | Local `postCreate`                             |
+| Disable or tune automated recovery               | Local or global `reactions`                    |
+| Change notification routing for all projects     | Global registry                                |
+| Rename, remove, or relink a registered project   | Use AO commands/dashboard project settings     |
+| Change where AO stores sessions                  | Do not hand-edit; re-register/relink if needed |
 
 Do not manually edit `storageKey`, `path`, or `originUrl` unless you are repairing a broken registry entry and already know why it is wrong.
 
@@ -89,9 +91,9 @@ Do not manually edit `storageKey`, `path`, or `originUrl` unless you are repairi
 A practical local config usually starts with the agent, runtime, workspace, setup, and rules:
 
 ```yaml title="agent-orchestrator.yaml"
-agent: claude-code       # claude-code | codex | aider | opencode
-runtime: tmux            # tmux | process
-workspace: worktree      # worktree | clone
+agent: claude-code # claude-code | codex | aider | opencode
+runtime: tmux # tmux | process
+workspace: worktree # worktree | clone
 
 agentConfig:
   permissions: permissionless
@@ -146,18 +148,18 @@ For normal use, run AO from inside the repository and keep `agent-orchestrator.y
 
 ## Top-Level Global Keys
 
-| Key | Default | Purpose |
-|-----|---------|---------|
-| `port` | `3000` | Dashboard HTTP port |
-| `terminalPort` | auto from `14800` | tmux terminal WebSocket port |
-| `directTerminalPort` | auto from `14801` | direct PTY WebSocket port |
-| `readyThresholdMs` | `300000` | Time before a ready session is treated as idle |
-| `defaults` | built-ins | Cross-project defaults for agent/runtime/workspace/notifiers |
-| `projects` | `{}` | Registered project identities |
-| `projectOrder` | unset | Optional sidebar/project ordering |
-| `notifiers` | `{}` | Named notifier instances |
-| `notificationRouting` | desktop/composio defaults | Priority-to-notifier routing |
-| `reactions` | built-in defaults | Global automation rules |
+| Key                   | Default                   | Purpose                                                      |
+| --------------------- | ------------------------- | ------------------------------------------------------------ |
+| `port`                | `3000`                    | Dashboard HTTP port                                          |
+| `terminalPort`        | auto from `14800`         | tmux terminal WebSocket port                                 |
+| `directTerminalPort`  | auto from `14801`         | direct PTY WebSocket port                                    |
+| `readyThresholdMs`    | `300000`                  | Time before a ready session is treated as idle               |
+| `defaults`            | built-ins                 | Cross-project defaults for agent/runtime/workspace/notifiers |
+| `projects`            | `{}`                      | Registered project identities                                |
+| `projectOrder`        | unset                     | Optional sidebar/project ordering                            |
+| `notifiers`           | `{}`                      | Named notifier instances                                     |
+| `notificationRouting` | desktop/composio defaults | Priority-to-notifier routing                                 |
+| `reactions`           | built-in defaults         | Global automation rules                                      |
 
 ## Where Data Lives
 
@@ -172,7 +174,19 @@ ls ~/.agent-orchestrator
 ## Next Steps
 
 <Cards>
-  <Card title="Projects" href="/docs/configuration/projects" description="Per-project behavior settings: agents, workspaces, rules, setup, trackers, and SCM." />
-  <Card title="Reactions" href="/docs/configuration/reactions" description="Control what AO does when CI fails, reviews arrive, or agents need help." />
-  <Card title="Remote access" href="/docs/configuration/remote-access" description="Access the dashboard from another machine without exposing it publicly." />
+	<Card
+		title="Projects"
+		href="/docs/configuration/projects"
+		description="Per-project behavior settings: agents, workspaces, rules, setup, trackers, and SCM."
+	/>
+	<Card
+		title="Reactions"
+		href="/docs/configuration/reactions"
+		description="Control what AO does when CI fails, reviews arrive, or agents need help."
+	/>
+	<Card
+		title="Remote access"
+		href="/docs/configuration/remote-access"
+		description="Access the dashboard from another machine without exposing it publicly."
+	/>
 </Cards>

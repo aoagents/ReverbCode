@@ -5,14 +5,24 @@ description: How each agent gets its own copy of the repo — a git worktree or 
 
 Every session needs an isolated filesystem so agents don't stomp each other. AO handles this with a **workspace** plugin. Two options ship:
 
-| Plugin | Isolation | Disk usage | Speed |
-|---|---|---|---|
-| [worktree](/docs/plugins/workspaces/worktree) | Per-session branch, shared `.git` | Low (shared object DB) | Fast (no clone) |
-| [clone](/docs/plugins/workspaces/clone) | Per-session full clone | High | Slower (initial clone) |
+| Plugin                                        | Isolation                         | Disk usage             | Speed                  |
+| --------------------------------------------- | --------------------------------- | ---------------------- | ---------------------- |
+| [worktree](/docs/plugins/workspaces/worktree) | Per-session branch, shared `.git` | Low (shared object DB) | Fast (no clone)        |
+| [clone](/docs/plugins/workspaces/clone)       | Per-session full clone            | High                   | Slower (initial clone) |
 
 <PluginGrid>
-  <PluginCard name="worktree" logo="github" href="/docs/plugins/workspaces/worktree" description="git worktree. Default, fast, disk-efficient." />
-  <PluginCard name="clone" logo="github" href="/docs/plugins/workspaces/clone" description="Full per-session clone. Use when tools struggle with worktrees." />
+	<PluginCard
+		name="worktree"
+		logo="github"
+		href="/docs/plugins/workspaces/worktree"
+		description="git worktree. Default, fast, disk-efficient."
+	/>
+	<PluginCard
+		name="clone"
+		logo="github"
+		href="/docs/plugins/workspaces/clone"
+		description="Full per-session clone. Use when tools struggle with worktrees."
+	/>
 </PluginGrid>
 
 ## Choosing

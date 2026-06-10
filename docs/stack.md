@@ -18,27 +18,27 @@ invariants.
 
 ## Accepted stack
 
-| Area | Decision | Status | Rationale |
-|------|----------|--------|-----------|
-| Backend language | Go 1.25.7 | Implemented | Matches `backend/go.mod`; small daemon, strong stdlib, easy local distribution. |
-| Backend core | Go stdlib | Implemented | Domain, lifecycle, session, and adapter contracts should stay dependency-light. |
-| Frontend shell | Electron + TypeScript | Implemented | Local desktop control plane paired with the daemon. |
-| Runtime adapter | `zellij` CLI via `os/exec` | Implemented | Terminal multiplexing fits long-running sessions, attach/debug workflows, and adapter isolation. |
-| Terminal PTY | `github.com/creack/pty` | Implemented | PTY-backed terminal sessions with resize/input/output control. |
-| Git/worktrees | `git` CLI via `os/exec` | Implemented | Uses real repo behavior, credentials, hooks, LFS, submodules, and user config. |
-| HTTP API | `net/http` + `github.com/go-chi/chi/v5` | Implemented | Lightweight, idiomatic router without committing AO to a large web framework. |
-| WebSocket | `github.com/coder/websocket` | Implemented | Small WebSocket library for terminal streaming. |
-| Storage | SQLite in WAL mode via `database/sql` | Implemented | Local daemon, single writer, many dashboard/API reads, no external DB setup. |
-| SQLite driver | `modernc.org/sqlite` | Implemented | Current pure-Go driver in `backend/internal/storage/sqlite`; keep it swappable behind `database/sql`. |
-| SQL generation | `github.com/sqlc-dev/sqlc` | Implemented | Hand-written SQL with generated typed methods from `backend/sqlc.yaml`. |
-| Migrations | `github.com/pressly/goose/v3` | Implemented | Simple SQL migrations for the embedded/local database. |
-| CLI | `github.com/spf13/cobra` | Implemented | Standard command structure for daemon startup, diagnostics, and admin commands. |
-| Config | stdlib environment loading + SQLite-backed state/config | Implemented / evolving | `internal/config` handles daemon env/defaults; durable product config belongs in SQLite, so no config framework is selected for V1. |
-| Logging | `log/slog` | Implemented | Stdlib structured logging before adding another logging dependency. |
-| OpenAPI generation | `github.com/swaggest/openapi-go`, `github.com/swaggest/jsonschema-go`, `gopkg.in/yaml.v3` | Implemented | Generated OpenAPI keeps route contracts close to Go DTOs. |
-| Testing | stdlib `testing` | Implemented | Keep pure domain logic and adapter contracts easy to test. |
-| Test assertions | `github.com/stretchr/testify/require` | Planned if needed | Concise assertions for higher-level adapter and integration tests; do not add unless tests benefit. |
-| Packaging | `github.com/goreleaser/goreleaser` | Planned | Cross-platform release automation, checksums, and future Homebrew support. |
+| Area               | Decision                                                                                  | Status                 | Rationale                                                                                                                           |
+| ------------------ | ----------------------------------------------------------------------------------------- | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Backend language   | Go 1.25.7                                                                                 | Implemented            | Matches `backend/go.mod`; small daemon, strong stdlib, easy local distribution.                                                     |
+| Backend core       | Go stdlib                                                                                 | Implemented            | Domain, lifecycle, session, and adapter contracts should stay dependency-light.                                                     |
+| Frontend shell     | Electron + TypeScript                                                                     | Implemented            | Local desktop control plane paired with the daemon.                                                                                 |
+| Runtime adapter    | `zellij` CLI via `os/exec`                                                                | Implemented            | Terminal multiplexing fits long-running sessions, attach/debug workflows, and adapter isolation.                                    |
+| Terminal PTY       | `github.com/creack/pty`                                                                   | Implemented            | PTY-backed terminal sessions with resize/input/output control.                                                                      |
+| Git/worktrees      | `git` CLI via `os/exec`                                                                   | Implemented            | Uses real repo behavior, credentials, hooks, LFS, submodules, and user config.                                                      |
+| HTTP API           | `net/http` + `github.com/go-chi/chi/v5`                                                   | Implemented            | Lightweight, idiomatic router without committing AO to a large web framework.                                                       |
+| WebSocket          | `github.com/coder/websocket`                                                              | Implemented            | Small WebSocket library for terminal streaming.                                                                                     |
+| Storage            | SQLite in WAL mode via `database/sql`                                                     | Implemented            | Local daemon, single writer, many dashboard/API reads, no external DB setup.                                                        |
+| SQLite driver      | `modernc.org/sqlite`                                                                      | Implemented            | Current pure-Go driver in `backend/internal/storage/sqlite`; keep it swappable behind `database/sql`.                               |
+| SQL generation     | `github.com/sqlc-dev/sqlc`                                                                | Implemented            | Hand-written SQL with generated typed methods from `backend/sqlc.yaml`.                                                             |
+| Migrations         | `github.com/pressly/goose/v3`                                                             | Implemented            | Simple SQL migrations for the embedded/local database.                                                                              |
+| CLI                | `github.com/spf13/cobra`                                                                  | Implemented            | Standard command structure for daemon startup, diagnostics, and admin commands.                                                     |
+| Config             | stdlib environment loading + SQLite-backed state/config                                   | Implemented / evolving | `internal/config` handles daemon env/defaults; durable product config belongs in SQLite, so no config framework is selected for V1. |
+| Logging            | `log/slog`                                                                                | Implemented            | Stdlib structured logging before adding another logging dependency.                                                                 |
+| OpenAPI generation | `github.com/swaggest/openapi-go`, `github.com/swaggest/jsonschema-go`, `gopkg.in/yaml.v3` | Implemented            | Generated OpenAPI keeps route contracts close to Go DTOs.                                                                           |
+| Testing            | stdlib `testing`                                                                          | Implemented            | Keep pure domain logic and adapter contracts easy to test.                                                                          |
+| Test assertions    | `github.com/stretchr/testify/require`                                                     | Planned if needed      | Concise assertions for higher-level adapter and integration tests; do not add unless tests benefit.                                 |
+| Packaging          | `github.com/goreleaser/goreleaser`                                                        | Planned                | Cross-platform release automation, checksums, and future Homebrew support.                                                          |
 
 ## Pending decisions
 
@@ -70,15 +70,15 @@ config surface appears.
 
 ## Explicitly avoided for V1
 
-| Avoid | Reason |
-|-------|--------|
-| GORM | AO needs explicit transactional SQL and CDC-triggered writes. |
-| Gin/Fiber | `net/http` + `chi` is enough for a local daemon API. |
-| `go-git` as the primary Git engine | AO should match installed Git behavior, credentials, hooks, LFS, submodules, and user config. |
-| `github.com/spf13/viper` / `github.com/knadh/koanf` by default | Env/default loading plus SQLite-backed config is enough for V1. |
-| Temporal / NATS / Kafka / Redis | V1 is a local daemon with SQLite and CDC, not a distributed control plane. |
-| Full plugin framework | Keep adapter interfaces narrow until product needs justify a plugin runtime. |
-| Multi-sink CDC fan-out | Start with one durable local delivery path; add fan-out later if needed. |
+| Avoid                                                          | Reason                                                                                        |
+| -------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| GORM                                                           | AO needs explicit transactional SQL and CDC-triggered writes.                                 |
+| Gin/Fiber                                                      | `net/http` + `chi` is enough for a local daemon API.                                          |
+| `go-git` as the primary Git engine                             | AO should match installed Git behavior, credentials, hooks, LFS, submodules, and user config. |
+| `github.com/spf13/viper` / `github.com/knadh/koanf` by default | Env/default loading plus SQLite-backed config is enough for V1.                               |
+| Temporal / NATS / Kafka / Redis                                | V1 is a local daemon with SQLite and CDC, not a distributed control plane.                    |
+| Full plugin framework                                          | Keep adapter interfaces narrow until product needs justify a plugin runtime.                  |
+| Multi-sink CDC fan-out                                         | Start with one durable local delivery path; add fan-out later if needed.                      |
 
 ## Current stack mapping
 

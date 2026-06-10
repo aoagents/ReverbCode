@@ -58,32 +58,37 @@ Covers: install health, plugin resolution, notifier connectivity, stale temp fil
 ## GitHub / SCM
 
 <Accordions>
-  <Accordion title="GitHub API rate limit">
-    AO paces calls, but heavy projects can still hit limits. The lifecycle manager backs off automatically. If you see sustained rate-limit errors, check that you're logged in as yourself (`gh auth status`) — unauthenticated calls have much lower limits.
-  </Accordion>
-  <Accordion title="CI recovery never fires">
-    `reactions.ciFailed.enabled: false` in your config, or the PR is in draft. See [CI recovery › When it doesn't kick in](/docs/guides/ci-recovery#when-it-doesnt-kick-in).
-  </Accordion>
-  <Accordion title="Review loop never fires">
-    Review feedback is only replayed on `CHANGES_REQUESTED` — not on plain `COMMENTED` reviews. See [Review loop](/docs/guides/review-loop).
-  </Accordion>
-  <Accordion title="Webhook delivers but nothing happens">
-    HMAC signature check failing. Verify your `secretEnvVar` is exported and matches the secret you set on GitHub.
-  </Accordion>
+	<Accordion title="GitHub API rate limit">
+		AO paces calls, but heavy projects can still hit limits. The lifecycle manager backs off automatically. If you see
+		sustained rate-limit errors, check that you're logged in as yourself (`gh auth status`) — unauthenticated calls have
+		much lower limits.
+	</Accordion>
+	<Accordion title="CI recovery never fires">
+		`reactions.ciFailed.enabled: false` in your config, or the PR is in draft. See [CI recovery › When it doesn't kick
+		in](/docs/guides/ci-recovery#when-it-doesnt-kick-in).
+	</Accordion>
+	<Accordion title="Review loop never fires">
+		Review feedback is only replayed on `CHANGES_REQUESTED` — not on plain `COMMENTED` reviews. See [Review
+		loop](/docs/guides/review-loop).
+	</Accordion>
+	<Accordion title="Webhook delivers but nothing happens">
+		HMAC signature check failing. Verify your `secretEnvVar` is exported and matches the secret you set on GitHub.
+	</Accordion>
 </Accordions>
 
 ## Notifications
 
 <Accordions>
-  <Accordion title="Desktop notifications silent on macOS">
-    System Settings → Notifications → allow your terminal app.
-  </Accordion>
-  <Accordion title="Desktop notifier warning on Windows">
-    Expected. Add Discord, Slack, or a webhook notifier in the same `notifier:` list.
-  </Accordion>
-  <Accordion title="Slack webhook 429s under load">
-    The slack notifier doesn't honor Retry-After. Use the generic [webhook notifier](/docs/plugins/notifiers/webhook) with `retries` tuned up.
-  </Accordion>
+	<Accordion title="Desktop notifications silent on macOS">
+		System Settings → Notifications → allow your terminal app.
+	</Accordion>
+	<Accordion title="Desktop notifier warning on Windows">
+		Expected. Add Discord, Slack, or a webhook notifier in the same `notifier:` list.
+	</Accordion>
+	<Accordion title="Slack webhook 429s under load">
+		The slack notifier doesn't honor Retry-After. Use the generic [webhook notifier](/docs/plugins/notifiers/webhook)
+		with `retries` tuned up.
+	</Accordion>
 </Accordions>
 
 ## Windows-specific
@@ -101,7 +106,7 @@ Covers: install health, plugin resolution, notifier connectivity, stale temp fil
 
 - Check the [FAQ](/docs/faq).
 - Open an issue: [`ComposioHQ/agent-orchestrator`](https://github.com/ComposioHQ/agent-orchestrator/issues).
-When opening an issue, include:
+  When opening an issue, include:
 
 - Output of `ao --version`
 - The contents of `~/.agent-orchestrator/{hash}-observability/processes/` (one JSON snapshot per process; each contains traces, health, and metrics)

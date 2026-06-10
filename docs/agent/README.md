@@ -90,7 +90,6 @@ The workspace adapter prefers:
 
 Hook metadata changes publish `session.updated`. The frontend listens to `session.created`, `session.terminated`, and `session.updated` and invalidates the workspace query.
 
-
 ## Acceptance Criteria
 
 Agent adapter behavior:
