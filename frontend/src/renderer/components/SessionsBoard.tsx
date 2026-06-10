@@ -1,5 +1,4 @@
 import { useNavigate } from "@tanstack/react-router";
-import { Bell, Plus, Settings } from "lucide-react";
 import {
   type AttentionZone,
   type WorkerDisplayStatus,
@@ -8,7 +7,7 @@ import {
   workerDisplayStatus,
 } from "../types/workspace";
 import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
-import { useShell } from "../lib/shell-context";
+import { DashboardSubhead, DashboardTopbar } from "./DashboardTopbar";
 import { cn } from "../lib/utils";
 
 type SessionsBoardProps = {
@@ -40,12 +39,10 @@ const BADGE: Record<WorkerDisplayStatus, { label: string; color: string }> = {
 export function SessionsBoard({ projectId }: SessionsBoardProps) {
   const navigate = useNavigate();
   const workspaceQuery = useWorkspaceQuery();
-  const { openSpawn } = useShell();
   const all = workspaceQuery.data ?? [];
   const workspaces = projectId ? all.filter((w) => w.id === projectId) : all;
   const sessions = workspaces.flatMap((w) => w.sessions);
   const projectLabel = projectId ? (workspaces[0]?.name ?? projectId) : "agent-orchestrator";
-  const working = sessions.filter((s) => attentionZone(s) === "working").length;
 
   const byZone = new Map<AttentionZone, WorkspaceSession[]>();
   for (const session of sessions) {
@@ -62,61 +59,8 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-[#0a0b0d] text-[#f4f5f7]">
-      {/* Topbar (mc-board .dashboard-app-header): crumb · tabs · working pill | bell · primary */}
-      <header className="flex h-14 shrink-0 items-center gap-[13px] px-5">
-        <span className="text-[14.5px] font-semibold tracking-[-0.01em] text-[#f4f5f7]">{projectLabel}</span>
-        <nav className="ml-1.5 flex items-center gap-0.5">
-          <button className="h-7 rounded-md bg-white/[0.07] px-[11px] text-[12.5px] text-[#f4f5f7]" type="button">
-            Coding
-          </button>
-          <button
-            className="h-7 rounded-md px-[11px] text-[12.5px] text-[#646a73] transition-colors hover:text-[#f4f5f7]"
-            onClick={() => void navigate({ to: "/review" })}
-            type="button"
-          >
-            Reviews
-          </button>
-        </nav>
-        {working > 0 && (
-          <span className="inline-flex items-center gap-[7px] rounded-md px-[11px] py-[5px] text-[#9ba1aa] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.06)]">
-            <span className="h-[7px] w-[7px] animate-status-pulse rounded-full bg-[#f59f4c]" />
-            <span className="text-[11.5px]">{working} working</span>
-          </span>
-        )}
-        <div className="ml-auto flex items-center gap-1.5">
-          <button
-            aria-label="Notifications"
-            className="grid h-[34px] w-[34px] place-items-center rounded-[7px] text-[#9ba1aa] transition-colors hover:bg-white/[0.04] hover:text-[#f4f5f7]"
-            type="button"
-          >
-            <Bell className="h-[15px] w-[15px]" aria-hidden="true" />
-          </button>
-          {projectId && (
-            <button
-              aria-label="Project settings"
-              className="grid h-[34px] w-[34px] place-items-center rounded-[7px] text-[#9ba1aa] transition-colors hover:bg-white/[0.04] hover:text-[#f4f5f7]"
-              onClick={() => void navigate({ to: "/projects/$projectId/settings", params: { projectId } })}
-              type="button"
-            >
-              <Settings className="h-[15px] w-[15px]" aria-hidden="true" />
-            </button>
-          )}
-          <button
-            className="inline-flex h-[34px] items-center gap-1.5 rounded-[7px] bg-[#4d8dff] px-[15px] text-[13px] font-semibold text-white transition-colors hover:brightness-110"
-            onClick={() => openSpawn(projectId)}
-            type="button"
-          >
-            <Plus className="h-3.5 w-3.5" aria-hidden="true" />
-            New worker
-          </button>
-        </div>
-      </header>
-
-      {/* Board subhead (mc-board .dashboard-main__subhead) */}
-      <div className="flex items-baseline gap-3 px-[18px] pt-[22px]">
-        <h1 className="text-[21px] font-bold tracking-[-0.025em] text-[#f4f5f7]">Board</h1>
-        <span className="text-[12.5px] text-[#646a73]">Live agent sessions flowing from work → review → merge.</span>
-      </div>
+      <DashboardTopbar activeTab="coding" projectId={projectId} projectLabel={projectLabel} />
+      <DashboardSubhead title="Board" subtitle="Live agent sessions flowing from work → review → merge." />
 
       <div className="min-h-0 flex-1 overflow-hidden p-[18px]">
         {workspaceQuery.isError ? (

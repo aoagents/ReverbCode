@@ -1,9 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ClipboardCheck, Play } from "lucide-react";
+import { Play } from "lucide-react";
 import { useState } from "react";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
+import { DashboardSubhead, DashboardTopbar } from "./DashboardTopbar";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Card, CardContent } from "./ui/card";
@@ -48,44 +49,45 @@ export function ReviewDashboard() {
   const runs = (reviews.data ?? []).slice().sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-background text-foreground">
-      <header className="flex h-11 shrink-0 items-center gap-2.5 border-b border-border px-4">
-        <ClipboardCheck className="h-[15px] w-[15px] shrink-0 text-accent" aria-hidden="true" />
-        <span className="text-[13.5px] font-semibold text-foreground">Review</span>
-        <span className="font-mono text-[11px] text-passive">{runs.length}</span>
-        <div className="ml-auto flex items-center gap-2">
-          <Select value={target} onValueChange={setTarget}>
-            <SelectTrigger className="h-7 w-48 text-[12px]">
-              <SelectValue placeholder="Select a worker…" />
-            </SelectTrigger>
-            <SelectContent>
-              {sessions.length === 0 ? (
-                <SelectItem value="__none__" disabled>
-                  No workers
+    <div className="flex h-full min-h-0 flex-col bg-[#0a0b0d] text-[#f4f5f7]">
+      <DashboardTopbar activeTab="reviews" />
+      <DashboardSubhead
+        title="Reviews"
+        subtitle="Code-review runs and their findings, ready to send back."
+        count={runs.length}
+      />
+      <div className="flex items-center gap-2 px-[18px] pt-3">
+        <Select value={target} onValueChange={setTarget}>
+          <SelectTrigger className="h-8 w-56 text-[12px]">
+            <SelectValue placeholder="Select a worker…" />
+          </SelectTrigger>
+          <SelectContent>
+            {sessions.length === 0 ? (
+              <SelectItem value="__none__" disabled>
+                No workers
+              </SelectItem>
+            ) : (
+              sessions.map((s) => (
+                <SelectItem key={s.id} value={s.id}>
+                  {s.title}
                 </SelectItem>
-              ) : (
-                sessions.map((s) => (
-                  <SelectItem key={s.id} value={s.id}>
-                    {s.title}
-                  </SelectItem>
-                ))
-              )}
-            </SelectContent>
-          </Select>
-          <Button
-            size="sm"
-            variant="primary"
-            className="h-7 px-2.5 text-[11.5px]"
-            disabled={!target || target === "__none__" || execute.isPending}
-            onClick={() => execute.mutate(target)}
-          >
-            <Play className="h-3 w-3" aria-hidden="true" />
-            {execute.isPending ? "Starting…" : "Run review"}
-          </Button>
-        </div>
-      </header>
+              ))
+            )}
+          </SelectContent>
+        </Select>
+        <Button
+          size="sm"
+          variant="primary"
+          className="h-8 px-3 text-[12px]"
+          disabled={!target || target === "__none__" || execute.isPending}
+          onClick={() => execute.mutate(target)}
+        >
+          <Play className="h-3 w-3" aria-hidden="true" />
+          {execute.isPending ? "Starting…" : "Run review"}
+        </Button>
+      </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-4">
+      <div className="min-h-0 flex-1 overflow-y-auto p-[18px]">
         {reviews.isError ? (
           <p className="py-10 text-center text-[12px] text-passive">Could not load reviews.</p>
         ) : runs.length === 0 ? (

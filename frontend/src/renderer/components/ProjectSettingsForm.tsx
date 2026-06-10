@@ -1,10 +1,9 @@
-import { useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft } from "lucide-react";
 import { useState } from "react";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { DashboardSubhead, DashboardTopbar } from "./DashboardTopbar";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Label } from "./ui/label";
@@ -20,7 +19,6 @@ const AGENT_OPTIONS = ["claude-code", "codex", "opencode", "amp", "goose", "kiro
 const projectQueryKey = (id: string) => ["project", id] as const;
 
 export function ProjectSettingsForm({ projectId }: { projectId: string }) {
-  const navigate = useNavigate();
   const queryClient = useQueryClient();
 
   const query = useQuery({
@@ -43,20 +41,10 @@ export function ProjectSettingsForm({ projectId }: { projectId: string }) {
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-background text-foreground">
-      <header className="flex h-11 shrink-0 items-center gap-2 border-b border-border px-4">
-        <button
-          aria-label="Back to project"
-          className="grid h-7 w-7 place-items-center rounded-md text-passive transition-colors hover:bg-raised hover:text-muted-foreground"
-          onClick={() => void navigate({ to: "/projects/$projectId", params: { projectId } })}
-          type="button"
-        >
-          <ArrowLeft className="h-[15px] w-[15px]" aria-hidden="true" />
-        </button>
-        <span className="truncate text-[13.5px] font-semibold text-foreground">{query.data.name}</span>
-        <span className="font-mono text-[11px] text-passive">settings</span>
-      </header>
-      <div className="min-h-0 flex-1 overflow-y-auto p-4">
+    <div className="flex h-full min-h-0 flex-col bg-[#0a0b0d] text-[#f4f5f7]">
+      <DashboardTopbar activeTab="coding" projectId={projectId} projectLabel={query.data.name} />
+      <DashboardSubhead title="Settings" subtitle={query.data.path} />
+      <div className="min-h-0 flex-1 overflow-y-auto p-[18px]">
         <SettingsBody key={projectId} project={query.data} onSaved={() => queryClient.invalidateQueries({ queryKey: workspaceQueryKey })} projectId={projectId} />
       </div>
     </div>

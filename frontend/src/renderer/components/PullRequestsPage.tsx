@@ -1,10 +1,10 @@
 import { useNavigate } from "@tanstack/react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { GitPullRequest } from "lucide-react";
 import { useState } from "react";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import type { WorkspaceSession } from "../types/workspace";
+import { DashboardSubhead, DashboardTopbar } from "./DashboardTopbar";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
@@ -45,14 +45,15 @@ export function PullRequestsPage() {
     .sort((a, b) => stateRank[a.state] - stateRank[b.state] || a.number - b.number);
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-background text-foreground">
-      <header className="flex h-11 shrink-0 items-center gap-2.5 border-b border-border px-4">
-        <GitPullRequest className="h-[15px] w-[15px] shrink-0 text-accent" aria-hidden="true" />
-        <span className="text-[13.5px] font-semibold text-foreground">Pull requests</span>
-        <span className="font-mono text-[11px] text-passive">{rows.length}</span>
-      </header>
+    <div className="flex h-full min-h-0 flex-col bg-[#0a0b0d] text-[#f4f5f7]">
+      <DashboardTopbar />
+      <DashboardSubhead
+        title="Pull requests"
+        subtitle="Open PRs across every agent session, ready to resolve and merge."
+        count={rows.length}
+      />
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-4">
+      <div className="min-h-0 flex-1 overflow-y-auto p-[18px]">
         {rows.length === 0 ? (
           <p className="py-10 text-center text-[12px] text-passive">No open pull requests.</p>
         ) : (
