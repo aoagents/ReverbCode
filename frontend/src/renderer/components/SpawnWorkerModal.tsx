@@ -18,6 +18,9 @@ const agentOptions: { value: AgentProvider; label: string }[] = [
 ];
 
 const basedOnTabs = ["Branch", "Issue", "Pull Request"] as const;
+// The project's default branch — selecting it in "Based on" means "new session
+// branch off the default", not "check out the default branch itself".
+const BASE_BRANCH = "main";
 type BasedOn = (typeof basedOnTabs)[number];
 
 const NAME_RULE = /^[a-z0-9-]+$/;
@@ -47,7 +50,7 @@ export function SpawnWorkerModal({
   const [projectId, setProjectId] = useState(fallbackProjectId);
   const [agent, setAgent] = useState<AgentProvider>("claude-code");
   const [basedOn, setBasedOn] = useState<BasedOn>("Branch");
-  const [branch, setBranch] = useState("main");
+  const [branch, setBranch] = useState(BASE_BRANCH);
   const [tab, setTab] = useState<"Prompt" | "Workspace">("Prompt");
   const [prompt, setPrompt] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -63,7 +66,7 @@ export function SpawnWorkerModal({
 
   const selectedWorkspace = workspaces.find((workspace) => workspace.id === projectId) ?? workspaces[0];
   const branchOptions = Array.from(
-    new Set(["main", ...(selectedWorkspace?.sessions.map((session) => session.branch).filter(Boolean) ?? [])]),
+    new Set([BASE_BRANCH, ...(selectedWorkspace?.sessions.map((session) => session.branch).filter(Boolean) ?? [])]),
   );
   const nameValid = name === "" || NAME_RULE.test(name);
   const canSubmit = prompt.trim().length > 0 && projectId !== "" && nameValid && !isSubmitting;
@@ -74,15 +77,22 @@ export function SpawnWorkerModal({
     setError(null);
     setIsSubmitting(true);
     try {
+      // The API's `branch` field means "check out this exact branch in the
+      // session worktree" — valid for resuming an existing session branch, but
+      // never for the base branch itself (git refuses a second worktree on a
+      // checked-out branch; daemon manager.go). "Based on main" therefore
+      // OMITS branch so the daemon mints a fresh ao/<sessionId> off the
+      // project's default branch.
+      const trimmedBranch = branch.trim();
       await onCreateTask({
         projectId,
         prompt: prompt.trim(),
-        branch: basedOn === "Branch" ? branch.trim() || undefined : undefined,
+        branch: basedOn === "Branch" && trimmedBranch !== "" && trimmedBranch !== BASE_BRANCH ? trimmedBranch : undefined,
         harness: agent,
       });
       setName("");
       setPrompt("");
-      setBranch("main");
+      setBranch(BASE_BRANCH);
       onOpenChange(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not spawn worker");

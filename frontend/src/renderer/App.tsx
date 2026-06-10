@@ -7,7 +7,7 @@ import { SpawnWorkerModal } from "./components/SpawnWorkerModal";
 import { Topbar } from "./components/Topbar";
 import { useDaemonStatus } from "./hooks/useDaemonStatus";
 import { useWorkspaceQuery, workspaceQueryKey } from "./hooks/useWorkspaceQuery";
-import { apiClient } from "./lib/api-client";
+import { apiClient, apiErrorMessage } from "./lib/api-client";
 import { Theme, useUiStore } from "./stores/ui-store";
 import { toAgentProvider, toSessionStatus, type AgentProvider, type WorkspaceSummary } from "./types/workspace";
 
@@ -132,9 +132,7 @@ export function App({ routeSessionId, routeWorkspaceId }: AppProps) {
     });
 
     if (error || !data?.session) {
-      throw new Error(
-        error instanceof Error ? error.message : error ? String(error) : "No session returned",
-      );
+      throw new Error(error ? apiErrorMessage(error) : "No session returned");
     }
 
     const session = data.session;

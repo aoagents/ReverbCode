@@ -23,7 +23,8 @@ const { postMock, mockData } = vi.hoisted(() => ({
   },
 }));
 
-vi.mock("./lib/api-client", () => ({
+vi.mock("./lib/api-client", async (importActual) => ({
+  ...(await importActual<typeof import("./lib/api-client")>()),
   getApiBaseUrl: () => "http://127.0.0.1:3001",
   setApiBaseUrl: () => undefined,
   subscribeApiBaseUrl: () => () => undefined,
@@ -169,7 +170,9 @@ test("spawns a worker from the New worker modal", async () => {
       kind: "worker",
       harness: "claude-code",
       prompt: "Make task creation work",
-      branch: "main",
+      // "Based on main" omits branch: the daemon mints ao/<sessionId> off the
+      // default branch (main itself can't be checked out in a second worktree).
+      branch: undefined,
     },
   });
 });
@@ -193,7 +196,7 @@ test("surfaces an error when spawning fails", async () => {
       kind: "worker",
       harness: "claude-code",
       prompt: "Failing task",
-      branch: "main",
+      branch: undefined,
     },
   });
   expect(await screen.findByText("Failed to fetch")).toBeInTheDocument();
