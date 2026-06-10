@@ -1,19 +1,30 @@
 import {
   Columns2,
   FileText,
+  GitBranch,
   GitPullRequest,
+  LayoutGrid,
   MoreHorizontal,
   PanelLeft,
-  Pin,
   Plus,
   Terminal,
   Waypoints,
 } from "lucide-react";
 import type { WorkbenchTab, WorkbenchView } from "../stores/ui-store";
-import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
+import type { WorkerDisplayStatus, WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { workerDisplayStatus } from "../types/workspace";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { cn } from "../lib/utils";
+
+// Session status → pill tone, mirroring agent-orchestrator's StatusBadge
+// (working=orange & breathing, input=amber, fail=red, ready=green, done=neutral).
+const STATUS_PILL: Record<WorkerDisplayStatus, { label: string; tone: string; breathe: boolean }> = {
+  working: { label: "Working", tone: "#f59f4c", breathe: true },
+  needs_you: { label: "Needs input", tone: "#e8c14a", breathe: false },
+  ci_failed: { label: "CI failed", tone: "#ef6b6b", breathe: false },
+  mergeable: { label: "Ready", tone: "#74b98a", breathe: false },
+  done: { label: "Done", tone: "#9ba1aa", breathe: false },
+};
 
 const isMac = typeof navigator !== "undefined" && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent);
 const dragStyle = isMac ? ({ WebkitAppRegion: "drag" } as React.CSSProperties) : undefined;
@@ -27,6 +38,8 @@ type TopbarProps = {
   onSetWorkbenchTab: (tab: WorkbenchTab) => void;
   onNewWorker: () => void;
   onToggleSidebar: () => void;
+  /** Back-to-board navigation for the "Kanban" button (session view). */
+  onOpenBoard?: () => void;
 };
 
 export function Topbar({
@@ -37,6 +50,7 @@ export function Topbar({
   onSetWorkbenchTab,
   onNewWorker,
   onToggleSidebar,
+  onOpenBoard,
 }: TopbarProps) {
   return (
     <header
@@ -61,12 +75,36 @@ export function Topbar({
           <span className="truncate font-medium text-foreground">Orchestrator</span>
         </div>
       ) : (
-        <div className="flex min-w-0 items-center gap-1.5 text-[13px] text-muted-foreground">
-          <span className="truncate">{session?.workspaceName ?? workspace?.name ?? "—"}</span>
-          <span className="text-passive">/</span>
-          <span className="truncate font-medium text-foreground">{session?.title ?? "session"}</span>
-          <Pin className="h-3 w-3 shrink-0 text-passive" aria-hidden="true" />
-        </div>
+        <>
+          {/* Kanban back-to-board (session-board-btn) */}
+          <button
+            aria-label="Back to board"
+            className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-[12px] text-muted-foreground transition-colors hover:bg-white/[0.04] hover:text-foreground"
+            onClick={onOpenBoard}
+            style={noDragStyle}
+            type="button"
+          >
+            <LayoutGrid className="h-[14px] w-[14px]" aria-hidden="true" />
+            Kanban
+          </button>
+          <span className="h-5 w-px shrink-0 bg-border" aria-hidden="true" />
+
+          {/* Identity (session-topbar__id): project / title over a branch line */}
+          <div className="flex min-w-0 items-center gap-2.5">
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5 text-[13px] leading-none">
+                <span className="truncate text-muted-foreground">{session?.workspaceName ?? workspace?.name ?? "—"}</span>
+                <span className="text-passive">/</span>
+                <span className="truncate font-medium text-foreground">{session?.title ?? "session"}</span>
+              </div>
+              <div className="mt-1 flex items-center gap-1 text-[10.5px] text-passive">
+                <GitBranch className="h-3 w-3 shrink-0" aria-hidden="true" />
+                <span className="truncate font-mono">{session?.branch || `session/${session?.id ?? ""}`}</span>
+              </div>
+            </div>
+            {session && <SessionStatusPill session={session} />}
+          </div>
+        </>
       )}
 
       <div className="ml-auto flex shrink-0 items-center gap-0.5">
@@ -149,6 +187,25 @@ function IconToggle({
       </TooltipTrigger>
       <TooltipContent>{label}</TooltipContent>
     </Tooltip>
+  );
+}
+
+// StatusBadge --pill: tinted bordered pill (inset 25%-tone hairline + 7%-tone
+// fill) with a 6px dot that breathes while the agent is working.
+function SessionStatusPill({ session }: { session: WorkspaceSession }) {
+  const { label, tone, breathe } = STATUS_PILL[workerDisplayStatus(session)];
+  return (
+    <span
+      className="inline-flex shrink-0 items-center gap-[7px] whitespace-nowrap rounded-[7px] px-[11px] py-[5px] text-[11.5px] font-semibold"
+      style={{
+        color: tone,
+        background: `color-mix(in srgb, ${tone} 7%, transparent)`,
+        boxShadow: `inset 0 0 0 1px color-mix(in srgb, ${tone} 25%, transparent)`,
+      }}
+    >
+      <span className={cn("h-1.5 w-1.5 rounded-full", breathe && "animate-status-pulse")} style={{ background: tone }} />
+      {label}
+    </span>
   );
 }
 

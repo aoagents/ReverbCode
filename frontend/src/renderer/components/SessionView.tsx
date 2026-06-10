@@ -47,6 +47,11 @@ export function SessionView({ sessionId, projectId }: SessionViewProps) {
     <div className="flex h-full min-h-0 flex-col bg-background text-foreground">
       <Topbar
         onNewWorker={() => openSpawn(workspace?.id)}
+        onOpenBoard={() =>
+          workspace
+            ? void navigate({ to: "/projects/$projectId", params: { projectId: workspace.id } })
+            : void navigate({ to: "/" })
+        }
         onSetWorkbenchTab={setWorkbenchTab}
         onToggleSidebar={toggleSidebar}
         session={session}
