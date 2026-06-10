@@ -46,3 +46,6 @@ session-events.jsonl.*
 # OS
 .DS_Store
 Thumbs.db
+
+# Personal local overrides (not for the team)
+.envrc.local
