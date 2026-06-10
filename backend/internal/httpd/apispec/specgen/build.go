@@ -61,6 +61,8 @@ func Build() ([]byte, error) {
 			"Agent session lifecycle and messaging"),
 		*(&openapi31.Tag{Name: "prs"}).WithDescription(
 			"Pull-request actions (SCM lane)"),
+		*(&openapi31.Tag{Name: "reviews"}).WithDescription(
+			"Code-review runs and findings"),
 		*(&openapi31.Tag{Name: "events"}).WithDescription(
 			"Server-sent CDC event stream with durable replay"),
 	}
@@ -156,6 +158,13 @@ var schemaNames = map[string]string{
 	"ControllersMergePRResponse":         "MergePRResponse",
 	"ControllersResolveCommentsRequest":  "ResolveCommentsRequest",
 	"ControllersResolveCommentsResponse": "ResolveCommentsResponse",
+	// httpd/controllers — review wire envelopes
+	"ControllersListReviewsResponse": "ListReviewsResponse",
+	"ControllersExecuteReviewInput":  "ExecuteReviewInput",
+	"ControllersReviewResponse":      "ReviewResponse",
+	// service/review entities
+	"ReviewRun":     "ReviewRun",
+	"ReviewFinding": "ReviewFinding",
 	// service/project entities + DTOs
 	"ProjectProject":        "Project",
 	"ProjectSummary":        "ProjectSummary",
@@ -240,7 +249,44 @@ func operations() []operation {
 	ops = append(ops, projectOperations()...)
 	ops = append(ops, sessionOperations()...)
 	ops = append(ops, prOperations()...)
+	ops = append(ops, reviewOperations()...)
 	return ops
+}
+
+// reviewOperations declares the /reviews operations. Must stay 1:1 with the
+// routes ReviewsController.Register mounts (enforced by the parity test).
+func reviewOperations() []operation {
+	return []operation{
+		{
+			method: http.MethodGet, path: "/api/v1/reviews", id: "listReviews", tag: "reviews",
+			summary: "List code-review runs",
+			resps: []respUnit{
+				{http.StatusOK, controllers.ListReviewsResponse{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/reviews/execute", id: "executeReview", tag: "reviews",
+			summary: "Start a code-review run for a session's PR",
+			reqBody: controllers.ExecuteReviewInput{},
+			resps: []respUnit{
+				{http.StatusCreated, controllers.ReviewResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusUnprocessableEntity, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/reviews/{id}/send", id: "sendReview", tag: "reviews",
+			summary:    "Send a review run's findings to its PR",
+			pathParams: []any{controllers.ReviewIDParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ReviewResponse{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+	}
 }
 
 type eventsQuery struct {

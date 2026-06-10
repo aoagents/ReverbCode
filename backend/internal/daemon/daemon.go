@@ -16,6 +16,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd"
 	"github.com/aoagents/agent-orchestrator/backend/internal/runfile"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
+	reviewsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/review"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 	"github.com/aoagents/agent-orchestrator/backend/internal/terminal"
 )
@@ -105,6 +106,7 @@ func Run() error {
 	srv, err := httpd.NewWithDeps(cfg, log, termMgr, httpd.APIDeps{
 		Projects: projectsvc.New(store),
 		Sessions: sessionSvc,
+		Reviews:  reviewsvc.NewInMemory(),
 		CDC:      store,
 		Events:   cdcPipe.Broadcaster,
 		Activity: lcStack.LCM,

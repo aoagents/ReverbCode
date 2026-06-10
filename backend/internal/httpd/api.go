@@ -13,6 +13,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
 	prsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/pr"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
+	reviewsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/review"
 )
 
 // APIDeps bundles every service the API layer's controllers depend on.
@@ -21,6 +22,7 @@ type APIDeps struct {
 	Sessions controllers.SessionService
 	Activity controllers.ActivityRecorder
 	PRs      prsvc.ActionManager
+	Reviews  reviewsvc.Manager
 	CDC      cdc.Source
 	Events   cdcSubscriber
 }
@@ -32,6 +34,7 @@ type API struct {
 	projects *controllers.ProjectsController
 	sessions *controllers.SessionsController
 	prs      *controllers.PRsController
+	reviews  *controllers.ReviewsController
 	events   *EventsController
 }
 
@@ -48,8 +51,9 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 			Svc:      deps.Sessions,
 			Activity: deps.Activity,
 		},
-		prs:    &controllers.PRsController{Svc: deps.PRs},
-		events: &EventsController{Source: deps.CDC, Live: deps.Events},
+		prs:     &controllers.PRsController{Svc: deps.PRs},
+		reviews: &controllers.ReviewsController{Svc: deps.Reviews},
+		events:  &EventsController{Source: deps.CDC, Live: deps.Events},
 	}
 }
 
@@ -70,6 +74,7 @@ func (a *API) Register(root chi.Router) {
 			a.projects.Register(r)
 			a.sessions.Register(r)
 			a.prs.Register(r)
+			a.reviews.Register(r)
 			// Sibling REST controllers plug in here.
 		})
 		// Long-lived streams intentionally bypass the REST timeout middleware.
