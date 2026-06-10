@@ -53,5 +53,6 @@ type SessionRecord struct {
 // plus the derived display Status.
 type Session struct {
 	SessionRecord
-	Status SessionStatus `json:"status"`
+	Status           SessionStatus `json:"status"`
+	TerminalHandleID string        `json:"terminalHandleId,omitempty"`
 }

@@ -186,6 +186,15 @@ func TestProjectsAPI_ListAddGet(t *testing.T) {
 
 	}
 
+	body, status, _ = doRequest(t, srv, "GET", "/api/v1/projects", "")
+	if status != http.StatusOK {
+		t.Fatalf("GET projects after add = %d, want 200; body=%s", status, body)
+	}
+	mustJSON(t, body, &list)
+	if len(list.Projects) != 1 || list.Projects[0].Path != repo {
+		t.Fatalf("project summary path = %#v, want path %q", list.Projects, repo)
+	}
+
 }
 
 func TestProjectsAPI_AddValidationAndConflicts(t *testing.T) {
@@ -307,6 +316,36 @@ func TestProjectsAPI_Delete(t *testing.T) {
 
 }
 
+// TestProjectsAPI_RejectsUnknownConfigKeys locks the strict-decoder gate on the
+// project config endpoints: a misspelled or removed field surfaces as a clear
+// 400 instead of being silently dropped, so the API cannot accumulate dead
+// config the daemon never reads.
+func TestProjectsAPI_RejectsUnknownConfigKeys(t *testing.T) {
+	srv := newTestServer(t)
+	repo := gitRepo(t, "rejects-unknown")
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/projects", `{"path":`+quote(repo)+`,"projectId":"rej"}`)
+	if status != http.StatusCreated {
+		t.Fatalf("seed create = %d, want 201; body=%s", status, body)
+	}
+
+	// PUT a config body with an extraneous top-level key.
+	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/rej/config", `{"config":{"defaultBranch":"develop"},"surprise":"!"}`)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_JSON")
+
+	// PUT a config body with a removed field inside the nested config — the
+	// canonical regression: agentRules / tracker are no longer modelled, so
+	// projects can't sneak them back in.
+	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/rej/config", `{"config":{"agentRules":"x"}}`)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_JSON")
+	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/rej/config", `{"config":{"tracker":{"plugin":"github"}}}`)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_JSON")
+
+	// POST /projects gets the same gate, so add-time config rides the same rail.
+	otherRepo := gitRepo(t, "rejects-unknown-add")
+	body, status, _ = doRequest(t, srv, "POST", "/api/v1/projects", `{"path":`+quote(otherRepo)+`,"projectId":"rej2","config":{"orchestratorRules":"x"}}`)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_JSON")
+}
+
 func TestProjectsRoutes_LegacyUnregistered(t *testing.T) {
 
 	srv := newTestServer(t)
@@ -376,6 +415,8 @@ type projectSummary struct {
 	ID string `json:"id"`
 
 	Name string `json:"name"`
+
+	Path string `json:"path"`
 
 	SessionPrefix string `json:"sessionPrefix"`
 }

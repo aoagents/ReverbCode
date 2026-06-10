@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -33,6 +34,18 @@ const (
 	DefaultAgent = "claude-code"
 )
 
+// DefaultAllowedOrigins are the browser origins the daemon's CORS boundary
+// trusts, beyond loopback-served content (which the middleware always trusts —
+// local pages can reach the no-auth daemon directly anyway). The daemon has no
+// auth, so every entry must be an origin web content cannot present:
+// app://renderer is the packaged Electron renderer, served from a custom
+// scheme only the desktop app registers — no website can bear it. The opaque
+// "null" origin (file:// pages, sandboxed iframes on any website) must never
+// be added.
+var DefaultAllowedOrigins = []string{
+	"app://renderer",
+}
+
 // Config is the fully-resolved daemon configuration. It is immutable once
 // built by Load.
 type Config struct {
@@ -54,6 +67,9 @@ type Config struct {
 	// Manager (see DefaultAgent). Selected by AO_AGENT; startSession fails fast
 	// if no adapter with this id is registered.
 	Agent string
+	// AllowedOrigins are the browser origins granted CORS read access (see
+	// DefaultAllowedOrigins). Overridden by AO_ALLOWED_ORIGINS.
+	AllowedOrigins []string
 }
 
 // Addr returns the host:port the HTTP server binds. It uses net.JoinHostPort so
@@ -74,6 +90,7 @@ func (c Config) Addr() string {
 //	AO_RUN_FILE          running.json path   (default <state-dir>/running.json)
 //	AO_DATA_DIR          durable state dir   (default <state-dir>/data)
 //	AO_AGENT             agent adapter id    (default claude-code)
+//	AO_ALLOWED_ORIGINS   CORS origins, comma-separated (default DefaultAllowedOrigins)
 //
 // The bind host is not configurable: the daemon is loopback-only by design.
 func Load() (Config, error) {
@@ -83,6 +100,7 @@ func Load() (Config, error) {
 		RequestTimeout:  DefaultRequestTimeout,
 		ShutdownTimeout: DefaultShutdownTimeout,
 		Agent:           DefaultAgent,
+		AllowedOrigins:  DefaultAllowedOrigins,
 	}
 
 	if raw := os.Getenv("AO_PORT"); raw != "" {
@@ -114,6 +132,25 @@ func Load() (Config, error) {
 
 	if raw := os.Getenv("AO_AGENT"); raw != "" {
 		cfg.Agent = raw
+	}
+
+	if raw, ok := os.LookupEnv("AO_ALLOWED_ORIGINS"); ok && raw != "" {
+		// Explicit override replaces the defaults entirely so a deployment can
+		// also narrow the list. The "null" origin is rejected, never silently
+		// dropped: an operator allowing it would open the no-auth daemon to
+		// every sandboxed iframe on the web.
+		origins := make([]string, 0, 4)
+		for _, origin := range strings.Split(raw, ",") {
+			origin = strings.TrimSpace(origin)
+			if origin == "" {
+				continue
+			}
+			if origin == "null" || origin == "*" {
+				return Config{}, fmt.Errorf("invalid AO_ALLOWED_ORIGINS entry %q: wildcard and null origins are not allowed", origin)
+			}
+			origins = append(origins, origin)
+		}
+		cfg.AllowedOrigins = origins
 	}
 
 	runFile, err := resolveRunFilePath()

@@ -85,6 +85,8 @@ func TestLoadInvalid(t *testing.T) {
 		{"negative request timeout", map[string]string{"AO_REQUEST_TIMEOUT": "-1s"}},
 		{"zero shutdown timeout", map[string]string{"AO_SHUTDOWN_TIMEOUT": "0s"}},
 		{"negative shutdown timeout", map[string]string{"AO_SHUTDOWN_TIMEOUT": "-5s"}},
+		{"null origin", map[string]string{"AO_ALLOWED_ORIGINS": "app://renderer,null"}},
+		{"wildcard origin", map[string]string{"AO_ALLOWED_ORIGINS": "*"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -96,4 +98,40 @@ func TestLoadInvalid(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestLoadAllowedOrigins(t *testing.T) {
+	t.Run("default includes the packaged renderer origin", func(t *testing.T) {
+		t.Setenv("AO_ALLOWED_ORIGINS", "")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		found := false
+		for _, origin := range cfg.AllowedOrigins {
+			if origin == "app://renderer" {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("AllowedOrigins = %v, want app://renderer included", cfg.AllowedOrigins)
+		}
+	})
+
+	t.Run("override replaces defaults and trims entries", func(t *testing.T) {
+		t.Setenv("AO_ALLOWED_ORIGINS", " app://renderer , http://localhost:9999 ,")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		want := []string{"app://renderer", "http://localhost:9999"}
+		if len(cfg.AllowedOrigins) != len(want) {
+			t.Fatalf("AllowedOrigins = %v, want %v", cfg.AllowedOrigins, want)
+		}
+		for i, origin := range want {
+			if cfg.AllowedOrigins[i] != origin {
+				t.Errorf("AllowedOrigins[%d] = %q, want %q", i, cfg.AllowedOrigins[i], origin)
+			}
+		}
+	})
 }

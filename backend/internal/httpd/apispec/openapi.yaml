@@ -8,6 +8,49 @@ servers:
 - description: Local daemon (loopback only)
   url: http://127.0.0.1:3001
 paths:
+  /api/v1/events:
+    get:
+      operationId: streamEvents
+      parameters:
+      - description: Replay events with seq greater than this cursor. When omitted,
+          clients may send Last-Event-ID instead.
+        in: query
+        name: after
+        schema:
+          description: Replay events with seq greater than this cursor. When omitted,
+            clients may send Last-Event-ID instead.
+          minimum: 0
+          type:
+          - "null"
+          - integer
+      responses:
+        "200":
+          content:
+            text/event-stream:
+              schema:
+                type: string
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Stream CDC events with durable replay
+      tags:
+      - events
   /api/v1/orchestrators:
     get:
       operationId: listOrchestrators
@@ -238,6 +281,51 @@ paths:
                 $ref: '#/components/schemas/APIError'
           description: Internal Server Error
       summary: Fetch one project; discriminates ok vs degraded
+      tags:
+      - projects
+  /api/v1/projects/{id}/config:
+    put:
+      operationId: setProjectConfig
+      parameters:
+      - description: Project identifier (registry key).
+        in: path
+        name: id
+        required: true
+        schema:
+          description: Project identifier (registry key).
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetProjectConfigInput'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Replace a project's per-project config
       tags:
       - projects
   /api/v1/prs/{id}/merge:
@@ -501,6 +589,57 @@ paths:
       summary: Rename a session display name
       tags:
       - sessions
+  /api/v1/sessions/{sessionId}/activity:
+    post:
+      operationId: setSessionActivity
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetActivityRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SetActivityResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Report an agent activity-state signal for a session
+      tags:
+      - sessions
   /api/v1/sessions/{sessionId}/kill:
     post:
       operationId: killSession
@@ -540,6 +679,108 @@ paths:
       summary: Mark a session terminated and tear down runtime/workspace resources
       tags:
       - sessions
+  /api/v1/sessions/{sessionId}/pr:
+    get:
+      operationId: listSessionPRs
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListSessionPRsResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: List pull requests owned by a session
+      tags:
+      - sessions
+  /api/v1/sessions/{sessionId}/pr/claim:
+    post:
+      operationId: claimSessionPR
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClaimPRRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClaimPRResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Unprocessable Entity
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Claim an existing pull request for a session
+      tags:
+      - sessions
   /api/v1/sessions/{sessionId}/restore:
     post:
       operationId: restoreSession
@@ -577,6 +818,46 @@ paths:
                 $ref: '#/components/schemas/APIError'
           description: Internal Server Error
       summary: Restore a terminated session
+      tags:
+      - sessions
+  /api/v1/sessions/{sessionId}/rollback:
+    post:
+      operationId: rollbackSession
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RollbackSessionResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Undo a partially-completed spawn (delete seed row, or kill if spawn
+        output exists)
       tags:
       - sessions
   /api/v1/sessions/{sessionId}/send:
@@ -680,6 +961,8 @@ components:
       type: object
     AddProjectInput:
       properties:
+        config:
+          $ref: '#/components/schemas/ProjectConfig'
         name:
           type:
           - "null"
@@ -692,6 +975,48 @@ components:
           - string
       required:
       - path
+      type: object
+    AgentConfig:
+      properties:
+        model:
+          type: string
+        permissions:
+          type: string
+      type: object
+    ClaimPRRequest:
+      properties:
+        allowTakeover:
+          type:
+          - "null"
+          - boolean
+        pr:
+          minLength: 1
+          type: string
+      required:
+      - pr
+      type: object
+    ClaimPRResponse:
+      properties:
+        branchChanged:
+          type: boolean
+        ok:
+          type: boolean
+        prs:
+          items:
+            $ref: '#/components/schemas/SessionPRFacts'
+          type: array
+        sessionId:
+          type: string
+        takenOverFrom:
+          items:
+            type: string
+          type: array
+      required:
+      - ok
+      - sessionId
+      - prs
+      - branchChanged
+      - takenOverFrom
       type: object
     CleanupSessionsResponse:
       properties:
@@ -753,6 +1078,18 @@ components:
       required:
       - projects
       type: object
+    ListSessionPRsResponse:
+      properties:
+        prs:
+          items:
+            $ref: '#/components/schemas/SessionPRFacts'
+          type: array
+        sessionId:
+          type: string
+      required:
+      - sessionId
+      - prs
+      type: object
     ListSessionsResponse:
       properties:
         sessions:
@@ -791,6 +1128,8 @@ components:
       properties:
         agent:
           type: string
+        config:
+          $ref: '#/components/schemas/ProjectConfig'
         defaultBranch:
           type: string
         id:
@@ -801,16 +1140,37 @@ components:
           type: string
         repo:
           type: string
-        scm:
-          $ref: '#/components/schemas/SCMConfig'
-        tracker:
-          $ref: '#/components/schemas/TrackerConfig'
       required:
       - id
       - name
       - path
       - repo
       - defaultBranch
+      type: object
+    ProjectConfig:
+      properties:
+        agentConfig:
+          $ref: '#/components/schemas/AgentConfig'
+        defaultBranch:
+          type: string
+        env:
+          additionalProperties:
+            type: string
+          type: object
+        orchestrator:
+          $ref: '#/components/schemas/RoleOverride'
+        postCreate:
+          items:
+            type: string
+          type: array
+        sessionPrefix:
+          type: string
+        symlinks:
+          items:
+            type: string
+          type: array
+        worker:
+          $ref: '#/components/schemas/RoleOverride'
       type: object
     ProjectGetResponse:
       properties:
@@ -843,6 +1203,8 @@ components:
           type: string
         name:
           type: string
+        path:
+          type: string
         resolveError:
           type: string
         sessionPrefix:
@@ -850,6 +1212,7 @@ components:
       required:
       - id
       - name
+      - path
       - sessionPrefix
       type: object
     RemoveProjectResult:
@@ -906,35 +1269,26 @@ components:
       - sessionId
       - session
       type: object
-    SCMConfig:
+    RoleOverride:
       properties:
-        package:
+        agent:
           type: string
-        path:
-          type: string
-        plugin:
-          type: string
-        webhook:
-          $ref: '#/components/schemas/SCMWebhookConfig'
+        agentConfig:
+          $ref: '#/components/schemas/AgentConfig'
       type: object
-    SCMWebhookConfig:
+    RollbackSessionResponse:
       properties:
-        deliveryHeader:
+        deleted:
+          type: boolean
+        killed:
+          type: boolean
+        ok:
+          type: boolean
+        sessionId:
           type: string
-        enabled:
-          type:
-          - "null"
-          - boolean
-        eventHeader:
-          type: string
-        maxBodyBytes:
-          type: integer
-        path:
-          type: string
-        secretEnvVar:
-          type: string
-        signatureHeader:
-          type: string
+      required:
+      - ok
+      - sessionId
       type: object
     SendSessionMessageRequest:
       properties:
@@ -981,6 +1335,8 @@ components:
           type: string
         status:
           type: string
+        terminalHandleId:
+          type: string
         updatedAt:
           format: date-time
           type: string
@@ -994,12 +1350,79 @@ components:
       - updatedAt
       - status
       type: object
+    SessionPRFacts:
+      properties:
+        ci:
+          type: string
+        mergeability:
+          type: string
+        number:
+          type: integer
+        review:
+          type: string
+        reviewComments:
+          type: boolean
+        state:
+          enum:
+          - draft
+          - open
+          - merged
+          - closed
+          type: string
+        updatedAt:
+          format: date-time
+          type: string
+        url:
+          type: string
+      required:
+      - url
+      - number
+      - state
+      - ci
+      - review
+      - mergeability
+      - reviewComments
+      - updatedAt
+      type: object
     SessionResponse:
       properties:
         session:
           $ref: '#/components/schemas/Session'
       required:
       - session
+      type: object
+    SetActivityRequest:
+      properties:
+        state:
+          description: Agent activity state reported by an agent hook.
+          enum:
+          - active
+          - idle
+          - waiting_input
+          - exited
+          type: string
+      required:
+      - state
+      type: object
+    SetActivityResponse:
+      properties:
+        ok:
+          type: boolean
+        sessionId:
+          type: string
+        state:
+          type: string
+      required:
+      - ok
+      - sessionId
+      - state
+      type: object
+    SetProjectConfigInput:
+      properties:
+        config:
+          $ref: '#/components/schemas/ProjectConfig'
+      required:
+      - config
       type: object
     SpawnOrchestratorRequest:
       properties:
@@ -1019,8 +1442,6 @@ components:
       type: object
     SpawnSessionRequest:
       properties:
-        agentRules:
-          type: string
         branch:
           type: string
         harness:
@@ -1029,6 +1450,25 @@ components:
           - codex
           - aider
           - opencode
+          - grok
+          - droid
+          - amp
+          - agy
+          - crush
+          - cursor
+          - qwen
+          - copilot
+          - goose
+          - auggie
+          - continue
+          - devin
+          - cline
+          - kimi
+          - kiro
+          - kilocode
+          - vibe
+          - pi
+          - autohand
           type: string
         issueId:
           type: string
@@ -1045,15 +1485,6 @@ components:
       required:
       - projectId
       type: object
-    TrackerConfig:
-      properties:
-        package:
-          type: string
-        path:
-          type: string
-        plugin:
-          type: string
-      type: object
 tags:
 - description: Project registry, configuration, and lifecycle administration
   name: projects
@@ -1061,3 +1492,5 @@ tags:
   name: sessions
 - description: Pull-request actions (SCM lane)
   name: prs
+- description: Server-sent CDC event stream with durable replay
+  name: events
