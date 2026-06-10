@@ -1,8 +1,7 @@
-import { defineConfig } from "vitest/config";
+import { defineConfig } from "vite";
 import type { Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
-import electron from "vite-plugin-electron/simple";
 
 // CSP for the built renderer. The daemon is loopback-only, so network access is
 // pinned to 127.0.0.1 (REST + SSE over http, terminal mux over ws). Injected at
@@ -11,7 +10,6 @@ import electron from "vite-plugin-electron/simple";
 const CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
   "script-src 'self'",
-  // Inline style attributes (xterm, radix) have no nonce path; allow them.
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data:",
   "font-src 'self' data:",
@@ -35,12 +33,10 @@ const injectCspMeta: Plugin = {
   },
 };
 
-// VITE_NO_ELECTRON=1 serves the renderer as a plain web app (no Electron child),
-// so it can be opened in a browser for design QA / screenshots. `window.ao` is
-// then undefined, which the renderer already handles (TerminalPane scaffold).
-const skipElectron = process.env.VITE_NO_ELECTRON === "1";
-
 export default defineConfig({
+  // Dev proxy for VITE_NO_ELECTRON=1 browser preview — forwards /api and /mux
+  // to the daemon so the renderer can be tested against a running daemon from
+  // a plain browser without an Electron shell.
   server: {
     proxy: {
       "/api": {
@@ -54,24 +50,7 @@ export default defineConfig({
       },
     },
   },
-  plugins: [
-    react(),
-    tailwindcss(),
-    injectCspMeta,
-    ...(skipElectron
-      ? []
-      : [
-          electron({
-            main: {
-              entry: "src/main.ts",
-            },
-            preload: {
-              input: "src/preload.ts",
-            },
-            renderer: {},
-          }),
-        ]),
-  ],
+  plugins: [react(), tailwindcss(), injectCspMeta],
   test: {
     environment: "jsdom",
     exclude: ["node_modules/**", "dist/**", "dist-electron/**", "e2e/**"],

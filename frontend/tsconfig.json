@@ -19,6 +19,14 @@
     "noImplicitReturns": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx", "vite.config.ts", "playwright.config.ts"],
-  "exclude": ["node_modules", "dist", "dist-electron", "release", "src/landing"]
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "forge.config.ts",
+    "vite.main.config.ts",
+    "vite.preload.config.ts",
+    "vite.renderer.config.ts",
+    "playwright.config.ts"
+  ],
+  "exclude": ["node_modules", "dist", "dist-electron", ".vite", "release", "out", "src/landing"]
 }

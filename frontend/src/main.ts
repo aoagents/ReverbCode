@@ -1,5 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, net, protocol, shell, type OpenDialogOptions } from "electron";
-import { autoUpdater } from "electron-updater";
+import updateElectronApp from "update-electron-app";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import os from "node:os";
@@ -7,6 +7,10 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { createListenPortScanner, defaultRunFilePath, parseRunFile } from "./shared/daemon-discovery";
 import type { DaemonStatus } from "./shared/daemon-status";
+
+// Globals injected at compile time by @electron-forge/plugin-vite.
+declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
+declare const MAIN_WINDOW_VITE_NAME: string;
 
 let mainWindow: BrowserWindow | null = null;
 let daemonProcess: ChildProcessWithoutNullStreams | null = null;
@@ -36,7 +40,7 @@ protocol.registerSchemesAsPrivileged([
 // Maps app://renderer/<path> to the built renderer in dist/. Paths without a
 // file extension are client-side routes and fall back to index.html (SPA).
 function registerRendererProtocol(): void {
-  const distRoot = path.join(__dirname, "../dist");
+  const distRoot = path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}`);
   protocol.handle(RENDERER_SCHEME, async (request) => {
     const url = new URL(request.url);
     if (url.host !== RENDERER_HOST) {
@@ -56,8 +60,8 @@ function registerRendererProtocol(): void {
 }
 
 function rendererUrl(): string {
-  if (process.env.VITE_DEV_SERVER_URL) {
-    return process.env.VITE_DEV_SERVER_URL;
+  if (typeof MAIN_WINDOW_VITE_DEV_SERVER_URL !== "undefined" && MAIN_WINDOW_VITE_DEV_SERVER_URL) {
+    return MAIN_WINDOW_VITE_DEV_SERVER_URL;
   }
 
   return `${RENDERER_ORIGIN}/index.html`;
@@ -298,12 +302,7 @@ ipcMain.handle("app:chooseDirectory", async () => {
 // notarized build — see frontend/docs/desktop-release.md.
 function initAutoUpdates(): void {
   if (!app.isPackaged) return;
-
-  autoUpdater.on("error", (error) => console.error("auto-update: error", error));
-  autoUpdater.on("update-available", (info) => console.log("auto-update: available", info.version));
-  autoUpdater.on("update-downloaded", (info) => console.log("auto-update: downloaded", info.version));
-
-  autoUpdater.checkForUpdatesAndNotify().catch((error) => console.error("auto-update: check failed", error));
+  updateElectronApp();
 }
 
 app.whenReady().then(() => {

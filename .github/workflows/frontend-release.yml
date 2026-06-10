@@ -1,12 +1,12 @@
 name: Desktop release
 
-# Builds and publishes the Electron desktop app, generating the update feed
-# (latest-mac.yml / latest.yml) that electron-updater reads. Triggered by a
-# `desktop-v*` tag or manually.
+# Builds and publishes the Electron desktop app via electron-forge.
+# Generates a GitHub Release (draft) with installers + update manifests.
+# Triggered by a `desktop-v*` tag or manually.
 #
 # ⚠️ Until macOS code signing + notarization secrets are configured (see
-# frontend/docs/desktop-release.md), published builds are UNSIGNED and will NOT
-# auto-update on macOS. The workflow still produces installable artifacts.
+# frontend/docs/desktop-release.md), published builds are UNSIGNED and will
+# NOT auto-update on macOS. The workflow still produces installable artifacts.
 
 on:
   push:
@@ -18,7 +18,7 @@ jobs:
   release:
     runs-on: macos-latest
     permissions:
-      contents: write # electron-builder publishes a GitHub Release
+      contents: write
     defaults:
       run:
         working-directory: frontend
@@ -30,14 +30,12 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
-      - name: Build and publish
-        run: npm run dist -- --publish always
+      - name: Publish
+        run: npm run publish
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # macOS signing + notarization — required for auto-update to run on
-          # macOS. Add these as repository secrets and remove `mac.identity: null`
-          # from frontend/package.json. Until then the env vars are unset and the
-          # build is unsigned.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # macOS signing + notarization — add as repository secrets and
+          # set osxSign/osxNotarize in forge.config.ts to enable.
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
