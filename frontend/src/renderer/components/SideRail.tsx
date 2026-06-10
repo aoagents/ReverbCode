@@ -9,6 +9,7 @@ import {
   workerStatusPulses,
 } from "../types/workspace";
 import { Button } from "./ui/button";
+import { SessionInspector } from "./SessionInspector";
 import { cn } from "../lib/utils";
 
 // Session status is a single glyph, no text: spinner while working, a PR icon
@@ -67,7 +68,10 @@ export function SideRail({ view, session, workspaces, onSelectSession }: SideRai
       {view === "orchestrator" ? (
         <WorkersList workspaces={workspaces} onSelectSession={onSelectSession} />
       ) : (
-        <GitRail session={session} />
+        <>
+          <SessionInspector session={session} />
+          <GitRail session={session} />
+        </>
       )}
     </aside>
   );
