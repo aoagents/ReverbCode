@@ -4,13 +4,17 @@ import { useCallback, useEffect, useState } from "react";
 import { Sidebar } from "../components/Sidebar";
 import { SpawnWorkerModal } from "../components/SpawnWorkerModal";
 import { useDaemonStatus } from "../hooks/useDaemonStatus";
-import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { useWorkspaceQuery, workspaceQueryKey, workspaceQueryOptions } from "../hooks/useWorkspaceQuery";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { ShellProvider } from "../lib/shell-context";
 import { type Theme, useUiStore } from "../stores/ui-store";
 import { toAgentProvider, toSessionStatus, type AgentProvider, type WorkspaceSummary } from "../types/workspace";
 
 export const Route = createFileRoute("/_shell")({
+  // Prefetch the workspace list for the whole shell (parent loaders run before
+  // children); pairs with the router's defaultPreload: "intent" so a hovered
+  // nav target is warm before the click.
+  loader: ({ context }) => context.queryClient.ensureQueryData(workspaceQueryOptions),
   component: ShellLayout,
 });
 

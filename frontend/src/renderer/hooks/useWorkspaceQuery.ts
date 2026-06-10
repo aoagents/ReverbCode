@@ -38,11 +38,15 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
   }));
 }
 
+// Shared so route loaders can prefetch via queryClient.ensureQueryData (paired
+// with the router's defaultPreload: "intent") and the hook reads the same cache.
+export const workspaceQueryOptions = {
+  queryKey: workspaceQueryKey,
+  queryFn: fetchWorkspaces,
+  retry: 1,
+  refetchInterval: 15_000,
+};
+
 export function useWorkspaceQuery() {
-  return useQuery({
-    queryKey: workspaceQueryKey,
-    queryFn: fetchWorkspaces,
-    retry: 1,
-    refetchInterval: 15_000,
-  });
+  return useQuery(workspaceQueryOptions);
 }
