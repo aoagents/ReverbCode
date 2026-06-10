@@ -296,10 +296,10 @@ ipcMain.handle("app:chooseDirectory", async () => {
   return result.filePaths[0] ?? null;
 });
 
-// Auto-update only runs for packaged builds reading a published feed (see
-// package.json build.publish). In dev there is no feed and electron-updater
-// throws, so it is skipped. A live updater additionally requires a signed +
-// notarized build — see frontend/docs/desktop-release.md.
+// Auto-update only runs for packaged builds reading the GitHub Releases feed
+// (see forge.config.ts publishers). In dev there is no feed, so it is skipped.
+// A live updater additionally requires a signed + notarized build — see
+// frontend/docs/desktop-release.md.
 function initAutoUpdates(): void {
   if (!app.isPackaged) return;
   updateElectronApp();
