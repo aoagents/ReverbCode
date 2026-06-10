@@ -3,6 +3,7 @@
 // (package.json test script) because it only auto-discovers vite.config.*.
 import { defineConfig } from "vitest/config";
 import type { Plugin } from "vite";
+import { fileURLToPath, URL } from "node:url";
 import { TanStackRouterVite } from "@tanstack/router-plugin/vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
@@ -38,6 +39,12 @@ const injectCspMeta: Plugin = {
 };
 
 export default defineConfig({
+  // "@/" → the renderer root (src/renderer), the shadcn/ui import convention.
+  resolve: {
+    alias: {
+      "@": fileURLToPath(new URL("./src/renderer", import.meta.url)),
+    },
+  },
   // Dev proxy for VITE_NO_ELECTRON=1 browser preview — forwards /api and /mux
   // to the daemon so the renderer can be tested against a running daemon from
   // a plain browser without an Electron shell.

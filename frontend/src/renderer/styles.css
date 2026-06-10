@@ -26,10 +26,13 @@
   --color-foreground: var(--fg);
   --color-surface: var(--bg-1);
   --color-card: var(--bg-1);
+  --color-card-foreground: var(--fg);
   --color-raised: var(--bg-2);
   --color-overlay: var(--bg-3);
   --color-popover: var(--bg-1);
   --color-popover-foreground: var(--fg);
+  /* shadcn input border uses border-input; map to our hairline border */
+  --color-input: var(--border);
   --color-sidebar: var(--bg);
   --color-sidebar-foreground: var(--fg-muted);
   --color-terminal: var(--term-bg);
@@ -59,6 +62,10 @@
   --color-success-strong: var(--green-strong);
   --color-warning: var(--amber);
   --color-error: var(--red);
+
+  /* shadcn "destructive" → our error red (Button destructive, Alert, etc.) */
+  --color-destructive: var(--red);
+  --color-destructive-foreground: #ffffff;
 
   --radius-sm: 4px;
   --radius-md: 6px;
