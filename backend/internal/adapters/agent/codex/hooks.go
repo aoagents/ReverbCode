@@ -13,17 +13,26 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
+// Codex (0.136+) never loads hook config from AO's per-session worktrees, so
+// AO's hooks ride the launch command as `-c` session-flag config instead of
+// workspace files:
+//
+//   - Project-local `.codex/` layers only load when the directory is trusted,
+//     and for linked git worktrees Codex sources hook declarations from the
+//     matching `.codex/` folder in the ROOT checkout, not the worktree. A
+//     hooks.json written into an AO worktree is therefore dead config.
+//   - Hooks passed as `-c 'hooks.<Event>=[...]'` land in Codex's session-flags
+//     config layer, which is not trust-gated and aggregates with (never
+//     replaces) the user's own hooks from `~/.codex`. They carry no persisted
+//     trust hash, so the launch command also passes
+//     `--dangerously-bypass-hook-trust` to let them run.
 const (
 	codexHooksDirName  = ".codex"
 	codexHooksFileName = "hooks.json"
 
-	codexConfigFileName        = "config.toml"
-	codexHooksFeatureLine      = "hooks = true"
-	codexLegacyHookFeatureLine = "codex_hooks = true"
-
-	// codexHookCommandPrefix identifies the hook commands AO owns, so
-	// install skips duplicates and uninstall recognizes AO entries by
-	// prefix without an embedded template to diff against.
+	// codexHookCommandPrefix identifies the hook commands AO owns, so the
+	// legacy-file cleanup and uninstall recognize AO entries by prefix
+	// without an embedded template to diff against.
 	codexHookCommandPrefix = "ao hooks codex "
 	codexHookTimeout       = 30
 )
@@ -45,15 +54,15 @@ type codexHookEntry struct {
 	Timeout int    `json:"timeout,omitempty"`
 }
 
-// codexHookSpec describes one hook AO installs, defined in code rather
-// than read from an embedded hooks file.
+// codexHookSpec describes one hook AO delivers via launch-command config.
 type codexHookSpec struct {
 	Event   string
 	Command string
 }
 
-// codexManagedHooks is the source of truth for the hooks AO installs.
-// Codex groups every hook under the nil matcher.
+// codexManagedHooks is the source of truth for the hooks AO delivers. Event
+// names must not contain dots: they are spliced into a dotted `-c` key path,
+// and Codex splits that path on every dot without honoring quoting.
 var codexManagedHooks = []codexHookSpec{
 	{Event: "SessionStart", Command: codexHookCommandPrefix + "session-start"},
 	{Event: "UserPromptSubmit", Command: codexHookCommandPrefix + "user-prompt-submit"},
@@ -61,9 +70,70 @@ var codexManagedHooks = []codexHookSpec{
 	{Event: "Stop", Command: codexHookCommandPrefix + "stop"},
 }
 
-// GetAgentHooks installs AO's Codex hooks into the worktree-local
-// .codex/hooks.json file. Existing hook entries are preserved and duplicate
-// AO commands are not appended.
+// appendSessionHookFlags adds AO's activity hooks to the argv as `-c`
+// session-flag config, one flag per managed event.
+func appendSessionHookFlags(cmd *[]string) {
+	for _, spec := range codexManagedHooks {
+		flag := fmt.Sprintf(`hooks.%s=[{hooks=[{type="command",command=%s,timeout=%d}]}]`,
+			spec.Event, codexTOMLBasicString(spec.Command), codexHookTimeout)
+		*cmd = append(*cmd, "-c", flag)
+	}
+}
+
+// appendWorkspaceTrustFlag marks the session's worktree as a trusted Codex
+// project for this invocation only, so spawns into never-before-trusted repos
+// don't hang on the interactive "Do you trust this directory?" prompt.
+//
+// The override is shaped as a single `projects={...}` value (not a dotted
+// `projects."<path>".trust_level` key) because Codex splits `-c` key paths on
+// every dot without honoring quoted segments, which corrupts path keys. The
+// inline table deep-merges with the user's persisted projects map. Both the
+// literal and symlink-resolved paths are trusted because Codex looks trust up
+// by the canonicalized cwd first and the literal path second (on macOS the two
+// commonly differ, e.g. /tmp vs /private/tmp).
+func appendWorkspaceTrustFlag(cmd *[]string, workspacePath string) {
+	path := strings.TrimSpace(workspacePath)
+	if path == "" {
+		return
+	}
+	keys := []string{path}
+	if resolved, err := filepath.EvalSymlinks(path); err == nil && resolved != path {
+		keys = append(keys, resolved)
+	}
+	entries := make([]string, 0, len(keys))
+	for _, key := range keys {
+		entries = append(entries, codexTOMLBasicString(key)+`={trust_level="trusted"}`)
+	}
+	*cmd = append(*cmd, "-c", "projects={"+strings.Join(entries, ",")+"}")
+}
+
+// codexTOMLBasicString renders s as a TOML basic string, escaping backslashes
+// and quotes (Windows paths) plus control characters so the value survives
+// Codex's TOML parse of the `-c` override.
+func codexTOMLBasicString(s string) string {
+	var b strings.Builder
+	b.WriteByte('"')
+	for _, r := range s {
+		switch {
+		case r == '\\':
+			b.WriteString(`\\`)
+		case r == '"':
+			b.WriteString(`\"`)
+		case r < 0x20 || r == 0x7f:
+			fmt.Fprintf(&b, `\u%04X`, r)
+		default:
+			b.WriteRune(r)
+		}
+	}
+	b.WriteByte('"')
+	return b.String()
+}
+
+// GetAgentHooks no longer installs workspace files — Codex never loads them
+// from AO's worktrees (see the package comment above); the hooks ride the
+// launch command instead. It still strips hook entries that older AO versions
+// wrote into the worktree-local .codex/hooks.json so reused or restored
+// worktrees don't keep dead AO config, preserving user-defined hooks.
 func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfig) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -71,43 +141,15 @@ func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfi
 	if strings.TrimSpace(cfg.WorkspacePath) == "" {
 		return errors.New("codex.GetAgentHooks: WorkspacePath is required")
 	}
-
-	hooksPath := codexHooksPath(cfg.WorkspacePath)
-	topLevel, rawHooks, err := readCodexHooks(hooksPath)
-	if err != nil {
+	if err := removeLegacyWorkspaceHooks(cfg.WorkspacePath); err != nil {
 		return fmt.Errorf("codex.GetAgentHooks: %w", err)
-	}
-
-	for event, specs := range groupCodexHooksByEvent() {
-		var existingGroups []codexMatcherGroup
-		if err := parseCodexHookType(rawHooks, event, &existingGroups); err != nil {
-			return fmt.Errorf("codex.GetAgentHooks: %w", err)
-		}
-		for _, spec := range specs {
-			if !codexHookCommandExists(existingGroups, spec.Command) {
-				entry := codexHookEntry{Type: "command", Command: spec.Command, Timeout: codexHookTimeout}
-				existingGroups = addCodexHook(existingGroups, entry)
-			}
-		}
-		if err := marshalCodexHookType(rawHooks, event, existingGroups); err != nil {
-			return fmt.Errorf("codex.GetAgentHooks: %w", err)
-		}
-	}
-
-	if err := writeCodexHooks(hooksPath, topLevel, rawHooks); err != nil {
-		return fmt.Errorf("codex.GetAgentHooks: %w", err)
-	}
-
-	if err := ensureCodexHooksFeatureEnabled(cfg.WorkspacePath); err != nil {
-		return fmt.Errorf("codex.GetAgentHooks: enable hooks feature: %w", err)
 	}
 	return nil
 }
 
-// UninstallHooks removes AO's Codex hooks from the workspace-local
+// UninstallHooks removes AO's legacy Codex hooks from the workspace-local
 // .codex/hooks.json file, leaving user-defined hooks untouched. A missing file
-// is a no-op. The .codex/config.toml `hooks = true` feature flag is left in
-// place because it enables every Codex hook, not just AO's.
+// is a no-op.
 func (p *Plugin) UninstallHooks(ctx context.Context, workspacePath string) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -115,35 +157,53 @@ func (p *Plugin) UninstallHooks(ctx context.Context, workspacePath string) error
 	if strings.TrimSpace(workspacePath) == "" {
 		return errors.New("codex.UninstallHooks: workspacePath is required")
 	}
+	if err := removeLegacyWorkspaceHooks(workspacePath); err != nil {
+		return fmt.Errorf("codex.UninstallHooks: %w", err)
+	}
+	return nil
+}
 
+// removeLegacyWorkspaceHooks strips AO-owned entries from a workspace-local
+// hooks.json left behind by older AO versions. Files without one are untouched.
+func removeLegacyWorkspaceHooks(workspacePath string) error {
 	hooksPath := codexHooksPath(workspacePath)
 	if _, err := os.Stat(hooksPath); errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
 	topLevel, rawHooks, err := readCodexHooks(hooksPath)
 	if err != nil {
-		return fmt.Errorf("codex.UninstallHooks: %w", err)
+		return err
 	}
 
-	for _, event := range codexManagedEvents() {
+	changed := false
+	for event, raw := range rawHooks {
 		var groups []codexMatcherGroup
-		if err := parseCodexHookType(rawHooks, event, &groups); err != nil {
-			return fmt.Errorf("codex.UninstallHooks: %w", err)
+		if err := json.Unmarshal(raw, &groups); err != nil {
+			return fmt.Errorf("parse %s hooks: %w", event, err)
 		}
-		groups = removeCodexManagedHooks(groups)
-		if err := marshalCodexHookType(rawHooks, event, groups); err != nil {
-			return fmt.Errorf("codex.UninstallHooks: %w", err)
+		kept := removeCodexManagedHooks(groups)
+		if countCodexHooks(kept) == countCodexHooks(groups) {
+			continue
 		}
+		changed = true
+		if len(kept) == 0 {
+			delete(rawHooks, event)
+			continue
+		}
+		data, err := json.Marshal(kept)
+		if err != nil {
+			return fmt.Errorf("encode %s hooks: %w", event, err)
+		}
+		rawHooks[event] = data
 	}
-
-	if err := writeCodexHooks(hooksPath, topLevel, rawHooks); err != nil {
-		return fmt.Errorf("codex.UninstallHooks: %w", err)
+	if !changed {
+		return nil
 	}
-	return nil
+	return writeCodexHooks(hooksPath, topLevel, rawHooks)
 }
 
-// AreHooksInstalled reports whether any AO Codex hook is present in the
-// workspace-local hooks file. A missing file means none are installed.
+// AreHooksInstalled reports whether any legacy AO Codex hook is still present
+// in the workspace-local hooks file. A missing file means none are installed.
 func (p *Plugin) AreHooksInstalled(ctx context.Context, workspacePath string) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
@@ -161,10 +221,10 @@ func (p *Plugin) AreHooksInstalled(ctx context.Context, workspacePath string) (b
 		return false, fmt.Errorf("codex.AreHooksInstalled: %w", err)
 	}
 
-	for _, event := range codexManagedEvents() {
+	for event, raw := range rawHooks {
 		var groups []codexMatcherGroup
-		if err := parseCodexHookType(rawHooks, event, &groups); err != nil {
-			return false, fmt.Errorf("codex.AreHooksInstalled: %w", err)
+		if err := json.Unmarshal(raw, &groups); err != nil {
+			return false, fmt.Errorf("codex.AreHooksInstalled: parse %s hooks: %w", event, err)
 		}
 		for _, group := range groups {
 			for _, hook := range group.Hooks {
@@ -236,32 +296,19 @@ func writeCodexHooks(hooksPath string, topLevel, rawHooks map[string]json.RawMes
 	return nil
 }
 
-// groupCodexHooksByEvent groups the managed hook specs by their Codex event so
-// each event's array is rewritten once.
-func groupCodexHooksByEvent() map[string][]codexHookSpec {
-	byEvent := map[string][]codexHookSpec{}
-	for _, spec := range codexManagedHooks {
-		byEvent[spec.Event] = append(byEvent[spec.Event], spec)
-	}
-	return byEvent
-}
-
-// codexManagedEvents returns the distinct Codex events AO manages, in the
-// order they first appear in codexManagedHooks.
-func codexManagedEvents() []string {
-	seen := map[string]bool{}
-	events := make([]string, 0, len(codexManagedHooks))
-	for _, spec := range codexManagedHooks {
-		if !seen[spec.Event] {
-			seen[spec.Event] = true
-			events = append(events, spec.Event)
-		}
-	}
-	return events
-}
-
 func isCodexManagedHook(command string) bool {
 	return strings.HasPrefix(command, codexHookCommandPrefix)
+}
+
+// countCodexHooks totals the hook entries across groups so the legacy cleanup
+// can tell whether stripping AO entries changed anything, including removals
+// inside a group that survives.
+func countCodexHooks(groups []codexMatcherGroup) int {
+	total := 0
+	for _, group := range groups {
+		total += len(group.Hooks)
+	}
+	return total
 }
 
 // removeCodexManagedHooks strips AO hook entries from every group,
@@ -281,108 +328,4 @@ func removeCodexManagedHooks(groups []codexMatcherGroup) []codexMatcherGroup {
 		}
 	}
 	return result
-}
-
-func parseCodexHookType(rawHooks map[string]json.RawMessage, event string, target *[]codexMatcherGroup) error {
-	data, ok := rawHooks[event]
-	if !ok {
-		return nil
-	}
-	if err := json.Unmarshal(data, target); err != nil {
-		return fmt.Errorf("parse %s hooks: %w", event, err)
-	}
-	return nil
-}
-
-func marshalCodexHookType(rawHooks map[string]json.RawMessage, event string, groups []codexMatcherGroup) error {
-	if len(groups) == 0 {
-		delete(rawHooks, event)
-		return nil
-	}
-	data, err := json.Marshal(groups)
-	if err != nil {
-		return fmt.Errorf("encode %s hooks: %w", event, err)
-	}
-	rawHooks[event] = data
-	return nil
-}
-
-func codexHookCommandExists(groups []codexMatcherGroup, command string) bool {
-	for _, group := range groups {
-		for _, hook := range group.Hooks {
-			if hook.Command == command {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func addCodexHook(groups []codexMatcherGroup, hook codexHookEntry) []codexMatcherGroup {
-	for i, group := range groups {
-		if group.Matcher == nil {
-			groups[i].Hooks = append(groups[i].Hooks, hook)
-			return groups
-		}
-	}
-	return append(groups, codexMatcherGroup{
-		Matcher: nil,
-		Hooks:   []codexHookEntry{hook},
-	})
-}
-
-func ensureCodexHooksFeatureEnabled(workspacePath string) error {
-	configPath := filepath.Join(workspacePath, codexHooksDirName, codexConfigFileName)
-	data, err := os.ReadFile(configPath) //nolint:gosec // path built from caller-owned workspace dir
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("read config.toml: %w", err)
-	}
-
-	content := string(data)
-	hasNew := containsCodexFeatureLine(content, codexHooksFeatureLine)
-	hasLegacy := containsCodexFeatureLine(content, codexLegacyHookFeatureLine)
-	switch {
-	case hasNew && hasLegacy:
-		content = stripCodexLegacyHookFeatureLine(content)
-	case hasNew:
-		return nil
-	case hasLegacy:
-		content = strings.Replace(content, codexLegacyHookFeatureLine, codexHooksFeatureLine, 1)
-	case strings.Contains(content, "[features]"):
-		content = strings.Replace(content, "[features]", "[features]\n"+codexHooksFeatureLine, 1)
-	default:
-		if content != "" && !strings.HasSuffix(content, "\n") {
-			content += "\n"
-		}
-		content += "\n[features]\n" + codexHooksFeatureLine + "\n"
-	}
-
-	if err := os.MkdirAll(filepath.Dir(configPath), 0o750); err != nil {
-		return fmt.Errorf("create .codex directory: %w", err)
-	}
-	if err := hookutil.AtomicWriteFile(configPath, []byte(content), 0o600); err != nil {
-		return fmt.Errorf("write config.toml: %w", err)
-	}
-	return nil
-}
-
-func containsCodexFeatureLine(content, line string) bool {
-	for raw := range strings.SplitSeq(content, "\n") {
-		if strings.TrimSpace(raw) == line {
-			return true
-		}
-	}
-	return false
-}
-
-func stripCodexLegacyHookFeatureLine(content string) string {
-	idx := strings.Index(content, codexLegacyHookFeatureLine)
-	if idx < 0 {
-		return content
-	}
-	end := idx + len(codexLegacyHookFeatureLine)
-	if end < len(content) && content[end] == '\n' {
-		end++
-	}
-	return content[:idx] + content[end:]
 }

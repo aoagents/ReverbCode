@@ -55,6 +55,8 @@ The original spawn prompt may remain in metadata as `prompt` for launch/debug fa
 
 Agent adapters install hooks into the worktree-local config owned by the native agent.
 
+Codex is the exception: Codex (0.136+) only loads project-local `.codex/` hook config from trusted directories, and for linked git worktrees it sources hook declarations from the matching folder in the root checkout — never from AO's per-session worktree. The Codex adapter therefore passes its hooks on the launch command as `-c 'hooks.<Event>=[...]'` session-flag config (plus `--dangerously-bypass-hook-trust`, since session-flag hooks have no persisted trust hash), and marks the worktree as a trusted project for the invocation with `-c 'projects={"<worktree>"={trust_level="trusted"}}'` so spawns into never-before-trusted repos don't hang on Codex's interactive directory-trust prompt. Its `GetAgentHooks` writes nothing; it only strips entries older AO versions left in the worktree-local `.codex/hooks.json`.
+
 Hook callbacks run through hidden AO CLI commands:
 
 ```text
@@ -71,6 +73,8 @@ The callback:
 6. Prints `{}` and exits 0 for successful no-op cases, including non-AO sessions or missing rows.
 
 The spawn engine inserts the AO session row before launching the durability provider so early startup hooks can update an existing row. If launch fails after insertion, spawn deletes the row during rollback.
+
+The hook commands are a bare `ao hooks ...` on purpose: worktree-committed hook files stay machine-portable, and adapters recognize their own entries by command prefix for install/dedup/uninstall. To make the bare `ao` resolve to the daemon that installed the hooks (not a foreign or legacy `ao` earlier on the user's PATH), the session manager pins each spawned session's `PATH` with the daemon executable's directory first. When the pin cannot be applied (executable unresolvable or not named `ao`), the daemon logs a warning at spawn. Hook delivery failures are best-effort appended to `hooks.log` under `AO_DATA_DIR` (agents swallow hook stderr), and `ao doctor` warns when the `ao` on PATH is not the running binary.
 
 ## Restore Boundary
 

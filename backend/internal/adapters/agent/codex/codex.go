@@ -57,9 +57,10 @@ func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
 }
 
 // GetLaunchCommand builds the argv to start a new Codex session, applying the
-// no-update-check, hook-trust bypass, and approval flags, optional
-// system-prompt instructions, and the initial prompt (passed after `--` so a
-// leading "-" is not read as a flag).
+// no-update-check, hook-trust bypass, and approval flags, AO's session-flag
+// activity hooks, the workspace trust override, optional system-prompt
+// instructions, and the initial prompt (passed after `--` so a leading "-" is
+// not read as a flag).
 func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (cmd []string, err error) {
 	binary, err := p.codexBinary(ctx)
 	if err != nil {
@@ -68,8 +69,11 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 
 	cmd = []string{binary}
 	appendNoUpdateCheckFlag(&cmd)
+	appendHideRateLimitNudgeFlag(&cmd)
 	appendHookTrustBypassFlag(&cmd)
 	appendApprovalFlags(&cmd, cfg.Permissions)
+	appendSessionHookFlags(&cmd)
+	appendWorkspaceTrustFlag(&cmd, cfg.WorkspacePath)
 
 	if cfg.SystemPromptFile != "" {
 		cmd = append(cmd, "-c", "model_instructions_file="+cfg.SystemPromptFile)
@@ -111,11 +115,14 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 		return nil, false, err
 	}
 
-	cmd = make([]string, 0, 8)
+	cmd = make([]string, 0, 24)
 	cmd = append(cmd, binary, "resume")
 	appendNoUpdateCheckFlag(&cmd)
+	appendHideRateLimitNudgeFlag(&cmd)
 	appendHookTrustBypassFlag(&cmd)
 	appendApprovalFlags(&cmd, cfg.Permissions)
+	appendSessionHookFlags(&cmd)
+	appendWorkspaceTrustFlag(&cmd, cfg.Session.WorkspacePath)
 	cmd = append(cmd, agentSessionID)
 	return cmd, true, nil
 }
@@ -226,11 +233,19 @@ func appendNoUpdateCheckFlag(cmd *[]string) {
 	*cmd = append(*cmd, "-c", "check_for_update_on_startup=false")
 }
 
+func appendHideRateLimitNudgeFlag(cmd *[]string) {
+	// When the account nears its rate limit, the Codex TUI interposes an
+	// interactive "switch to a cheaper model?" dialog before the first turn.
+	// In a headless AO pane that dialog hangs the session invisibly and
+	// swallows the auto-submitted spawn prompt, so suppress it.
+	*cmd = append(*cmd, "-c", "notice.hide_rate_limit_model_nudge=true")
+}
+
 func appendHookTrustBypassFlag(cmd *[]string) {
-	// AO installs deterministic workspace-local Codex hooks immediately before
-	// launch/restore. Without this flag, a fresh per-session worktree can skip
-	// those hooks until an interactive /hooks trust review happens, leaving AO
-	// without activity signals.
+	// AO's activity hooks ride the launch command as session-flag config (see
+	// appendSessionHookFlags) and carry no persisted trust hash in the user's
+	// `[hooks.state]`. Without this flag Codex would hold them for an
+	// interactive hooks review, leaving AO without activity signals.
 	*cmd = append(*cmd, "--dangerously-bypass-hook-trust")
 }
 
