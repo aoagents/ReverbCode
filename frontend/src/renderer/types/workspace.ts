@@ -139,6 +139,55 @@ export function workerStatusPulses(status: WorkerDisplayStatus): boolean {
   return status === "working" || status === "needs_you";
 }
 
+/**
+ * Kanban attention zone, ordered by human-action urgency — ported from
+ * agent-orchestrator's getAttentionLevel (packages/web/src/lib/types.ts),
+ * collapsed to its default "simple" set and rebound to reverbcode's
+ * {@link SessionStatus}. The board groups sessions into these columns so the
+ * highest-ROrI work (a one-click merge) sits leftmost.
+ */
+export type AttentionZone = "merge" | "action" | "pending" | "working" | "done";
+
+/** Columns left→right, most-urgent first. "done" is the archive column. */
+export const attentionZoneOrder: AttentionZone[] = ["merge", "action", "pending", "working", "done"];
+
+export const attentionZoneLabel: Record<AttentionZone, string> = {
+  merge: "Ready to merge",
+  action: "Needs you",
+  pending: "Pending",
+  working: "Working",
+  done: "Done",
+};
+
+export function attentionZone(session: WorkspaceSession): AttentionZone {
+  switch (session.status) {
+    // Terminal — archive.
+    case "merged":
+    case "terminated":
+      return "done";
+    // One click to clear — highest ROI, checked first.
+    case "approved":
+    case "mergeable":
+      return "merge";
+    // Agent waiting on a human (respond) or a problem to investigate (review);
+    // agent-orchestrator collapses these into one "action" zone by default.
+    case "needs_input":
+    case "ci_failed":
+    case "changes_requested":
+      return "action";
+    // Waiting on an external reviewer / CI — nothing to do right now.
+    case "review_pending":
+    case "pr_open":
+    case "draft":
+      return "pending";
+    // Agents doing their thing — don't interrupt.
+    case "working":
+    case "idle":
+    default:
+      return "working";
+  }
+}
+
 export type WorkspaceSummary = {
   id: string;
   name: string;
