@@ -5,7 +5,6 @@ import { SideRail } from "./components/SideRail";
 import { Sidebar } from "./components/Sidebar";
 import { SpawnWorkerModal } from "./components/SpawnWorkerModal";
 import { Topbar } from "./components/Topbar";
-import { TooltipProvider } from "./components/ui/tooltip";
 import { useDaemonStatus } from "./hooks/useDaemonStatus";
 import { useWorkspaceQuery, workspaceQueryKey } from "./hooks/useWorkspaceQuery";
 import { apiClient } from "./lib/api-client";
@@ -169,7 +168,7 @@ export function App({ routeSessionId, routeWorkspaceId }: AppProps) {
   const showSideRail = !(view === "session" && workbenchTab === "terminal");
 
   return (
-    <TooltipProvider>
+    <>
       <div className="flex h-screen flex-col bg-background text-foreground">
         <Topbar
           onNewWorker={() => openSpawn()}
@@ -201,6 +200,6 @@ export function App({ routeSessionId, routeWorkspaceId }: AppProps) {
         open={spawnOpen}
         workspaces={workspaces}
       />
-    </TooltipProvider>
+    </>
   );
 }
