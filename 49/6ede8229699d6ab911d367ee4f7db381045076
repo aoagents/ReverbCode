@@ -1,0 +1,43 @@
+docs/agent/README.md
+  s_15e9729d3cec0a::t_ffb8c40d3842a2 58-59
+  s_ba675d048d2968::t_27702ef6b0337d 77-78
+backend/internal/adapters/agent/codex/codex.go
+  s_15e9729d3cec0a::t_8fdbf9503c201d 60-63,75-76
+  s_15e9729d3cec0a::t_2d71da1f594db1 121
+  s_15e9729d3cec0a::t_0392e93f4ecf6a 118,124-125
+  s_15e9729d3cec0a::t_fd812e05ed2e2b 72
+  s_15e9729d3cec0a::t_77a83f7c1a7e00 245-248
+  s_15e9729d3cec0a::t_9af52c64741166 236-243
+backend/internal/adapters/agent/codex/codex_test.go
+  s_15e9729d3cec0a::t_049722c8d504ec 9,16-39,42,49,62-67,73-89,143-185,190-197,222-243,246-252,255-276,298-299,302-331,334,338-339,343,346,350-351,354-355,358,361,363,393,398-399,417-421
+  s_15e9729d3cec0a::t_3c07c8fa675a97 58,412
+  s_15e9729d3cec0a::t_b099ad5ddfd73b 186-189
+backend/internal/adapters/agent/codex/hooks.go
+  s_15e9729d3cec0a::t_a1efee335aa8fa 185
+  s_15e9729d3cec0a::t_f0d73d12e2852e 303-309,311
+  s_15e9729d3cec0a::t_4b1f0c47ccf636 16-28,33-35,57,63-65,73-136,144,150,152,160-164,166-168,175,178-179,181-184,186,188-191,193-197,199-200,202,205-206,224,226-227
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "496ede8229699d6ab911d367ee4f7db381045076",
+  "prompts": {},
+  "sessions": {
+    "s_15e9729d3cec0a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3eeeab3d-700c-4821-81b2-0fce22448046",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    },
+    "s_ba675d048d2968": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a4c19362-11e9-48f1-9694-15939b12b25b",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    }
+  }
+}
