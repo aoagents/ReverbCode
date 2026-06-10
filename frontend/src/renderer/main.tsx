@@ -5,12 +5,20 @@ import { RouterProvider } from "@tanstack/react-router";
 import "@xterm/xterm/css/xterm.css";
 import "./styles.css";
 import { queryClient } from "./lib/query-client";
-import { router } from "./router";
+import { createAppRouter } from "./router";
+
+const router = createAppRouter(queryClient);
+
+declare module "@tanstack/react-router" {
+	interface Register {
+		router: typeof router;
+	}
+}
 
 createRoot(document.getElementById("root") as HTMLElement).render(
-  <React.StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <RouterProvider router={router} />
-    </QueryClientProvider>
-  </React.StrictMode>,
+	<React.StrictMode>
+		<QueryClientProvider client={queryClient}>
+			<RouterProvider router={router} />
+		</QueryClientProvider>
+	</React.StrictMode>,
 );

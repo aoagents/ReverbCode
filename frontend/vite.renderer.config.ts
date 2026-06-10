@@ -1,5 +1,6 @@
 import { defineConfig } from "vite";
 import type { Plugin } from "vite";
+import { TanStackRouterVite } from "@tanstack/router-plugin/vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
@@ -50,7 +51,17 @@ export default defineConfig({
       },
     },
   },
-  plugins: [react(), tailwindcss(), injectCspMeta],
+  plugins: [
+    TanStackRouterVite({
+      routesDirectory: "./src/renderer/routes",
+      generatedRouteTree: "./src/renderer/routeTree.gen.ts",
+      target: "react",
+      autoCodeSplitting: true,
+    }),
+    react(),
+    tailwindcss(),
+    injectCspMeta,
+  ],
   test: {
     environment: "jsdom",
     exclude: ["node_modules/**", "dist/**", "dist-electron/**", "e2e/**"],

@@ -1,51 +1,18 @@
-import { createHashHistory, createRootRoute, createRoute, createRouter, Outlet } from "@tanstack/react-router";
-import { App } from "./App";
+import { createHashHistory, createRouter } from "@tanstack/react-router";
+import type { QueryClient } from "@tanstack/react-query";
+import { routeTree } from "./routeTree.gen";
 
-const rootRoute = createRootRoute({
-  component: RootLayout,
-});
-
-const indexRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/",
-  component: App,
-});
-
-const workspaceRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/workspaces/$workspaceId",
-  component: WorkspaceRoute,
-});
-
-const sessionRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/workspaces/$workspaceId/sessions/$sessionId",
-  component: SessionRoute,
-});
-
-const routeTree = rootRoute.addChildren([indexRoute, workspaceRoute, sessionRoute]);
-
-export const router = createRouter({
-  history: createHashHistory(),
-  routeTree,
-});
-
-function RootLayout() {
-  return <Outlet />;
-}
-
-function WorkspaceRoute() {
-  const { workspaceId } = workspaceRoute.useParams();
-  return <App routeWorkspaceId={workspaceId} />;
-}
-
-function SessionRoute() {
-  const { sessionId, workspaceId } = sessionRoute.useParams();
-  return <App routeSessionId={sessionId} routeWorkspaceId={workspaceId} />;
-}
-
-declare module "@tanstack/react-router" {
-  interface Register {
-    router: typeof router;
-  }
+// Hash history is required for Electron's file:// renderer origin — browser
+// history would break on hard reload since there is no server to serve paths.
+export function createAppRouter(queryClient: QueryClient) {
+	return createRouter({
+		history: createHashHistory(),
+		routeTree,
+		context: { queryClient },
+		defaultPreload: "intent",
+		// Always re-run loaders when a route is preloaded or visited so React
+		// Query's cache is the single source of truth for staleness.
+		defaultPreloadStaleTime: 0,
+		scrollRestoration: true,
+	});
 }
