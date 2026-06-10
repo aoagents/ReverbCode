@@ -1,5 +1,5 @@
 import { useNavigate } from "@tanstack/react-router";
-import { GitPullRequest, LoaderCircle, Plus } from "lucide-react";
+import { GitPullRequest, LoaderCircle, Plus, Settings } from "lucide-react";
 import {
   type AttentionZone,
   type WorkerDisplayStatus,
@@ -78,6 +78,16 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
           <Plus className="h-3 w-3" aria-hidden="true" />
           New worker
         </button>
+        {projectId && (
+          <button
+            aria-label="Project settings"
+            className="grid h-6 w-6 place-items-center rounded-md text-passive transition-colors hover:bg-raised hover:text-muted-foreground"
+            onClick={() => void navigate({ to: "/projects/$projectId/settings", params: { projectId } })}
+            type="button"
+          >
+            <Settings className="h-[15px] w-[15px]" aria-hidden="true" />
+          </button>
+        )}
       </header>
 
       {workspaceQuery.isError ? (
