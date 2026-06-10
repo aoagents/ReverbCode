@@ -1203,6 +1203,8 @@ components:
           type: string
         name:
           type: string
+        path:
+          type: string
         resolveError:
           type: string
         sessionPrefix:
@@ -1210,6 +1212,7 @@ components:
       required:
       - id
       - name
+      - path
       - sessionPrefix
       type: object
     RemoveProjectResult:
@@ -1331,6 +1334,8 @@ components:
         projectId:
           type: string
         status:
+          type: string
+        terminalHandleId:
           type: string
         updatedAt:
           format: date-time

@@ -6,6 +6,7 @@ import "github.com/aoagents/agent-orchestrator/backend/internal/domain"
 type Summary struct {
 	ID            domain.ProjectID `json:"id"`
 	Name          string           `json:"name"`
+	Path          string           `json:"path"`
 	SessionPrefix string           `json:"sessionPrefix"`
 	ResolveError  string           `json:"resolveError,omitempty"`
 }

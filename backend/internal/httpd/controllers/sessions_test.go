@@ -28,7 +28,7 @@ type fakeSessionService struct {
 
 func newFakeSessionService() *fakeSessionService {
 	now := time.Now().UTC()
-	s := domain.Session{SessionRecord: domain.SessionRecord{ID: "ao-1", ProjectID: "ao", Kind: domain.KindWorker, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, CreatedAt: now, UpdatedAt: now}, Status: domain.StatusIdle}
+	s := domain.Session{SessionRecord: domain.SessionRecord{ID: "ao-1", ProjectID: "ao", Kind: domain.KindWorker, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, CreatedAt: now, UpdatedAt: now}, Status: domain.StatusIdle, TerminalHandleID: "ao-1/terminal_0"}
 	return &fakeSessionService{sessions: map[domain.SessionID]domain.Session{s.ID: s}}
 }
 
@@ -174,7 +174,7 @@ func TestSessionsAPI_ListSpawnGetAndActions(t *testing.T) {
 		Sessions []sessionBody `json:"sessions"`
 	}
 	mustJSON(t, body, &list)
-	if len(list.Sessions) != 1 || list.Sessions[0].ID != "ao-1" || list.Sessions[0].Status != string(domain.StatusIdle) {
+	if len(list.Sessions) != 1 || list.Sessions[0].ID != "ao-1" || list.Sessions[0].Status != string(domain.StatusIdle) || list.Sessions[0].TerminalHandleID != "ao-1/terminal_0" {
 		t.Fatalf("list = %#v", list)
 	}
 
@@ -359,13 +359,14 @@ func TestSessionsAPI_CleanupWithoutProjectFilter(t *testing.T) {
 }
 
 type sessionBody struct {
-	ID          string `json:"id"`
-	ProjectID   string `json:"projectId"`
-	IssueID     string `json:"issueId"`
-	Kind        string `json:"kind"`
-	Harness     string `json:"harness"`
-	DisplayName string `json:"displayName"`
-	Status      string `json:"status"`
+	ID               string `json:"id"`
+	ProjectID        string `json:"projectId"`
+	IssueID          string `json:"issueId"`
+	Kind             string `json:"kind"`
+	Harness          string `json:"harness"`
+	DisplayName      string `json:"displayName"`
+	Status           string `json:"status"`
+	TerminalHandleID string `json:"terminalHandleId"`
 }
 
 func TestSessionsAPI_PRRoutes(t *testing.T) {

@@ -58,6 +58,7 @@ func (m *Service) List(ctx context.Context) ([]Summary, error) {
 		out = append(out, Summary{
 			ID:            domain.ProjectID(row.ID),
 			Name:          displayName(row),
+			Path:          row.Path,
 			SessionPrefix: resolveSessionPrefix(row),
 		})
 	}
