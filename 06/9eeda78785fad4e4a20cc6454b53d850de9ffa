@@ -1,0 +1,21 @@
+frontend/src/renderer/components/ui/context-menu.tsx
+  s_1c9ec74f457ab0::t_0397d4d920e9ca 59-67
+backend/internal/adapters/workspace/gitworktree/gitops.go
+  s_1c9ec74f457ab0::t_5c3ece3b786b9e 92-96
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "069eeda78785fad4e4a20cc6454b53d850de9ffa",
+  "prompts": {},
+  "sessions": {
+    "s_1c9ec74f457ab0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "40514750-edbd-42cf-8eb3-9af733edbbbb",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    }
+  }
+}
