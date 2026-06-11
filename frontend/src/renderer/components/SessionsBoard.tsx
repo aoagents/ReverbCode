@@ -5,6 +5,7 @@ import {
   type WorkspaceSession,
   attentionZone,
   workerDisplayStatus,
+  workerSessions,
 } from "../types/workspace";
 import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
 import { DashboardSubhead, DashboardTopbar } from "./DashboardTopbar";
@@ -18,22 +19,55 @@ type SessionsBoardProps = {
 // The four kanban columns, left→right by flow (work → review → merge), ported
 // verbatim from agent-orchestrator (SIMPLE_KANBAN_LEVELS + AttentionZone +
 // mc-board.css). "done" is archived, not a column.
-type Column = { level: AttentionZone; label: string; glow: string; dot: string; dotGlow: boolean; title: string };
+type Column = {
+  level: AttentionZone;
+  label: string;
+  glow: string;
+  dot: string;
+  dotGlow: boolean;
+  titleClass: string;
+};
 const COLUMNS: Column[] = [
-  { level: "working", label: "Working", glow: "color-mix(in srgb, #f59f4c 7%, transparent)", dot: "#f59f4c", dotGlow: true, title: "rgb(231, 180, 131)" },
-  { level: "action", label: "Needs you", glow: "color-mix(in srgb, #e8c14a 6%, transparent)", dot: "#e8c14a", dotGlow: true, title: "rgb(227, 207, 141)" },
-  { level: "pending", label: "In review", glow: "rgba(255, 255, 255, 0.02)", dot: "#9ba1aa", dotGlow: false, title: "rgb(160, 170, 185)" },
-  { level: "merge", label: "Ready to merge", glow: "color-mix(in srgb, #74b98a 7%, transparent)", dot: "#74b98a", dotGlow: true, title: "rgb(150, 200, 168)" },
+  {
+    level: "working",
+    label: "Working",
+    glow: "color-mix(in srgb, var(--orange) 7%, transparent)",
+    dot: "var(--orange)",
+    dotGlow: true,
+    titleClass: "text-working",
+  },
+  {
+    level: "action",
+    label: "Needs you",
+    glow: "color-mix(in srgb, var(--amber) 6%, transparent)",
+    dot: "var(--amber)",
+    dotGlow: true,
+    titleClass: "text-warning",
+  },
+  {
+    level: "pending",
+    label: "In review",
+    glow: "var(--kanban-pending-glow)",
+    dot: "var(--fg-muted)",
+    dotGlow: false,
+    titleClass: "text-muted-foreground",
+  },
+  {
+    level: "merge",
+    label: "Ready to merge",
+    glow: "color-mix(in srgb, var(--green) 7%, transparent)",
+    dot: "var(--green)",
+    dotGlow: true,
+    titleClass: "text-success",
+  },
 ];
 
-// Card status badge — agent-orchestrator's StatusBadge, reduced to reverbcode's
-// glanceable display status.
-const BADGE: Record<WorkerDisplayStatus, { label: string; color: string }> = {
-  working: { label: "Working", color: "#f59f4c" },
-  needs_you: { label: "Needs input", color: "#e8c14a" },
-  ci_failed: { label: "CI failed", color: "#ef6b6b" },
-  mergeable: { label: "Ready", color: "#74b98a" },
-  done: { label: "Done", color: "#646a73" },
+const BADGE: Record<WorkerDisplayStatus, { label: string; className: string }> = {
+  working: { label: "Working", className: "text-working" },
+  needs_you: { label: "Needs input", className: "text-warning" },
+  ci_failed: { label: "CI failed", className: "text-error" },
+  mergeable: { label: "Ready", className: "text-success" },
+  done: { label: "Done", className: "text-passive" },
 };
 
 export function SessionsBoard({ projectId }: SessionsBoardProps) {
@@ -41,7 +75,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
   const workspaceQuery = useWorkspaceQuery();
   const all = workspaceQuery.data ?? [];
   const workspaces = projectId ? all.filter((w) => w.id === projectId) : all;
-  const sessions = workspaces.flatMap((w) => w.sessions);
+  const sessions = workspaces.flatMap((w) => workerSessions(w.sessions));
   const projectLabel = projectId ? (workspaces[0]?.name ?? projectId) : "agent-orchestrator";
 
   const byZone = new Map<AttentionZone, WorkspaceSession[]>();
@@ -58,13 +92,13 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
     });
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-[#0a0b0d] text-[#f4f5f7]">
+    <div className="flex h-full min-h-0 flex-col bg-background text-foreground">
       <DashboardTopbar activeTab="coding" projectId={projectId} projectLabel={projectLabel} />
       <DashboardSubhead title="Board" subtitle="Live agent sessions flowing from work → review → merge." />
 
       <div className="min-h-0 flex-1 overflow-hidden p-[18px]">
         {workspaceQuery.isError ? (
-          <p className="py-10 text-center text-[12px] text-[#646a73]">Could not load sessions.</p>
+          <p className="py-10 text-center text-[12px] text-passive">Could not load sessions.</p>
         ) : (
           <div className="grid h-full grid-cols-4 gap-2">
             {COLUMNS.map((col) => (
@@ -75,21 +109,21 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
       </div>
 
       {done.length > 0 && (
-        <div className="shrink-0 border-t border-white/[0.06] px-[18px] py-2.5">
+        <div className="shrink-0 border-t border-border px-[18px] py-2.5">
           <div className="mb-1.5 flex items-center gap-2">
-            <span className="h-[7px] w-[7px] rounded-full bg-[#646a73]" />
-            <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#9ba1aa]">Done</span>
-            <span className="font-mono text-[11px] text-[#646a73]">{done.length}</span>
+            <span className="h-[7px] w-[7px] rounded-full bg-passive" />
+            <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Done</span>
+            <span className="font-mono text-[11px] text-passive">{done.length}</span>
           </div>
           <div className="flex flex-wrap gap-2">
             {done.map((s) => (
               <button
                 key={s.id}
-                className="rounded-[7px] border border-white/[0.06] bg-[#15171b] px-2.5 py-1.5 text-left transition-colors hover:border-white/[0.1]"
+                className="rounded-[7px] border border-border bg-surface px-2.5 py-1.5 text-left transition-colors hover:border-border-strong"
                 onClick={() => openSession(s)}
                 type="button"
               >
-                <span className="text-[12px] text-[#9ba1aa]">{s.title}</span>
+                <span className="text-[12px] text-muted-foreground">{s.title}</span>
               </button>
             ))}
           </div>
@@ -99,21 +133,27 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
   );
 }
 
-function ZoneColumn({ col, sessions, onOpen }: { col: Column; sessions: WorkspaceSession[]; onOpen: (s: WorkspaceSession) => void }) {
+function ZoneColumn({
+  col,
+  sessions,
+  onOpen,
+}: {
+  col: Column;
+  sessions: WorkspaceSession[];
+  onOpen: (s: WorkspaceSession) => void;
+}) {
   return (
     <section
       className="flex min-w-0 flex-col overflow-hidden rounded-[13px]"
-      style={{ background: `linear-gradient(180deg, ${col.glow}, transparent 130px), rgba(255, 255, 255, 0.018)` }}
+      style={{ background: `linear-gradient(180deg, ${col.glow}, transparent 130px), var(--kanban-column-bg)` }}
     >
       <div className="flex shrink-0 items-center gap-[9px] px-[15px] pb-[11px] pt-[14px]">
         <span
           className="h-[7px] w-[7px] rounded-full"
           style={{ background: col.dot, boxShadow: col.dotGlow ? `0 0 7px color-mix(in srgb, ${col.dot} 60%, transparent)` : undefined }}
         />
-        <span className="text-[11px] font-semibold uppercase tracking-[0.08em]" style={{ color: col.title }}>
-          {col.label}
-        </span>
-        <span className="ml-auto font-mono text-[11px] leading-none text-[#646a73]">{sessions.length}</span>
+        <span className={cn("text-[11px] font-semibold uppercase tracking-[0.08em]", col.titleClass)}>{col.label}</span>
+        <span className="ml-auto font-mono text-[11px] leading-none text-passive">{sessions.length}</span>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-[11px] pb-3">
         <div className="flex flex-col gap-2.5">
@@ -131,27 +171,27 @@ function SessionCard({ session, onOpen }: { session: WorkspaceSession; onOpen: (
   const branch = session.branch || `session/${session.id}`;
   return (
     <button
-      className="w-full rounded-[7px] border border-white/[0.06] bg-[#15171b] text-left transition-colors hover:border-white/[0.12]"
+      className="w-full rounded-[7px] border border-border bg-surface text-left transition-colors hover:border-border-strong"
       onClick={onOpen}
       type="button"
     >
       <div className="flex items-center gap-2 px-[13px] pb-[9px] pt-3">
-        <span className="inline-flex items-center gap-1.5 text-[11px] font-medium" style={{ color: badge.color }}>
-          <span className="h-[7px] w-[7px] rounded-full" style={{ background: badge.color }} />
+        <span className={cn("inline-flex items-center gap-1.5 text-[11px] font-medium", badge.className)}>
+          <span className={cn("h-[7px] w-[7px] rounded-full bg-current")} />
           {badge.label}
         </span>
-        <span className="ml-auto shrink-0 font-mono text-[10.5px] tracking-[0.04em] text-[#646a73]">{session.id}</span>
+        <span className="ml-auto shrink-0 font-mono text-[10.5px] tracking-[0.04em] text-passive">{session.id}</span>
       </div>
       <div
         className={cn(
-          "px-[13px] pb-2.5 text-[13px] font-medium leading-[1.42] tracking-[-0.01em] text-[#f4f5f7]",
+          "px-[13px] pb-2.5 text-[13px] font-medium leading-[1.42] tracking-[-0.01em] text-foreground",
           "line-clamp-2 overflow-hidden",
         )}
       >
         {session.title}
       </div>
-      <div className="px-[13px] pb-2.5 font-mono text-[10.5px] text-[#646a73]">{branch}</div>
-      <div className="border-t border-white/[0.06] px-[13px] py-2 font-mono text-[10.5px] text-[#646a73]">
+      <div className="px-[13px] pb-2.5 font-mono text-[10.5px] text-passive">{branch}</div>
+      <div className="border-t border-border px-[13px] py-2 font-mono text-[10.5px] text-passive">
         {session.pullRequest ? `PR #${session.pullRequest.number} · ${session.pullRequest.state}` : "no PR yet"}
       </div>
     </button>

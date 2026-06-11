@@ -65,6 +65,8 @@ export type ChangedFile = {
   staged?: boolean;
 };
 
+export type SessionKind = "worker" | "orchestrator";
+
 export type WorkspaceSession = {
   id: string;
   terminalHandleId?: string;
@@ -72,8 +74,12 @@ export type WorkspaceSession = {
   workspaceName: string;
   title: string;
   provider: AgentProvider;
+  kind?: SessionKind;
   branch: string;
   status: SessionStatus;
+  /** ISO timestamp from the daemon — used for relative time in the inspector. */
+  createdAt?: string;
+  /** ISO timestamp from the daemon. */
   updatedAt: string;
   /** The session's git diff against its base, when known. */
   changedFiles?: ChangedFile[];
@@ -111,6 +117,22 @@ export function workerDisplayStatus(session: WorkspaceSession): WorkerDisplaySta
     default:
       return "working";
   }
+}
+
+export function isOrchestratorSession(session: WorkspaceSession): boolean {
+  return session.kind === "orchestrator" || session.id.endsWith("-orchestrator");
+}
+
+export function findProjectOrchestrator(
+  workspaces: WorkspaceSummary[],
+  projectId: string,
+): WorkspaceSession | undefined {
+  const workspace = workspaces.find((w) => w.id === projectId);
+  return workspace?.sessions.find(isOrchestratorSession);
+}
+
+export function workerSessions(sessions: WorkspaceSession[]): WorkspaceSession[] {
+  return sessions.filter((s) => !isOrchestratorSession(s));
 }
 
 export function sessionIsActive(session: WorkspaceSession): boolean {

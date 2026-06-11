@@ -33,7 +33,7 @@ function bannerText(state: TerminalSessionState, error?: string): string | undef
   return undefined;
 }
 
-function AttachedTerminal({ session, daemonReady }: TerminalPaneProps) {
+function AttachedTerminal({ session, theme, daemonReady }: TerminalPaneProps) {
   // One terminal instance per pane lifetime (yyork's core rule): switching
   // sessions never remounts XtermTerminal — the attachment effect re-points
   // the mux and clears the screen instead. A keyed remount would tear down the
@@ -52,12 +52,16 @@ function AttachedTerminal({ session, daemonReady }: TerminalPaneProps) {
 
   useEffect(() => {
     if (!terminal) return;
-    // Reuse means the previous session's screen + scrollback would linger;
-    // full-reset before re-pointing (RIS also clears mouse modes/charsets the
-    // old TUI left active). Skipped on the very first attachment: the buffer
-    // is empty and the first fit may not have run yet.
+    // Reuse means the previous session's screen would linger; clear before
+    // re-pointing. Screen-clear only, never reset(): every pane PTY is
+    // `zellij attach` with identical modes, and a full RIS would wipe the
+    // mouse-tracking mode zellij enabled at attach — the 50KB ring replay
+    // can't re-enable it, leaving wheel scroll dead after the first session
+    // switch (yyork's frozen-scroll regression, solved there the same way).
+    // Skipped on the very first attachment: the buffer is empty and the first
+    // fit may not have run yet.
     if (hadAttachmentRef.current) {
-      terminal.reset();
+      terminal.clear();
     }
     hadAttachmentRef.current = true;
     return attach(terminal);
@@ -75,10 +79,8 @@ function AttachedTerminal({ session, daemonReady }: TerminalPaneProps) {
   const showEmptyState = !handleId;
 
   return (
-    <div className="relative h-full min-h-0">
-      <div className="h-full min-h-0 bg-terminal p-3">
-        <XtermTerminal ariaLabel="Session terminal" onReady={handleReady} onError={handleInitError} />
-      </div>
+    <div className="relative h-full min-h-0 bg-terminal">
+      <XtermTerminal ariaLabel="Session terminal" onError={handleInitError} onReady={handleReady} theme={theme} />
       {showEmptyState && (
         <div className="absolute inset-0 grid place-items-center bg-terminal font-mono text-[13px]">
           <div className="text-center">

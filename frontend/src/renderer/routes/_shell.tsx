@@ -2,12 +2,14 @@ import { createFileRoute, Outlet, useNavigate } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useState } from "react";
 import { Sidebar } from "../components/Sidebar";
+import { SidebarProvider } from "../components/ui/sidebar";
 import { SpawnWorkerModal } from "../components/SpawnWorkerModal";
+import { TitlebarNav } from "../components/TitlebarNav";
 import { useDaemonStatus } from "../hooks/useDaemonStatus";
 import { useWorkspaceQuery, workspaceQueryKey, workspaceQueryOptions } from "../hooks/useWorkspaceQuery";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { ShellProvider } from "../lib/shell-context";
-import { type Theme, useUiStore } from "../stores/ui-store";
+import { readStoredTheme, type Theme, useUiStore } from "../stores/ui-store";
 import { toAgentProvider, toSessionStatus, type AgentProvider, type WorkspaceSummary } from "../types/workspace";
 
 export const Route = createFileRoute("/_shell")({
@@ -36,7 +38,7 @@ function ShellLayout() {
   const workspaceQuery = useWorkspaceQuery();
   const workspaces = workspaceQuery.data ?? [];
   const daemonStatus = useDaemonStatus(queryClient);
-  const { theme, setSystemTheme, toggleSidebar } = useUiStore();
+  const { theme, setTheme, isSidebarOpen, toggleSidebar } = useUiStore();
   const [spawnOpen, setSpawnOpen] = useState(false);
   const [spawnProjectId, setSpawnProjectId] = useState<string | undefined>(undefined);
 
@@ -121,21 +123,20 @@ function ShellLayout() {
     document.documentElement.style.colorScheme = theme;
   }, [theme]);
 
+  // Follow OS appearance only until the user picks a theme explicitly.
   useEffect(() => {
+    if (readStoredTheme()) return;
+
     const mediaQuery = window.matchMedia("(prefers-color-scheme: light)");
-    const handleChange = () => setSystemTheme(systemTheme());
-    handleChange();
+    const handleChange = () => setTheme(systemTheme());
     mediaQuery.addEventListener("change", handleChange);
     return () => mediaQuery.removeEventListener("change", handleChange);
-  }, [setSystemTheme]);
+  }, [setTheme]);
 
+  // ⌘B lives in SidebarProvider (shadcn's built-in shortcut), which routes
+  // through onOpenChange back into the ui-store.
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "b") {
-        event.preventDefault();
-        toggleSidebar();
-        return;
-      }
       if ((event.metaKey || event.ctrlKey) && /^[1-9]$/.test(event.key)) {
         const workspace = workspaces[Number(event.key) - 1];
         if (workspace) {
@@ -146,11 +147,19 @@ function ShellLayout() {
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [navigate, toggleSidebar, workspaces]);
+  }, [navigate, workspaces]);
 
   return (
     <ShellProvider value={{ daemonStatus, openSpawn, createProject, createTask }}>
-      <div className="flex h-screen bg-background text-foreground">
+      {/* Controlled by the ui-store so TitlebarNav / Topbar toggles (which call
+          the store directly) stay in sync. --sidebar-width chains to the
+          drag-resizable --ao-sidebar-w set on :root by useResizable. */}
+      <SidebarProvider
+        className="h-screen min-h-0 bg-background text-foreground"
+        onOpenChange={(open) => open !== isSidebarOpen && toggleSidebar()}
+        open={isSidebarOpen}
+        style={{ "--sidebar-width": "var(--ao-sidebar-w, 240px)", "--sidebar-width-icon": "48px" } as React.CSSProperties}
+      >
         <Sidebar
           daemonStatus={daemonStatus}
           onCreateProject={createProject}
@@ -161,7 +170,16 @@ function ShellLayout() {
         <main className="flex min-w-0 flex-1 flex-col">
           <Outlet />
         </main>
-      </div>
+        {/* Fixed macOS titlebar cluster beside the traffic lights — rendered
+            once here so the toggle/history buttons never move when the
+            sidebar collapses or expands. MUST come after the sidebar/topbars
+            in the DOM: Electron builds the window-drag region in document
+            order (drag rects add, no-drag rects subtract), so the cluster's
+            no-drag holes only survive if they're processed after the drag
+            strips they overlap. Rendered first, real clicks get swallowed by
+            window-drag even though DOM hit-testing looks correct. */}
+        <TitlebarNav />
+      </SidebarProvider>
       <SpawnWorkerModal
         defaultProjectId={spawnProjectId}
         onCreateTask={createTask}

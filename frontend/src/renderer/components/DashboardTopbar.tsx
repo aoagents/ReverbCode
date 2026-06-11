@@ -1,84 +1,127 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { Bell, Plus, Settings } from "lucide-react";
-import { attentionZone } from "../types/workspace";
-import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
-import { useShell } from "../lib/shell-context";
+import { Bell, Waypoints } from "lucide-react";
+import { useState } from "react";
+import { findProjectOrchestrator } from "../types/workspace";
+import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { spawnOrchestrator } from "../lib/spawn-orchestrator";
+import { useUiStore } from "../stores/ui-store";
 import { cn } from "../lib/utils";
+
+const isMac = typeof navigator !== "undefined" && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent);
+const dragStyle = isMac ? ({ WebkitAppRegion: "drag" } as React.CSSProperties) : undefined;
+const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined;
 
 type DashboardTab = "coding" | "reviews";
 
 type DashboardTopbarProps = {
   /** Which top-nav tab reads as active (omit on the PR board, which is neither). */
   activeTab?: DashboardTab;
-  /** When set, the project crumb + settings gear scope to one project. */
+  /** When set, the project crumb scopes to one project. */
   projectId?: string;
   projectLabel?: string;
 };
 
 // The dashboard header (mc-board .dashboard-app-header): project crumb · Coding/
-// Reviews tabs · "N working" breathing pill | bell · settings · New worker.
+// Reviews tabs | bell · Orchestrator (board ↔ terminal).
 // Shared verbatim across the board, review, and PR screens so navigating between
 // them keeps one stable top strip (agent-orchestrator surfaces them as tabs).
 export function DashboardTopbar({ activeTab, projectId, projectLabel = "agent-orchestrator" }: DashboardTopbarProps) {
   const navigate = useNavigate();
-  const { openSpawn } = useShell();
+  const queryClient = useQueryClient();
+  const [isSpawning, setIsSpawning] = useState(false);
+  const isSidebarOpen = useUiStore((state) => state.isSidebarOpen);
   const all = useWorkspaceQuery().data ?? [];
-  const sessions = (projectId ? all.filter((w) => w.id === projectId) : all).flatMap((w) => w.sessions);
-  const working = sessions.filter((s) => attentionZone(s) === "working").length;
+  const orchestrator = projectId ? findProjectOrchestrator(all, projectId) : undefined;
 
-  const tabClass = (tab: DashboardTab) =>
-    cn(
-      "h-7 rounded-md px-[11px] text-[12.5px] transition-colors",
-      activeTab === tab ? "bg-white/[0.07] text-[#f4f5f7]" : "text-[#646a73] hover:text-[#f4f5f7]",
-    );
+  const openOrchestrator = async () => {
+    if (!projectId) return;
+    if (orchestrator) {
+      void navigate({
+        to: "/projects/$projectId/sessions/$sessionId",
+        params: { projectId, sessionId: orchestrator.id },
+      });
+      return;
+    }
+    setIsSpawning(true);
+    try {
+      const sessionId = await spawnOrchestrator(projectId);
+      await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+      void navigate({
+        to: "/projects/$projectId/sessions/$sessionId",
+        params: { projectId, sessionId },
+      });
+    } catch (error) {
+      console.error("Failed to spawn orchestrator:", error);
+    } finally {
+      setIsSpawning(false);
+    }
+  };
 
   return (
-    <header className="flex h-14 shrink-0 items-center gap-[13px] px-5">
-      <span className="text-[14.5px] font-semibold tracking-[-0.01em] text-[#f4f5f7]">{projectLabel}</span>
-      <nav className="ml-1.5 flex items-center gap-0.5">
-        <button
-          className={tabClass("coding")}
-          onClick={() => void navigate(projectId ? { to: "/projects/$projectId", params: { projectId } } : { to: "/" })}
-          type="button"
-        >
-          Coding
-        </button>
-        <button className={tabClass("reviews")} onClick={() => void navigate({ to: "/review" })} type="button">
-          Reviews
-        </button>
-      </nav>
-      {working > 0 && (
-        <span className="inline-flex items-center gap-[7px] rounded-md px-[11px] py-[5px] text-[#9ba1aa] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.06)]">
-          <span className="h-[7px] w-[7px] animate-status-pulse rounded-full bg-[#f59f4c]" />
-          <span className="text-[11.5px]">{working} working</span>
-        </span>
-      )}
-      <div className="ml-auto flex items-center gap-1.5">
-        <button
-          aria-label="Notifications"
-          className="grid h-[34px] w-[34px] place-items-center rounded-[7px] text-[#9ba1aa] transition-colors hover:bg-white/[0.04] hover:text-[#f4f5f7]"
-          type="button"
-        >
+    <header
+      className={cn("dashboard-app-header", isMac && !isSidebarOpen && "is-under-titlebar-nav")}
+      style={dragStyle}
+    >
+      <div className="session-topbar__lead">
+        <div className="topbar-project-line">
+          <span className="dashboard-app-header__project">{projectLabel}</span>
+          <nav aria-label="Workspace mode" className="dashboard-app-header__tabs">
+            <button
+              className={cn("dashboard-app-header__tab", activeTab === "coding" && "is-active")}
+              onClick={() => void navigate(projectId ? { to: "/projects/$projectId", params: { projectId } } : { to: "/" })}
+              style={noDragStyle}
+              type="button"
+            >
+              Coding
+            </button>
+            <button
+              className={cn("dashboard-app-header__tab", activeTab === "reviews" && "is-active")}
+              onClick={() => void navigate({ to: "/review" })}
+              style={noDragStyle}
+              type="button"
+            >
+              Reviews
+            </button>
+          </nav>
+        </div>
+      </div>
+      <div className="dashboard-app-header__spacer" />
+      <div className="dashboard-app-header__actions">
+        <button aria-label="Notifications" className="dashboard-app-header__icon-btn" style={noDragStyle} type="button">
           <Bell className="h-[15px] w-[15px]" aria-hidden="true" />
         </button>
-        {projectId && (
-          <button
-            aria-label="Project settings"
-            className="grid h-[34px] w-[34px] place-items-center rounded-[7px] text-[#9ba1aa] transition-colors hover:bg-white/[0.04] hover:text-[#f4f5f7]"
-            onClick={() => void navigate({ to: "/projects/$projectId/settings", params: { projectId } })}
-            type="button"
-          >
-            <Settings className="h-[15px] w-[15px]" aria-hidden="true" />
-          </button>
-        )}
-        <button
-          className="inline-flex h-[34px] items-center gap-1.5 rounded-[7px] bg-[#4d8dff] px-[15px] text-[13px] font-semibold text-white transition-colors hover:brightness-110"
-          onClick={() => openSpawn(projectId)}
-          type="button"
-        >
-          <Plus className="h-3.5 w-3.5" aria-hidden="true" />
-          New worker
-        </button>
+        {projectId ? (
+          orchestrator ? (
+            <button
+              aria-label="Orchestrator"
+              className="dashboard-app-header__primary-btn"
+              onClick={() =>
+                void navigate({
+                  to: "/projects/$projectId/sessions/$sessionId",
+                  params: { projectId, sessionId: orchestrator.id },
+                })
+              }
+              style={noDragStyle}
+              type="button"
+            >
+              <Waypoints className="h-3.5 w-3.5" aria-hidden="true" />
+              Orchestrator
+            </button>
+          ) : (
+            <button
+              aria-label="Spawn Orchestrator"
+              className="dashboard-app-header__primary-btn"
+              disabled={isSpawning}
+              onClick={() => void openOrchestrator()}
+              style={noDragStyle}
+              type="button"
+            >
+              <Waypoints className="h-3.5 w-3.5" aria-hidden="true" />
+              {isSpawning ? "Spawning…" : "Spawn Orchestrator"}
+            </button>
+          )
+        ) : null}
       </div>
     </header>
   );
@@ -89,9 +132,9 @@ export function DashboardTopbar({ activeTab, projectId, projectLabel = "agent-or
 export function DashboardSubhead({ title, subtitle, count }: { title: string; subtitle: string; count?: number }) {
   return (
     <div className="flex items-baseline gap-3 px-[18px] pt-[22px]">
-      <h1 className="text-[21px] font-bold tracking-[-0.025em] text-[#f4f5f7]">{title}</h1>
-      {typeof count === "number" && <span className="font-mono text-[13px] text-[#646a73]">{count}</span>}
-      <span className="text-[12.5px] text-[#646a73]">{subtitle}</span>
+      <h1 className="text-[21px] font-bold tracking-[-0.025em] text-foreground">{title}</h1>
+      {typeof count === "number" && <span className="font-mono text-[13px] text-passive">{count}</span>}
+      <span className="text-[12.5px] text-passive">{subtitle}</span>
     </div>
   );
 }

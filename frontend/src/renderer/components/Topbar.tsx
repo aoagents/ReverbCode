@@ -1,29 +1,18 @@
-import {
-  Columns2,
-  FileText,
-  GitBranch,
-  GitPullRequest,
-  LayoutGrid,
-  MoreHorizontal,
-  PanelLeft,
-  Plus,
-  Terminal,
-  Waypoints,
-} from "lucide-react";
-import type { WorkbenchTab, WorkbenchView } from "../stores/ui-store";
-import type { WorkerDisplayStatus, WorkspaceSession, WorkspaceSummary } from "../types/workspace";
+import { Bell, GitBranch, LayoutGrid, PanelRightClose, PanelRightOpen, Waypoints } from "lucide-react";
+import { type WorkbenchView, useUiStore } from "../stores/ui-store";
+import type { WorkerDisplayStatus, WorkspaceSession } from "../types/workspace";
 import { workerDisplayStatus } from "../types/workspace";
-import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { cn } from "../lib/utils";
 
 // Session status → pill tone, mirroring agent-orchestrator's StatusBadge
 // (working=orange & breathing, input=amber, fail=red, ready=green, done=neutral).
+// Tones are theme vars so the pill tracks the light/dark status palettes.
 const STATUS_PILL: Record<WorkerDisplayStatus, { label: string; tone: string; breathe: boolean }> = {
-  working: { label: "Working", tone: "#f59f4c", breathe: true },
-  needs_you: { label: "Needs input", tone: "#e8c14a", breathe: false },
-  ci_failed: { label: "CI failed", tone: "#ef6b6b", breathe: false },
-  mergeable: { label: "Ready", tone: "#74b98a", breathe: false },
-  done: { label: "Done", tone: "#9ba1aa", breathe: false },
+  working: { label: "Working", tone: "var(--orange)", breathe: true },
+  needs_you: { label: "Needs input", tone: "var(--amber)", breathe: false },
+  ci_failed: { label: "CI failed", tone: "var(--red)", breathe: false },
+  mergeable: { label: "Ready", tone: "var(--green)", breathe: false },
+  done: { label: "Done", tone: "var(--fg-muted)", breathe: false },
 };
 
 const isMac = typeof navigator !== "undefined" && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent);
@@ -33,160 +22,84 @@ const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperti
 type TopbarProps = {
   view: WorkbenchView;
   session?: WorkspaceSession;
-  workspace?: WorkspaceSummary;
-  workbenchTab: WorkbenchTab;
-  onSetWorkbenchTab: (tab: WorkbenchTab) => void;
-  onNewWorker: () => void;
-  onToggleSidebar: () => void;
-  /** Back-to-board navigation for the "Kanban" button (session view). */
+  /** Project crumb for orchestrator sessions (matches AO topbar-project-line). */
+  projectLabel?: string;
+  /** Back-to-board navigation for the Kanban / Open Kanban button. */
   onOpenBoard?: () => void;
 };
 
-export function Topbar({
-  view,
-  session,
-  workspace,
-  workbenchTab,
-  onSetWorkbenchTab,
-  onNewWorker,
-  onToggleSidebar,
-  onOpenBoard,
-}: TopbarProps) {
+export function Topbar({ view, session, projectLabel, onOpenBoard }: TopbarProps) {
+  const isSidebarOpen = useUiStore((state) => state.isSidebarOpen);
+  const isInspectorOpen = useUiStore((state) => state.isInspectorOpen);
+  const toggleInspector = useUiStore((state) => state.toggleInspector);
+
   return (
     <header
-      className="flex h-11 shrink-0 items-center gap-2.5 border-b border-border bg-background px-3"
+      className={cn("dashboard-app-header session-topbar", isMac && !isSidebarOpen && "is-under-titlebar-nav")}
       style={dragStyle}
     >
-      {isMac && <span className="inline-block w-[66px] shrink-0" />}
-      <button
-        aria-label="Toggle sidebar"
-        className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-passive transition-colors hover:bg-raised hover:text-muted-foreground"
-        onClick={onToggleSidebar}
-        style={noDragStyle}
-        title="Toggle sidebar (⌘B)"
-        type="button"
-      >
-        <PanelLeft className="h-[15px] w-[15px]" aria-hidden="true" />
-      </button>
-
-      {view === "orchestrator" ? (
-        <div className="flex min-w-0 items-center gap-2 text-[13px] text-muted-foreground">
-          <Waypoints className="h-[15px] w-[15px] shrink-0 text-accent" aria-hidden="true" />
-          <span className="truncate font-medium text-foreground">Orchestrator</span>
-        </div>
-      ) : (
-        <>
-          {/* Kanban back-to-board (session-board-btn) */}
-          <button
-            aria-label="Back to board"
-            className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-[12px] text-muted-foreground transition-colors hover:bg-white/[0.04] hover:text-foreground"
-            onClick={onOpenBoard}
-            style={noDragStyle}
-            type="button"
-          >
-            <LayoutGrid className="h-[14px] w-[14px]" aria-hidden="true" />
-            Kanban
-          </button>
-          <span className="h-5 w-px shrink-0 bg-border" aria-hidden="true" />
-
-          {/* Identity (session-topbar__id): project / title over a branch line */}
-          <div className="flex min-w-0 items-center gap-2.5">
-            <div className="min-w-0">
-              <div className="flex items-center gap-1.5 text-[13px] leading-none">
-                <span className="truncate text-muted-foreground">{session?.workspaceName ?? workspace?.name ?? "—"}</span>
-                <span className="text-passive">/</span>
-                <span className="truncate font-medium text-foreground">{session?.title ?? "session"}</span>
-              </div>
-              <div className="mt-1 flex items-center gap-1 text-[10.5px] text-passive">
-                <GitBranch className="h-3 w-3 shrink-0" aria-hidden="true" />
-                <span className="truncate font-mono">{session?.branch || `session/${session?.id ?? ""}`}</span>
-              </div>
-            </div>
-            {session && <SessionStatusPill session={session} />}
-          </div>
-        </>
-      )}
-
-      <div className="ml-auto flex shrink-0 items-center gap-0.5">
+      <div className="session-topbar__lead">
         {view === "orchestrator" ? (
-          <>
-            <button
-              aria-label="New worker"
-              className="mr-1 inline-flex h-6 items-center gap-1.5 rounded-md border border-border px-2.5 text-[11.5px] text-muted-foreground transition-colors hover:border-accent hover:text-accent"
-              onClick={onNewWorker}
-              style={noDragStyle}
-              type="button"
-            >
-              <Plus className="h-3 w-3" aria-hidden="true" />
-              New worker
-            </button>
-            <IconToggle label="Terminal" active>
-              <Terminal className="h-[15px] w-[15px]" aria-hidden="true" />
-            </IconToggle>
-            <IconToggle label="More">
-              <MoreHorizontal className="h-[15px] w-[15px]" aria-hidden="true" />
-            </IconToggle>
-          </>
+          <div className="topbar-project-pills-group">
+            <div className="topbar-project-line">
+              <span className="dashboard-app-header__project">{projectLabel ?? session?.workspaceName ?? "Project"}</span>
+              <span aria-hidden="true" className="topbar-identity-sep">
+                ·
+              </span>
+              <span className="session-detail-mode-badge session-detail-mode-badge--neutral">
+                <Waypoints className="size-3 shrink-0" aria-hidden="true" />
+                Orchestrator
+              </span>
+            </div>
+          </div>
         ) : (
-          <>
-            <PrPill session={session} workspace={workspace} />
-            <IconToggle
-              label="Changes"
-              active={workbenchTab === "changes"}
-              onClick={() => onSetWorkbenchTab("changes")}
-            >
-              <Columns2 className="h-[15px] w-[15px]" aria-hidden="true" />
-            </IconToggle>
-            <IconToggle label="Files" active={workbenchTab === "files"} onClick={() => onSetWorkbenchTab("files")}>
-              <FileText className="h-[15px] w-[15px]" aria-hidden="true" />
-            </IconToggle>
-            <IconToggle
-              label="Terminal"
-              active={workbenchTab === "terminal"}
-              onClick={() => onSetWorkbenchTab("terminal")}
-            >
-              <Terminal className="h-[15px] w-[15px]" aria-hidden="true" />
-            </IconToggle>
-            <IconToggle label="Session actions">
-              <MoreHorizontal className="h-[15px] w-[15px]" aria-hidden="true" />
-            </IconToggle>
-          </>
+          <div className="session-topbar__identity">
+            <div className="session-topbar__branch">
+              <GitBranch className="h-3 w-3 shrink-0" aria-hidden="true" />
+              <span className="truncate">{session?.branch || `session/${session?.id ?? ""}`}</span>
+            </div>
+            {session ? <SessionStatusPill session={session} /> : null}
+          </div>
         )}
       </div>
-    </header>
-  );
-}
 
-function IconToggle({
-  label,
-  active = false,
-  onClick,
-  children,
-}: {
-  label: string;
-  active?: boolean;
-  onClick?: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
+      <div className="dashboard-app-header__spacer" />
+
+      <div className="dashboard-app-header__actions">
+        {/* Bell leads the actions row, as in AO's SessionDetailHeader. */}
+        <button aria-label="Notifications" className="dashboard-app-header__icon-btn" style={noDragStyle} type="button">
+          <Bell className="h-[15px] w-[15px]" aria-hidden="true" />
+        </button>
         <button
-          aria-label={label}
-          aria-pressed={active}
-          className={cn(
-            "grid h-7 w-7 place-items-center rounded-md transition-colors",
-            active ? "bg-accent-weak text-accent" : "text-passive hover:bg-raised hover:text-muted-foreground",
-          )}
-          onClick={onClick}
+          aria-label={view === "orchestrator" ? "Open Kanban" : "Back to board"}
+          className="dashboard-app-header__primary-btn"
+          onClick={onOpenBoard}
           style={noDragStyle}
           type="button"
         >
-          {children}
+          <LayoutGrid className="h-3.5 w-3.5" aria-hidden="true" />
+          {view === "orchestrator" ? "Open Kanban" : "Kanban"}
         </button>
-      </TooltipTrigger>
-      <TooltipContent>{label}</TooltipContent>
-    </Tooltip>
+        {/* Inspector collapse (worker sessions only — orchestrators have no rail). */}
+        {view === "session" && (
+          <button
+            aria-label={isInspectorOpen ? "Close inspector panel" : "Open inspector panel"}
+            aria-pressed={isInspectorOpen}
+            className="dashboard-app-header__icon-btn"
+            onClick={toggleInspector}
+            style={noDragStyle}
+            title={`${isInspectorOpen ? "Close" : "Open"} inspector · ⌘⇧B`}
+            type="button"
+          >
+            {isInspectorOpen ? (
+              <PanelRightClose className="h-[15px] w-[15px]" aria-hidden="true" />
+            ) : (
+              <PanelRightOpen className="h-[15px] w-[15px]" aria-hidden="true" />
+            )}
+          </button>
+        )}
+      </div>
+    </header>
   );
 }
 
@@ -196,7 +109,7 @@ function SessionStatusPill({ session }: { session: WorkspaceSession }) {
   const { label, tone, breathe } = STATUS_PILL[workerDisplayStatus(session)];
   return (
     <span
-      className="inline-flex shrink-0 items-center gap-[7px] whitespace-nowrap rounded-[7px] px-[11px] py-[5px] text-[11.5px] font-semibold"
+      className="inline-flex shrink-0 items-center gap-[7px] whitespace-nowrap rounded-[7px] px-[11px] py-[5px] text-[11.5px] font-semibold leading-none"
       style={{
         color: tone,
         background: `color-mix(in srgb, ${tone} 7%, transparent)`,
@@ -206,46 +119,5 @@ function SessionStatusPill({ session }: { session: WorkspaceSession }) {
       <span className={cn("h-1.5 w-1.5 rounded-full", breathe && "animate-status-pulse")} style={{ background: tone }} />
       {label}
     </span>
-  );
-}
-
-function PrPill({ session, workspace }: { session?: WorkspaceSession; workspace?: WorkspaceSummary }) {
-  const pr = session?.pullRequest ?? workspace?.pullRequest;
-  const status = session ? workerDisplayStatus(session) : "working";
-
-  if (!pr) {
-    return (
-      <button
-        className="mr-1 inline-flex h-6 items-center gap-1.5 rounded-md border border-border px-2.5 text-[11.5px] font-medium text-muted-foreground transition-colors hover:border-accent hover:text-accent"
-        style={noDragStyle}
-        type="button"
-      >
-        <GitPullRequest className="h-3 w-3" aria-hidden="true" />
-        Open PR
-      </button>
-    );
-  }
-
-  const tone =
-    status === "ci_failed"
-      ? "border-error/40 bg-error/10 text-error"
-      : status === "needs_you"
-        ? "border-warning/40 bg-warning/10 text-warning"
-        : "border-success/40 bg-success/10 text-success";
-  const label = status === "ci_failed" ? "CI failed" : status === "needs_you" ? "review requested" : "mergeable";
-
-  return (
-    <button
-      className={cn(
-        "mr-1 inline-flex h-6 items-center gap-1.5 whitespace-nowrap rounded-md border px-2.5 text-[11.5px] font-medium",
-        tone,
-      )}
-      style={noDragStyle}
-      title={`PR #${pr.number} — ${label}`}
-      type="button"
-    >
-      <GitPullRequest className="h-3 w-3" aria-hidden="true" />
-      PR #{pr.number} · {label}
-    </button>
   );
 }

@@ -23,7 +23,13 @@ export type AttachableTerminal = {
   rows: number;
   write: (data: Uint8Array) => void;
   writeln: (line: string) => void;
-  reset: () => void;
+  /**
+   * Erase screen + scrollback and home the cursor, preserving terminal modes.
+   * Never a full reset (RIS): that would drop the mouse-tracking mode zellij
+   * enabled at attach, which the ring replay cannot re-establish — killing
+   * wheel scroll (see XtermTerminal's CLEAR_SEQUENCE).
+   */
+  clear: () => void;
   onData: (listener: (data: string) => void) => { dispose: () => void };
   onResize: (listener: (size: { cols: number; rows: number }) => void) => { dispose: () => void };
 };
@@ -166,10 +172,11 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 
     // Connection status is chrome (the pane's banner), never buffer content —
     // the PTY owns the buffer. On reattach the server replays the recent-output
-    // ring (backend internal/terminal/ring.go); drop the stale screen so it
-    // isn't doubled.
+    // ring (backend internal/terminal/ring.go); clear the stale screen so it
+    // isn't doubled. Screen-clear only, never reset(): RIS would wipe zellij's
+    // mouse-tracking mode and freeze wheel scrolling after every reconnect.
     if (!r.firstAttach) {
-      terminal.reset();
+      terminal.clear();
     }
     r.firstAttach = false;
 

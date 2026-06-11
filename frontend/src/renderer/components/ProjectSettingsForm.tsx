@@ -41,7 +41,7 @@ export function ProjectSettingsForm({ projectId }: { projectId: string }) {
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-[#0a0b0d] text-[#f4f5f7]">
+    <div className="flex h-full min-h-0 flex-col bg-background text-foreground">
       <DashboardTopbar activeTab="coding" projectId={projectId} projectLabel={query.data.name} />
       <DashboardSubhead title="Settings" subtitle={query.data.path} />
       <div className="min-h-0 flex-1 overflow-y-auto p-[18px]">

@@ -31,9 +31,11 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
         workspaceName: project.name,
         title: session.displayName ?? session.issueId ?? session.id,
         provider: toAgentProvider(session.harness),
-        branch: "",
+        kind: session.kind === "orchestrator" ? "orchestrator" : session.kind === "worker" ? "worker" : undefined,
+        branch: `session/${session.id}`,
         status: toSessionStatus(session.status, session.isTerminated),
-        updatedAt: new Date(session.updatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }),
+        createdAt: session.createdAt,
+        updatedAt: session.updatedAt,
       })),
   }));
 }

@@ -24,10 +24,13 @@ import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import type { AttachableTerminal } from "../hooks/useTerminalSession";
+import { buildTerminalThemes } from "../lib/terminal-themes";
+import type { Theme } from "../stores/ui-store";
 
 export type XtermTerminalProps = {
   ariaLabel?: string;
   className?: string;
+  theme: Theme;
   /** Terminal construction failed; the owner decides how to surface it. */
   onError?: (error: unknown) => void;
   /**
@@ -56,36 +59,22 @@ function loadRenderer(term: Terminal): void {
   }
 }
 
-// The terminal is the agent CLI; it keeps the emdash dark palette in both app
-// themes — see DESIGN.md → Color. ANSI 0-7 normal / 8-15 bright follow the
-// VS Code dark palette except where an emdash token exists (green, blue,
-// yellow, brightBlack).
-const TERMINAL_THEME = {
-  background: "#161616",
-  foreground: "#d7d7d2",
-  cursor: "#7bd88f",
-  cursorAccent: "#161616",
-  selectionBackground: "rgba(63, 142, 247, 0.35)",
-  black: "#000000",
-  red: "#cd3131",
-  green: "#7bd88f",
-  yellow: "#ffcc4a",
-  blue: "#5b9dff",
-  magenta: "#bc3fbc",
-  cyan: "#11a8cd",
-  white: "#e5e5e5",
-  brightBlack: "#7c7c7c",
-  brightRed: "#f14c4c",
-  brightGreen: "#23d18b",
-  brightYellow: "#f5f543",
-  brightBlue: "#3b8eea",
-  brightMagenta: "#d670d6",
-  brightCyan: "#29b8db",
-  brightWhite: "#ffffff",
-};
+// xterm palette tracks the app theme (see lib/terminal-themes.ts + --term-* in
+// styles.css). The PTY content is still the agent's own ANSI output.
+const terminalThemes = buildTerminalThemes();
+
+// Erase scrollback (3J) + display (2J) and home the cursor — yyork's
+// terminalResetSequence. Deliberately NOT term.reset(): a full RIS also wipes
+// the DEC private modes zellij enabled when its attach process started (SGR
+// mouse tracking, alt screen), and the mux's 50KB ring replay no longer
+// contains those init sequences — after a RIS, xterm never re-enters
+// mouse-tracking mode, wheel events stop being forwarded to zellij, and
+// scrolling goes dead.
+const CLEAR_SEQUENCE = "\x1b[3J\x1b[2J\x1b[H";
 
 export function XtermTerminal(props: XtermTerminalProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
+  const termRef = useRef<Terminal | null>(null);
   // Latest callbacks in a ref so the mount effect stays dependency-free — we
   // never tear down and recreate the terminal because a handler identity
   // changed between renders.
@@ -94,6 +83,12 @@ export function XtermTerminal(props: XtermTerminalProps) {
   useEffect(() => {
     callbacksRef.current = props;
   });
+
+  useEffect(() => {
+    const term = termRef.current;
+    if (!term) return;
+    term.options.theme = props.theme === "dark" ? terminalThemes.dark : terminalThemes.light;
+  }, [props.theme]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -122,15 +117,21 @@ export function XtermTerminal(props: XtermTerminalProps) {
         // background, the way VS Code's terminal does; without it dim colors
         // render washed out.
         minimumContrastRatio: 4.5,
-        // Unlike yyork (zellij owns scrollback there, so it uses 0), the PTY
-        // here runs the agent CLI directly — xterm's buffer IS the scrollback.
-        scrollback: 4000,
-        theme: TERMINAL_THEME,
+        // The mux PTY runs `zellij attach` (backend AttachCommand), a
+        // full-screen alt-buffer app that owns scrollback itself — same as
+        // yyork. xterm's own buffer never accumulates history (the alt screen
+        // doesn't feed scrollback), and wheel events reach zellij as mouse
+        // reports instead of scrolling locally. 0 also stops FitAddon
+        // reserving ~14px on the right for a scrollbar that can never appear.
+        scrollback: 0,
+        theme: props.theme === "dark" ? terminalThemes.dark : terminalThemes.light,
       });
     } catch (error) {
       callbacksRef.current.onError?.(error);
       return undefined;
     }
+
+    termRef.current = term;
 
     const fit = new FitAddon();
     term.loadAddon(fit);
@@ -171,13 +172,14 @@ export function XtermTerminal(props: XtermTerminalProps) {
       },
       write: (data) => term.write(data),
       writeln: (line) => term.writeln(line),
-      reset: () => term.reset(),
+      clear: () => term.write(CLEAR_SEQUENCE),
       onData: (listener) => term.onData(listener),
       onResize: (listener) => term.onResize(listener),
     };
     callbacksRef.current.onReady?.(handle);
 
     return () => {
+      termRef.current = null;
       cancelAnimationFrame(raf);
       for (const timer of settleTimers) window.clearTimeout(timer);
       observer.disconnect();

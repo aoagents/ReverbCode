@@ -45,7 +45,7 @@ export function PullRequestsPage() {
     .sort((a, b) => stateRank[a.state] - stateRank[b.state] || a.number - b.number);
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-[#0a0b0d] text-[#f4f5f7]">
+    <div className="flex h-full min-h-0 flex-col bg-background text-foreground">
       <DashboardTopbar />
       <DashboardSubhead
         title="Pull requests"

@@ -49,7 +49,7 @@ export function ReviewDashboard() {
   const runs = (reviews.data ?? []).slice().sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-[#0a0b0d] text-[#f4f5f7]">
+    <div className="flex h-full min-h-0 flex-col bg-background text-foreground">
       <DashboardTopbar activeTab="reviews" />
       <DashboardSubhead
         title="Reviews"

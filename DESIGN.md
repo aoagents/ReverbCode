@@ -30,6 +30,16 @@ sections below — where they conflict, **agent-orchestrator wins**. Do not re-f
   hand-rolled CSS components are structure/behaviour reference only.
 - The one carried-over divergence still holds: the **accent is refined blue**, and
   the **terminal keeps its own palette**. Everything else tracks agent-orchestrator.
+- **Approved divergence (2026-06-10):** on macOS, a titlebar cluster (sidebar toggle +
+  back/forward history arrows, `TitlebarNav`) sits beside the traffic lights,
+  VS Code-style — the web reference has no window chrome, so no analogue exists.
+- **Approved divergence (2026-06-10):** the session inspector rail is fully
+  collapsible, built on the shadcn resizable primitive (`pnpm dlx shadcn add
+  resizable`, react-resizable-panels v4 `collapsible` panel + imperative API,
+  user-requested). The panel animates to 0% via a flex-grow transition while the
+  content keeps a stable min-width (yyork-style, no mid-animation reflow). Toggled
+  by a `PanelRight` icon button in the session topbar and ⌘⇧B; open state + split
+  width persist. The AO reference keeps the rail always visible.
 
 ## Product Context
 
