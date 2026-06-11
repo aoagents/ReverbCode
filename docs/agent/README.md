@@ -71,7 +71,7 @@ The callback:
 4. POSTs the state to the daemon at `POST /api/v1/sessions/{id}/activity`; the daemon owns the store and fans out `session.updated` via CDC.
 5. Always exits 0 — a failed delivery must never break the user's agent. Failures are appended to `hooks.log` under `AO_DATA_DIR` and surfaced by the `hooks-log` check in `ao doctor`.
 
-The daemon also records the FIRST callback per spawn/restore (`first_signal_at`); a live session that has never signaled past a grace period derives the `no_signal` display status instead of a confident `idle`, so a broken hook pipeline is visible on the dashboard.
+The daemon also records the FIRST callback per spawn/restore (`first_signal_at`); a live session that has never signaled past a grace period derives the `no_signal` display status instead of a confident `idle`, so a broken hook pipeline is visible on the dashboard. The downgrade only applies to harnesses with a registered activity deriver (`activitydispatch.SupportsHarness`, injected into the session service at daemon wiring) — for a hook-less adapter, permanent silence is normal and stays `idle`. Known limitation: neither Codex nor Claude Code derives an activity state from `SessionStart`, so a restored session the user never prompts has nothing to signal and shows `no_signal` once the grace passes; a receipt-only session-start signal would close that gap.
 
 Persisting hook-derived metadata (`agentSessionId`, `title`, `summary`) into the session row is **not implemented yet** — until it is, adapters whose restore needs the native session id (e.g. `codex resume`) fall back to a fresh launch.
 

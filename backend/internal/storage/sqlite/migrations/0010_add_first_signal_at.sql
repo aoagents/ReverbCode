@@ -17,12 +17,13 @@ UPDATE sessions SET first_signal_at = activity_last_at;
 -- +goose StatementEnd
 
 -- Recreate the sessions update CDC trigger so the first hook receipt also
--- fans out a session_updated event: the first signal often repeats the seeded
--- activity state (e.g. Codex SessionStart reports idle on an idle-seeded row),
--- and without this clause the dashboard would keep showing no_signal until the
+-- fans out a session_updated event: hook deliveries are best-effort, so the
+-- first signal to arrive may repeat the seeded activity state (a lost "active"
+-- POST followed by a Stop hook landing idle on the idle-seeded row), and
+-- without this clause the dashboard would keep showing no_signal until the
 -- next real state change.
 -- +goose StatementBegin
-DROP TRIGGER sessions_cdc_update;
+DROP TRIGGER IF EXISTS sessions_cdc_update;
 -- +goose StatementEnd
 -- +goose StatementBegin
 CREATE TRIGGER sessions_cdc_update
@@ -40,7 +41,7 @@ END;
 
 -- +goose Down
 -- +goose StatementBegin
-DROP TRIGGER sessions_cdc_update;
+DROP TRIGGER IF EXISTS sessions_cdc_update;
 -- +goose StatementEnd
 -- +goose StatementBegin
 CREATE TRIGGER sessions_cdc_update
