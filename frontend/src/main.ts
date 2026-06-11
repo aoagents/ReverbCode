@@ -12,6 +12,9 @@ import type { DaemonStatus } from "./shared/daemon-status";
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
 declare const MAIN_WINDOW_VITE_NAME: string;
 
+// Must run before app ready so the About panel and default-menu role labels use it.
+app.setName("Agent Orchestrator");
+
 let mainWindow: BrowserWindow | null = null;
 let daemonProcess: ChildProcessWithoutNullStreams | null = null;
 let daemonStatus: DaemonStatus = { state: "stopped" };
