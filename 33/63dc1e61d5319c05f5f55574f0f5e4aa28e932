@@ -1,0 +1,104 @@
+frontend/src/main.ts
+  s_a63f04afb933fb::t_e9b365ea91ef00 8-9
+  s_a63f04afb933fb::t_1c21549b39443c 260-311
+  s_a63f04afb933fb::t_57a51fc75cb11c 75
+  s_a63f04afb933fb::t_3fc6e9b316227a 366-372
+frontend/src/renderer/hooks/useWorkspaceQuery.ts
+  s_a63f04afb933fb::t_b7b9082ed19916 19-29,31-45
+  s_a63f04afb933fb::t_502a81b48bf2a8 30
+backend/internal/httpd/apispec/openapi.yaml
+  s_a63f04afb933fb::t_f408b3d9fe10c4 643-834,1272-1326,1596-1597,1632-1645
+frontend/src/shared/daemon-discovery.ts
+  s_a63f04afb933fb::t_65b084a495b72f 91-106
+frontend/src/renderer/components/ui/context-menu.tsx
+  s_a63f04afb933fb::t_d2d028fe4926f2 53-56
+  s_a63f04afb933fb::t_dd9f6180f3d01b 84-92
+  s_a63f04afb933fb::t_35cd7a94131d44 1-52,57-83,93-133
+frontend/src/shared/daemon-discovery.test.ts
+  s_a63f04afb933fb::t_e1cf3d2e686a07 100-130
+  s_a63f04afb933fb::t_04d31757ad17be 2-9
+backend/internal/httpd/controllers/sessions_test.go
+  s_a63f04afb933fb::t_844d2de0e5bc76 493-584
+  s_a63f04afb933fb::t_bdaf24cc376385 28-33
+  s_a63f04afb933fb::t_f8a63ff5318832 155-192
+backend/internal/daemon/lifecycle_wiring.go
+  s_a63f04afb933fb::t_55658f79fb8f84 96
+frontend/src/renderer/components/SideRail.tsx
+  s_a63f04afb933fb::t_a40dd9418ea6da 1,4,14
+  s_a63f04afb933fb::t_28e1c1fe875327 2
+  s_a63f04afb933fb::t_8de8c632e62097 121-124,134-153,161-165,169,172-176,185-190,192-208,215,217,221,224,226-236,239-243,248-261
+  s_a63f04afb933fb::t_2d1760975b27c4 126-133
+backend/internal/httpd/controllers/sessions.go
+  s_a63f04afb933fb::t_5ff9ab47360784 321-388
+  s_a63f04afb933fb::t_34269a2ab2a82e 39-42
+  s_a63f04afb933fb::t_97d85e25d4cc44 75-78
+backend/internal/ports/outbound.go
+  s_a63f04afb933fb::t_a1346ab0228c5b 127-169
+frontend/src/renderer/hooks/useSessionGit.ts
+  s_a63f04afb933fb::t_9d23179ad1a8c4 1-101
+backend/internal/service/session/service.go
+  s_a63f04afb933fb::t_cfbe5521529f6e 88
+  s_a63f04afb933fb::t_0d356d7b0e3626 342,344
+  s_a63f04afb933fb::t_cf6ae5d0e14506 109-111,116
+frontend/src/renderer/types/workspace.ts
+  s_a63f04afb933fb::t_34cdf0a10f8be0 161-163
+frontend/src/shared/daemon-status.ts
+  s_a63f04afb933fb::t_06706ff17b8d0c 9-13
+frontend/src/renderer/components/CenterPane.tsx
+  s_a63f04afb933fb::t_c6361c20c2d8b8 1-2,4-5,13-15,18,21,27-33,36-37,57-93,96-98,101-103,108-119,122-125
+  s_a63f04afb933fb::t_5c24c1a82b3f4d 94-95,99-100,104-107,120-121
+backend/internal/httpd/controllers/dto.go
+  s_a63f04afb933fb::t_4e12bbf60b1642 215-250
+frontend/src/renderer/App.test.tsx
+  s_a63f04afb933fb::t_20af9f74424dfb 140-141
+backend/internal/cli/dto_drift_e2e_test.go
+  s_a63f04afb933fb::t_da67edb0da9ed9 105-120
+backend/internal/httpd/apispec/specgen/build.go
+  s_a63f04afb933fb::t_36e9133c920749 156-160
+  s_a63f04afb933fb::t_1ebe9afd9e0095 475-523
+frontend/src/api/schema.ts
+  s_a63f04afb933fb::t_f408b3d9fe10c4 199-266,442-462,569,584-588,1423-1668
+backend/internal/service/session/git.go
+  s_a63f04afb933fb::t_e24ff2ed7a1c3a 39
+  s_a63f04afb933fb::t_2598f566a6fc98 48-49
+  s_a63f04afb933fb::t_86f437c32b60a2 1-16,18-29,31-38,40-47,50-92
+  s_a63f04afb933fb::t_6ce60415835c05 17
+  s_a63f04afb933fb::t_63f8823d82ef21 30
+backend/internal/domain/session.go
+  s_a63f04afb933fb::t_71eb1ad97e1cd7 64-66
+frontend/src/renderer/components/Sidebar.tsx
+  s_a63f04afb933fb::t_4671dbb19bd410 30-40,52-96
+  s_a63f04afb933fb::t_7ced347d156e9a 181
+  s_a63f04afb933fb::t_52aff7c8177abe 155
+  s_a63f04afb933fb::t_d937b7daefe694 202-203
+  s_a63f04afb933fb::t_d9659bcbe6c1d1 1,3,7,17-20
+backend/internal/adapters/workspace/gitworktree/gitops.go
+  s_a63f04afb933fb::t_b916be0183653c 1-48,51,53-199
+  s_a63f04afb933fb::t_7c4179b611c1e6 49-50,52
+frontend/src/renderer/App.tsx
+  s_a63f04afb933fb::t_468dead8299807 255-256,259
+  s_a63f04afb933fb::t_8ff46dcb2d2371 181-215
+  s_a63f04afb933fb::t_8612a27a4748f4 216-226
+  s_a63f04afb933fb::t_aaaaf6bd6c86c9 11
+  s_a63f04afb933fb::t_ee0d7cee802eee 244,246,248-249
+frontend/src/renderer/lib/api-errors.ts
+  s_a63f04afb933fb::t_34d07d338ad611 1-18
+backend/internal/adapters/workspace/gitworktree/gitops_integration_test.go
+  s_a63f04afb933fb::t_f9c9bf4fc95a29 1-151
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "3363dc1e61d5319c05f5f55574f0f5e4aa28e932",
+  "prompts": {},
+  "sessions": {
+    "s_a63f04afb933fb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e37c8af1-ab64-4e72-85ce-6b9f63ff7492",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    }
+  }
+}
