@@ -1,4 +1,13 @@
-import { GitBranch, GitCommitHorizontal, GitPullRequest, LoaderCircle, Plus, Square, SquareCheck, Trash2 } from "lucide-react";
+import {
+	GitBranch,
+	GitCommitHorizontal,
+	GitPullRequest,
+	LoaderCircle,
+	Plus,
+	Square,
+	SquareCheck,
+	Trash2,
+} from "lucide-react";
 import { useEffect, useState } from "react";
 import type { WorkbenchView } from "../stores/ui-store";
 import { useSessionGit } from "../hooks/useSessionGit";

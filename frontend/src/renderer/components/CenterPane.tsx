@@ -103,8 +103,8 @@ function StartOrchestratorPane({
 					<>
 						<p className="mt-4 text-[13.5px] font-medium text-[var(--term-fg)]">No orchestrator running</p>
 						<p className="mt-1 text-[12.5px] leading-relaxed text-[var(--term-dim)]">
-							The orchestrator coordinates <span className="text-[var(--term-fg)]">{workspace.name}</span> — talk to
-							it and it spawns and manages workers for you.
+							The orchestrator coordinates <span className="text-[var(--term-fg)]">{workspace.name}</span> — talk to it
+							and it spawns and manages workers for you.
 						</p>
 						<Button className="mt-4" disabled={isStarting} onClick={() => void start()} variant="primary">
 							{isStarting ? "Starting…" : "Start orchestrator"}

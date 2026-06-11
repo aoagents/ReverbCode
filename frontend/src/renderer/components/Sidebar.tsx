@@ -1,6 +1,22 @@
-import { ChevronsUpDown, CircleStop, Eraser, Folder, Plus, RotateCcw, Search, Settings, Trash2, Waypoints } from "lucide-react";
+import {
+	ChevronsUpDown,
+	CircleStop,
+	Eraser,
+	Folder,
+	Plus,
+	RotateCcw,
+	Search,
+	Settings,
+	Trash2,
+	Waypoints,
+} from "lucide-react";
 import { useState } from "react";
-import { sessionIsActive, sessionNeedsAttention, type WorkspaceSession, type WorkspaceSummary } from "../types/workspace";
+import {
+	sessionIsActive,
+	sessionNeedsAttention,
+	type WorkspaceSession,
+	type WorkspaceSummary,
+} from "../types/workspace";
 import { useUiStore } from "../stores/ui-store";
 import { aoBridge } from "../lib/bridge";
 import { useEventsConnection } from "../hooks/useEventsConnection";
