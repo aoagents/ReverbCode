@@ -167,7 +167,7 @@ func (w *Workspace) Destroy(ctx context.Context, info ports.WorkspaceInfo) error
 			if statusErr != nil {
 				// A failed probe must stay visible: without it the caller can't
 				// tell "not dirty" from "couldn't check".
-				return fmt.Errorf("gitworktree: refusing to remove %q: path is still registered after git worktree prune (worktree remove: %w; dirty probe: %v)", path, removeErr, statusErr)
+				return fmt.Errorf("gitworktree: refusing to remove %q: path is still registered after git worktree prune (worktree remove: %w; dirty probe: %w)", path, removeErr, statusErr)
 			}
 			return fmt.Errorf("gitworktree: refusing to remove %q: path is still registered after git worktree prune (worktree remove: %w)", path, removeErr)
 		}
