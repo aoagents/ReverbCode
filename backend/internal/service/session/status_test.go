@@ -2,12 +2,29 @@ package session
 
 import (
 	"testing"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
+var statusNow = time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
+
+// statusRec builds a session whose agent HAS delivered a hook signal; the
+// no-signal cases below zero FirstSignalAt explicitly.
 func statusRec(activity domain.ActivityState, terminated bool) domain.SessionRecord {
-	return domain.SessionRecord{Activity: domain.Activity{State: activity}, IsTerminated: terminated}
+	return domain.SessionRecord{
+		Activity:      domain.Activity{State: activity, LastActivityAt: statusNow},
+		FirstSignalAt: statusNow,
+		IsTerminated:  terminated,
+	}
+}
+
+// silentRec builds a live session that has never delivered a hook signal,
+// seeded (spawned/restored) `age` before the derivation time.
+func silentRec(age time.Duration) domain.SessionRecord {
+	return domain.SessionRecord{
+		Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: statusNow.Add(-age)},
+	}
 }
 
 func statusPR(facts domain.PRFacts) *domain.PRFacts { return &facts }
@@ -17,26 +34,62 @@ func TestServiceDerivesStatusFromSessionFactsAndPR(t *testing.T) {
 		name string
 		rec  domain.SessionRecord
 		pr   *domain.PRFacts
-		want domain.SessionStatus
+		// hookless marks a harness with no activity pipeline (signalCapable
+		// false): silence is its permanent normal state, never no_signal.
+		hookless bool
+		want     domain.SessionStatus
 	}{
-		{"terminated", statusRec(domain.ActivityExited, true), nil, domain.StatusTerminated},
-		{"merged-pr", statusRec(domain.ActivityIdle, true), statusPR(domain.PRFacts{Merged: true}), domain.StatusMerged},
-		{"needs-input", statusRec(domain.ActivityWaitingInput, false), statusPR(domain.PRFacts{CI: domain.CIFailing}), domain.StatusNeedsInput},
-		{"ci-failed", statusRec(domain.ActivityIdle, false), statusPR(domain.PRFacts{CI: domain.CIFailing}), domain.StatusCIFailed},
-		{"draft", statusRec(domain.ActivityIdle, false), statusPR(domain.PRFacts{Draft: true}), domain.StatusDraft},
-		{"changes-requested", statusRec(domain.ActivityIdle, false), statusPR(domain.PRFacts{Review: domain.ReviewChangesRequest}), domain.StatusChangesRequested},
-		{"mergeable", statusRec(domain.ActivityIdle, false), statusPR(domain.PRFacts{Mergeability: domain.MergeMergeable}), domain.StatusMergeable},
-		{"approved", statusRec(domain.ActivityIdle, false), statusPR(domain.PRFacts{Review: domain.ReviewApproved}), domain.StatusApproved},
-		{"review-pending", statusRec(domain.ActivityIdle, false), statusPR(domain.PRFacts{Review: domain.ReviewRequired}), domain.StatusReviewPending},
-		{"pr-open", statusRec(domain.ActivityIdle, false), statusPR(domain.PRFacts{}), domain.StatusPROpen},
-		{"working", statusRec(domain.ActivityActive, false), nil, domain.StatusWorking},
-		{"idle", statusRec(domain.ActivityIdle, false), nil, domain.StatusIdle},
+		{"terminated", statusRec(domain.ActivityExited, true), nil, false, domain.StatusTerminated},
+		{"merged-pr", statusRec(domain.ActivityIdle, true), statusPR(domain.PRFacts{Merged: true}), false, domain.StatusMerged},
+		{"needs-input", statusRec(domain.ActivityWaitingInput, false), statusPR(domain.PRFacts{CI: domain.CIFailing}), false, domain.StatusNeedsInput},
+		{"ci-failed", statusRec(domain.ActivityIdle, false), statusPR(domain.PRFacts{CI: domain.CIFailing}), false, domain.StatusCIFailed},
+		{"draft", statusRec(domain.ActivityIdle, false), statusPR(domain.PRFacts{Draft: true}), false, domain.StatusDraft},
+		{"changes-requested", statusRec(domain.ActivityIdle, false), statusPR(domain.PRFacts{Review: domain.ReviewChangesRequest}), false, domain.StatusChangesRequested},
+		{"mergeable", statusRec(domain.ActivityIdle, false), statusPR(domain.PRFacts{Mergeability: domain.MergeMergeable}), false, domain.StatusMergeable},
+		{"approved", statusRec(domain.ActivityIdle, false), statusPR(domain.PRFacts{Review: domain.ReviewApproved}), false, domain.StatusApproved},
+		{"review-pending", statusRec(domain.ActivityIdle, false), statusPR(domain.PRFacts{Review: domain.ReviewRequired}), false, domain.StatusReviewPending},
+		{"pr-open", statusRec(domain.ActivityIdle, false), statusPR(domain.PRFacts{}), false, domain.StatusPROpen},
+		{"working", statusRec(domain.ActivityActive, false), nil, false, domain.StatusWorking},
+		{"idle", statusRec(domain.ActivityIdle, false), nil, false, domain.StatusIdle},
+
+		// A live session whose hook-capable agent never signaled is no_signal
+		// once the grace passes — never a confident idle.
+		{"no-signal-after-grace", silentRec(2 * noSignalGrace), nil, false, domain.StatusNoSignal},
+		// A hook-less harness can never signal: its silence stays idle forever
+		// instead of degrading into a false "needs you".
+		{"hookless-silent-stays-idle", silentRec(2 * noSignalGrace), nil, true, domain.StatusIdle},
+		// Right after spawn the agent legitimately hasn't called back yet.
+		{"silent-within-grace-is-idle", silentRec(10 * time.Second), nil, false, domain.StatusIdle},
+		// Termination and PR facts outrank the missing-signal downgrade.
+		{
+			"no-signal-terminated-wins",
+			domain.SessionRecord{Activity: domain.Activity{State: domain.ActivityExited, LastActivityAt: statusNow.Add(-2 * noSignalGrace)}, IsTerminated: true},
+			nil,
+			false,
+			domain.StatusTerminated,
+		},
+		{"no-signal-pr-wins", silentRec(2 * noSignalGrace), statusPR(domain.PRFacts{}), false, domain.StatusPROpen},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := deriveStatus(tt.rec, tt.pr); got != tt.want {
+			if got := deriveStatus(tt.rec, tt.pr, statusNow, !tt.hookless); got != tt.want {
 				t.Fatalf("got %q want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+// Without an injected capability predicate the service must never claim
+// no_signal; with one, capability follows the predicate per harness.
+func TestHarnessSignalsCapabilityGate(t *testing.T) {
+	if (&Service{}).harnessSignals(domain.HarnessCodex) {
+		t.Fatal("zero-value Service reports signal-capable; want incapable (never no_signal)")
+	}
+	s := NewWithDeps(Deps{SignalCapable: func(h domain.AgentHarness) bool { return h == domain.HarnessCodex }})
+	if !s.harnessSignals(domain.HarnessCodex) {
+		t.Fatal("harnessSignals(codex) = false with codex-capable predicate")
+	}
+	if s.harnessSignals(domain.HarnessAmp) {
+		t.Fatal("harnessSignals(amp) = true with codex-only predicate")
 	}
 }

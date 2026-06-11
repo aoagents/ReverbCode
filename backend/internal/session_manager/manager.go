@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -37,6 +38,12 @@ const (
 	// EnvDataDir tells a spawned agent's AO hook commands where the store lives.
 	EnvDataDir = "AO_DATA_DIR"
 )
+
+// hookBinaryName is the executable name the workspace hook commands invoke:
+// every agent adapter installs a bare `ao hooks <agent> <event>`. The session
+// PATH pin (hookPATH) only works when the daemon's own executable carries this
+// name, since prepending its directory must change what `ao` resolves to.
+const hookBinaryName = "ao"
 
 type lifecycleRecorder interface {
 	MarkSpawned(ctx context.Context, id domain.SessionID, metadata domain.SessionMetadata) error
@@ -80,6 +87,11 @@ type Manager struct {
 	// they don't need real binaries on PATH. Returns ports.ErrAgentBinaryNotFound
 	// when the binary is missing so the sentinel propagates through toAPIError.
 	lookPath func(string) (string, error)
+	// executable resolves the daemon's own binary (os.Executable in
+	// production); its directory is prepended to spawned sessions' PATH so the
+	// workspace hook commands resolve back to this daemon. Tests inject a stub.
+	executable func() (string, error)
+	logger     *slog.Logger
 }
 
 // Deps are the collaborators a Session Manager needs; New wires them together.
@@ -98,21 +110,30 @@ type Deps struct {
 	// Production wiring leaves this nil and the manager defaults to
 	// exec.LookPath; tests inject a stub so they need not seed real binaries.
 	LookPath func(string) (string, error)
+	// Executable overrides os.Executable for the session PATH pin (see
+	// hookPATH). Production wiring leaves this nil; tests inject a stub so they
+	// control what the test binary appears to be.
+	Executable func() (string, error)
+	// Logger receives spawn-time diagnostics (e.g. when the session PATH
+	// cannot be pinned to the daemon binary). Nil defaults to slog.Default().
+	Logger *slog.Logger
 }
 
 // New builds a Session Manager from its dependencies, defaulting the clock to
 // time.Now when Deps.Clock is nil.
 func New(d Deps) *Manager {
 	m := &Manager{
-		runtime:   d.Runtime,
-		agents:    d.Agents,
-		workspace: d.Workspace,
-		store:     d.Store,
-		messenger: d.Messenger,
-		lcm:       d.Lifecycle,
-		dataDir:   d.DataDir,
-		clock:     d.Clock,
-		lookPath:  d.LookPath,
+		runtime:    d.Runtime,
+		agents:     d.Agents,
+		workspace:  d.Workspace,
+		store:      d.Store,
+		messenger:  d.Messenger,
+		lcm:        d.Lifecycle,
+		dataDir:    d.DataDir,
+		clock:      d.Clock,
+		lookPath:   d.LookPath,
+		executable: d.Executable,
+		logger:     d.Logger,
 	}
 	if m.clock == nil {
 		m.clock = time.Now
@@ -120,12 +141,19 @@ func New(d Deps) *Manager {
 	if m.lookPath == nil {
 		m.lookPath = exec.LookPath
 	}
+	if m.executable == nil {
+		m.executable = os.Executable
+	}
+	if m.logger == nil {
+		m.logger = slog.Default()
+	}
 	return m
 }
 
 // Spawn creates the session row (which assigns the "{project}-{n}" id), then the
-// workspace and runtime, then reports completion to the LCM. A failure after the
-// row exists parks it as terminated and rolls back what was built.
+// workspace and runtime, then reports completion to the LCM. If workspace
+// materialization fails the still-seed row is deleted outright; a later failure
+// parks the row as terminated and rolls back what was built.
 func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.SessionRecord, error) {
 	project, err := m.loadProject(ctx, cfg.ProjectID)
 	if err != nil {
@@ -160,7 +188,10 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		BaseBranch: project.Config.WithDefaults().DefaultBranch,
 	})
 	if err != nil {
-		m.markSpawnFailedTerminated(ctx, id)
+		// Nothing observable exists yet — no worktree, no runtime — so the seed
+		// row is deleted outright instead of accumulating as a terminated orphan
+		// in session lists (e.g. when gitworktree refuses the branch).
+		m.rollbackSpawnSeedRow(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: workspace: %w", id, err)
 	}
 
@@ -208,7 +239,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		SessionID:     id,
 		WorkspacePath: ws.Path,
 		Argv:          argv,
-		Env:           spawnEnv(id, cfg.ProjectID, cfg.IssueID, m.dataDir, project.Config.Env),
+		Env:           m.runtimeEnv(id, cfg.ProjectID, cfg.IssueID, project.Config.Env),
 	})
 	if err != nil {
 		_ = m.workspace.Destroy(ctx, ws)
@@ -278,9 +309,24 @@ func roleOverride(kind domain.SessionKind, cfg domain.ProjectConfig) domain.Role
 
 // markSpawnFailedTerminated best-effort parks an orphaned spawn as terminated.
 // A phantom half-spawned row is worse than a terminal one; we only delete the
-// row when nothing observable has landed yet (seed state) via rollbackSpawn.
+// row when nothing observable has landed yet (seed state) via rollbackSpawn or
+// rollbackSpawnSeedRow.
 func (m *Manager) markSpawnFailedTerminated(ctx context.Context, id domain.SessionID) {
 	_ = m.lcm.MarkTerminated(ctx, id)
+}
+
+// rollbackSpawnSeedRow best-effort removes the row of a spawn that failed
+// before anything observable (worktree, runtime) was built, so failed spawns
+// don't accumulate terminated rows in session lists. DeleteSession only removes
+// rows still in seed state; if the row has progressed or the delete itself
+// fails, fall back to parking it terminated so a phantom row never looks live.
+// (Kill is not a usable fallback here: it refuses seed rows with
+// ErrIncompleteHandle before recording terminal intent.)
+func (m *Manager) rollbackSpawnSeedRow(ctx context.Context, id domain.SessionID) {
+	if deleted, err := m.store.DeleteSession(ctx, id); err == nil && deleted {
+		return
+	}
+	m.markSpawnFailedTerminated(ctx, id)
 }
 
 // rollbackSpawn deletes a session row when it is still in seed state — used
@@ -393,7 +439,7 @@ func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.Sess
 		SessionID:     id,
 		WorkspacePath: ws.Path,
 		Argv:          argv,
-		Env:           spawnEnv(id, rec.ProjectID, rec.IssueID, m.dataDir, project.Config.Env),
+		Env:           m.runtimeEnv(id, rec.ProjectID, rec.IssueID, project.Config.Env),
 	})
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: runtime: %w", id, err)
@@ -555,6 +601,54 @@ func spawnEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueI
 	env[EnvIssueID] = string(issue)
 	env[EnvDataDir] = dataDir
 	return env
+}
+
+// runtimeEnv is spawnEnv plus the hook PATH pin: the session's PATH puts the
+// running daemon's own directory first, so the bare `ao` in workspace hook
+// commands resolves to the daemon that installed them rather than whatever
+// `ao` is first on the inherited PATH (e.g. a legacy CLI without the hooks
+// command, which fails every callback and silently kills activity tracking).
+// When the pin cannot be applied the inherited PATH is kept and a warning is
+// logged so the degradation isn't silent.
+func (m *Manager) runtimeEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueID, projectEnv map[string]string) map[string]string {
+	env := spawnEnv(id, project, issue, m.dataDir, projectEnv)
+	path, err := hookPATH(m.executable, os.Getenv, projectEnv)
+	if err != nil {
+		m.logger.Warn("session PATH not pinned to the daemon binary; `ao hooks` callbacks may resolve to a different ao and activity tracking will stall",
+			"session", id, "error", err)
+		return env
+	}
+	env["PATH"] = path
+	return env
+}
+
+// hookPATH builds the PATH value pinned into a spawned session: the daemon
+// executable's directory prepended to the base PATH (the project's PATH
+// override when set, else the daemon's inherited PATH — matching what the
+// runtime would have exported anyway). An error means the pin cannot be
+// applied: the executable is unresolvable, or is not named "ao", in which case
+// prepending its directory would not change what `ao` resolves to.
+func hookPATH(executable func() (string, error), getenv func(string) string, projectEnv map[string]string) (string, error) {
+	exe, err := executable()
+	if err != nil {
+		return "", fmt.Errorf("resolve daemon executable: %w", err)
+	}
+	name := filepath.Base(exe)
+	if runtime.GOOS == "windows" {
+		name = strings.TrimSuffix(strings.ToLower(name), ".exe")
+	}
+	if name != hookBinaryName {
+		return "", fmt.Errorf("daemon executable %s is not named %q", exe, hookBinaryName)
+	}
+	base := projectEnv["PATH"]
+	if base == "" {
+		base = getenv("PATH")
+	}
+	dir := filepath.Dir(exe)
+	if base == "" {
+		return dir, nil
+	}
+	return dir + string(os.PathListSeparator) + base, nil
 }
 
 // provisionWorkspace applies the project's per-workspace setup after the

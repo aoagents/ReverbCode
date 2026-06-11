@@ -7,6 +7,7 @@ package gen
 
 import (
 	"context"
+	"database/sql"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -15,7 +16,7 @@ import (
 const getSession = `-- name: GetSession :one
 SELECT id, project_id, num, issue_id, kind, harness,
     activity_state, activity_last_at, is_terminated, branch, workspace_path,
-    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name
+    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at
 FROM sessions WHERE id = ?
 `
 
@@ -40,6 +41,7 @@ func (q *Queries) GetSession(ctx context.Context, id domain.SessionID) (Session,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DisplayName,
+		&i.FirstSignalAt,
 	)
 	return i, err
 }
@@ -47,10 +49,10 @@ func (q *Queries) GetSession(ctx context.Context, id domain.SessionID) (Session,
 const insertSession = `-- name: InsertSession :exec
 INSERT INTO sessions (
     id, project_id, num, issue_id, kind, harness, display_name,
-    activity_state, activity_last_at, is_terminated,
+    activity_state, activity_last_at, first_signal_at, is_terminated,
     branch, workspace_path, runtime_handle_id, agent_session_id, prompt,
     created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertSessionParams struct {
@@ -63,6 +65,7 @@ type InsertSessionParams struct {
 	DisplayName     string
 	ActivityState   domain.ActivityState
 	ActivityLastAt  time.Time
+	FirstSignalAt   sql.NullTime
 	IsTerminated    bool
 	Branch          string
 	WorkspacePath   string
@@ -84,6 +87,7 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) er
 		arg.DisplayName,
 		arg.ActivityState,
 		arg.ActivityLastAt,
+		arg.FirstSignalAt,
 		arg.IsTerminated,
 		arg.Branch,
 		arg.WorkspacePath,
@@ -99,7 +103,7 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) er
 const listAllSessions = `-- name: ListAllSessions :many
 SELECT id, project_id, num, issue_id, kind, harness,
     activity_state, activity_last_at, is_terminated, branch, workspace_path,
-    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name
+    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at
 FROM sessions ORDER BY project_id, num
 `
 
@@ -130,6 +134,7 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]Session, error) {
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DisplayName,
+			&i.FirstSignalAt,
 		); err != nil {
 			return nil, err
 		}
@@ -147,7 +152,7 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]Session, error) {
 const listSessionsByProject = `-- name: ListSessionsByProject :many
 SELECT id, project_id, num, issue_id, kind, harness,
     activity_state, activity_last_at, is_terminated, branch, workspace_path,
-    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name
+    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at
 FROM sessions WHERE project_id = ? ORDER BY num
 `
 
@@ -178,6 +183,7 @@ func (q *Queries) ListSessionsByProject(ctx context.Context, projectID domain.Pr
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DisplayName,
+			&i.FirstSignalAt,
 		); err != nil {
 			return nil, err
 		}
@@ -248,7 +254,7 @@ func (q *Queries) SessionIsSeed(ctx context.Context, id domain.SessionID) (bool,
 const updateSession = `-- name: UpdateSession :exec
 UPDATE sessions SET
     issue_id = ?, kind = ?, harness = ?, display_name = ?,
-    activity_state = ?, activity_last_at = ?, is_terminated = ?,
+    activity_state = ?, activity_last_at = ?, first_signal_at = ?, is_terminated = ?,
     branch = ?, workspace_path = ?, runtime_handle_id = ?, agent_session_id = ?, prompt = ?,
     updated_at = ?
 WHERE id = ?
@@ -261,6 +267,7 @@ type UpdateSessionParams struct {
 	DisplayName     string
 	ActivityState   domain.ActivityState
 	ActivityLastAt  time.Time
+	FirstSignalAt   sql.NullTime
 	IsTerminated    bool
 	Branch          string
 	WorkspacePath   string
@@ -279,6 +286,7 @@ func (q *Queries) UpdateSession(ctx context.Context, arg UpdateSessionParams) er
 		arg.DisplayName,
 		arg.ActivityState,
 		arg.ActivityLastAt,
+		arg.FirstSignalAt,
 		arg.IsTerminated,
 		arg.Branch,
 		arg.WorkspacePath,

@@ -26,6 +26,7 @@ function sessionWith(overrides: Partial<WorkspaceSession>): WorkspaceSession {
 describe("toSessionStatus", () => {
 	it("passes through a known status", () => {
 		expect(toSessionStatus("mergeable")).toBe("mergeable");
+		expect(toSessionStatus("no_signal")).toBe("no_signal");
 	});
 
 	it("overrides to terminated when the session is terminated", () => {
@@ -50,6 +51,7 @@ describe("workerDisplayStatus", () => {
 		["needs_input", "needs_you"],
 		["changes_requested", "needs_you"],
 		["review_pending", "needs_you"],
+		["no_signal", "needs_you"],
 		["ci_failed", "ci_failed"],
 		["approved", "mergeable"],
 		["mergeable", "mergeable"],

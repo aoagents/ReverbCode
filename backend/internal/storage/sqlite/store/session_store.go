@@ -180,7 +180,8 @@ func rowToRecord(row gen.Session) domain.SessionRecord {
 			State:          row.ActivityState,
 			LastActivityAt: row.ActivityLastAt,
 		},
-		IsTerminated: row.IsTerminated,
+		FirstSignalAt: nullTimeToTime(row.FirstSignalAt),
+		IsTerminated:  row.IsTerminated,
 		Metadata: domain.SessionMetadata{
 			Branch:          row.Branch,
 			WorkspacePath:   row.WorkspacePath,
@@ -205,6 +206,7 @@ func recordToInsert(rec domain.SessionRecord, num int64) gen.InsertSessionParams
 		DisplayName:     rec.DisplayName,
 		ActivityState:   activity.State,
 		ActivityLastAt:  activity.LastActivityAt,
+		FirstSignalAt:   timeToNullTime(rec.FirstSignalAt),
 		IsTerminated:    rec.IsTerminated,
 		Branch:          rec.Metadata.Branch,
 		WorkspacePath:   rec.Metadata.WorkspacePath,
@@ -226,6 +228,7 @@ func recordToUpdate(rec domain.SessionRecord) gen.UpdateSessionParams {
 		DisplayName:     rec.DisplayName,
 		ActivityState:   activity.State,
 		ActivityLastAt:  activity.LastActivityAt,
+		FirstSignalAt:   timeToNullTime(rec.FirstSignalAt),
 		IsTerminated:    rec.IsTerminated,
 		Branch:          rec.Metadata.Branch,
 		WorkspacePath:   rec.Metadata.WorkspacePath,
@@ -234,6 +237,22 @@ func recordToUpdate(rec domain.SessionRecord) gen.UpdateSessionParams {
 		Prompt:          rec.Metadata.Prompt,
 		UpdatedAt:       rec.UpdatedAt,
 	}
+}
+
+// nullTimeToTime / timeToNullTime bridge the nullable first_signal_at column
+// to the domain's zero-time convention (zero = no signal received yet).
+func nullTimeToTime(t sql.NullTime) time.Time {
+	if !t.Valid {
+		return time.Time{}
+	}
+	return t.Time
+}
+
+func timeToNullTime(t time.Time) sql.NullTime {
+	if t.IsZero() {
+		return sql.NullTime{}
+	}
+	return sql.NullTime{Time: t, Valid: true}
 }
 
 func normalActivity(a domain.Activity, fallback time.Time) domain.Activity {

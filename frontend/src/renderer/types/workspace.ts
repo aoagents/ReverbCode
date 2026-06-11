@@ -10,6 +10,7 @@ export type SessionStatus =
 	| "merged"
 	| "needs_input"
 	| "idle"
+	| "no_signal"
 	| "terminated";
 
 const sessionStatuses = new Set<SessionStatus>([
@@ -24,6 +25,7 @@ const sessionStatuses = new Set<SessionStatus>([
 	"merged",
 	"needs_input",
 	"idle",
+	"no_signal",
 	"terminated",
 ]);
 
@@ -99,6 +101,9 @@ export function workerDisplayStatus(session: WorkspaceSession): WorkerDisplaySta
 		case "needs_input":
 		case "changes_requested":
 		case "review_pending":
+		// no_signal: the daemon has never heard from this agent — a human
+		// should look at the pane, so it surfaces as needs-you.
+		case "no_signal":
 			return "needs_you";
 		case "ci_failed":
 			return "ci_failed";

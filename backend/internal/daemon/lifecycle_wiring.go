@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/activitydispatch"
 	agentregistry "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/registry"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/workspace/gitworktree"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
@@ -78,12 +79,21 @@ func startSession(cfg config.Config, runtime ports.Runtime, store *sqlite.Store,
 		Messenger: messenger,
 		Lifecycle: lcm,
 		DataDir:   cfg.DataDir,
+		Logger:    log,
 	})
 	scmProvider, err := newGitHubSCMProvider(log)
 	if err != nil {
 		logSCMProviderDisabled(log, err)
 	}
-	return sessionsvc.NewWithDeps(sessionsvc.Deps{Manager: mgr, Store: store, PRClaimer: store, SCM: scmProvider}), nil
+	return sessionsvc.NewWithDeps(sessionsvc.Deps{
+		Manager:   mgr,
+		Store:     store,
+		PRClaimer: store,
+		SCM:       scmProvider,
+		// no_signal only makes sense for harnesses whose adapters install
+		// activity hooks; the deriver registry is the source of truth for that.
+		SignalCapable: activitydispatch.SupportsHarness,
+	}), nil
 }
 
 // runtimeMessageSender is the narrow part of the concrete runtime needed by

@@ -269,6 +269,39 @@ func TestSessionUpdateActivityAndTermination(t *testing.T) {
 	}
 }
 
+func TestSessionFirstSignalRoundTrip(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	r, _ := s.CreateSession(ctx, sampleRecord("mer"))
+
+	// Fresh sessions have no signal receipt: NULL round-trips as zero time.
+	got, _, _ := s.GetSession(ctx, r.ID)
+	if !got.FirstSignalAt.IsZero() {
+		t.Fatalf("fresh session has receipt: %v", got.FirstSignalAt)
+	}
+
+	stamp := time.Now().UTC().Truncate(time.Second)
+	got.FirstSignalAt = stamp
+	if err := s.UpdateSession(ctx, got); err != nil {
+		t.Fatal(err)
+	}
+	again, _, _ := s.GetSession(ctx, r.ID)
+	if !again.FirstSignalAt.Equal(stamp) {
+		t.Fatalf("receipt not persisted: got %v want %v", again.FirstSignalAt, stamp)
+	}
+
+	// Clearing it (spawn/restore re-proves the hook pipeline) round-trips too.
+	again.FirstSignalAt = time.Time{}
+	if err := s.UpdateSession(ctx, again); err != nil {
+		t.Fatal(err)
+	}
+	final, _, _ := s.GetSession(ctx, r.ID)
+	if !final.FirstSignalAt.IsZero() {
+		t.Fatalf("receipt not cleared: %v", final.FirstSignalAt)
+	}
+}
+
 func TestPRCRUD(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

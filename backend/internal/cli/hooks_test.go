@@ -2,9 +2,13 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -207,6 +211,99 @@ func TestHooks_DaemonDownIsBestEffort(t *testing.T) {
 	}, "hooks", "claude-code", "session-end")
 	if err != nil {
 		t.Fatalf("hooks must be best-effort (exit 0) when the daemon is down, got: %v", err)
+	}
+}
+
+// TestHooks_DeliveryFailureGoesToHooksLog covers the durable failure sink:
+// agents swallow hook stderr, so a delivery failure must also land in
+// $AO_DATA_DIR/hooks.log — and a delivered hook must not write the file at all.
+func TestHooks_DeliveryFailureGoesToHooksLog(t *testing.T) {
+	cases := []struct {
+		name    string
+		status  int
+		body    string
+		wantLog bool
+		wantIn  []string
+	}{
+		{
+			name:    "daemon error is appended",
+			status:  http.StatusInternalServerError,
+			body:    `{"error":"internal","code":"BOOM","message":"boom"}`,
+			wantLog: true,
+			wantIn:  []string{"ao hooks claude-code session-end", "session=ao-7"},
+		},
+		{
+			name:   "successful delivery writes nothing",
+			status: http.StatusOK,
+			body:   `{"ok":true}`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("AO_SESSION_ID", "ao-7")
+			cfg := setConfigEnv(t)
+			srv, _ := activityServer(t, tc.status, tc.body)
+			writeRunFileFor(t, cfg, srv)
+
+			_, _, err := executeCLI(t, Deps{
+				In:           strings.NewReader(`{"reason":"logout"}`),
+				ProcessAlive: func(int) bool { return true },
+			}, "hooks", "claude-code", "session-end")
+			if err != nil {
+				t.Fatalf("hooks must exit 0, got: %v", err)
+			}
+
+			logPath := filepath.Join(cfg.dataDir, "hooks.log")
+			data, err := os.ReadFile(logPath)
+			if !tc.wantLog {
+				if !errors.Is(err, fs.ErrNotExist) {
+					t.Fatalf("hooks.log should not exist after a delivered hook, got err=%v data=%q", err, data)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("hooks.log not written: %v", err)
+			}
+			for _, want := range tc.wantIn {
+				if !strings.Contains(string(data), want) {
+					t.Errorf("hooks.log missing %q:\n%s", want, data)
+				}
+			}
+		})
+	}
+}
+
+// TestHooks_HooksLogTruncatesPastCap asserts the size guard: an append against
+// a hooks.log already past the cap truncates it first, so a persistently
+// failing hook cannot grow the file without bound.
+func TestHooks_HooksLogTruncatesPastCap(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "ao-7")
+	cfg := setConfigEnv(t) // no run file written: every delivery fails
+	logPath := filepath.Join(cfg.dataDir, "hooks.log")
+	if err := os.MkdirAll(cfg.dataDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	oversized := strings.Repeat("x", maxHooksLogBytes+1)
+	if err := os.WriteFile(logPath, []byte(oversized), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err := executeCLI(t, Deps{
+		In: strings.NewReader(`{"reason":"logout"}`),
+	}, "hooks", "claude-code", "session-end")
+	if err != nil {
+		t.Fatalf("hooks must exit 0, got: %v", err)
+	}
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data) > maxHooksLogBytes {
+		t.Fatalf("hooks.log = %d bytes, want truncated below the %d cap", len(data), maxHooksLogBytes)
+	}
+	if !strings.Contains(string(data), "ao hooks claude-code session-end") {
+		t.Errorf("truncated hooks.log missing the new failure line:\n%s", data)
 	}
 }
 
