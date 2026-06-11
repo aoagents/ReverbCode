@@ -1,0 +1,42 @@
+backend/internal/storage/sqlite/migrations/0010_add_first_signal_at.sql
+  s_15e9729d3cec0a::t_d3560d42c5e64e 44
+  s_15e9729d3cec0a::t_536578d1a7eb0a 20-23,26
+backend/internal/daemon/lifecycle_wiring.go
+  s_15e9729d3cec0a::t_b701614db1c2db 10
+  s_15e9729d3cec0a::t_6e8f09064606ad 88-96
+backend/internal/service/session/status.go
+  s_15e9729d3cec0a::t_d3eef86573dc60 11-15,18-22
+  s_15e9729d3cec0a::t_5611c76f47bef7 47-50
+backend/internal/service/session/service.go
+  s_15e9729d3cec0a::t_26499afc7dd823 313,315,326-334
+  s_15e9729d3cec0a::t_0f1f0e913c627b 70-74
+  s_15e9729d3cec0a::t_39a7a3482d3a3d 91-94,99
+backend/internal/lifecycle/manager.go
+  s_15e9729d3cec0a::t_9623df6fe10d81 90-92
+docs/agent/README.md
+  s_15e9729d3cec0a::t_8d892fafbe7398 74
+backend/internal/adapters/agent/activitydispatch/dispatch.go
+  s_15e9729d3cec0a::t_ca229b61691b76 60-70
+backend/internal/adapters/agent/activitydispatch/dispatch_test.go
+  s_15e9729d3cec0a::t_cd2190ed1a6f95 1-33
+backend/internal/service/session/status_test.go
+  s_15e9729d3cec0a::t_f80fecf3213aba 42-53,55-60,62,68,71,75
+  s_15e9729d3cec0a::t_4919e3b5b601ab 37-40
+  s_15e9729d3cec0a::t_7ae2e4a9fde865 81-95
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "eac71e5802ae6d5afe760a31483ec8d18d06f721",
+  "prompts": {},
+  "sessions": {
+    "s_15e9729d3cec0a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3eeeab3d-700c-4821-81b2-0fce22448046",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    }
+  }
+}
