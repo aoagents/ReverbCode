@@ -1,0 +1,85 @@
+backend/internal/service/session/service.go
+  s_1c9ec74f457ab0::t_000c9965c1def4 345-347
+  s_1c9ec74f457ab0::t_91d1c35aab7ffe 36-38
+  s_1c9ec74f457ab0::t_f8c76cff1d0017 22-23
+  s_1c9ec74f457ab0::t_46e009c4ae974d 397,399
+frontend/src/renderer/App.tsx
+  s_1c9ec74f457ab0::t_c062253b0a6bc1 57-59
+  s_1c9ec74f457ab0::t_344d1e2aa71a66 201-216
+  s_1c9ec74f457ab0::t_883a9e66d35949 262,269
+backend/internal/cli/dto_drift_e2e_test.go
+  s_1c9ec74f457ab0::t_9229b7f4a0d293 81-88
+backend/internal/httpd/controllers/sessions_test.go
+  s_1c9ec74f457ab0::t_68dee430cdb832 91,97-117
+  s_1c9ec74f457ab0::t_cdb197675c2d8d 390-439
+  s_1c9ec74f457ab0::t_4976dac1a3a00b 44
+  s_1c9ec74f457ab0::t_c7a5acaafd5360 22
+frontend/src/renderer/App.test.tsx
+  s_1c9ec74f457ab0::t_1c6efdbd6ff33b 217-286
+  s_1c9ec74f457ab0::t_ee59348587708c 22
+  s_1c9ec74f457ab0::t_1f24f7ac717c8a 1
+frontend/src/renderer/hooks/useWorkspaceQuery.ts
+  s_1c9ec74f457ab0::t_05d492945d4c9d 32,38,45-46
+backend/internal/httpd/apispec/specgen/build.go
+  s_1c9ec74f457ab0::t_4cfb5cff9cb281 441-460
+  s_1c9ec74f457ab0::t_01f2d6dd547fb5 144-145
+frontend/src/renderer/components/Sidebar.tsx
+  s_1c9ec74f457ab0::t_33c8b90972b655 205-216,218-223,226-233,235-247
+  s_1c9ec74f457ab0::t_52ca17e2c1fc25 54-55
+  s_1c9ec74f457ab0::t_32ee88f5a08e90 1-15
+  s_1c9ec74f457ab0::t_8e9778324fd838 33-34
+  s_1c9ec74f457ab0::t_c4a50487622e95 71,73-110
+  s_1c9ec74f457ab0::t_547d2d26ab2a93 281-313
+frontend/src/renderer/hooks/useWorkspaceQuery.test.tsx
+  s_1c9ec74f457ab0::t_0c0d0dd2286042 119-155
+backend/internal/httpd/controllers/dto.go
+  s_1c9ec74f457ab0::t_eb2727f24a546d 107
+  s_1c9ec74f457ab0::t_d7c2c9f91195b1 161-172
+backend/internal/domain/session.go
+  s_1c9ec74f457ab0::t_694956076ff4c6 51-61
+  s_1c9ec74f457ab0::t_73f782c5a2d528 69
+backend/internal/storage/sqlite/gen/models.go
+  s_1c9ec74f457ab0::t_057d60a2bfa597 133
+backend/internal/storage/sqlite/queries/sessions.sql
+  s_1c9ec74f457ab0::t_bc465826406b5c 23,29,35,42-52
+backend/internal/storage/sqlite/gen/sessions.sql.go
+  s_1c9ec74f457ab0::t_057d60a2bfa597 16-38,42,68,130,162,180,212,280-295
+backend/internal/httpd/controllers/sessions.go
+  s_1c9ec74f457ab0::t_e1c70d502760b6 235-261
+  s_1c9ec74f457ab0::t_d9c162f50b07a7 74-75
+  s_1c9ec74f457ab0::t_531f8421c63672 506-512
+  s_1c9ec74f457ab0::t_34549fb8c8b088 33-34
+backend/internal/httpd/apispec/openapi.yaml
+  s_1c9ec74f457ab0::t_24fc5172c9120b 451-460,653-691,1149-1181,1262-1271,1699-1700,1876-1884
+frontend/src/api/schema.ts
+  s_1c9ec74f457ab0::t_24fc5172c9120b 199-215,386-402,444-447,613,675-678,1236-1237,1492-1541,2126-2144
+backend/internal/service/session/service_test.go
+  s_1c9ec74f457ab0::t_5e7d3300e8518c 149-259
+  s_1c9ec74f457ab0::t_bb38aa4b483d8f 68-89
+backend/internal/storage/sqlite/store/session_store.go
+  s_1c9ec74f457ab0::t_b335db6af3462c 59-87
+  s_1c9ec74f457ab0::t_e2c6f90b9e9f53 214
+backend/internal/storage/sqlite/store/store_test.go
+  s_1c9ec74f457ab0::t_9da54e42d12f0e 305-371
+frontend/src/renderer/types/workspace.ts
+  s_1c9ec74f457ab0::t_0a6c1e3e0a7132 79-80
+  s_1c9ec74f457ab0::t_975187a18d7c81 167-172
+backend/internal/storage/sqlite/migrations/0011_add_session_archived_at.sql
+  s_1c9ec74f457ab0::t_e0eaf08241f7ef 1-51
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "8cd8f1f3dac14cfdf36b6a73804194ef535a8987",
+  "prompts": {},
+  "sessions": {
+    "s_1c9ec74f457ab0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "40514750-edbd-42cf-8eb3-9af733edbbbb",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    }
+  }
+}
