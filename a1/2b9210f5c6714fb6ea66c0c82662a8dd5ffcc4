@@ -1,0 +1,177 @@
+frontend/src/renderer/components/DashboardTopbar.tsx
+  s_1c9ec74f457ab0::t_e299e08975d953 1-142
+frontend/src/renderer/routes/_shell.tsx
+  s_1c9ec74f457ab0::t_e299e08975d953 1-56,79-188,190-191,193-218
+  s_1c9ec74f457ab0::t_4a92e97f4014a5 57-78
+  s_1c9ec74f457ab0::t_2f43c6a378fe87 189,192
+frontend/src/renderer/components/ProjectSettingsForm.tsx
+  s_1c9ec74f457ab0::t_e299e08975d953 1-237
+frontend/src/renderer/components/PullRequestsPage.tsx
+  s_1c9ec74f457ab0::t_e299e08975d953 1-170
+frontend/tsconfig.json
+  s_1c9ec74f457ab0::t_e299e08975d953 20-24
+backend/internal/httpd/apispec/openapi.yaml
+  s_1c9ec74f457ab0::t_e299e08975d953 415-503,1453-1460,1537-1545,1747-1794,2060-2061
+frontend/src/renderer/components/SessionsBoard.tsx
+  s_1c9ec74f457ab0::t_e299e08975d953 1-202
+frontend/src/renderer/routes/_shell.review.tsx
+  s_1c9ec74f457ab0::t_e299e08975d953 1-6
+frontend/forge.config.ts
+  s_1c9ec74f457ab0::t_e299e08975d953 26
+frontend/src/renderer/components/ui/resizable.tsx
+  s_1c9ec74f457ab0::t_e299e08975d953 1-45
+frontend/src/renderer/routes/_shell.projects.$projectId_.settings.tsx
+  s_1c9ec74f457ab0::t_e299e08975d953 1-11
+backend/internal/httpd/api.go
+  s_1c9ec74f457ab0::t_e299e08975d953 16,25,37,54-56,77
+frontend/src/main.ts
+  s_1c9ec74f457ab0::t_e299e08975d953 2,15-16
+frontend/src/renderer/routes/_shell.projects.$projectId_.sessions.$sessionId.tsx
+  s_1c9ec74f457ab0::t_e299e08975d953 1-11
+CLAUDE.md
+  s_1c9ec74f457ab0::t_e299e08975d953 7-17
+backend/internal/terminal/session_test.go
+  s_1c9ec74f457ab0::t_e299e08975d953 20,38,62,84,96-98,109-163,185
+frontend/src/renderer/components/ui/label.tsx
+  s_1c9ec74f457ab0::t_e299e08975d953 1-21
+frontend/src/renderer/routeTree.gen.ts
+  s_1c9ec74f457ab0::t_e299e08975d953 22,26,31,36,41,46,51,207,216-218,229
+  s_1c9ec74f457ab0::t_98c72c9ea35fc0 11-20,23-25,27-30,32-35,37-40,42-45,47-50,52-67,70-77,80-87,90-99,102-133,136,139-204,208-215,219-228,230-231,233-237
+frontend/src/renderer/components/Sidebar.test.tsx
+  s_1c9ec74f457ab0::t_c8e70aa5cc8f44 1-92
+backend/internal/service/review/review.go
+  s_1c9ec74f457ab0::t_e299e08975d953 1-108
+frontend/src/renderer/components/ReviewDashboard.tsx
+  s_1c9ec74f457ab0::t_e299e08975d953 1-171
+frontend/src/renderer/components/SessionView.tsx
+  s_1c9ec74f457ab0::t_e299e08975d953 1-51,57-165
+  s_1c9ec74f457ab0::t_1ebb635266a992 52-56
+frontend/src/renderer/components/Sidebar.tsx
+  s_1c9ec74f457ab0::t_0e2bae1bf99b31 368-379
+  s_1c9ec74f457ab0::t_33d9a19b26082a 124-126,148,150-153
+  s_1c9ec74f457ab0::t_949ab42c7f71ee 442-490,494-495,499,501,505,508-535
+  s_1c9ec74f457ab0::t_a6639af2d94794 6-7,11
+  s_1c9ec74f457ab0::t_e93231dd1a0c34 258
+frontend/src/renderer/lib/spawn-orchestrator.ts
+  s_1c9ec74f457ab0::t_e299e08975d953 1-18
+frontend/src/renderer/components/ui/card.tsx
+  s_1c9ec74f457ab0::t_e299e08975d953 1-56
+frontend/src/renderer/components/ui/skeleton.tsx
+  s_1c9ec74f457ab0::t_e299e08975d953 1-7
+frontend/.npmrc
+  s_1c9ec74f457ab0::t_e299e08975d953 1-2
+frontend/src/renderer/hooks/useTerminalSession.ts
+  s_1c9ec74f457ab0::t_e299e08975d953 26-32,54-57,82,103-106,162-170,176-182
+frontend/src/renderer/hooks/useTerminalSession.test.tsx
+  s_1c9ec74f457ab0::t_e299e08975d953 82,94,97-98,170,174-183,203,211
+frontend/src/renderer/components/ui/sheet.tsx
+  s_1c9ec74f457ab0::t_e299e08975d953 1-107
+backend/internal/adapters/runtime/zellij/zellij.go
+  s_1c9ec74f457ab0::t_e299e08975d953 155-157,163,208-211,220,228-234
+backend/internal/terminal/fakes_test.go
+  s_1c9ec74f457ab0::t_e299e08975d953 44-50
+frontend/src/renderer/components/TerminalPane.tsx
+  s_1c9ec74f457ab0::t_e299e08975d953 1,4-5,29,38-44,46-47,49-53,56-66,68-78,81,84-95
+frontend/src/renderer/routes/_shell.index.tsx
+  s_1c9ec74f457ab0::t_e299e08975d953 1-6
+backend/internal/httpd/controllers/reviews.go
+  s_1c9ec74f457ab0::t_e299e08975d953 1-103
+frontend/src/renderer/components/SpawnWorkerModal.test.tsx
+  s_1c9ec74f457ab0::t_e299e08975d953 1-77
+DESIGN.md
+  s_1c9ec74f457ab0::t_e299e08975d953 8-44,84-87
+frontend/src/renderer/components/ui/separator.tsx
+  s_1c9ec74f457ab0::t_e299e08975d953 1-28
+frontend/src/renderer/components/ui/context-menu.tsx
+  s_1c9ec74f457ab0::t_e299e08975d953 106,118-120
+frontend/src/renderer/styles.css
+  s_1c9ec74f457ab0::t_e299e08975d953 13-22,29,34-36,38-43,66-68,74-81,93-115,117,119-127,145-146,151-160,196-203,233-974
+backend/internal/httpd/terminal_mux_test.go
+  s_1c9ec74f457ab0::t_e299e08975d953 9,23-34,36-37,84,113
+frontend/src/renderer/components/TitlebarNav.tsx
+  s_1c9ec74f457ab0::t_e299e08975d953 1-77
+frontend/src/renderer/components/XtermTerminal.tsx
+  s_1c9ec74f457ab0::t_e299e08975d953 1-203
+backend/internal/terminal/session.go
+  s_1c9ec74f457ab0::t_e299e08975d953 105-128,137,141-143,157,161-163,185-189
+frontend/src/api/schema.ts
+  s_1c9ec74f457ab0::t_e299e08975d953 146-196,531-534,564-566,645-662,1289-1394
+frontend/components.json
+  s_1c9ec74f457ab0::t_e299e08975d953 1-21
+frontend/src/renderer/components/SessionView.test.tsx
+  s_1c9ec74f457ab0::t_e299e08975d953 1-207
+frontend/src/renderer/components/Topbar.tsx
+  s_1c9ec74f457ab0::t_e299e08975d953 1-3,7-17,25-28,31-35,38,41,43-56,58-64,68-74,76-78,82-83,85-104,108-111,113-119,121-126
+frontend/src/renderer/types/workspace.test.ts
+  s_1c9ec74f457ab0::t_e299e08975d953 3,10-11,110-133
+backend/internal/adapters/runtime/zellij/commands.go
+  s_1c9ec74f457ab0::t_e299e08975d953 53-60
+frontend/vite.renderer.config.ts
+  s_1c9ec74f457ab0::t_e299e08975d953 2-3,6,42-47
+backend/internal/httpd/apispec/specgen/build.go
+  s_1c9ec74f457ab0::t_e299e08975d953 64-65,169-175,261,265-298
+frontend/src/renderer/components/ui/sidebar.tsx
+  s_1c9ec74f457ab0::t_e299e08975d953 1-677
+frontend/pnpm-workspace.yaml
+  s_1c9ec74f457ab0::t_e299e08975d953 1-20
+backend/internal/daemon/daemon.go
+  s_1c9ec74f457ab0::t_e299e08975d953 19,109
+frontend/src/renderer/components/SessionInspector.tsx
+  s_1c9ec74f457ab0::t_e299e08975d953 1-390
+frontend/src/renderer/components/SpawnWorkerModal.tsx
+  s_1c9ec74f457ab0::t_e299e08975d953 21-23,33-38,53,68-70,80-86,90-91,96,183-195,230-234
+frontend/src/renderer/components/ui/table.tsx
+  s_1c9ec74f457ab0::t_e299e08975d953 1-76
+frontend/src/renderer/hooks/useResizable.ts
+  s_1c9ec74f457ab0::t_e299e08975d953 1-76
+frontend/src/renderer/lib/api-client.ts
+  s_1c9ec74f457ab0::t_e299e08975d953 75-91
+frontend/src/renderer/routes/_shell.projects.$projectId.tsx
+  s_1c9ec74f457ab0::t_e299e08975d953 1-11
+frontend/src/renderer/routes/_shell.reviews.tsx
+  s_1c9ec74f457ab0::t_e299e08975d953 1-8
+frontend/src/renderer/stores/ui-store.ts
+  s_1c9ec74f457ab0::t_e299e08975d953 4,6,9-12,16,19-20,22,26-27,38-40,42-43,47-57,61,64-73,80-84
+frontend/src/renderer/components/ui/dropdown-menu.tsx
+  s_1c9ec74f457ab0::t_e299e08975d953 1-74
+frontend/package.json
+  s_1c9ec74f457ab0::t_e299e08975d953 3,19,59,67
+frontend/src/renderer/lib/terminal-themes.ts
+  s_1c9ec74f457ab0::t_e299e08975d953 1-62
+backend/internal/terminal/manager_test.go
+  s_1c9ec74f457ab0::t_e299e08975d953 72,155,169-170
+backend/internal/adapters/runtime/zellij/zellij_test.go
+  s_1c9ec74f457ab0::t_e299e08975d953 45-50,384-388,401-414,423-443
+frontend/src/renderer/components/CenterPane.tsx
+  s_1c9ec74f457ab0::t_e299e08975d953 1-2,11,13,15
+frontend/src/renderer/hooks/use-mobile.tsx
+  s_1c9ec74f457ab0::t_e299e08975d953 1-19
+frontend/src/renderer/lib/format-time.ts
+  s_1c9ec74f457ab0::t_e299e08975d953 1-14
+frontend/src/renderer/routes/_shell.prs.tsx
+  s_1c9ec74f457ab0::t_e299e08975d953 1-6
+frontend/src/renderer/components/ui/select.tsx
+  s_1c9ec74f457ab0::t_e299e08975d953 1-160
+frontend/src/renderer/lib/mock-data.ts
+  s_1c9ec74f457ab0::t_e299e08975d953 18-19,44-45
+frontend/src/renderer/lib/shell-context.ts
+  s_1c9ec74f457ab0::t_e299e08975d953 1-24
+frontend/src/renderer/routes/_shell.sessions.$sessionId.tsx
+  s_1c9ec74f457ab0::t_e299e08975d953 1-11
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "a12b9210f5c6714fb6ea66c0c82662a8dd5ffcc4",
+  "prompts": {},
+  "sessions": {
+    "s_1c9ec74f457ab0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "40514750-edbd-42cf-8eb3-9af733edbbbb",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    }
+  }
+}
