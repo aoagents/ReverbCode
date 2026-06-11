@@ -1,0 +1,117 @@
+backend/internal/storage/sqlite/gen/sessions.sql.go
+  s_15e9729d3cec0a::t_02989f89cb2a6a 19,44,106,137,155,186
+  s_15e9729d3cec0a::t_e363661cee298c 10,52,55,68,90,257,270,289
+backend/internal/storage/sqlite/gen/models.go
+  s_15e9729d3cec0a::t_e363661cee298c 131
+frontend/src/renderer/components/SpawnWorkerModal.tsx
+  s_ba675d048d2968::t_4fc49340aaba6c 30,71,162-170
+.context/codex-session-id
+  s_15e9729d3cec0a::t_e44f07ae174527 1
+backend/internal/domain/session.go
+  s_15e9729d3cec0a::t_9e4f637a97d789 46-52
+backend/internal/storage/sqlite/store/session_store.go
+  s_15e9729d3cec0a::t_a2cb7ea21f75cc 231,242-255
+  s_15e9729d3cec0a::t_489d1af8d36643 209
+  s_15e9729d3cec0a::t_9c5414eeaa2229 183-184
+backend/internal/session_manager/provision_test.go
+  s_4df1c91c109126::t_1b522ac5b7c632 99-101
+backend/internal/lifecycle/manager_test.go
+  s_15e9729d3cec0a::t_8b15de214eae7f 500-548
+frontend/src/renderer/App.test.tsx
+  s_ba675d048d2968::t_4fc49340aaba6c 10,42,61,164-165,174-208,234-258
+backend/internal/service/session/status.go
+  s_15e9729d3cec0a::t_2a4f9ba3c0b2f7 3-4,6-18,42-47
+frontend/src/renderer/types/workspace.ts
+  s_15e9729d3cec0a::t_e3e824a6f26e13 13,28
+  s_15e9729d3cec0a::t_55f37e4a0623d3 104-106
+backend/internal/cli/hooks_test.go
+  s_4df1c91c109126::t_1a010249b7f3e7 307-309
+backend/internal/cli/doctor_test.go
+  s_4df1c91c109126::t_8bee9e7afddf18 351-352
+backend/internal/storage/sqlite/migrations/0009_add_first_signal_at.sql
+  s_15e9729d3cec0a::t_39010829ce1983 1-39
+  s_15e9729d3cec0a::t_65bb080950ecce 40-59
+backend/internal/session_manager/manager_test.go
+  s_0c9f3151785578::t_c09d4621698892 338-339
+  s_4df1c91c109126::t_579244cab9ffe0 675-677
+  s_ba675d048d2968::t_8c763a57c6f239 22-25
+backend/internal/storage/sqlite/queries/sessions.sql
+  s_15e9729d3cec0a::t_e363661cee298c 7,10,15
+  s_15e9729d3cec0a::t_02989f89cb2a6a 23,29,35
+backend/internal/cli/hooks.go
+  s_ba675d048d2968::t_8c763a57c6f239 72-74
+backend/internal/storage/sqlite/store/store_test.go
+  s_15e9729d3cec0a::t_0e3b82d207ca60 272-304
+backend/internal/lifecycle/manager.go
+  s_15e9729d3cec0a::t_14ff429c60deb6 88-92,96-98
+  s_15e9729d3cec0a::t_6f40c905251265 120-123
+backend/internal/service/session/service.go
+  s_15e9729d3cec0a::t_7845431e15d39f 304,306-315
+frontend/src/renderer/App.tsx
+  s_ba675d048d2968::t_4fc49340aaba6c 34-46,129,144-147,158,163-173,185,187
+backend/internal/cli/doctor.go
+  s_15e9729d3cec0a::t_a4902cf46715f4 178
+  s_4df1c91c109126::t_252030805f0acb 268-269
+  s_15e9729d3cec0a::t_f46077facf5cc4 313-354
+  s_15e9729d3cec0a::t_f99113ee2a7eb5 147
+  s_15e9729d3cec0a::t_adfe8e483ac9da 16,20
+  s_15e9729d3cec0a::t_37e6ad1aca78e8 382-414
+backend/internal/adapters/agent/codex/hooks.go
+  s_15e9729d3cec0a::t_1e6a7fa193f0c2 37-40
+DESIGN.md
+  s_ba675d048d2968::t_4fc49340aaba6c 220-230
+backend/internal/adapters/agent/codex/codex_test.go
+  s_15e9729d3cec0a::t_405f04c530aa69 33-36
+backend/internal/service/session/status_test.go
+  s_15e9729d3cec0a::t_15697fd00d8054 5,10-13,15-27,51-64,68
+docs/agent/README.md
+  s_15e9729d3cec0a::t_5f5eeee7139152 69-76
+backend/internal/adapters/agent/codex/codex.go
+  s_15e9729d3cec0a::t_f43a906ddcc0a4 232-252
+backend/internal/domain/status.go
+  s_15e9729d3cec0a::t_bf44c8a1ecadd6 21-25
+backend/internal/session_manager/manager.go
+  s_4df1c91c109126::t_2e3e035bb25938 622-653
+  s_4df1c91c109126::t_101957fa66aa77 146
+  s_ba675d048d2968::t_8c763a57c6f239 126-134
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "641b7120918956cde650ec4c0c23ea54109c689b",
+  "prompts": {},
+  "sessions": {
+    "s_0c9f3151785578": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7258917a-a74d-44f2-8029-57296ba49648",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    },
+    "s_15e9729d3cec0a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3eeeab3d-700c-4821-81b2-0fce22448046",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    },
+    "s_4df1c91c109126": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0a337f1e-306c-4ce0-a1b2-e60dc01746c8",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    },
+    "s_ba675d048d2968": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a4c19362-11e9-48f1-9694-15939b12b25b",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    }
+  }
+}
