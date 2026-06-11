@@ -49,3 +49,7 @@ Thumbs.db
 
 # Personal local overrides (not for the team)
 .envrc.local
+
+# electron-forge / vite build output
+.vite/
+dist-electron/

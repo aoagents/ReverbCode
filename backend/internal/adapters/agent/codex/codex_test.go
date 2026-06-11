@@ -6,20 +6,47 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
+// canonicalTempDir returns a t.TempDir() with symlinks resolved so the
+// workspace trust flag collapses to a single predictable entry (macOS TempDir
+// lives under a /var -> /private/var symlink).
+func canonicalTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// sessionHookFlags mirrors the `-c` hook config appendSessionHookFlags emits,
+// asserted literally so accidental format drift fails loudly: Codex parses
+// these values as TOML.
+func sessionHookFlags() []string {
+	return []string{
+		"-c", `hooks.SessionStart=[{hooks=[{type="command",command="ao hooks codex session-start",timeout=5}]}]`,
+		"-c", `hooks.UserPromptSubmit=[{hooks=[{type="command",command="ao hooks codex user-prompt-submit",timeout=5}]}]`,
+		"-c", `hooks.PermissionRequest=[{hooks=[{type="command",command="ao hooks codex permission-request",timeout=5}]}]`,
+		"-c", `hooks.Stop=[{hooks=[{type="command",command="ao hooks codex stop",timeout=5}]}]`,
+	}
+}
+
 func TestGetLaunchCommandBuildsCrossPlatformArgv(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "codex"}
+	workspace := canonicalTempDir(t)
 
 	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
 		Permissions:      ports.PermissionModeBypassPermissions,
 		Prompt:           "-fix this",
 		SystemPromptFile: filepath.Join("tmp", "prompt with spaces.md"),
 		SystemPrompt:     "ignored",
+		WorkspacePath:    workspace,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -28,13 +55,35 @@ func TestGetLaunchCommandBuildsCrossPlatformArgv(t *testing.T) {
 	want := []string{
 		"codex",
 		"-c", "check_for_update_on_startup=false",
+		"-c", "notice.hide_rate_limit_model_nudge=true",
 		"--dangerously-bypass-hook-trust",
 		"--dangerously-bypass-approvals-and-sandbox",
-		"-c", "model_instructions_file=" + filepath.Join("tmp", "prompt with spaces.md"),
-		"--", "-fix this",
 	}
+	want = append(want, sessionHookFlags()...)
+	want = append(want,
+		"-c", `projects={"`+workspace+`"={trust_level="trusted"}}`,
+		"-c", "model_instructions_file="+filepath.Join("tmp", "prompt with spaces.md"),
+		"--", "-fix this",
+	)
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
+	}
+}
+
+func TestGetLaunchCommandWithoutWorkspaceOmitsTrustFlag(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "codex"}
+
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, arg := range cmd {
+		if strings.HasPrefix(arg, "projects=") {
+			t.Fatalf("command %#v contains a projects trust flag without a workspace", cmd)
+		}
+	}
+	if !containsSubsequence(cmd, sessionHookFlags()) {
+		t.Fatalf("command %#v missing session hook flags", cmd)
 	}
 }
 
@@ -91,6 +140,61 @@ func TestGetLaunchCommandMapsApprovalModes(t *testing.T) {
 	}
 }
 
+func TestAppendWorkspaceTrustFlagCoversLiteralAndResolvedPaths(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation needs extra privileges on Windows")
+	}
+	base := canonicalTempDir(t)
+	target := filepath.Join(base, "real")
+	if err := os.Mkdir(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(base, "link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+
+	var cmd []string
+	appendWorkspaceTrustFlag(&cmd, link)
+	want := []string{
+		"-c",
+		`projects={"` + link + `"={trust_level="trusted"},"` + target + `"={trust_level="trusted"}}`,
+	}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("trust flag\nwant: %#v\n got: %#v", want, cmd)
+	}
+
+	cmd = nil
+	appendWorkspaceTrustFlag(&cmd, target)
+	want = []string{"-c", `projects={"` + target + `"={trust_level="trusted"}}`}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("canonical-path trust flag\nwant: %#v\n got: %#v", want, cmd)
+	}
+
+	cmd = nil
+	appendWorkspaceTrustFlag(&cmd, "   ")
+	if cmd != nil {
+		t.Fatalf("blank workspace produced %#v, want no flag", cmd)
+	}
+}
+
+func TestCodexTOMLBasicStringEscapes(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{"plain", "\"plain\""},
+		{"C:\\Users\\dev", "\"C:\\\\Users\\\\dev\""},
+		{"with \"quotes\"", "\"with \\\"quotes\\\"\""},
+		{"tab\there", "\"tab\\u0009here\""},
+	}
+	for _, tt := range tests {
+		if got := codexTOMLBasicString(tt.in); got != tt.want {
+			t.Fatalf("codexTOMLBasicString(%q) = %s, want %s", tt.in, got, tt.want)
+		}
+	}
+}
+
 func TestGetPromptDeliveryStrategyIsInCommand(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "codex"}
 
@@ -115,18 +219,30 @@ func TestGetConfigSpecHasNoCustomFieldsYet(t *testing.T) {
 	}
 }
 
-func TestGetAgentHooksInstallsCodexHooks(t *testing.T) {
+// legacyHooksJSON builds a hooks.json in the shape older AO versions wrote:
+// AO-managed entries plus one user-defined Stop hook.
+func legacyHooksJSON() string {
+	return `{
+  "hooks": {
+    "Stop": [
+      {"matcher": null, "hooks": [
+        {"type": "command", "command": "custom stop hook", "timeout": 3},
+        {"type": "command", "command": "ao hooks codex stop", "timeout": 30}
+      ]}
+    ],
+    "UserPromptSubmit": [
+      {"matcher": null, "hooks": [
+        {"type": "command", "command": "ao hooks codex user-prompt-submit", "timeout": 30}
+      ]}
+    ]
+  },
+  "unmanagedKey": {"keep": true}
+}`
+}
+
+func TestGetAgentHooksWritesNothingIntoFreshWorkspace(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "codex"}
 	workspace := t.TempDir()
-	hooksDir := filepath.Join(workspace, ".codex")
-	if err := os.MkdirAll(hooksDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	hooksPath := filepath.Join(hooksDir, "hooks.json")
-	existing := `{"hooks":{"Stop":[{"matcher":null,"hooks":[{"type":"command","command":"custom stop hook","timeout":3}]}]}}`
-	if err := os.WriteFile(hooksPath, []byte(existing), 0o644); err != nil {
-		t.Fatal(err)
-	}
 
 	cfg := ports.WorkspaceHookConfig{
 		DataDir:       t.TempDir(),
@@ -136,7 +252,36 @@ func TestGetAgentHooksInstallsCodexHooks(t *testing.T) {
 	if err := plugin.GetAgentHooks(context.Background(), cfg); err != nil {
 		t.Fatal(err)
 	}
-	// A second install must not duplicate AO hook commands.
+
+	if _, err := os.Stat(filepath.Join(workspace, codexHooksDirName)); !os.IsNotExist(err) {
+		t.Fatalf(".codex dir state = %v, want not-exist: hooks ride the launch command", err)
+	}
+}
+
+func TestGetAgentHooksRequiresWorkspacePath(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "codex"}
+	err := plugin.GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{WorkspacePath: "  "})
+	if err == nil {
+		t.Fatal("expected error for blank WorkspacePath")
+	}
+}
+
+func TestGetAgentHooksStripsLegacyAOEntries(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "codex"}
+	workspace := t.TempDir()
+	hooksPath := filepath.Join(workspace, codexHooksDirName, codexHooksFileName)
+	if err := os.MkdirAll(filepath.Dir(hooksPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(hooksPath, []byte(legacyHooksJSON()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := ports.WorkspaceHookConfig{
+		DataDir:       t.TempDir(),
+		SessionID:     "sess-1",
+		WorkspacePath: workspace,
+	}
 	if err := plugin.GetAgentHooks(context.Background(), cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -149,51 +294,73 @@ func TestGetAgentHooksInstallsCodexHooks(t *testing.T) {
 	if err := json.Unmarshal(data, &config); err != nil {
 		t.Fatal(err)
 	}
-	if config.Hooks == nil {
-		t.Fatalf("hooks config missing hooks object: %#v", config)
-	}
 	for _, spec := range codexManagedHooks {
-		entries := config.Hooks[spec.Event]
-		if count := countCodexHookCommand(entries, spec.Command); count != 1 {
-			t.Fatalf("%s command count = %d, want 1 in %#v", spec.Event, count, entries)
+		if got := countCodexHookCommand(config.Hooks[spec.Event], spec.Command); got != 0 {
+			t.Fatalf("%s command %q count = %d after cleanup, want 0", spec.Event, spec.Command, got)
 		}
 	}
-	stopEntries := config.Hooks["Stop"]
-	if countCodexHookCommand(stopEntries, "custom stop hook") != 1 {
-		t.Fatalf("existing Stop hook was not preserved: %#v", stopEntries)
+	if countCodexHookCommand(config.Hooks["Stop"], "custom stop hook") != 1 {
+		t.Fatalf("user Stop hook not preserved: %#v", config.Hooks["Stop"])
 	}
-
-	configData, err := os.ReadFile(filepath.Join(workspace, ".codex", "config.toml"))
-	if err != nil {
-		t.Fatal(err)
+	if _, ok := config.Hooks["UserPromptSubmit"]; ok {
+		t.Fatalf("UserPromptSubmit left behind after its only entry was AO's: %#v", config.Hooks)
 	}
-	if !strings.Contains(string(configData), codexHooksFeatureLine) {
-		t.Fatalf("config.toml missing hooks feature flag: %s", configData)
+	if !strings.Contains(string(data), "unmanagedKey") {
+		t.Fatalf("top-level keys AO doesn't manage were dropped: %s", data)
 	}
 }
 
-func TestUninstallHooksRemovesCodexHooks(t *testing.T) {
+func TestGetAgentHooksLeavesFilesWithoutAOEntriesUntouched(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "codex"}
 	workspace := t.TempDir()
-	hooksPath := filepath.Join(workspace, ".codex", "hooks.json")
-
-	ctx := context.Background()
-	cfg := ports.WorkspaceHookConfig{DataDir: t.TempDir(), SessionID: "sess-1", WorkspacePath: workspace}
-
-	// Pre-seed a user's own Stop hook; it must survive uninstall.
+	hooksPath := filepath.Join(workspace, codexHooksDirName, codexHooksFileName)
 	if err := os.MkdirAll(filepath.Dir(hooksPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	existing := `{"hooks":{"Stop":[{"matcher":null,"hooks":[{"type":"command","command":"custom stop hook","timeout":3}]}]}}`
-	if err := os.WriteFile(hooksPath, []byte(existing), 0o644); err != nil {
+	seed := `{"hooks":{"Stop":[{"matcher":null,"hooks":[{"type":"command","command":"custom stop hook","timeout":3}]}]}}`
+	if err := os.WriteFile(hooksPath, []byte(seed), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := plugin.GetAgentHooks(ctx, cfg); err != nil {
+	cfg := ports.WorkspaceHookConfig{
+		DataDir:       t.TempDir(),
+		SessionID:     "sess-1",
+		WorkspacePath: workspace,
+	}
+	if err := plugin.GetAgentHooks(context.Background(), cfg); err != nil {
 		t.Fatal(err)
 	}
+
+	data, err := os.ReadFile(hooksPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != seed {
+		t.Fatalf("user-only hooks.json was rewritten\n--- before ---\n%s\n--- after ---\n%s", seed, data)
+	}
+}
+
+func TestUninstallHooksRemovesLegacyCodexHooks(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "codex"}
+	workspace := t.TempDir()
+	hooksPath := filepath.Join(workspace, codexHooksDirName, codexHooksFileName)
+
+	ctx := context.Background()
+
+	// Missing file is a no-op.
+	if err := plugin.UninstallHooks(ctx, workspace); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(hooksPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(hooksPath, []byte(legacyHooksJSON()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
 	if installed, err := plugin.AreHooksInstalled(ctx, workspace); err != nil || !installed {
-		t.Fatalf("AreHooksInstalled after install = (%v, %v), want (true, nil)", installed, err)
+		t.Fatalf("AreHooksInstalled with legacy entries = (%v, %v), want (true, nil)", installed, err)
 	}
 
 	if err := plugin.UninstallHooks(ctx, workspace); err != nil {
@@ -219,25 +386,17 @@ func TestUninstallHooksRemovesCodexHooks(t *testing.T) {
 	if countCodexHookCommand(config.Hooks["Stop"], "custom stop hook") != 1 {
 		t.Fatalf("user Stop hook not preserved: %#v", config.Hooks["Stop"])
 	}
-
-	// The shared hooks feature flag in config.toml is left in place — it enables
-	// every Codex hook, not just AO's.
-	configData, err := os.ReadFile(filepath.Join(workspace, ".codex", "config.toml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(configData), codexHooksFeatureLine) {
-		t.Fatalf("config.toml hooks feature flag removed by uninstall: %s", configData)
-	}
 }
 
 func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "codex"}
+	workspace := canonicalTempDir(t)
 
 	cmd, ok, err := plugin.GetRestoreCommand(context.Background(), ports.RestoreConfig{
 		Permissions: ports.PermissionModeAuto,
 		Session: ports.SessionRef{
-			Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "thread-123"},
+			Metadata:      map[string]string{ports.MetadataKeyAgentSessionID: "thread-123"},
+			WorkspacePath: workspace,
 		},
 	})
 	if err != nil {
@@ -250,11 +409,16 @@ func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 		"codex",
 		"resume",
 		"-c", "check_for_update_on_startup=false",
+		"-c", "notice.hide_rate_limit_model_nudge=true",
 		"--dangerously-bypass-hook-trust",
 		"--ask-for-approval", "on-request",
 		"-c", `approvals_reviewer="auto_review"`,
-		"thread-123",
 	}
+	want = append(want, sessionHookFlags()...)
+	want = append(want,
+		"-c", `projects={"`+workspace+`"={trust_level="trusted"}}`,
+		"thread-123",
+	)
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("restore cmd\nwant: %#v\n got: %#v", want, cmd)
 	}
@@ -341,97 +505,6 @@ func TestSessionInfoFalseWhenNoHookMetadata(t *testing.T) {
 	}
 }
 
-func TestEnsureCodexHooksFeatureEnabledEdgeCases(t *testing.T) {
-	tests := []struct {
-		name     string
-		seed     *string // nil means do not create config.toml
-		wantHas  []string
-		wantMiss []string
-	}{
-		{
-			name:    "missing config.toml is created with features block",
-			seed:    nil,
-			wantHas: []string{"[features]", codexHooksFeatureLine},
-		},
-		{
-			name:    "empty config.toml is populated with features block",
-			seed:    strPtr(""),
-			wantHas: []string{"[features]", codexHooksFeatureLine},
-		},
-		{
-			name:    "existing features block without hooks gains hooks=true",
-			seed:    strPtr("[features]\nother = true\n"),
-			wantHas: []string{"[features]", codexHooksFeatureLine, "other = true"},
-		},
-		{
-			name:     "hooks=true already present is a no-op",
-			seed:     strPtr("[features]\nhooks = true\n"),
-			wantHas:  []string{"[features]", codexHooksFeatureLine},
-			wantMiss: []string{codexLegacyHookFeatureLine},
-		},
-		{
-			name:     "legacy codex_hooks=true is replaced with hooks=true",
-			seed:     strPtr("[features]\ncodex_hooks = true\n"),
-			wantHas:  []string{"[features]", codexHooksFeatureLine},
-			wantMiss: []string{codexLegacyHookFeatureLine},
-		},
-		{
-			name:     "both hooks=true and legacy line keep only the new line",
-			seed:     strPtr("[features]\nhooks = true\ncodex_hooks = true\n"),
-			wantHas:  []string{"[features]", codexHooksFeatureLine},
-			wantMiss: []string{codexLegacyHookFeatureLine},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			workspace := t.TempDir()
-			configDir := filepath.Join(workspace, codexHooksDirName)
-			configPath := filepath.Join(configDir, codexConfigFileName)
-			if tt.seed != nil {
-				if err := os.MkdirAll(configDir, 0o755); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.WriteFile(configPath, []byte(*tt.seed), 0o600); err != nil {
-					t.Fatal(err)
-				}
-			}
-
-			// No-op check: snapshot the file content before and after for
-			// the cases the helper documents as no-ops.
-			var before []byte
-			if tt.seed != nil && strings.Contains(*tt.seed, codexHooksFeatureLine) && !strings.Contains(*tt.seed, codexLegacyHookFeatureLine) {
-				before = []byte(*tt.seed)
-			}
-
-			if err := ensureCodexHooksFeatureEnabled(workspace); err != nil {
-				t.Fatalf("ensureCodexHooksFeatureEnabled: %v", err)
-			}
-
-			data, err := os.ReadFile(configPath)
-			if err != nil {
-				t.Fatalf("read %s: %v", configPath, err)
-			}
-			got := string(data)
-			for _, want := range tt.wantHas {
-				if !strings.Contains(got, want) {
-					t.Fatalf("config.toml missing %q\n--- got ---\n%s", want, got)
-				}
-			}
-			for _, miss := range tt.wantMiss {
-				if strings.Contains(got, miss) {
-					t.Fatalf("config.toml unexpectedly contains %q\n--- got ---\n%s", miss, got)
-				}
-			}
-			if before != nil && string(data) != string(before) {
-				t.Fatalf("expected no-op, content changed\n--- before ---\n%s\n--- after ---\n%s", before, data)
-			}
-		})
-	}
-}
-
-func strPtr(s string) *string { return &s }
-
 func contains(values []string, needle string) bool {
 	for _, value := range values {
 		if value == needle {
@@ -475,4 +548,28 @@ func countCodexHookCommand(entries []codexMatcherGroup, command string) int {
 		}
 	}
 	return count
+}
+
+func TestDoctorLaunchProbesMirrorLaunchFlags(t *testing.T) {
+	probes := DoctorLaunchProbes()
+	if len(probes) != 2 {
+		t.Fatalf("probes = %d, want 2", len(probes))
+	}
+	if !reflect.DeepEqual(probes[0], []string{"--dangerously-bypass-hook-trust", "--version"}) {
+		t.Fatalf("flag probe = %#v", probes[0])
+	}
+	override := probes[1]
+	if len(override) < 2 || override[0] != "features" || override[1] != "list" {
+		t.Fatalf("override probe must ride `features list`, got %#v", override)
+	}
+	joined := strings.Join(override, " ")
+	for _, want := range []string{
+		"hooks.SessionStart=", "hooks.UserPromptSubmit=", "hooks.PermissionRequest=", "hooks.Stop=",
+		"notice.hide_rate_limit_model_nudge=true",
+		`projects={"`,
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("override probe missing %q in %s", want, joined)
+		}
+	}
 }

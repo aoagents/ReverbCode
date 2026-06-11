@@ -6,8 +6,10 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -18,6 +20,17 @@ import (
 // the id alphabet the daemon issues. Validating the externally-set env value
 // before it reaches the loopback URL keeps it from steering the request.
 var sessionIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+
+const (
+	// hooksLogName is the file under AO_DATA_DIR where hook delivery failures
+	// are appended. Agent hook runners swallow stderr, so without a durable
+	// sink a dead activity feed (e.g. an unreachable daemon) stays invisible.
+	hooksLogName = "hooks.log"
+	// maxHooksLogBytes caps hooks.log: an append against a file already past
+	// the cap truncates it first, so a persistently failing hook cannot grow
+	// the file without bound.
+	maxHooksLogBytes = 1 << 20
+)
 
 // setActivityAPIRequest mirrors the daemon's SetActivityRequest body for
 // POST /api/v1/sessions/{id}/activity. The CLI keeps its own copy so it need
@@ -56,10 +69,10 @@ func (c *commandContext) runHook(ctx context.Context, agent, event string) error
 	}
 	payload, err := io.ReadAll(c.deps.In)
 	if err != nil {
-		// Surface read errors to stderr for parity with the daemon-error path,
-		// but keep the empty payload and exit 0: a failed hook must not break
-		// the agent. The deriver tolerates an empty payload.
-		_, _ = fmt.Fprintf(c.deps.Err, "ao hooks %s %s: read stdin: %v\n", agent, event, err)
+		// Surface read errors for parity with the daemon-error path, but keep
+		// the empty payload and exit 0: a failed hook must not break the
+		// agent. The deriver tolerates an empty payload.
+		c.reportHookFailure(agent, event, sessionID, fmt.Errorf("read stdin: %w", err))
 	}
 
 	state, ok := activitydispatch.Derive(agent, event, payload)
@@ -70,9 +83,43 @@ func (c *commandContext) runHook(ctx context.Context, agent, event string) error
 
 	path := "sessions/" + url.PathEscape(sessionID) + "/activity"
 	if err := c.postJSON(ctx, path, setActivityAPIRequest{State: string(state)}, nil); err != nil {
-		// Report to stderr (the agent's hook runner captures it) for diagnosis,
-		// but exit 0: a failed activity report must not disrupt the agent.
-		_, _ = fmt.Fprintf(c.deps.Err, "ao hooks %s %s: %v\n", agent, event, err)
+		// Surface the failure for diagnosis, but exit 0: a failed activity
+		// report must not disrupt the agent.
+		c.reportHookFailure(agent, event, sessionID, err)
 	}
 	return nil
+}
+
+// reportHookFailure surfaces a hook delivery failure without breaking the
+// agent: stderr for the agent's hook runner, plus a best-effort append to
+// $AO_DATA_DIR/hooks.log so the failure can be diagnosed after the fact.
+func (c *commandContext) reportHookFailure(agent, event, sessionID string, cause error) {
+	msg := fmt.Sprintf("ao hooks %s %s: %v", agent, event, cause)
+	_, _ = fmt.Fprintln(c.deps.Err, msg)
+	dataDir := strings.TrimSpace(os.Getenv("AO_DATA_DIR"))
+	if dataDir == "" {
+		return
+	}
+	line := fmt.Sprintf("%s session=%s %s\n", time.Now().UTC().Format(time.RFC3339), sessionID, msg)
+	appendHooksLog(dataDir, line)
+}
+
+// appendHooksLog appends one line to the hooks log, truncating first when the
+// file has outgrown maxHooksLogBytes. Errors are dropped: this sink is itself
+// best-effort and has nowhere better to report.
+func appendHooksLog(dataDir, line string) {
+	if err := os.MkdirAll(dataDir, 0o750); err != nil {
+		return
+	}
+	path := filepath.Join(dataDir, hooksLogName)
+	flags := os.O_APPEND | os.O_CREATE | os.O_WRONLY
+	if info, err := os.Stat(path); err == nil && info.Size() > maxHooksLogBytes {
+		flags = os.O_TRUNC | os.O_CREATE | os.O_WRONLY
+	}
+	f, err := os.OpenFile(path, flags, 0o600) //nolint:gosec // path is rooted in AO's own data dir
+	if err != nil {
+		return
+	}
+	defer func() { _ = f.Close() }()
+	_, _ = f.WriteString(line)
 }

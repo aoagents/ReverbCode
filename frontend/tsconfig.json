@@ -1,21 +1,32 @@
 {
 	"compilerOptions": {
 		"target": "ES2022",
-		"module": "CommonJS",
-		"moduleResolution": "Node",
-		"lib": ["ES2022", "DOM"],
-		"outDir": "dist",
-		"rootDir": "src",
+		"useDefineForClassFields": true,
+		"module": "ESNext",
+		"moduleResolution": "Bundler",
+		"lib": ["ES2022", "DOM", "DOM.Iterable"],
+		"jsx": "react-jsx",
+		"types": ["vite/client", "vitest/globals"],
 		"strict": true,
 		"esModuleInterop": true,
+		"allowSyntheticDefaultImports": true,
+		"isolatedModules": true,
+		"noEmit": true,
 		"forceConsistentCasingInFileNames": true,
 		"skipLibCheck": true,
-		"sourceMap": true,
 		"noUnusedLocals": true,
 		"noUnusedParameters": true,
 		"noImplicitReturns": true,
 		"noFallthroughCasesInSwitch": true
 	},
-	"include": ["src/**/*.ts"],
-	"exclude": ["node_modules", "dist"]
+	"include": [
+		"src/**/*.ts",
+		"src/**/*.tsx",
+		"forge.config.ts",
+		"vite.main.config.ts",
+		"vite.preload.config.ts",
+		"vite.renderer.config.ts",
+		"playwright.config.ts"
+	],
+	"exclude": ["node_modules", "dist", "dist-electron", ".vite", "release", "out", "src/landing"]
 }

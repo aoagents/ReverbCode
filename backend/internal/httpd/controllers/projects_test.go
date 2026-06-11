@@ -186,6 +186,15 @@ func TestProjectsAPI_ListAddGet(t *testing.T) {
 
 	}
 
+	body, status, _ = doRequest(t, srv, "GET", "/api/v1/projects", "")
+	if status != http.StatusOK {
+		t.Fatalf("GET projects after add = %d, want 200; body=%s", status, body)
+	}
+	mustJSON(t, body, &list)
+	if len(list.Projects) != 1 || list.Projects[0].Path != repo {
+		t.Fatalf("project summary path = %#v, want path %q", list.Projects, repo)
+	}
+
 }
 
 func TestProjectsAPI_AddValidationAndConflicts(t *testing.T) {
@@ -406,6 +415,8 @@ type projectSummary struct {
 	ID string `json:"id"`
 
 	Name string `json:"name"`
+
+	Path string `json:"path"`
 
 	SessionPrefix string `json:"sessionPrefix"`
 }

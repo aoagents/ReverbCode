@@ -34,6 +34,7 @@ type ControlDeps struct {
 //	RequestID      → attach a request id for correlation
 //	requestLogger  → slog-backed access log, stderr, carries the request id
 //	RealIP         → normalise client IP (loopback proxy from the dev server)
+//	cors           → CORS allowlist for the Electron renderer / dev origins
 //
 // The per-request timeout is deliberately not global: it wraps only bounded
 // REST routes, never long-lived terminal streams or health probes.
@@ -45,6 +46,7 @@ func NewRouterWithControl(cfg config.Config, log *slog.Logger, termMgr *terminal
 	r.Use(middleware.RequestID)
 	r.Use(requestLogger(log))
 	r.Use(middleware.RealIP)
+	r.Use(corsMiddleware(cfg.AllowedOrigins))
 
 	// JSON envelopes for unmatched routes / methods — chi's defaults are
 	// text/plain, which would break consumers that parse every response as

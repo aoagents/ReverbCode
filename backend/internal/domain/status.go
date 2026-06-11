@@ -18,4 +18,9 @@ const (
 	StatusNeedsInput       SessionStatus = "needs_input"
 	StatusIdle             SessionStatus = "idle"
 	StatusTerminated       SessionStatus = "terminated"
+	// StatusNoSignal marks a live session whose agent has never delivered a
+	// hook callback for the current spawn/restore: AO cannot tell whether the
+	// agent is working or stuck (broken hook pipeline, blocked interactive
+	// prompt). Rendered instead of a confident idle.
+	StatusNoSignal SessionStatus = "no_signal"
 )

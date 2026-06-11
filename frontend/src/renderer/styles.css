@@ -1,0 +1,181 @@
+@import "tailwindcss";
+
+/*
+ * Design system — see DESIGN.md (source of truth). emdash-matched: flat near-black
+ * neutral ramp, hairline borders, system font, refined-blue accent (not emdash's
+ * jade). Dark is primary (:root); light is the supported override
+ * (:root[data-theme="light"]). The Zustand theme toggle sets data-theme on <html>.
+ */
+@theme inline {
+	--font-sans:
+		-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Fira Sans", "Helvetica Neue",
+		sans-serif;
+	--font-mono: Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+
+	/* Surfaces */
+	--color-background: var(--bg);
+	--color-foreground: var(--fg);
+	--color-surface: var(--bg-1);
+	--color-card: var(--bg-1);
+	--color-raised: var(--bg-2);
+	--color-overlay: var(--bg-3);
+	--color-popover: var(--bg-1);
+	--color-popover-foreground: var(--fg);
+	--color-sidebar: var(--bg);
+	--color-sidebar-foreground: var(--fg-muted);
+	--color-terminal: var(--term-bg);
+
+	/* Text */
+	--color-muted: var(--bg-2);
+	--color-muted-foreground: var(--fg-muted);
+	--color-passive: var(--fg-passive);
+	--color-secondary: var(--bg-2);
+	--color-secondary-foreground: var(--fg-muted);
+
+	/* Accent (refined blue) — primary buttons, active session, focus */
+	--color-primary: var(--accent);
+	--color-primary-foreground: var(--accent-fg);
+	--color-accent: var(--accent);
+	--color-accent-foreground: var(--accent-fg);
+	--color-accent-weak: var(--accent-weak);
+	--color-accent-dim: var(--accent-dim);
+	--color-ring: var(--accent);
+
+	/* Borders */
+	--color-border: var(--border);
+	--color-border-strong: var(--border-1);
+
+	/* Status — map 1:1 to the daemon's derived statuses */
+	--color-success: var(--green);
+	--color-success-strong: var(--green-strong);
+	--color-warning: var(--amber);
+	--color-error: var(--red);
+
+	--radius-sm: 4px;
+	--radius-md: 6px;
+	--radius-lg: 8px;
+	--radius-xl: 12px;
+
+	--animate-status-pulse: status-pulse 1.8s ease-in-out infinite;
+	--animate-overlay-in: overlay-in 150ms ease-out;
+	--animate-modal-in: modal-in 150ms ease-out;
+}
+
+:root {
+	/* Dark — primary. sRGB approximations of emdash's display-p3 neutral ramp. */
+	--bg: #111111;
+	--bg-1: #191919;
+	--bg-2: #222222;
+	--bg-3: #2a2a2a;
+	--fg: #eeeeee;
+	--fg-muted: #b4b4b4;
+	--fg-passive: #6e6e6e;
+	--border: #3a3a3a;
+	--border-1: #484848;
+	--accent: #5b9dff;
+	--accent-fg: #0b0d12;
+	--accent-weak: rgb(91 157 255 / 0.16);
+	--accent-dim: #2a4a7a;
+	--green: #6cb16c;
+	--green-strong: #7bd88f;
+	--amber: #ffcc4a;
+	--red: #d4544f;
+	--term-bg: #161616;
+	--term-fg: #d7d7d2;
+	--term-green: #7bd88f;
+	--term-dim: #7c7c7c;
+	--term-blue: #5b9dff;
+	--term-amber: #ffcc4a;
+	--shadow: 0 1px 0 rgb(0 0 0 / 0.4), 0 12px 32px rgb(0 0 0 / 0.45);
+}
+
+:root[data-theme="light"] {
+	/* Light — supported, not primary. */
+	--bg: #fcfcfc;
+	--bg-1: #ffffff;
+	--bg-2: #ededee;
+	--bg-3: #e4e4e6;
+	--fg: #1a1a1a;
+	--fg-muted: #666666;
+	--fg-passive: #9a9a9a;
+	--border: #e3e3e5;
+	--border-1: #d4d4d6;
+	--accent: #2563eb;
+	--accent-fg: #ffffff;
+	--accent-weak: rgb(37 99 235 / 0.12);
+	--accent-dim: #bcd2f7;
+	--green: #1a7f37;
+	--green-strong: #1a7f37;
+	--amber: #9a6b00;
+	--red: #c0392b;
+	/* Terminal keeps its own dark palette in both themes (it is the agent CLI). */
+	--term-bg: #161616;
+	--term-fg: #d7d7d2;
+	--term-green: #7bd88f;
+	--term-dim: #7c7c7c;
+	--term-blue: #5b9dff;
+	--term-amber: #ffcc4a;
+	--shadow: 0 1px 0 rgb(0 0 0 / 0.03), 0 12px 30px rgb(20 30 50 / 0.1);
+}
+
+* {
+	box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+	height: 100%;
+}
+
+body {
+	margin: 0;
+	overflow: hidden;
+	background: var(--bg);
+	color: var(--fg);
+	font-family: var(--font-sans);
+	font-size: 14px;
+	line-height: 1.5;
+	-webkit-font-smoothing: antialiased;
+}
+
+button,
+input,
+textarea,
+select {
+	font: inherit;
+}
+
+.xterm {
+	height: 100%;
+}
+
+@keyframes status-pulse {
+	0%,
+	100% {
+		opacity: 1;
+	}
+	50% {
+		opacity: 0.35;
+	}
+}
+
+@keyframes overlay-in {
+	from {
+		opacity: 0;
+	}
+	to {
+		opacity: 1;
+	}
+}
+
+@keyframes modal-in {
+	from {
+		opacity: 0;
+		transform: translate(-50%, -50%) scale(0.95);
+	}
+	to {
+		opacity: 1;
+		transform: translate(-50%, -50%) scale(1);
+	}
+}

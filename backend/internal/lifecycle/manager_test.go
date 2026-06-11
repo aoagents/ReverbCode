@@ -497,3 +497,52 @@ func TestPRObservation_RetriesAfterMessengerFailure(t *testing.T) {
 		t.Fatalf("want retry to send once, got %v", msg.msgs)
 	}
 }
+
+func TestActivity_FirstSignalStampsReceipt(t *testing.T) {
+	m, st, _ := newManager()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: time.Now()}}
+	// A same-state repeat (idle on an idle-seeded row) must still write: the
+	// receipt itself is the durable fact that clears no_signal.
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityIdle}); err != nil {
+		t.Fatal(err)
+	}
+	got := st.sessions["mer-1"]
+	if got.FirstSignalAt.IsZero() {
+		t.Fatalf("first signal not stamped: %+v", got)
+	}
+	stamped := got.FirstSignalAt
+	// Later signals must not move the receipt.
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityActive, Timestamp: time.Now().Add(time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions["mer-1"]; !got.FirstSignalAt.Equal(stamped) {
+		t.Fatalf("first signal moved: %v -> %v", stamped, got.FirstSignalAt)
+	}
+}
+
+func TestActivity_SameStateRepeatAfterReceiptIsNoOp(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.FirstSignalAt = time.Now()
+	st.sessions["mer-1"] = rec
+	before := st.sessions["mer-1"]
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityActive}); err != nil {
+		t.Fatal(err)
+	}
+	if st.sessions["mer-1"] != before {
+		t.Fatalf("same-state repeat after receipt must not rewrite: %+v", st.sessions["mer-1"])
+	}
+}
+
+func TestMarkSpawnedClearsFirstSignal(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.FirstSignalAt = time.Now().Add(-time.Hour)
+	st.sessions["mer-1"] = rec
+	if err := m.MarkSpawned(ctx, "mer-1", domain.SessionMetadata{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions["mer-1"]; !got.FirstSignalAt.IsZero() {
+		t.Fatalf("spawn/restore must clear the receipt, got %+v", got)
+	}
+}

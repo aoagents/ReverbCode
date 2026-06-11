@@ -222,6 +222,7 @@ func TestE2E_SpawnAndProjectAddDTORoundTrip(t *testing.T) {
 			"--path", "/repo/mer",
 			"--id", "demo",
 			"--name", "Demo",
+			"--as-workspace",
 		})
 		if err := root.Execute(); err != nil {
 			t.Fatalf("project add execute: %v\noutput: %s", err, out.String())
@@ -236,6 +237,9 @@ func TestE2E_SpawnAndProjectAddDTORoundTrip(t *testing.T) {
 		}
 		if got.Name == nil || *got.Name != "Demo" {
 			t.Errorf("Name = %v, want %q", got.Name, "Demo")
+		}
+		if !got.AsWorkspace {
+			t.Errorf("AsWorkspace = false, want true (CLI json:\"asWorkspace\" vs AddInput)")
 		}
 		if !bytes.Contains(out.Bytes(), []byte("registered project")) {
 			t.Errorf("output missing %q; got: %s", "registered project", out.String())

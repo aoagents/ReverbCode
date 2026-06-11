@@ -961,6 +961,8 @@ components:
       type: object
     AddProjectInput:
       properties:
+        asWorkspace:
+          type: boolean
         config:
           $ref: '#/components/schemas/ProjectConfig'
         name:
@@ -1049,6 +1051,8 @@ components:
       properties:
         id:
           type: string
+        kind:
+          type: string
         name:
           type: string
         path:
@@ -1058,6 +1062,7 @@ components:
       required:
       - id
       - name
+      - kind
       - path
       - resolveError
       type: object
@@ -1149,15 +1154,22 @@ components:
           type: string
         id:
           type: string
+        kind:
+          type: string
         name:
           type: string
         path:
           type: string
         repo:
           type: string
+        workspaceRepos:
+          items:
+            $ref: '#/components/schemas/WorkspaceRepo'
+          type: array
       required:
       - id
       - name
+      - kind
       - path
       - repo
       - defaultBranch
@@ -1216,7 +1228,11 @@ components:
       properties:
         id:
           type: string
+        kind:
+          type: string
         name:
+          type: string
+        path:
           type: string
         resolveError:
           type: string
@@ -1225,6 +1241,8 @@ components:
       required:
       - id
       - name
+      - path
+      - kind
       - sessionPrefix
       type: object
     RemoveProjectResult:
@@ -1346,6 +1364,8 @@ components:
         projectId:
           type: string
         status:
+          type: string
+        terminalHandleId:
           type: string
         updatedAt:
           format: date-time
@@ -1494,6 +1514,19 @@ components:
           type: string
       required:
       - projectId
+      type: object
+    WorkspaceRepo:
+      properties:
+        name:
+          type: string
+        relativePath:
+          type: string
+        repo:
+          type: string
+      required:
+      - name
+      - relativePath
+      - repo
       type: object
 tags:
 - description: Project registry, configuration, and lifecycle administration
