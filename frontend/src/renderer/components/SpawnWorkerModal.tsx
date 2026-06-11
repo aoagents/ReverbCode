@@ -202,7 +202,11 @@ export function SpawnWorkerModal({
 							)}
 						</div>
 
-						{error && <p className="text-[12px] text-error">{error}</p>}
+						{error && (
+							<p className="text-[12px] text-error" role="alert">
+								{error}
+							</p>
+						)}
 
 						<div className="-mx-[18px] -mb-[18px] flex justify-end border-t border-border bg-surface px-3.5 py-3">
 							<Button disabled={!canSubmit} type="submit" variant="primary">
