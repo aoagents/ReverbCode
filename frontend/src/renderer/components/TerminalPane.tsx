@@ -7,7 +7,7 @@ import { SearchAddon } from "@xterm/addon-search";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import type { WorkspaceSession } from "../types/workspace";
 import type { Theme } from "../stores/ui-store";
-import { useTerminalSession, type TerminalSessionState } from "../hooks/useTerminalSession";
+import { useTerminalSession, type AttachableTerminal, type TerminalSessionState } from "../hooks/useTerminalSession";
 
 type TerminalPaneProps = {
 	session?: WorkspaceSession;
@@ -70,6 +70,8 @@ function bannerText(state: TerminalSessionState, error?: string): string | undef
 	return undefined;
 }
 
+const CLEAR_SEQUENCE = "\x1b[3J\x1b[2J\x1b[H";
+
 function XtermTerminal({ session, theme, daemonReady }: TerminalPaneProps) {
 	const containerRef = useRef<HTMLDivElement | null>(null);
 	const terminalRef = useRef<Terminal | null>(null);
@@ -84,6 +86,9 @@ function XtermTerminal({ session, theme, daemonReady }: TerminalPaneProps) {
 			fontFamily: 'Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
 			fontSize: 13,
 			lineHeight: 1.35,
+			// Zellij owns scrollback inside the attached pane; keeping xterm
+			// scrollback creates a dead scrollbar beside the alt-buffer app.
+			scrollback: 0,
 			theme: terminalTheme(theme),
 		});
 		terminalRef.current = terminal;
@@ -112,7 +117,20 @@ function XtermTerminal({ session, theme, daemonReady }: TerminalPaneProps) {
 		if (session?.terminalHandleId) {
 			rafId = requestAnimationFrame(() => {
 				fitTerminal();
-				detach = attach(terminal);
+				const attachable: AttachableTerminal = {
+					get cols() {
+						return terminal.cols;
+					},
+					get rows() {
+						return terminal.rows;
+					},
+					write: (data) => terminal.write(data),
+					writeln: (line) => terminal.writeln(line),
+					clear: () => terminal.write(CLEAR_SEQUENCE),
+					onData: (listener) => terminal.onData(listener),
+					onResize: (listener) => terminal.onResize(listener),
+				};
+				detach = attach(attachable);
 			});
 		} else {
 			rafId = requestAnimationFrame(fitTerminal);

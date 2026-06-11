@@ -23,7 +23,11 @@ export type AttachableTerminal = {
 	rows: number;
 	write: (data: Uint8Array) => void;
 	writeln: (line: string) => void;
-	reset: () => void;
+	/**
+	 * Erase screen + scrollback while preserving terminal modes. A full reset
+	 * drops zellij mouse tracking, so wheel scroll stops after reconnect.
+	 */
+	clear: () => void;
 	onData: (listener: (data: string) => void) => { dispose: () => void };
 	onResize: (listener: (size: { cols: number; rows: number }) => void) => { dispose: () => void };
 };
@@ -154,8 +158,9 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 			terminal.writeln(`\x1b[2mAttaching to ${sessionRef.current?.title ?? handle}…\x1b[0m`);
 		} else {
 			// The server replays the recent-output ring on open (backend
-			// internal/terminal/ring.go); drop the stale screen so it isn't doubled.
-			terminal.reset();
+			// internal/terminal/ring.go); clear the stale screen so it isn't doubled.
+			// Screen-clear only, never reset(): RIS wipes zellij's mouse mode.
+			terminal.clear();
 		}
 		r.firstAttach = false;
 
