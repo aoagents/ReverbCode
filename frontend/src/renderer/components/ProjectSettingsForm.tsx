@@ -16,6 +16,13 @@ type ProjectConfig = components["schemas"]["ProjectConfig"];
 // default". Kept short — the spawn modal owns the full list.
 const AGENT_OPTIONS = ["claude-code", "codex", "opencode", "amp", "goose", "kiro"] as const;
 
+const PERMISSION_MODE_OPTIONS = [
+	{ value: "default", label: "Default" },
+	{ value: "accept-edits", label: "Accept edits" },
+	{ value: "auto", label: "Auto" },
+	{ value: "bypass-permissions", label: "Bypass permissions" },
+] as const;
+
 const projectQueryKey = (id: string) => ["project", id] as const;
 
 export function ProjectSettingsForm({ projectId }: { projectId: string }) {
@@ -67,6 +74,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 		workerAgent: config.worker?.agent ?? "",
 		orchestratorAgent: config.orchestrator?.agent ?? "",
 		model: config.agentConfig?.model ?? "",
+		permissions: config.agentConfig?.permissions ?? "",
 	});
 	const [savedAt, setSavedAt] = useState<number | null>(null);
 
@@ -80,7 +88,11 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				sessionPrefix: form.sessionPrefix || undefined,
 				worker: blankToUndefined({ ...config.worker, agent: form.workerAgent || undefined }),
 				orchestrator: blankToUndefined({ ...config.orchestrator, agent: form.orchestratorAgent || undefined }),
-				agentConfig: blankToUndefined({ ...config.agentConfig, model: form.model || undefined }),
+				agentConfig: blankToUndefined({
+					...config.agentConfig,
+					model: form.model || undefined,
+					permissions: form.permissions || undefined,
+				}),
 			};
 			const { error } = await apiClient.PUT("/api/v1/projects/{id}/config", {
 				params: { path: { id: projectId } },
@@ -163,6 +175,12 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 							placeholder="(agent default)"
 						/>
 					</Field>
+					<Field label="Permission mode">
+						<PermissionModeSelect
+							value={form.permissions}
+							onChange={(v) => setForm((f) => ({ ...f, permissions: v }))}
+						/>
+					</Field>
 				</CardContent>
 			</Card>
 
@@ -180,6 +198,24 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				)}
 			</div>
 		</form>
+	);
+}
+
+function PermissionModeSelect({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+	return (
+		<Select value={value || "__default__"} onValueChange={(v) => onChange(v === "__default__" ? "" : v)}>
+			<SelectTrigger className="h-8 w-full text-[13px]">
+				<SelectValue />
+			</SelectTrigger>
+			<SelectContent>
+				<SelectItem value="__default__">Project default</SelectItem>
+				{PERMISSION_MODE_OPTIONS.map((opt) => (
+					<SelectItem key={opt.value} value={opt.value}>
+						{opt.label}
+					</SelectItem>
+				))}
+			</SelectContent>
+		</Select>
 	);
 }
 

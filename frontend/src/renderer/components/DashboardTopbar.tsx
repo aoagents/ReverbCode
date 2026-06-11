@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { Bell, Waypoints } from "lucide-react";
+import { Waypoints } from "lucide-react";
 import { useState } from "react";
 import { findProjectOrchestrator } from "../types/workspace";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
@@ -90,9 +90,6 @@ export function DashboardTopbar({ activeTab, projectId, projectLabel = "agent-or
 			</div>
 			<div className="dashboard-app-header__spacer" />
 			<div className="dashboard-app-header__actions">
-				<button aria-label="Notifications" className="dashboard-app-header__icon-btn" style={noDragStyle} type="button">
-					<Bell className="h-[15px] w-[15px]" aria-hidden="true" />
-				</button>
 				{projectId ? (
 					orchestrator ? (
 						<button

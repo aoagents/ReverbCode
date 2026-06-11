@@ -1,4 +1,4 @@
-import { Bell, GitBranch, LayoutGrid, PanelRightClose, PanelRightOpen, Waypoints } from "lucide-react";
+import { GitBranch, LayoutGrid, PanelRightClose, PanelRightOpen, Waypoints } from "lucide-react";
 import { type WorkbenchView, useUiStore } from "../stores/ui-store";
 import type { WorkerDisplayStatus, WorkspaceSession } from "../types/workspace";
 import { workerDisplayStatus } from "../types/workspace";
@@ -68,10 +68,6 @@ export function Topbar({ view, session, projectLabel, onOpenBoard }: TopbarProps
 			<div className="dashboard-app-header__spacer" />
 
 			<div className="dashboard-app-header__actions">
-				{/* Bell leads the actions row, as in AO's SessionDetailHeader. */}
-				<button aria-label="Notifications" className="dashboard-app-header__icon-btn" style={noDragStyle} type="button">
-					<Bell className="h-[15px] w-[15px]" aria-hidden="true" />
-				</button>
 				<button
 					aria-label={view === "orchestrator" ? "Open Kanban" : "Back to board"}
 					className="dashboard-app-header__primary-btn"
