@@ -50,8 +50,14 @@ func listSessionsArgs() []string {
 	return []string{"list-sessions", "--no-formatting"}
 }
 
-func killSessionArgs(id string) []string {
-	return []string{"kill-session", id}
+// deleteSessionArgs builds the teardown command. `delete-session --force`
+// kills a running session AND removes its serialized resurrection state in one
+// step. Plain `kill-session` is not enough: zellij can keep the session in its
+// global resurrection cache as "(EXITED - attach to resurrect)", and any later
+// `zellij attach <id>` (e.g. the terminal mux re-opening a pane) would resurrect
+// it — re-running the agent command for a session the daemon already destroyed.
+func deleteSessionArgs(id string) []string {
+	return []string{"delete-session", "--force", id}
 }
 
 func attachArgs(id string) []string {

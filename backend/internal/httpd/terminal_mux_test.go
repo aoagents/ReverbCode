@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -19,13 +20,21 @@ import (
 
 // stubSource attaches a throwaway shell command instead of a real Zellij pane, so
 // the /mux path exercises the genuine upgrade + wsjson + Serve + creack/pty flow
-// without needing Zellij. IsAlive=false means the pane is treated as gone once the
-// command exits (no re-attach).
-type stubSource struct{ argv []string }
+// without needing Zellij. The pane reports alive until the first attach happens
+// (the mux refuses to attach to a dead pane), then dead, so the command's exit is
+// treated as the pane being gone (no re-attach).
+type stubSource struct {
+	argv     []string
+	attached atomic.Bool
+}
 
-func (s stubSource) AttachCommand(ports.RuntimeHandle) ([]string, error) { return s.argv, nil }
-func (stubSource) IsAlive(context.Context, ports.RuntimeHandle) (bool, error) {
-	return false, nil
+func (s *stubSource) AttachCommand(ports.RuntimeHandle) ([]string, error) {
+	s.attached.Store(true)
+	return s.argv, nil
+}
+
+func (s *stubSource) IsAlive(context.Context, ports.RuntimeHandle) (bool, error) {
+	return !s.attached.Load(), nil
 }
 
 type terminalMuxFrame struct {
@@ -72,7 +81,7 @@ func TestMuxUpgradeStreamsTerminal(t *testing.T) {
 		t.Skip("PTY spawning not supported on Windows")
 	}
 	mgr := terminal.NewManager(
-		stubSource{argv: []string{"/bin/sh", "-c", "printf MUXOK; exit 0"}},
+		&stubSource{argv: []string{"/bin/sh", "-c", "printf MUXOK; exit 0"}},
 		nil, discardLogger(),
 	)
 	defer mgr.Close()
@@ -101,7 +110,7 @@ func TestMuxSystemPingPong(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("PTY spawning not supported on Windows")
 	}
-	mgr := terminal.NewManager(stubSource{argv: []string{"/bin/sh"}}, nil, discardLogger())
+	mgr := terminal.NewManager(&stubSource{argv: []string{"/bin/sh"}}, nil, discardLogger())
 	defer mgr.Close()
 
 	c, done := dialMux(t, mgr)
