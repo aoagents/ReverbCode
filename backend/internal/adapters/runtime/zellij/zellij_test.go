@@ -42,6 +42,12 @@ func TestCommandBuilders(t *testing.T) {
 	if got, want := dumpScreenArgs("sess-1", "terminal_0"), []string{"--session", "sess-1", "action", "dump-screen", "--pane-id", "terminal_0", "--full"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("dumpScreenArgs = %#v, want %#v", got, want)
 	}
+	// delete-session --force (not kill-session): teardown must also purge the
+	// serialized resurrection state, or a later `zellij attach` re-creates the
+	// session — and re-runs its agent — after the daemon destroyed it.
+	if got, want := deleteSessionArgs("sess-1"), []string{"delete-session", "--force", "sess-1"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("deleteSessionArgs = %#v, want %#v", got, want)
+	}
 }
 
 func TestZellijSessionNameSanitizesIssueRefs(t *testing.T) {
@@ -375,8 +381,11 @@ func TestIsAliveParsesNoFormattingOutput(t *testing.T) {
 	}
 }
 
-func TestIsAliveTreatsExitStatusAsNotAlive(t *testing.T) {
-	fr := &fakeRunner{err: &exec.ExitError{}}
+// IsAlive may treat a non-zero list-sessions ONLY as "not alive" when zellij
+// says no sessions exist at all. Any other exit failure is a probe error: the
+// reaper reports it as a failed probe and the LCM must never read it as death.
+func TestIsAliveTreatsNoSessionsExitAsNotAlive(t *testing.T) {
+	fr := &fakeRunner{outputs: [][]byte{[]byte("No active zellij sessions found.")}, err: &exec.ExitError{}}
 	r := New(Options{Timeout: time.Second})
 	r.runner = fr
 
@@ -389,6 +398,20 @@ func TestIsAliveTreatsExitStatusAsNotAlive(t *testing.T) {
 	}
 }
 
+func TestIsAliveReportsOtherExitFailuresAsProbeErrors(t *testing.T) {
+	fr := &fakeRunner{outputs: [][]byte{[]byte("thread 'main' panicked")}, err: &exec.ExitError{}}
+	r := New(Options{Timeout: time.Second})
+	r.runner = fr
+
+	alive, err := r.IsAlive(context.Background(), ports.RuntimeHandle{ID: "sess-1/terminal_0"})
+	if err == nil {
+		t.Fatal("IsAlive: got nil error, want probe failure — a failed probe must not read as dead")
+	}
+	if alive {
+		t.Fatal("alive = true on probe failure")
+	}
+}
+
 func TestDestroyIsIdempotentWhenSessionMissing(t *testing.T) {
 	fr := &fakeRunner{err: &exec.ExitError{}}
 	r := New(Options{Timeout: time.Second})
@@ -397,8 +420,27 @@ func TestDestroyIsIdempotentWhenSessionMissing(t *testing.T) {
 	if err := r.Destroy(context.Background(), ports.RuntimeHandle{ID: "sess-1/terminal_0"}); err != nil {
 		t.Fatalf("Destroy: %v", err)
 	}
-	if len(fr.calls) != 1 || fr.calls[0].args[0] != "kill-session" {
-		t.Fatalf("calls = %#v, want only kill-session", fr.calls)
+	if len(fr.calls) != 1 || fr.calls[0].args[0] != "delete-session" {
+		t.Fatalf("calls = %#v, want only delete-session", fr.calls)
+	}
+}
+
+// Destroy must delete the session's serialized state, not merely kill it: a
+// killed-but-cached session is resurrected (agent re-run included) by any later
+// `zellij attach`, bringing a terminated session's runtime back to life.
+func TestDestroyForceDeletesSerializedSession(t *testing.T) {
+	fr := &fakeRunner{}
+	r := New(Options{Timeout: time.Second})
+	r.runner = fr
+
+	if err := r.Destroy(context.Background(), ports.RuntimeHandle{ID: "sess-1/terminal_0"}); err != nil {
+		t.Fatalf("Destroy: %v", err)
+	}
+	if len(fr.calls) != 1 {
+		t.Fatalf("calls = %d, want 1", len(fr.calls))
+	}
+	if got, want := fr.calls[0].args, []string{"delete-session", "--force", "sess-1"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("destroy args = %#v, want %#v", got, want)
 	}
 }
 

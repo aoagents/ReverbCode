@@ -102,6 +102,30 @@ func (s *session) run(ctx context.Context) {
 			return
 		}
 
+		// Gate EVERY attach (including the first) on the runtime actually
+		// being alive. `zellij attach` resurrects EXITED sessions — re-running
+		// the serialized agent command — so attaching to a dead handle would
+		// re-create a runtime the daemon already destroyed, outside lifecycle
+		// control. A definitive "not alive" is a clean exit. A probe ERROR is
+		// not proof of death: it retries with backoff up to the same
+		// consecutive-failure cap as attach failures.
+		alive, err := s.src.IsAlive(ctx, s.handle)
+		if err != nil {
+			failures++
+			if failures > s.maxReattach {
+				s.fail("liveness probe: " + err.Error())
+				return
+			}
+			if !s.backoff(ctx, failures) {
+				return
+			}
+			continue
+		}
+		if !alive {
+			s.markExited()
+			return
+		}
+
 		argv, err := s.src.AttachCommand(s.handle)
 		if err != nil {
 			s.fail("attach command: " + err.Error())
@@ -110,8 +134,11 @@ func (s *session) run(ctx context.Context) {
 		p, err := s.spawn(ctx, argv)
 		if err != nil {
 			failures++
-			if !s.shouldReattach(ctx, failures) {
+			if failures > s.maxReattach {
 				s.fail("spawn pty: " + err.Error())
+				return
+			}
+			if !s.backoff(ctx, failures) {
 				return
 			}
 			continue
@@ -127,8 +154,11 @@ func (s *session) run(ctx context.Context) {
 		}
 		failures++
 
-		if !s.shouldReattach(ctx, failures) {
+		if failures > s.maxReattach {
 			s.markExited()
+			return
+		}
+		if !s.backoff(ctx, failures) {
 			return
 		}
 		s.log.Debug("terminal re-attaching", "id", s.id, "failures", failures)
@@ -152,17 +182,11 @@ func (s *session) copyOut(p ptyProcess) {
 	}
 }
 
-// shouldReattach decides whether a dropped/failed PTY warrants another attempt:
-// only while not closed/cancelled, the Zellij session still exists, and we are
-// under the consecutive-failure cap. A backoff sleep separates attempts.
-func (s *session) shouldReattach(ctx context.Context, failures int) bool {
-	if s.isClosed() || ctx.Err() != nil || failures > s.maxReattach {
-		return false
-	}
-	alive, err := s.src.IsAlive(ctx, s.handle)
-	if err != nil || !alive {
-		return false
-	}
+// backoff sleeps between attach attempts; false means ctx was cancelled.
+// Whether another attempt is warranted at all (liveness, failure cap) is
+// decided at the top of the run loop, so a re-attach and a first attach share
+// one gate.
+func (s *session) backoff(ctx context.Context, failures int) bool {
 	select {
 	case <-ctx.Done():
 		return false
