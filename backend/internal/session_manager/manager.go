@@ -316,9 +316,9 @@ func sessionPrefix(project domain.ProjectRecord) string {
 		return p
 	}
 	if len(project.ID) <= 12 {
-		return string(project.ID)
+		return project.ID
 	}
-	return string(project.ID[:12])
+	return project.ID[:12]
 }
 
 // markSpawnFailedTerminated best-effort parks an orphaned spawn as terminated.
