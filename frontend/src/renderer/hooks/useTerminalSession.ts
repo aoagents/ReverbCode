@@ -23,7 +23,13 @@ export type AttachableTerminal = {
 	rows: number;
 	write: (data: Uint8Array) => void;
 	writeln: (line: string) => void;
-	reset: () => void;
+	/**
+	 * Erase screen + scrollback and home the cursor, preserving terminal modes.
+	 * Never a full reset (RIS): that would drop the mouse-tracking mode zellij
+	 * enabled at attach, which the ring replay cannot re-establish — killing
+	 * wheel scroll (see XtermTerminal's CLEAR_SEQUENCE).
+	 */
+	clear: () => void;
 	onData: (listener: (data: string) => void) => { dispose: () => void };
 	onResize: (listener: (size: { cols: number; rows: number }) => void) => { dispose: () => void };
 };
@@ -45,6 +51,10 @@ export type UseTerminalSessionOptions = {
 
 const RETRY_BASE_MS = 500;
 const RETRY_MAX_MS = 8_000;
+// Trailing debounce on grid changes: a pane drag emits a burst of intermediate
+// sizes; the attached program should get one SIGWINCH when the drag settles,
+// not dozens (yyork's terminal-panel does the same at its socket layer).
+const RESIZE_DEBOUNCE_MS = 100;
 
 function defaultCreateMux(): TerminalMux {
 	// Resolved per connect, not per hook: a daemon restart can change the port.
@@ -69,6 +79,7 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		handle: null as string | null,
 		disposers: [] as Array<() => void>,
 		retryTimer: null as ReturnType<typeof setTimeout> | null,
+		resizeTimer: null as ReturnType<typeof setTimeout> | null,
 		attempts: 0,
 		firstAttach: true,
 		detached: true,
@@ -88,6 +99,10 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		if (r.retryTimer) {
 			clearTimeout(r.retryTimer);
 			r.retryTimer = null;
+		}
+		if (r.resizeTimer) {
+			clearTimeout(r.resizeTimer);
+			r.resizeTimer = null;
 		}
 		r.disposers.forEach((dispose) => dispose());
 		r.disposers = [];
@@ -144,18 +159,27 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 			}),
 		);
 		const input = terminal.onData((data) => mux.sendInput(handle, data));
-		const resize = terminal.onResize(({ cols, rows }) => mux.resize(handle, cols, rows));
+		// xterm only fires onResize when the grid actually changed; the debounce
+		// additionally collapses a drag's burst of changes into one PTY resize.
+		const resize = terminal.onResize(({ cols, rows }) => {
+			if (r.resizeTimer) clearTimeout(r.resizeTimer);
+			r.resizeTimer = setTimeout(() => {
+				r.resizeTimer = null;
+				mux.resize(handle, cols, rows);
+			}, RESIZE_DEBOUNCE_MS);
+		});
 		r.disposers.push(
 			() => input.dispose(),
 			() => resize.dispose(),
 		);
 
-		if (r.firstAttach) {
-			terminal.writeln(`\x1b[2mAttaching to ${sessionRef.current?.title ?? handle}…\x1b[0m`);
-		} else {
-			// The server replays the recent-output ring on open (backend
-			// internal/terminal/ring.go); drop the stale screen so it isn't doubled.
-			terminal.reset();
+		// Connection status is chrome (the pane's banner), never buffer content —
+		// the PTY owns the buffer. On reattach the server replays the recent-output
+		// ring (backend internal/terminal/ring.go); clear the stale screen so it
+		// isn't doubled. Screen-clear only, never reset(): RIS would wipe zellij's
+		// mouse-tracking mode and freeze wheel scrolling after every reconnect.
+		if (!r.firstAttach) {
+			terminal.clear();
 		}
 		r.firstAttach = false;
 

@@ -10,7 +10,6 @@ export type SessionStatus =
 	| "merged"
 	| "needs_input"
 	| "idle"
-	| "no_signal"
 	| "terminated";
 
 const sessionStatuses = new Set<SessionStatus>([
@@ -25,7 +24,6 @@ const sessionStatuses = new Set<SessionStatus>([
 	"merged",
 	"needs_input",
 	"idle",
-	"no_signal",
 	"terminated",
 ]);
 
@@ -67,6 +65,8 @@ export type ChangedFile = {
 	staged?: boolean;
 };
 
+export type SessionKind = "worker" | "orchestrator";
+
 export type WorkspaceSession = {
 	id: string;
 	terminalHandleId?: string;
@@ -74,8 +74,12 @@ export type WorkspaceSession = {
 	workspaceName: string;
 	title: string;
 	provider: AgentProvider;
+	kind?: SessionKind;
 	branch: string;
 	status: SessionStatus;
+	/** ISO timestamp from the daemon — used for relative time in the inspector. */
+	createdAt?: string;
+	/** ISO timestamp from the daemon. */
 	updatedAt: string;
 	/** The session's git diff against its base, when known. */
 	changedFiles?: ChangedFile[];
@@ -101,9 +105,6 @@ export function workerDisplayStatus(session: WorkspaceSession): WorkerDisplaySta
 		case "needs_input":
 		case "changes_requested":
 		case "review_pending":
-		// no_signal: the daemon has never heard from this agent — a human
-		// should look at the pane, so it surfaces as needs-you.
-		case "no_signal":
 			return "needs_you";
 		case "ci_failed":
 			return "ci_failed";
@@ -116,6 +117,22 @@ export function workerDisplayStatus(session: WorkspaceSession): WorkerDisplaySta
 		default:
 			return "working";
 	}
+}
+
+export function isOrchestratorSession(session: WorkspaceSession): boolean {
+	return session.kind === "orchestrator" || session.id.endsWith("-orchestrator");
+}
+
+export function findProjectOrchestrator(
+	workspaces: WorkspaceSummary[],
+	projectId: string,
+): WorkspaceSession | undefined {
+	const workspace = workspaces.find((w) => w.id === projectId);
+	return workspace?.sessions.find(isOrchestratorSession);
+}
+
+export function workerSessions(sessions: WorkspaceSession[]): WorkspaceSession[] {
+	return sessions.filter((s) => !isOrchestratorSession(s));
 }
 
 export function sessionIsActive(session: WorkspaceSession): boolean {
@@ -142,6 +159,55 @@ export const workerStatusLabel: Record<WorkerDisplayStatus, string> = {
 /** Whether a status should breathe (alive/working). */
 export function workerStatusPulses(status: WorkerDisplayStatus): boolean {
 	return status === "working" || status === "needs_you";
+}
+
+/**
+ * Kanban attention zone, ordered by human-action urgency — ported from
+ * agent-orchestrator's getAttentionLevel (packages/web/src/lib/types.ts),
+ * collapsed to its default "simple" set and rebound to reverbcode's
+ * {@link SessionStatus}. The board groups sessions into these columns so the
+ * highest-ROrI work (a one-click merge) sits leftmost.
+ */
+export type AttentionZone = "merge" | "action" | "pending" | "working" | "done";
+
+/** Columns left→right, most-urgent first. "done" is the archive column. */
+export const attentionZoneOrder: AttentionZone[] = ["merge", "action", "pending", "working", "done"];
+
+export const attentionZoneLabel: Record<AttentionZone, string> = {
+	merge: "Ready to merge",
+	action: "Needs you",
+	pending: "Pending",
+	working: "Working",
+	done: "Done",
+};
+
+export function attentionZone(session: WorkspaceSession): AttentionZone {
+	switch (session.status) {
+		// Terminal — archive.
+		case "merged":
+		case "terminated":
+			return "done";
+		// One click to clear — highest ROI, checked first.
+		case "approved":
+		case "mergeable":
+			return "merge";
+		// Agent waiting on a human (respond) or a problem to investigate (review);
+		// agent-orchestrator collapses these into one "action" zone by default.
+		case "needs_input":
+		case "ci_failed":
+		case "changes_requested":
+			return "action";
+		// Waiting on an external reviewer / CI — nothing to do right now.
+		case "review_pending":
+		case "pr_open":
+		case "draft":
+			return "pending";
+		// Agents doing their thing — don't interrupt.
+		case "working":
+		case "idle":
+		default:
+			return "working";
+	}
 }
 
 export type WorkspaceSummary = {

@@ -17,7 +17,7 @@ func newTestSession(src PTYSource, spawn spawnFunc) *session {
 }
 
 func TestSessionFansOutLiveOutputToSubscribers(t *testing.T) {
-	src := &fakeSource{}
+	src := &fakeSource{alive: true}
 	pty := newFakePTY()
 	sp := &fakeSpawner{ptys: []*fakePTY{pty}}
 	s := newTestSession(src, sp.spawn)
@@ -35,7 +35,7 @@ func TestSessionFansOutLiveOutputToSubscribers(t *testing.T) {
 }
 
 func TestSessionReplaysRingBufferOnSubscribe(t *testing.T) {
-	src := &fakeSource{}
+	src := &fakeSource{alive: true}
 	pty := newFakePTY()
 	sp := &fakeSpawner{ptys: []*fakePTY{pty}}
 	s := newTestSession(src, sp.spawn)
@@ -59,7 +59,7 @@ func ringLen(s *session) int {
 }
 
 func TestSessionWriteAndResizeReachPTY(t *testing.T) {
-	src := &fakeSource{}
+	src := &fakeSource{alive: true}
 	pty := newFakePTY()
 	sp := &fakeSpawner{ptys: []*fakePTY{pty}}
 	s := newTestSession(src, sp.spawn)
@@ -81,7 +81,7 @@ func TestSessionWriteAndResizeReachPTY(t *testing.T) {
 }
 
 func TestSessionSkipsReattachOnCleanExit(t *testing.T) {
-	src := &fakeSource{alive: false} // Zellij session gone -> no re-attach
+	src := &fakeSource{alive: true} // alive for the first attach
 	pty := newFakePTY()
 	sp := &fakeSpawner{ptys: []*fakePTY{pty}}
 	s := newTestSession(src, sp.spawn)
@@ -93,7 +93,9 @@ func TestSessionSkipsReattachOnCleanExit(t *testing.T) {
 	go s.run(ctx)
 	s.subscribe(func([]byte) {}, func() { close(exited) })
 
-	pty.Close() // pane ends
+	eventually(t, time.Second, func() bool { return sp.calls() == 1 })
+	src.setAlive(false) // Zellij session gone -> no re-attach
+	pty.Close()         // pane ends
 	select {
 	case <-exited:
 	case <-time.After(time.Second):
@@ -101,6 +103,61 @@ func TestSessionSkipsReattachOnCleanExit(t *testing.T) {
 	}
 	if got := sp.calls(); got != 1 {
 		t.Fatalf("expected exactly one attach, got %d", got)
+	}
+}
+
+// TestSessionNeverAttachesToDeadRuntime covers the resurrection bug: `zellij
+// attach` on a killed-but-cached session resurrects it, re-running the agent
+// command. A session whose runtime probes definitively dead must therefore
+// report exited WITHOUT ever spawning an attach PTY — even on the very first
+// open (the original code only checked liveness on re-attach).
+func TestSessionNeverAttachesToDeadRuntime(t *testing.T) {
+	src := &fakeSource{alive: false}
+	sp := &fakeSpawner{}
+	s := newTestSession(src, sp.spawn)
+
+	exited := make(chan struct{})
+	s.subscribe(func([]byte) {}, func() { close(exited) })
+
+	go s.run(context.Background())
+	select {
+	case <-exited:
+	case <-time.After(time.Second):
+		t.Fatal("expected exit when runtime is dead before first attach")
+	}
+	if got := sp.calls(); got != 0 {
+		t.Fatalf("attach must never run against a dead runtime, got %d spawns", got)
+	}
+}
+
+// TestSessionRetriesProbeErrorsBeforeAttaching pins the hard rule that a
+// failed liveness probe is NOT proof of death: a transient probe error must
+// not flip the terminal to exited, and the attach proceeds once the probe
+// recovers.
+func TestSessionRetriesProbeErrorsBeforeAttaching(t *testing.T) {
+	src := &fakeSource{aliveErr: io.ErrUnexpectedEOF}
+	pty := newFakePTY()
+	sp := &fakeSpawner{ptys: []*fakePTY{pty}}
+	s := newTestSession(src, sp.spawn)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go s.run(ctx)
+
+	// While probes error the session must neither exit nor attach.
+	time.Sleep(50 * time.Millisecond)
+	if s.isExited() {
+		t.Fatal("probe error must not be treated as runtime death")
+	}
+	if got := sp.calls(); got != 0 {
+		t.Fatalf("attach must wait for a successful probe, got %d spawns", got)
+	}
+
+	// Probe recovers -> the attach goes through.
+	src.setAliveResult(true, nil)
+	eventually(t, 2*time.Second, func() bool { return sp.calls() == 1 })
+	if s.isExited() {
+		t.Fatal("session exited despite a live runtime")
 	}
 }
 
@@ -125,7 +182,7 @@ func TestSessionReattachesWhileSessionAlive(t *testing.T) {
 }
 
 func TestSessionFailsWhenAttachCommandErrors(t *testing.T) {
-	src := &fakeSource{attachErr: io.ErrUnexpectedEOF}
+	src := &fakeSource{alive: true, attachErr: io.ErrUnexpectedEOF}
 	sp := &fakeSpawner{}
 	s := newTestSession(src, sp.spawn)
 

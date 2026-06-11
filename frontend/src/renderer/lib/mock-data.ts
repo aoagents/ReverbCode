@@ -15,7 +15,8 @@ export const mockWorkspaces: WorkspaceSummary[] = [
 				provider: "claude-code",
 				branch: "feat/refactor-mux",
 				status: "working",
-				updatedAt: "now",
+				updatedAt: new Date().toISOString(),
+				createdAt: new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString(),
 				changedFiles: [
 					{
 						path: "internal/mux/terminal_mux.go",
@@ -40,7 +41,8 @@ export const mockWorkspaces: WorkspaceSummary[] = [
 				provider: "codex",
 				branch: "fix/webgl-fallback",
 				status: "needs_input",
-				updatedAt: "now",
+				updatedAt: new Date().toISOString(),
+				createdAt: new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString(),
 			},
 		],
 	},

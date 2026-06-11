@@ -69,7 +69,7 @@ func recv(t *testing.T, c *fakeConn, ch, typ string, d time.Duration) serverMsg 
 }
 
 func TestServeOpenStreamsAndWritesTerminal(t *testing.T) {
-	src := &fakeSource{}
+	src := &fakeSource{alive: true}
 	pty := newFakePTY()
 	sp := &fakeSpawner{ptys: []*fakePTY{pty}}
 	mgr := NewManager(src, nil, testLogger(), WithSpawn(sp.spawn), WithHeartbeat(0))
@@ -152,8 +152,7 @@ func TestServeOpenAlreadyExitedSessionDoesNotBlockReopen(t *testing.T) {
 // exit, so a later open for the same id is served rather than dropped by the
 // already-open guard.
 func TestServeExitAfterOpenClearsEntryAllowingReopen(t *testing.T) {
-	src := &fakeSource{}
-	src.setAlive(false) // a dropped pty must not re-attach -> session exits
+	src := &fakeSource{alive: true} // alive for the first attach
 	p := newFakePTY()
 	sp := &fakeSpawner{ptys: []*fakePTY{p}}
 	mgr := NewManager(src, nil, testLogger(), WithSpawn(sp.spawn), WithHeartbeat(0))
@@ -167,7 +166,8 @@ func TestServeExitAfterOpenClearsEntryAllowingReopen(t *testing.T) {
 	conn.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgOpen}
 	recv(t, conn, chTerminal, msgOpened, time.Second)
 
-	p.Close() // drop the pty; IsAlive false => session exits, no re-attach
+	src.setAlive(false) // a dropped pty must not re-attach -> session exits
+	p.Close()           // drop the pty; IsAlive false => session exits, no re-attach
 	recv(t, conn, chTerminal, msgExited, time.Second)
 
 	conn.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgOpen}

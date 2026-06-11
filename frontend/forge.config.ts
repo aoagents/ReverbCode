@@ -14,7 +14,6 @@ const config: ForgeConfig = {
 		osxSign: process.env.CSC_LINK ? {} : undefined,
 		osxNotarize: process.env.APPLE_ID
 			? {
-					tool: "notarytool",
 					appleId: process.env.APPLE_ID,
 					appleIdPassword: process.env.APPLE_APP_SPECIFIC_PASSWORD!,
 					teamId: process.env.APPLE_TEAM_ID!,
@@ -24,7 +23,7 @@ const config: ForgeConfig = {
 	rebuildConfig: {},
 	makers: [
 		{ name: "@electron-forge/maker-squirrel", config: { name: "AgentOrchestrator" } },
-		{ name: "@electron-forge/maker-zip", platforms: ["darwin"] },
+		{ name: "@electron-forge/maker-zip", platforms: ["darwin"], config: {} },
 		{ name: "@electron-forge/maker-deb", config: {} },
 		{ name: "@electron-forge/maker-rpm", config: {} },
 	],

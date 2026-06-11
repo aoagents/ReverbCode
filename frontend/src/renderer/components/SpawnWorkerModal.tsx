@@ -18,6 +18,9 @@ const agentOptions: { value: AgentProvider; label: string }[] = [
 ];
 
 const basedOnTabs = ["Branch", "Issue", "Pull Request"] as const;
+// The project's default branch — selecting it in "Based on" means "new session
+// branch off the default", not "check out the default branch itself".
+const BASE_BRANCH = "main";
 type BasedOn = (typeof basedOnTabs)[number];
 
 const NAME_RULE = /^[a-z0-9-]+$/;
@@ -27,7 +30,12 @@ type SpawnWorkerModalProps = {
 	onOpenChange: (open: boolean) => void;
 	workspaces: WorkspaceSummary[];
 	defaultProjectId?: string;
-	onCreateTask: (input: { projectId: string; prompt: string; name?: string; harness?: AgentProvider }) => Promise<void>;
+	onCreateTask: (input: {
+		projectId: string;
+		prompt: string;
+		branch?: string;
+		harness?: AgentProvider;
+	}) => Promise<void>;
 };
 
 export function SpawnWorkerModal({
@@ -42,6 +50,7 @@ export function SpawnWorkerModal({
 	const [projectId, setProjectId] = useState(fallbackProjectId);
 	const [agent, setAgent] = useState<AgentProvider>("claude-code");
 	const [basedOn, setBasedOn] = useState<BasedOn>("Branch");
+	const [branch, setBranch] = useState(BASE_BRANCH);
 	const [tab, setTab] = useState<"Prompt" | "Workspace">("Prompt");
 	const [prompt, setPrompt] = useState("");
 	const [error, setError] = useState<string | null>(null);
@@ -56,6 +65,9 @@ export function SpawnWorkerModal({
 	}, [open, fallbackProjectId]);
 
 	const selectedWorkspace = workspaces.find((workspace) => workspace.id === projectId) ?? workspaces[0];
+	const branchOptions = Array.from(
+		new Set([BASE_BRANCH, ...(selectedWorkspace?.sessions.map((session) => session.branch).filter(Boolean) ?? [])]),
+	);
 	const nameValid = name === "" || NAME_RULE.test(name);
 	const canSubmit = prompt.trim().length > 0 && projectId !== "" && nameValid && !isSubmitting;
 
@@ -65,14 +77,23 @@ export function SpawnWorkerModal({
 		setError(null);
 		setIsSubmitting(true);
 		try {
+			// The API's `branch` field means "check out this exact branch in the
+			// session worktree" — valid for resuming an existing session branch, but
+			// never for the base branch itself (git refuses a second worktree on a
+			// checked-out branch; daemon manager.go). "Based on main" therefore
+			// OMITS branch so the daemon mints a fresh ao/<sessionId> off the
+			// project's default branch.
+			const trimmedBranch = branch.trim();
 			await onCreateTask({
 				projectId,
 				prompt: prompt.trim(),
-				name: name || undefined,
+				branch:
+					basedOn === "Branch" && trimmedBranch !== "" && trimmedBranch !== BASE_BRANCH ? trimmedBranch : undefined,
 				harness: agent,
 			});
 			setName("");
 			setPrompt("");
+			setBranch(BASE_BRANCH);
 			onOpenChange(false);
 		} catch (err) {
 			setError(err instanceof Error ? err.message : "Could not spawn worker");
@@ -159,15 +180,19 @@ export function SpawnWorkerModal({
 								</div>
 							</div>
 							<div className="p-2.5">
-								<p className="px-1 py-1.5 text-[12.5px] text-passive">
-									{/* The API has no per-spawn base branch — the worker branches off the
-                      project's configured default branch in a fresh worktree. */}
-									{basedOn === "Branch"
-										? "Branches off the project's default branch in a fresh worktree."
-										: basedOn === "Issue"
-											? "Pick an issue to start from."
-											: "Pick a pull request to start from."}
-								</p>
+								{basedOn === "Branch" ? (
+									<SelectControl
+										aria-label="Based on branch"
+										className="flex w-full"
+										onChange={setBranch}
+										value={branch}
+										options={branchOptions.map((option) => ({ value: option, label: option }))}
+									/>
+								) : (
+									<p className="px-1 py-1.5 text-[12.5px] text-passive">
+										{basedOn === "Issue" ? "Pick an issue to start from." : "Pick a pull request to start from."}
+									</p>
+								)}
 							</div>
 						</div>
 
@@ -202,7 +227,11 @@ export function SpawnWorkerModal({
 							)}
 						</div>
 
-						{error && <p className="text-[12px] text-error">{error}</p>}
+						{error && (
+							<p className="text-[12px] text-error" role="alert">
+								{error}
+							</p>
+						)}
 
 						<div className="-mx-[18px] -mb-[18px] flex justify-end border-t border-border bg-surface px-3.5 py-3">
 							<Button disabled={!canSubmit} type="submit" variant="primary">

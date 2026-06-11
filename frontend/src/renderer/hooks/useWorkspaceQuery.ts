@@ -16,40 +16,37 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 
 	if (projectsError || sessionsError) throw projectsError ?? sessionsError;
 
-	type ApiSession = NonNullable<typeof sessionsData>["sessions"][number];
-
-	return (projectsData?.projects ?? []).map((project) => {
-		const projectSessions = (sessionsData?.sessions ?? []).filter((session) => session.projectId === project.id);
-		const toWorkspaceSession = (session: ApiSession) => ({
-			id: session.id,
-			terminalHandleId: session.terminalHandleId,
-			workspaceId: project.id,
-			workspaceName: project.name,
-			title: session.displayName ?? session.issueId ?? session.id,
-			provider: toAgentProvider(session.harness),
-			branch: session.branch ?? "",
-			status: toSessionStatus(session.status, session.isTerminated),
-			updatedAt: new Date(session.updatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }),
-		});
-		// One active orchestrator per project (DESIGN.md); it anchors the
-		// orchestrator view instead of appearing among the workers.
-		const orchestrator = projectSessions.find((session) => session.kind === "orchestrator" && !session.isTerminated);
-
-		return {
-			id: project.id,
-			name: project.name,
-			path: project.path,
-			orchestrator: orchestrator ? toWorkspaceSession(orchestrator) : undefined,
-			sessions: projectSessions.filter((session) => session.kind !== "orchestrator").map(toWorkspaceSession),
-		};
-	});
+	return (projectsData?.projects ?? []).map((project) => ({
+		id: project.id,
+		name: project.name,
+		path: project.path,
+		sessions: (sessionsData?.sessions ?? [])
+			.filter((session) => session.projectId === project.id)
+			.map((session) => ({
+				id: session.id,
+				terminalHandleId: session.terminalHandleId,
+				workspaceId: project.id,
+				workspaceName: project.name,
+				title: session.displayName ?? session.issueId ?? session.id,
+				provider: toAgentProvider(session.harness),
+				kind: session.kind === "orchestrator" ? "orchestrator" : session.kind === "worker" ? "worker" : undefined,
+				branch: `session/${session.id}`,
+				status: toSessionStatus(session.status, session.isTerminated),
+				createdAt: session.createdAt,
+				updatedAt: session.updatedAt,
+			})),
+	}));
 }
 
+// Shared so route loaders can prefetch via queryClient.ensureQueryData (paired
+// with the router's defaultPreload: "intent") and the hook reads the same cache.
+export const workspaceQueryOptions = {
+	queryKey: workspaceQueryKey,
+	queryFn: fetchWorkspaces,
+	retry: 1,
+	refetchInterval: 15_000,
+};
+
 export function useWorkspaceQuery() {
-	return useQuery({
-		queryKey: workspaceQueryKey,
-		queryFn: fetchWorkspaces,
-		retry: 1,
-		refetchInterval: 15_000,
-	});
+	return useQuery(workspaceQueryOptions);
 }

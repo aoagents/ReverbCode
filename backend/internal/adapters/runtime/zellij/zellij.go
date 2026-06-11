@@ -152,14 +152,15 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 	return ports.RuntimeHandle{ID: handleIDValue(id, paneID)}, nil
 }
 
-// Destroy kills the handle's zellij session. An already-gone session is treated
-// as success.
+// Destroy kills the handle's zellij session and deletes its serialized state,
+// so the session can never be resurrected by a later `zellij attach`. An
+// already-gone session is treated as success.
 func (r *Runtime) Destroy(ctx context.Context, handle ports.RuntimeHandle) error {
 	id, _, err := handleID(handle)
 	if err != nil {
 		return err
 	}
-	if _, err := r.run(ctx, killSessionArgs(id)...); err != nil {
+	if _, err := r.run(ctx, deleteSessionArgs(id)...); err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
 			return nil
@@ -204,7 +205,10 @@ func (r *Runtime) GetOutput(ctx context.Context, handle ports.RuntimeHandle, lin
 }
 
 // IsAlive reports whether the handle's session still appears in `zellij
-// list-sessions`.
+// list-sessions`. Only the documented "no sessions exist" failure counts as a
+// definitive "not alive"; any other list-sessions failure is reported as a
+// probe error so callers (the reaper feeding the LCM) treat it as a failed
+// probe, never as proof of death.
 func (r *Runtime) IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool, error) {
 	id, _, err := handleID(handle)
 	if err != nil {
@@ -213,12 +217,21 @@ func (r *Runtime) IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool
 	out, err := r.run(ctx, listSessionsArgs()...)
 	if err != nil {
 		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
+		if errors.As(err, &exitErr) && noActiveSessionsOutput(string(out)) {
 			return false, nil
 		}
 		return false, fmt.Errorf("zellij runtime: probe session %s: %w", id, err)
 	}
 	return sessionListedAlive(string(out), id), nil
+}
+
+// noActiveSessionsOutput reports whether a non-zero `zellij list-sessions`
+// failed because no sessions exist at all — the one exit-error case that is a
+// definitive "dead" rather than a probe failure. zellij 0.44 emits either
+// "No active zellij sessions found." or "There is no active session!".
+func noActiveSessionsOutput(out string) bool {
+	s := strings.ToLower(out)
+	return strings.Contains(s, "no active") && strings.Contains(s, "session")
 }
 
 // AttachCommand returns the argv a human runs to attach their terminal to the
