@@ -155,10 +155,12 @@ func (fakeAgents) Agent(domain.AgentHarness) (ports.Agent, bool) { return fakeAg
 type recordingAgent struct {
 	fakeAgent
 	lastConfig ports.AgentConfig
+	lastLaunch ports.LaunchConfig
 }
 
 func (a *recordingAgent) GetLaunchCommand(_ context.Context, cfg ports.LaunchConfig) ([]string, error) {
 	a.lastConfig = cfg.Config
+	a.lastLaunch = cfg
 	return []string{"launch"}, nil
 }
 
@@ -496,58 +498,88 @@ func TestSpawn_DefaultsBranchFromSessionID(t *testing.T) {
 }
 
 func TestSpawnWorker_AppendsActiveOrchestratorContact(t *testing.T) {
-	m, st, _, _ := newManager()
+	st := newFakeStore()
 	st.num = 1
 	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindOrchestrator}
+	agent := &recordingAgent{}
+	rt := &fakeRuntime{}
+	ws := &fakeWorkspace{}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
 
 	s, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Prompt: "do it"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	prompt := st.sessions[s.ID].Metadata.Prompt
+
+	// The user prompt must be preserved and stored in metadata as-is.
+	if got := st.sessions[s.ID].Metadata.Prompt; got != "do it" {
+		t.Fatalf("metadata prompt = %q, want %q", got, "do it")
+	}
+
+	// Coordination instructions must be in the system prompt, not the user prompt.
+	systemPrompt := agent.lastLaunch.SystemPrompt
 	for _, want := range []string{
-		"do it",
 		"## Orchestrator coordination",
 		`ao send --session mer-1 --message "<your message>"`,
 		"Only ping the orchestrator for true blockers, cross-session coordination",
 	} {
-		if !strings.Contains(prompt, want) {
-			t.Fatalf("prompt missing %q:\n%s", want, prompt)
+		if !strings.Contains(systemPrompt, want) {
+			t.Fatalf("system prompt missing %q:\n%s", want, systemPrompt)
 		}
+	}
+	if strings.Contains(agent.lastLaunch.Prompt, "## Orchestrator coordination") {
+		t.Fatalf("orchestrator coordination must not be in the user prompt:\n%s", agent.lastLaunch.Prompt)
 	}
 }
 
 func TestSpawnWorker_SkipsTerminatedOrchestratorContact(t *testing.T) {
-	m, st, _, _ := newManager()
+	st := newFakeStore()
 	st.num = 1
 	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindOrchestrator, IsTerminated: true}
+	agent := &recordingAgent{}
+	rt := &fakeRuntime{}
+	ws := &fakeWorkspace{}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
 
-	s, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Prompt: "do it"})
+	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Prompt: "do it"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	prompt := st.sessions[s.ID].Metadata.Prompt
-	if strings.Contains(prompt, "## Orchestrator coordination") || strings.Contains(prompt, "ao send --session mer-1") {
-		t.Fatalf("terminated orchestrator should not be added to prompt:\n%s", prompt)
+	systemPrompt := agent.lastLaunch.SystemPrompt
+	if strings.Contains(systemPrompt, "## Orchestrator coordination") || strings.Contains(systemPrompt, "ao send --session mer-1") {
+		t.Fatalf("terminated orchestrator should not be added to system prompt:\n%s", systemPrompt)
 	}
 }
 
 func TestSpawnOrchestrator_UsesCoordinatorPrompt(t *testing.T) {
-	m, st, _, _ := newManager()
-	s, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindOrchestrator})
+	st := newFakeStore()
+	agent := &recordingAgent{}
+	rt := &fakeRuntime{}
+	ws := &fakeWorkspace{}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+
+	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindOrchestrator})
 	if err != nil {
 		t.Fatal(err)
 	}
-	prompt := st.sessions[s.ID].Metadata.Prompt
+
+	// Coordinator instructions must be in the system prompt, not the user prompt.
+	systemPrompt := agent.lastLaunch.SystemPrompt
 	for _, want := range []string{
 		"You are the human-facing coordinator for project mer",
 		`ao spawn --project mer --prompt "<clear worker task>"`,
 		"`ao send`",
 		"avoid doing implementation yourself unless it is necessary",
 	} {
-		if !strings.Contains(prompt, want) {
-			t.Fatalf("prompt missing %q:\n%s", want, prompt)
+		if !strings.Contains(systemPrompt, want) {
+			t.Fatalf("system prompt missing %q:\n%s", want, systemPrompt)
 		}
+	}
+	if strings.Contains(agent.lastLaunch.Prompt, "You are the human-facing coordinator") {
+		t.Fatalf("coordinator role must not be in the user prompt:\n%s", agent.lastLaunch.Prompt)
 	}
 }
 

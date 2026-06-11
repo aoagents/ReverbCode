@@ -163,7 +163,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	// so a project can default workers to one agent and orchestrators to another.
 	cfg.Harness = effectiveHarness(cfg.Harness, cfg.Kind, project.Config)
 
-	prompt, err := m.buildSpawnPrompt(ctx, cfg)
+	prompt, systemPrompt, err := m.buildSpawnTexts(ctx, cfg)
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("spawn: prompt: %w", err)
 	}
@@ -220,6 +220,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		SessionID:     string(id),
 		WorkspacePath: ws.Path,
 		Prompt:        prompt,
+		SystemPrompt:  systemPrompt,
 		IssueID:       string(cfg.IssueID),
 		Config:        effectiveAgentConfig(cfg.Kind, project.Config),
 	})
@@ -578,22 +579,26 @@ func buildPrompt(cfg ports.SpawnConfig) string {
 	return cfg.Prompt
 }
 
-func (m *Manager) buildSpawnPrompt(ctx context.Context, cfg ports.SpawnConfig) (string, error) {
-	prompt := buildPrompt(cfg)
+// buildSpawnTexts returns the user-facing prompt and the system prompt to
+// deliver separately to the agent. Orchestrator role instructions and worker
+// coordination hints are placed in the system prompt so they are treated as
+// standing instructions rather than part of the human's task request.
+func (m *Manager) buildSpawnTexts(ctx context.Context, cfg ports.SpawnConfig) (prompt, systemPrompt string, err error) {
+	prompt = buildPrompt(cfg)
 
 	switch cfg.Kind {
 	case domain.KindOrchestrator:
-		return appendPromptSection(orchestratorPrompt(cfg.ProjectID), prompt), nil
+		systemPrompt = orchestratorPrompt(cfg.ProjectID)
 	case domain.KindWorker:
-		orchestratorID, ok, err := m.activeOrchestratorSessionID(ctx, cfg.ProjectID)
-		if err != nil {
-			return "", err
+		orchestratorID, ok, lookupErr := m.activeOrchestratorSessionID(ctx, cfg.ProjectID)
+		if lookupErr != nil {
+			return "", "", lookupErr
 		}
 		if ok {
-			prompt = appendPromptSection(prompt, workerOrchestratorPrompt(orchestratorID))
+			systemPrompt = workerOrchestratorPrompt(orchestratorID)
 		}
 	}
-	return prompt, nil
+	return prompt, systemPrompt, nil
 }
 
 func (m *Manager) activeOrchestratorSessionID(ctx context.Context, project domain.ProjectID) (domain.SessionID, bool, error) {
@@ -630,17 +635,6 @@ An active orchestrator session exists for this project. If you hit a true blocke
 `+"`ao send --session %s --message \"<your message>\"`"+`
 
 Only ping the orchestrator for true blockers, cross-session coordination, or decisions that cannot be resolved within your own task.`, orchestratorID)
-}
-
-func appendPromptSection(prompt, section string) string {
-	switch {
-	case prompt == "":
-		return section
-	case section == "":
-		return prompt
-	default:
-		return prompt + "\n\n" + section
-	}
 }
 
 // spawnEnv builds the runtime environment: the per-project env vars first, then
