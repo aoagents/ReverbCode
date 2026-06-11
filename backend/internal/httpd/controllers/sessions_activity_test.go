@@ -84,6 +84,13 @@ func TestSessionsAPI_ActivityRejectsBadJSON(t *testing.T) {
 	assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_JSON")
 }
 
+func TestSessionsAPI_ActivityMissingSessionIs404(t *testing.T) {
+	srv := newActivityTestServer(t, &fakeActivityRecorder{err: ports.ErrSessionNotFound})
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/missing/activity", `{"state":"idle"}`)
+	assertErrorCode(t, body, status, http.StatusNotFound, "SESSION_NOT_FOUND")
+}
+
 func TestSessionsAPI_ActivityRecorderErrorIs500(t *testing.T) {
 	srv := newActivityTestServer(t, &fakeActivityRecorder{err: errors.New("boom")})
 

@@ -58,6 +58,36 @@ func (q *Queries) CreateNotification(ctx context.Context, arg CreateNotification
 	return i, err
 }
 
+const getUnreadNotificationByDedupe = `-- name: GetUnreadNotificationByDedupe :one
+SELECT id, session_id, project_id, pr_url, type, title, body, status, created_at
+FROM notifications
+WHERE session_id = ? AND type = ? AND pr_url = ? AND status = 'unread'
+LIMIT 1
+`
+
+type GetUnreadNotificationByDedupeParams struct {
+	SessionID domain.SessionID
+	Type      domain.NotificationType
+	PRURL     string
+}
+
+func (q *Queries) GetUnreadNotificationByDedupe(ctx context.Context, arg GetUnreadNotificationByDedupeParams) (Notification, error) {
+	row := q.db.QueryRowContext(ctx, getUnreadNotificationByDedupe, arg.SessionID, arg.Type, arg.PRURL)
+	var i Notification
+	err := row.Scan(
+		&i.ID,
+		&i.SessionID,
+		&i.ProjectID,
+		&i.PRURL,
+		&i.Type,
+		&i.Title,
+		&i.Body,
+		&i.Status,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const listUnreadNotifications = `-- name: ListUnreadNotifications :many
 SELECT id, session_id, project_id, pr_url, type, title, body, status, created_at
 FROM notifications

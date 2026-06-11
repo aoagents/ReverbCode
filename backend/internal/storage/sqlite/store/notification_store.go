@@ -2,9 +2,9 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 
 	moderncsqlite "modernc.org/sqlite"
 	sqlite3 "modernc.org/sqlite/lib"
@@ -24,6 +24,11 @@ func (s *Store) CreateNotification(ctx context.Context, rec domain.NotificationR
 	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
+	if existing, ok, err := s.getUnreadNotificationByDedupe(ctx, rec); err != nil {
+		return domain.NotificationRecord{}, false, err
+	} else if ok {
+		return existing, false, nil
+	}
 	row, err := s.qw.CreateNotification(ctx, gen.CreateNotificationParams{
 		ID:        rec.ID,
 		SessionID: rec.SessionID,
@@ -36,8 +41,12 @@ func (s *Store) CreateNotification(ctx context.Context, rec domain.NotificationR
 		CreatedAt: rec.CreatedAt,
 	})
 	if err != nil {
-		if isUnreadNotificationDuplicate(err) {
-			return domain.NotificationRecord{}, false, nil
+		if isSQLiteUnique(err) {
+			if existing, ok, lookupErr := s.getUnreadNotificationByDedupe(ctx, rec); lookupErr != nil {
+				return domain.NotificationRecord{}, false, lookupErr
+			} else if ok {
+				return existing, false, nil
+			}
 		}
 		return domain.NotificationRecord{}, false, fmt.Errorf("create notification %s: %w", rec.ID, err)
 	}
@@ -62,15 +71,24 @@ func (s *Store) ListUnreadNotificationsByProject(ctx context.Context, projectID 
 	return notificationsFromGen(rows), nil
 }
 
-func isUnreadNotificationDuplicate(err error) bool {
-	var sqliteErr *moderncsqlite.Error
-	if !errors.As(err, &sqliteErr) || sqliteErr.Code() != sqlite3.SQLITE_CONSTRAINT_UNIQUE {
-		return false
+func (s *Store) getUnreadNotificationByDedupe(ctx context.Context, rec domain.NotificationRecord) (domain.NotificationRecord, bool, error) {
+	row, err := s.qw.GetUnreadNotificationByDedupe(ctx, gen.GetUnreadNotificationByDedupeParams{
+		SessionID: rec.SessionID,
+		Type:      rec.Type,
+		PRURL:     rec.PRURL,
+	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.NotificationRecord{}, false, nil
 	}
-	msg := err.Error()
-	return strings.Contains(msg, "notifications.session_id") &&
-		strings.Contains(msg, "notifications.type") &&
-		strings.Contains(msg, "notifications.pr_url")
+	if err != nil {
+		return domain.NotificationRecord{}, false, fmt.Errorf("lookup unread notification dedupe: %w", err)
+	}
+	return notificationFromGen(row), true, nil
+}
+
+func isSQLiteUnique(err error) bool {
+	var sqliteErr *moderncsqlite.Error
+	return errors.As(err, &sqliteErr) && sqliteErr.Code() == sqlite3.SQLITE_CONSTRAINT_UNIQUE
 }
 
 func notificationFromGen(row gen.Notification) domain.NotificationRecord {

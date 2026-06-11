@@ -3,6 +3,7 @@ package lifecycle
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -92,16 +93,30 @@ func (m *Manager) ApplySCMObservation(ctx context.Context, id domain.SessionID, 
 	if !o.Fetched {
 		return nil
 	}
-	rec, ok, err := m.store.GetSession(ctx, id)
-	if err != nil || !ok {
+	if err := m.ApplyPRObservation(ctx, id, scmToPRObservation(o)); err != nil {
 		return err
 	}
-	intent := m.notificationIntentForSCM(rec, o)
-	if err := m.ApplyPRObservation(ctx, id, scmToPRObservation(o)); err != nil {
+	intent, err := m.notificationIntentForCurrentSCM(ctx, id, o)
+	if err != nil {
 		return err
 	}
 	m.emitNotification(ctx, intent)
 	return nil
+}
+
+func (m *Manager) notificationIntentForCurrentSCM(ctx context.Context, id domain.SessionID, o ports.SCMObservation) (*ports.NotificationIntent, error) {
+	// Serialize the session snapshot with activity transitions so ready-to-merge
+	// notifications do not race against a simultaneous waiting_input update.
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rec, ok, err := m.store.GetSession(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", ports.ErrSessionNotFound, id)
+	}
+	return m.notificationIntentForSCM(rec, o), nil
 }
 
 func (m *Manager) notificationIntentForSCM(rec domain.SessionRecord, o ports.SCMObservation) *ports.NotificationIntent {
@@ -123,7 +138,7 @@ func (m *Manager) notificationIntentForSCM(rec domain.SessionRecord, o ports.SCM
 		base.Type = domain.NotificationPRMerged
 		return &base
 	}
-	if o.PR.Closed && !o.PR.Merged {
+	if o.PR.Closed {
 		base.Type = domain.NotificationPRClosedUnmerged
 		return &base
 	}

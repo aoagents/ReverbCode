@@ -1,6 +1,13 @@
 package ports
 
-import "github.com/aoagents/agent-orchestrator/backend/internal/domain"
+import (
+	"errors"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+)
+
+// ErrSessionNotFound reports an observation for an unknown session id.
+var ErrSessionNotFound = errors.New("session not found")
 
 // SpawnConfig is the request to start a new session: which project/issue, which
 // agent harness, and the branch/prompt the agent launches with.

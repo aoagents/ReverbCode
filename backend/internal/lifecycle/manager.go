@@ -101,9 +101,13 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	var intent *ports.NotificationIntent
 	m.mu.Lock()
 	rec, ok, err := m.store.GetSession(ctx, id)
-	if err != nil || !ok {
+	if err != nil {
 		m.mu.Unlock()
 		return err
+	}
+	if !ok {
+		m.mu.Unlock()
+		return fmt.Errorf("%w: %s", ports.ErrSessionNotFound, id)
 	}
 	now := m.clock()
 	if rec.IsTerminated {

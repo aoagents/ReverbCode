@@ -112,6 +112,14 @@ func TestActivity_InvalidIsIgnored(t *testing.T) {
 	}
 }
 
+func TestActivity_MissingSessionReturnsNotFound(t *testing.T) {
+	m, _, _ := newManager()
+	err := m.ApplyActivitySignal(ctx, "missing-1", ports.ActivitySignal{Valid: true, State: domain.ActivityWaitingInput})
+	if !errors.Is(err, ports.ErrSessionNotFound) {
+		t.Fatalf("err = %v, want ErrSessionNotFound", err)
+	}
+}
+
 func TestMarkTerminated(t *testing.T) {
 	m, st, _ := newManager()
 	st.sessions["mer-1"] = working("mer-1")

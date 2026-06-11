@@ -17,3 +17,9 @@ FROM notifications
 WHERE project_id = ? AND status = 'unread'
 ORDER BY created_at DESC
 LIMIT ?;
+
+-- name: GetUnreadNotificationByDedupe :one
+SELECT *
+FROM notifications
+WHERE session_id = ? AND type = ? AND pr_url = ? AND status = 'unread'
+LIMIT 1;
