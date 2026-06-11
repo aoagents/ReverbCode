@@ -120,7 +120,7 @@ func (w *Workspace) Create(ctx context.Context, cfg ports.WorkspaceConfig) (port
 	if err := w.validateBranch(ctx, repo, cfg.Branch); err != nil {
 		return ports.WorkspaceInfo{}, err
 	}
-	path, err := w.managedPath(cfg.ProjectID, cfg.SessionID)
+	path, err := w.managedPath(cfg)
 	if err != nil {
 		return ports.WorkspaceInfo{}, err
 	}
@@ -189,7 +189,7 @@ func (w *Workspace) Restore(ctx context.Context, cfg ports.WorkspaceConfig) (por
 	if err != nil {
 		return ports.WorkspaceInfo{}, err
 	}
-	path, err := w.managedPath(cfg.ProjectID, cfg.SessionID)
+	path, err := w.managedPath(cfg)
 	if err != nil {
 		return ports.WorkspaceInfo{}, err
 	}
@@ -383,11 +383,18 @@ func validateConfig(cfg ports.WorkspaceConfig) error {
 	if err := validatePathComponent("project id", string(cfg.ProjectID)); err != nil {
 		return err
 	}
-	if cfg.SessionID == "" {
-		return errors.New("gitworktree: session id is required")
-	}
-	if err := validatePathComponent("session id", string(cfg.SessionID)); err != nil {
-		return err
+	if cfg.Kind == domain.KindOrchestrator {
+		prefix := resolvedSessionPrefix(cfg)
+		if err := validatePathComponent("session prefix", prefix); err != nil {
+			return err
+		}
+	} else {
+		if cfg.SessionID == "" {
+			return errors.New("gitworktree: session id is required")
+		}
+		if err := validatePathComponent("session id", string(cfg.SessionID)); err != nil {
+			return err
+		}
 	}
 	if cfg.Branch == "" {
 		return errors.New("gitworktree: branch is required")
@@ -410,9 +417,28 @@ func validatePathComponent(name, value string) error {
 	return nil
 }
 
-func (w *Workspace) managedPath(project domain.ProjectID, session domain.SessionID) (string, error) {
-	path := filepath.Join(w.managedRoot, string(project), string(session))
+func (w *Workspace) managedPath(cfg ports.WorkspaceConfig) (string, error) {
+	var path string
+	if cfg.Kind == domain.KindOrchestrator {
+		prefix := resolvedSessionPrefix(cfg)
+		path = filepath.Join(w.managedRoot, string(cfg.ProjectID), "orchestrator", prefix+"-orchestrator")
+	} else {
+		path = filepath.Join(w.managedRoot, string(cfg.ProjectID), string(cfg.SessionID))
+	}
 	return w.validateManagedPath(path)
+}
+
+// resolvedSessionPrefix returns cfg.SessionPrefix when set, otherwise the first
+// 12 characters of the project ID (matching the display-prefix convention).
+func resolvedSessionPrefix(cfg ports.WorkspaceConfig) string {
+	if p := strings.TrimSpace(cfg.SessionPrefix); p != "" {
+		return p
+	}
+	id := string(cfg.ProjectID)
+	if len(id) <= 12 {
+		return id
+	}
+	return id[:12]
 }
 
 func (w *Workspace) validateManagedPath(path string) (string, error) {

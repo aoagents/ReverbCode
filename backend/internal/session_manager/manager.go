@@ -182,10 +182,12 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		branch = "ao/" + string(id)
 	}
 	ws, err := m.workspace.Create(ctx, ports.WorkspaceConfig{
-		ProjectID:  cfg.ProjectID,
-		SessionID:  id,
-		Branch:     branch,
-		BaseBranch: project.Config.WithDefaults().DefaultBranch,
+		ProjectID:     cfg.ProjectID,
+		SessionID:     id,
+		Kind:          cfg.Kind,
+		SessionPrefix: sessionPrefix(project),
+		Branch:        branch,
+		BaseBranch:    project.Config.WithDefaults().DefaultBranch,
 	})
 	if err != nil {
 		// Nothing observable exists yet — no worktree, no runtime — so the seed
@@ -307,6 +309,19 @@ func roleOverride(kind domain.SessionKind, cfg domain.ProjectConfig) domain.Role
 	return cfg.Worker
 }
 
+// sessionPrefix returns the display prefix for a project: the explicit
+// SessionPrefix when set, otherwise the first 12 characters of the project ID.
+func sessionPrefix(project domain.ProjectRecord) string {
+	if p := strings.TrimSpace(project.Config.SessionPrefix); p != "" {
+		return p
+	}
+	id := string(project.ID)
+	if len(id) <= 12 {
+		return id
+	}
+	return id[:12]
+}
+
 // markSpawnFailedTerminated best-effort parks an orphaned spawn as terminated.
 // A phantom half-spawned row is worse than a terminal one; we only delete the
 // row when nothing observable has landed yet (seed state) via rollbackSpawn or
@@ -418,7 +433,17 @@ func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.Sess
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: nothing to resume from", id)
 	}
 
-	ws, err := m.workspace.Restore(ctx, ports.WorkspaceConfig{ProjectID: rec.ProjectID, SessionID: id, Branch: meta.Branch})
+	project, err := m.loadProject(ctx, rec.ProjectID)
+	if err != nil {
+		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", id, err)
+	}
+	ws, err := m.workspace.Restore(ctx, ports.WorkspaceConfig{
+		ProjectID:     rec.ProjectID,
+		SessionID:     id,
+		Kind:          rec.Kind,
+		SessionPrefix: sessionPrefix(project),
+		Branch:        meta.Branch,
+	})
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: workspace: %w", id, err)
 	}
@@ -427,10 +452,6 @@ func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.Sess
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: no agent adapter for harness %q", id, rec.Harness)
 	}
 	if err := m.prepareWorkspace(ctx, agent, id, ws.Path); err != nil {
-		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", id, err)
-	}
-	project, err := m.loadProject(ctx, rec.ProjectID)
-	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", id, err)
 	}
 	// Restore re-applies the project's resolved agent config so a configured
