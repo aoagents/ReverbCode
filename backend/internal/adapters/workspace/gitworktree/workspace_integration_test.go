@@ -154,6 +154,42 @@ func TestWorkspaceIntegrationDestroyDirtyWorktree(t *testing.T) {
 	}
 }
 
+// TestWorkspaceIntegrationCreateInRemotelessRepo guards the BRANCH_NOT_FETCHED
+// regression: a repo with no remote configured must still spawn worktrees for
+// new branches by basing them on the local default-branch head
+// (refs/heads/main) once no origin/* candidate resolves.
+func TestWorkspaceIntegrationCreateInRemotelessRepo(t *testing.T) {
+	git := requireGit(t)
+	tmp := t.TempDir()
+	repo := filepath.Join(tmp, "repo")
+	run(t, git, "init", repo)
+	runGit(t, git, repo, "config", "user.email", "ao@example.com")
+	runGit(t, git, repo, "config", "user.name", "Ao Agents")
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("seed\n"), 0o644); err != nil {
+		t.Fatalf("write seed: %v", err)
+	}
+	runGit(t, git, repo, "add", "README.md")
+	runGit(t, git, repo, "commit", "-m", "seed")
+	runGit(t, git, repo, "branch", "-M", "main")
+
+	root := filepath.Join(tmp, "managed")
+	ws, err := New(Options{Binary: git, ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	ctx := context.Background()
+	info, err := ws.Create(ctx, ports.WorkspaceConfig{ProjectID: "proj", SessionID: "sess", Branch: "feature/remoteless"})
+	if err != nil {
+		t.Fatalf("create in remoteless repo: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(info.Path, "README.md")); err != nil {
+		t.Fatalf("created worktree missing seed file: %v", err)
+	}
+	if err := ws.Destroy(ctx, info); err != nil {
+		t.Fatalf("destroy: %v", err)
+	}
+}
+
 func requireGit(t *testing.T) string {
 	t.Helper()
 	git, err := exec.LookPath("git")

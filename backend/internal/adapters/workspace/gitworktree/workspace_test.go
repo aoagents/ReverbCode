@@ -46,7 +46,7 @@ func TestCommandArgs(t *testing.T) {
 
 func TestBaseRefCandidates(t *testing.T) {
 	got := baseRefCandidates("feature/test", "main")
-	want := []string{"origin/feature/test", "origin/main", "feature/test"}
+	want := []string{"origin/feature/test", "origin/main", "refs/heads/main", "feature/test"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("candidates = %#v, want %#v", got, want)
 	}

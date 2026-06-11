@@ -45,9 +45,14 @@ func worktreeListPorcelainArgs(repo string) []string {
 func baseRefCandidates(branch, defaultBranch string) []string {
 	candidates := []string{"origin/" + branch}
 	if strings.Contains(defaultBranch, "/") {
+		// A qualified default ("upstream/main") is used verbatim; git's refname
+		// disambiguation already falls back to refs/heads/<defaultBranch>.
 		candidates = append(candidates, defaultBranch)
 	} else {
-		candidates = append(candidates, "origin/"+defaultBranch)
+		// The local head comes after origin/<defaultBranch> so remote-tracking
+		// still wins when present, but a remoteless repo can base new branches
+		// on its local default branch instead of failing BRANCH_NOT_FETCHED.
+		candidates = append(candidates, "origin/"+defaultBranch, "refs/heads/"+defaultBranch)
 	}
 	return append(candidates, branch)
 }
