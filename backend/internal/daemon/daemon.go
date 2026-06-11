@@ -15,6 +15,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd"
 	"github.com/aoagents/agent-orchestrator/backend/internal/runfile"
+	notificationsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/notification"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 	reviewsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/review"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
@@ -82,11 +83,15 @@ func Run() error {
 	// Built before the Lifecycle Manager so the LCM can use it for SCM-driven
 	// agent nudges (CI failure, review feedback, merge conflict).
 	messenger := newSessionMessenger(store, runtimeAdapter, log)
+	notifier := notificationsvc.New(notificationsvc.Deps{
+		Store:      store,
+		Dispatcher: notificationsvc.NewDashboardDispatcher(nil),
+	})
 
 	// Bring up the Lifecycle Manager and the reaper first: it makes the session
 	// lifecycle write path live (reducer write -> store -> DB trigger ->
 	// change_log -> poller -> broadcaster) and gives startSession the shared LCM.
-	lcStack := startLifecycle(ctx, store, runtimeAdapter, messenger, log)
+	lcStack := startLifecycle(ctx, store, runtimeAdapter, messenger, notifier, log)
 	lcStack.scmDone = startSCMObserver(ctx, store, lcStack.LCM, log)
 
 	// Wire the controller-facing session service over the same store + LCM, the
@@ -104,12 +109,13 @@ func Run() error {
 	}
 
 	srv, err := httpd.NewWithDeps(cfg, log, termMgr, httpd.APIDeps{
-		Projects: projectsvc.New(store),
-		Sessions: sessionSvc,
-		Reviews:  reviewsvc.NewInMemory(),
-		CDC:      store,
-		Events:   cdcPipe.Broadcaster,
-		Activity: lcStack.LCM,
+		Projects:      projectsvc.New(store),
+		Sessions:      sessionSvc,
+		Reviews:       reviewsvc.NewInMemory(),
+		Notifications: notifier,
+		CDC:           store,
+		Events:        cdcPipe.Broadcaster,
+		Activity:      lcStack.LCM,
 	})
 	if err != nil {
 		stop()

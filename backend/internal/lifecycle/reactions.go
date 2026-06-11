@@ -92,7 +92,73 @@ func (m *Manager) ApplySCMObservation(ctx context.Context, id domain.SessionID, 
 	if !o.Fetched {
 		return nil
 	}
-	return m.ApplyPRObservation(ctx, id, scmToPRObservation(o))
+	rec, ok, err := m.store.GetSession(ctx, id)
+	if err != nil || !ok {
+		return err
+	}
+	intent := m.notificationIntentForSCM(rec, o)
+	if err := m.ApplyPRObservation(ctx, id, scmToPRObservation(o)); err != nil {
+		return err
+	}
+	m.emitNotification(ctx, intent)
+	return nil
+}
+
+func (m *Manager) notificationIntentForSCM(rec domain.SessionRecord, o ports.SCMObservation) *ports.NotificationIntent {
+	prURL := firstSCMNonEmpty(o.PR.URL, o.PR.HTMLURL)
+	base := ports.NotificationIntent{
+		SessionID:          rec.ID,
+		ProjectID:          rec.ProjectID,
+		PRURL:              prURL,
+		CreatedAt:          timeOr(o.ObservedAt, m.clock()),
+		SessionDisplayName: rec.DisplayName,
+		PRNumber:           o.PR.Number,
+		PRTitle:            o.PR.Title,
+		PRSourceBranch:     o.PR.SourceBranch,
+		PRTargetBranch:     o.PR.TargetBranch,
+		Provider:           o.Provider,
+		Repo:               o.Repo,
+	}
+	if o.PR.Merged {
+		base.Type = domain.NotificationPRMerged
+		return &base
+	}
+	if o.PR.Closed && !o.PR.Merged {
+		base.Type = domain.NotificationPRClosedUnmerged
+		return &base
+	}
+	if rec.IsTerminated || rec.Activity.State == domain.ActivityWaitingInput || !scmObservationIsReadyToMerge(o) {
+		return nil
+	}
+	base.Type = domain.NotificationReadyToMerge
+	return &base
+}
+
+func scmObservationIsReadyToMerge(o ports.SCMObservation) bool {
+	if o.PR.Merged || o.PR.Closed || o.PR.Draft {
+		return false
+	}
+	if domain.CIState(o.CI.Summary) == domain.CIFailing {
+		return false
+	}
+	if domain.ReviewDecision(o.Review.Decision) == domain.ReviewChangesRequest || hasUnresolvedSCMComments(o.Review.Threads) {
+		return false
+	}
+	return domain.Mergeability(o.Mergeability.State) == domain.MergeMergeable
+}
+
+func hasUnresolvedSCMComments(threads []ports.SCMReviewThreadObservation) bool {
+	for _, th := range threads {
+		if th.Resolved || th.IsBot {
+			continue
+		}
+		for _, c := range th.Comments {
+			if !c.IsBot {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func scmToPRObservation(o ports.SCMObservation) ports.PRObservation {
