@@ -56,6 +56,15 @@ export function ContextMenu({ menu, onClose }: { menu: ContextMenuState; onClose
 		return () => window.removeEventListener("keydown", handleKeyDown, true);
 	}, [onClose]);
 
+	// An armed destructive item decays back to its resting label after 3s, so a
+	// pause after an accidental first click can't leave a live trigger behind
+	// for a much-later mistaken second click.
+	useEffect(() => {
+		if (!armedId) return;
+		const timer = window.setTimeout(() => setArmedId(null), 3000);
+		return () => window.clearTimeout(timer);
+	}, [armedId]);
+
 	// Keep the menu on-screen for rows near the window edges.
 	const left = Math.min(menu.x, window.innerWidth - MENU_WIDTH - 8);
 	const estimatedHeight = menu.items.length * 30 + 12;

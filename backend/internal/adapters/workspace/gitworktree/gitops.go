@@ -89,6 +89,11 @@ func (g *GitOps) StageAll(ctx context.Context, path string) error {
 
 // DiscardAll resets tracked files to HEAD and removes untracked files and
 // directories. Destructive by design; callers own the confirmation UX.
+//
+// Gitignored files deliberately survive (`clean -fd`, not `-fdx`): discard
+// means "drop my changes", not "wipe the workspace" — node_modules, build
+// caches, and the gitignored AO session/hook files must keep the worktree
+// usable after a discard.
 func (g *GitOps) DiscardAll(ctx context.Context, path string) error {
 	if _, err := g.git(ctx, path, "reset", "--hard", "HEAD"); err != nil {
 		return fmt.Errorf("gitops: reset: %w", err)
