@@ -1,0 +1,19 @@
+backend/internal/storage/sqlite/store/store_test.go
+  s_15e9729d3cec0a::t_4c7a5e9c69b665 696-741
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "bd7009b7b575bca038cabaf001225fa78293a624",
+  "prompts": {},
+  "sessions": {
+    "s_15e9729d3cec0a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3eeeab3d-700c-4821-81b2-0fce22448046",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    }
+  }
+}
