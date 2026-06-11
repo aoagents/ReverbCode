@@ -1,14 +1,15 @@
 # Design System — ReverbCode
 
 > Source of truth for the ReverbCode desktop UI (Electron + React 19 + Tailwind v4
-> + Radix/shadcn + xterm, in `frontend/src/renderer`). Read this before any visual
-> or UI change. Created by `/design-consultation` on 2026-06-09.
+>
+> - Radix/shadcn + xterm, in `frontend/src/renderer`). Read this before any visual
+>   or UI change. Created by `/design-consultation` on 2026-06-09.
 
 ## ⚠️ Design direction — clone agent-orchestrator verbatim (SUPERSEDES emdash · 2026-06-10)
 
 By explicit user decision (2026-06-10), the renderer **clones the
 agent-orchestrator web app verbatim** in looks and design. This **supersedes the
-"match emdash" direction** documented in *Aesthetic Direction* and the palette
+"match emdash" direction** documented in _Aesthetic Direction_ and the palette
 sections below — where they conflict, **agent-orchestrator wins**. Do not re-flag
 "this doesn't match emdash" in QA/review; flag divergence from **agent-orchestrator**.
 
@@ -35,7 +36,7 @@ sections below — where they conflict, **agent-orchestrator wins**. Do not re-f
   VS Code-style — the web reference has no window chrome, so no analogue exists.
 - **Approved divergence (2026-06-10):** the session inspector rail is fully
   collapsible, built on the shadcn resizable primitive (`pnpm dlx shadcn add
-  resizable`, react-resizable-panels v4 `collapsible` panel + imperative API,
+resizable`, react-resizable-panels v4 `collapsible` panel + imperative API,
   user-requested). The panel animates to 0% via a flex-grow transition while the
   content keeps a stable min-width (yyork-style, no mid-animation reflow). Toggled
   by a `PanelRight` icon button in the session topbar and ⌘⇧B; open state + split
@@ -80,8 +81,8 @@ ReverbCode is **orchestrator-led**, which is the one thing that differs from emd
 
 ## Aesthetic Direction
 
-> **Superseded (2026-06-10):** see the *Design direction — clone agent-orchestrator
-> verbatim* banner at the top. The emdash framing below is retained for history; the
+> **Superseded (2026-06-10):** see the _Design direction — clone agent-orchestrator
+> verbatim_ banner at the top. The emdash framing below is retained for history; the
 > live look tracks agent-orchestrator (same flat near-black / hairline family, so most
 > of this still reads true).
 
@@ -93,7 +94,7 @@ ReverbCode is **orchestrator-led**, which is the one thing that differs from emd
 - **Reference:** [emdash](https://github.com/generalaction/emdash) (primary, visual +
   structural), [PostHog Code](https://github.com/PostHog/code) (secondary). Tokens
   below were extracted from emdash's `src/renderer/index.css`.
-- **Deliberate tradeoff:** to *be* emdash, we use the **system font stack** (not a
+- **Deliberate tradeoff:** to _be_ emdash, we use the **system font stack** (not a
   custom typeface) and emdash's neutral palette. We diverge in exactly one place: the
   accent is ReverbCode's **refined blue**, not emdash's jade green. The terminal keeps
   green (it is the agent CLI).
@@ -103,10 +104,10 @@ ReverbCode is **orchestrator-led**, which is the one thing that differs from emd
 System fonts only, like emdash — no custom/Google fonts, zero font payload.
 
 - **UI / body / display:** `-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-  Oxygen, Ubuntu, Cantarell, "Fira Sans", "Helvetica Neue", sans-serif` (San Francisco
+Oxygen, Ubuntu, Cantarell, "Fira Sans", "Helvetica Neue", sans-serif` (San Francisco
   on macOS).
 - **Mono / terminal / code / eyebrow labels:** `Menlo, Monaco, Consolas,
-  "Liberation Mono", "Courier New", monospace`.
+"Liberation Mono", "Courier New", monospace`.
 - **Eyebrow labels** (section titles, dialog titles, the rail "PROJECTS" header):
   mono, **uppercase**, `letter-spacing: .12–.14em`, `--foreground-passive`.
 - **Scale:** 14px base UI / sidebar (`text-sm`, weight 400) · 12px secondary + labels
@@ -120,34 +121,34 @@ and meaningful. Values are sRGB approximations of emdash's `color(display-p3 …
 
 ### Dark (primary)
 
-| Role | Hex |
-|------|-----|
-| `--bg` canvas | `#111111` |
-| `--bg-1` surface | `#191919` |
-| `--bg-2` raised / hover / active row | `#222222` |
-| `--bg-3` | `#2a2a2a` |
-| `--fg` text | `#eeeeee` |
-| `--fg-muted` | `#b4b4b4` |
-| `--fg-passive` | `#6e6e6e` |
-| `--border` hairline | `#3a3a3a` |
-| `--border-1` | `#484848` |
-| **`--accent` (blue)** | **`#5b9dff`** |
-| `--needs-you` / in-progress (amber) | `#ffcc4a` |
-| `--success` / mergeable (green) | `#6cb16c` |
-| terminal green | `#7bd88f` |
-| `--error` (red) | `#d4544f` |
-| text selection | `#3f8ef7` @ 35% |
-| terminal bg | `#161616` |
+| Role                                 | Hex             |
+| ------------------------------------ | --------------- |
+| `--bg` canvas                        | `#111111`       |
+| `--bg-1` surface                     | `#191919`       |
+| `--bg-2` raised / hover / active row | `#222222`       |
+| `--bg-3`                             | `#2a2a2a`       |
+| `--fg` text                          | `#eeeeee`       |
+| `--fg-muted`                         | `#b4b4b4`       |
+| `--fg-passive`                       | `#6e6e6e`       |
+| `--border` hairline                  | `#3a3a3a`       |
+| `--border-1`                         | `#484848`       |
+| **`--accent` (blue)**                | **`#5b9dff`**   |
+| `--needs-you` / in-progress (amber)  | `#ffcc4a`       |
+| `--success` / mergeable (green)      | `#6cb16c`       |
+| terminal green                       | `#7bd88f`       |
+| `--error` (red)                      | `#d4544f`       |
+| text selection                       | `#3f8ef7` @ 35% |
+| terminal bg                          | `#161616`       |
 
 ### Light (supported, not primary)
 
-| Role | Hex |
-|------|-----|
+| Role                      | Hex                               |
+| ------------------------- | --------------------------------- |
 | canvas / surface / raised | `#fcfcfc` / `#ffffff` / `#ededee` |
-| text / muted / passive | `#1a1a1a` / `#666666` / `#9a9a9a` |
-| border | `#e3e3e5` |
-| accent (blue) | `#2563eb` |
-| amber / green / red | `#9a6b00` / `#1a7f37` / `#c0392b` |
+| text / muted / passive    | `#1a1a1a` / `#666666` / `#9a9a9a` |
+| border                    | `#e3e3e5`                         |
+| accent (blue)             | `#2563eb`                         |
+| amber / green / red       | `#9a6b00` / `#1a7f37` / `#c0392b` |
 
 ### Accent rules
 
@@ -210,7 +211,7 @@ left rail stay name-only — no glyph.)
 ### Topbar
 
 - **Left (both):** `project / session` breadcrumb + pin; for the orchestrator, a hub icon
-  + `Orchestrator`.
+  - `Orchestrator`.
 - **Right — worker session:** a **PR/CI status pill** that is the action
   (`PR #156 · mergeable` green / `CI failed` red / `review requested` amber /
   `Open PR` when none) → **Changes / Files / Terminal** view toggles → **⋯ session menu**
@@ -255,13 +256,13 @@ mirrors emdash exactly. Launching from a project row pre-fills the Project field
 
 ## Decisions Log
 
-| Date | Decision | Rationale |
-|------|----------|-----------|
-| 2026-06-09 | Match emdash's visual language exactly | User direction; emdash is the demonstrated reference for this app's UI. |
-| 2026-06-09 | System font, not a custom typeface (e.g. Geist) | emdash uses the system stack; fidelity + native feel + zero font payload chosen over brand type. |
-| 2026-06-09 | Refined **blue** accent, not emdash's jade green | User's explicit pick; blue for primary/active/focus, terminal stays green. |
+| Date       | Decision                                                               | Rationale                                                                                          |
+| ---------- | ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| 2026-06-09 | Match emdash's visual language exactly                                 | User direction; emdash is the demonstrated reference for this app's UI.                            |
+| 2026-06-09 | System font, not a custom typeface (e.g. Geist)                        | emdash uses the system stack; fidelity + native feel + zero font payload chosen over brand type.   |
+| 2026-06-09 | Refined **blue** accent, not emdash's jade green                       | User's explicit pick; blue for primary/active/focus, terminal stays green.                         |
 | 2026-06-09 | Single global **Orchestrator** anchor, orchestrator-first default view | The one real difference from emdash; orchestrator is the human-facing coordinator you delegate to. |
-| 2026-06-09 | **Name-only** worker rows | User direction; status/branch/diff live in panes + topbar, not the row. |
-| 2026-06-09 | Removed **Library** from the rail footer | User direction; footer is Search + Settings only. |
-| 2026-06-09 | Topbar right = PR/CI pill + view toggles + ⋯ menu (worker) | Surfaces the actionable PR/CI state from the daemon; emdash/PostHog Code precedent. |
-| 2026-06-09 | Spawn modal mirrors emdash's Create Task | Consistency with the reference; mapped to `ao spawn` params. |
+| 2026-06-09 | **Name-only** worker rows                                              | User direction; status/branch/diff live in panes + topbar, not the row.                            |
+| 2026-06-09 | Removed **Library** from the rail footer                               | User direction; footer is Search + Settings only.                                                  |
+| 2026-06-09 | Topbar right = PR/CI pill + view toggles + ⋯ menu (worker)             | Surfaces the actionable PR/CI state from the daemon; emdash/PostHog Code precedent.                |
+| 2026-06-09 | Spawn modal mirrors emdash's Create Task                               | Consistency with the reference; mapped to `ao spawn` params.                                       |

@@ -12,7 +12,7 @@
 // Minimal join: "/" works for fs access on every platform Node supports,
 // including Windows paths that already contain backslashes (e.g. %APPDATA%).
 function joinPath(...segments: string[]): string {
-  return segments.map((segment) => segment.replace(/[/\\]+$/, "")).join("/");
+	return segments.map((segment) => segment.replace(/[/\\]+$/, "")).join("/");
 }
 
 /**
@@ -22,18 +22,18 @@ function joinPath(...segments: string[]): string {
  * port, or null when the line is not the announcement.
  */
 export function parseDaemonListenPort(line: string): number | null {
-  if (!line.includes('msg="daemon listening"')) return null;
-  const addr = /(?:^|\s)addr=("?)([^"\s]+)\1/.exec(line)?.[2];
-  if (!addr) return null;
-  return portFromAddr(addr);
+	if (!line.includes('msg="daemon listening"')) return null;
+	const addr = /(?:^|\s)addr=("?)([^"\s]+)\1/.exec(line)?.[2];
+	if (!addr) return null;
+	return portFromAddr(addr);
 }
 
 // Take the segment after the last ":" so IPv6 literals like [::1]:3001 parse too.
 function portFromAddr(addr: string): number | null {
-  const separator = addr.lastIndexOf(":");
-  if (separator === -1) return null;
-  const port = Number(addr.slice(separator + 1));
-  return Number.isInteger(port) && port >= 1 && port <= 65535 ? port : null;
+	const separator = addr.lastIndexOf(":");
+	if (separator === -1) return null;
+	const port = Number(addr.slice(separator + 1));
+	return Number.isInteger(port) && port >= 1 && port <= 65535 ? port : null;
 }
 
 /**
@@ -42,49 +42,49 @@ function portFromAddr(addr: string): number | null {
  * invokes onPort exactly once, for the first announcement seen.
  */
 export function createListenPortScanner(onPort: (port: number) => void): (chunk: string) => void {
-  let pending = "";
-  let done = false;
-  return (chunk) => {
-    if (done) return;
-    pending += chunk;
-    const lines = pending.split("\n");
-    pending = lines.pop() ?? "";
-    for (const line of lines) {
-      const port = parseDaemonListenPort(line);
-      if (port !== null) {
-        done = true;
-        onPort(port);
-        return;
-      }
-    }
-  };
+	let pending = "";
+	let done = false;
+	return (chunk) => {
+		if (done) return;
+		pending += chunk;
+		const lines = pending.split("\n");
+		pending = lines.pop() ?? "";
+		for (const line of lines) {
+			const port = parseDaemonListenPort(line);
+			if (port !== null) {
+				done = true;
+				onPort(port);
+				return;
+			}
+		}
+	};
 }
 
 /** Parsed running.json handshake — see backend/internal/runfile.Info. */
 export type RunFileInfo = {
-  pid: number;
-  port: number;
-  /** startedAt in epoch ms; 0 when missing/unparseable. */
-  startedAtMs: number;
+	pid: number;
+	port: number;
+	/** startedAt in epoch ms; 0 when missing/unparseable. */
+	startedAtMs: number;
 };
 
 /** Parse running.json contents. Returns null for malformed JSON or an invalid port. */
 export function parseRunFile(contents: string): RunFileInfo | null {
-  let raw: unknown;
-  try {
-    raw = JSON.parse(contents);
-  } catch {
-    return null;
-  }
-  if (typeof raw !== "object" || raw === null) return null;
-  const { pid, port, startedAt } = raw as { pid?: unknown; port?: unknown; startedAt?: unknown };
-  if (typeof port !== "number" || !Number.isInteger(port) || port < 1 || port > 65535) return null;
-  const startedAtMs = typeof startedAt === "string" ? Date.parse(startedAt) : NaN;
-  return {
-    pid: typeof pid === "number" && Number.isInteger(pid) ? pid : 0,
-    port,
-    startedAtMs: Number.isNaN(startedAtMs) ? 0 : startedAtMs,
-  };
+	let raw: unknown;
+	try {
+		raw = JSON.parse(contents);
+	} catch {
+		return null;
+	}
+	if (typeof raw !== "object" || raw === null) return null;
+	const { pid, port, startedAt } = raw as { pid?: unknown; port?: unknown; startedAt?: unknown };
+	if (typeof port !== "number" || !Number.isInteger(port) || port < 1 || port > 65535) return null;
+	const startedAtMs = typeof startedAt === "string" ? Date.parse(startedAt) : NaN;
+	return {
+		pid: typeof pid === "number" && Number.isInteger(pid) ? pid : 0,
+		port,
+		startedAtMs: Number.isNaN(startedAtMs) ? 0 : startedAtMs,
+	};
 }
 
 /**
@@ -94,19 +94,19 @@ export function parseRunFile(contents: string): RunFileInfo | null {
  * writes. Returns null when the platform's config root cannot be resolved.
  */
 export function defaultRunFilePath(
-  platform: NodeJS.Platform,
-  env: Record<string, string | undefined>,
-  homeDir: string,
+	platform: NodeJS.Platform,
+	env: Record<string, string | undefined>,
+	homeDir: string,
 ): string | null {
-  if (platform === "darwin") {
-    if (!homeDir) return null;
-    return joinPath(homeDir, "Library", "Application Support", "agent-orchestrator", "running.json");
-  }
-  if (platform === "win32") {
-    if (!env.APPDATA) return null;
-    return joinPath(env.APPDATA, "agent-orchestrator", "running.json");
-  }
-  const configRoot = env.XDG_CONFIG_HOME || (homeDir ? joinPath(homeDir, ".config") : "");
-  if (!configRoot) return null;
-  return joinPath(configRoot, "agent-orchestrator", "running.json");
+	if (platform === "darwin") {
+		if (!homeDir) return null;
+		return joinPath(homeDir, "Library", "Application Support", "agent-orchestrator", "running.json");
+	}
+	if (platform === "win32") {
+		if (!env.APPDATA) return null;
+		return joinPath(env.APPDATA, "agent-orchestrator", "running.json");
+	}
+	const configRoot = env.XDG_CONFIG_HOME || (homeDir ? joinPath(homeDir, ".config") : "");
+	if (!configRoot) return null;
+	return joinPath(configRoot, "agent-orchestrator", "running.json");
 }

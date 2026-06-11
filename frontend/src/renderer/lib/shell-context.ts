@@ -6,16 +6,11 @@ import type { AgentProvider } from "../types/workspace";
 // daemon status effect (IPC poll + event transport) must run exactly once, so
 // it lives in the shell and is handed down here rather than re-run per route.
 export type ShellContextValue = {
-  daemonStatus: ReturnType<typeof useDaemonStatus>;
-  /** Open the spawn-worker modal, optionally pre-selecting a project. */
-  openSpawn: (projectId?: string) => void;
-  createProject: (input: { path: string }) => Promise<void>;
-  createTask: (input: {
-    projectId: string;
-    prompt: string;
-    branch?: string;
-    harness?: AgentProvider;
-  }) => Promise<void>;
+	daemonStatus: ReturnType<typeof useDaemonStatus>;
+	/** Open the spawn-worker modal, optionally pre-selecting a project. */
+	openSpawn: (projectId?: string) => void;
+	createProject: (input: { path: string }) => Promise<void>;
+	createTask: (input: { projectId: string; prompt: string; branch?: string; harness?: AgentProvider }) => Promise<void>;
 };
 
 const ShellContext = createContext<ShellContextValue | null>(null);
@@ -23,7 +18,7 @@ const ShellContext = createContext<ShellContextValue | null>(null);
 export const ShellProvider = ShellContext.Provider;
 
 export function useShell(): ShellContextValue {
-  const ctx = useContext(ShellContext);
-  if (!ctx) throw new Error("useShell must be used within the _shell layout route");
-  return ctx;
+	const ctx = useContext(ShellContext);
+	if (!ctx) throw new Error("useShell must be used within the _shell layout route");
+	return ctx;
 }
