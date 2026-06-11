@@ -1050,6 +1050,8 @@ components:
       type: object
     AddProjectInput:
       properties:
+        asWorkspace:
+          type: boolean
         config:
           $ref: '#/components/schemas/ProjectConfig'
         name:
@@ -1115,13 +1117,30 @@ components:
           type: array
         ok:
           type: boolean
+        skipped:
+          items:
+            $ref: '#/components/schemas/CleanupSkippedSession'
+          type: array
       required:
       - ok
       - cleaned
+      - skipped
+      type: object
+    CleanupSkippedSession:
+      properties:
+        reason:
+          type: string
+        sessionId:
+          type: string
+      required:
+      - sessionId
+      - reason
       type: object
     DegradedProject:
       properties:
         id:
+          type: string
+        kind:
           type: string
         name:
           type: string
@@ -1132,6 +1151,7 @@ components:
       required:
       - id
       - name
+      - kind
       - path
       - resolveError
       type: object
@@ -1240,15 +1260,22 @@ components:
           type: string
         id:
           type: string
+        kind:
+          type: string
         name:
           type: string
         path:
           type: string
         repo:
           type: string
+        workspaceRepos:
+          items:
+            $ref: '#/components/schemas/WorkspaceRepo'
+          type: array
       required:
       - id
       - name
+      - kind
       - path
       - repo
       - defaultBranch
@@ -1307,6 +1334,8 @@ components:
       properties:
         id:
           type: string
+        kind:
+          type: string
         name:
           type: string
         path:
@@ -1319,6 +1348,7 @@ components:
       - id
       - name
       - path
+      - kind
       - sessionPrefix
       type: object
     RemoveProjectResult:
@@ -1638,6 +1668,19 @@ components:
           type: string
       required:
       - projectId
+      type: object
+    WorkspaceRepo:
+      properties:
+        name:
+          type: string
+        relativePath:
+          type: string
+        repo:
+          type: string
+      required:
+      - name
+      - relativePath
+      - repo
       type: object
 tags:
 - description: Project registry, configuration, and lifecycle administration

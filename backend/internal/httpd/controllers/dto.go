@@ -167,10 +167,19 @@ type RollbackSessionResponse struct {
 	Killed    bool             `json:"killed,omitempty"`
 }
 
+// CleanupSkippedSession is one terminal session whose workspace cleanup
+// preserved rather than reclaimed (a dirty worktree is never force-deleted),
+// with the user-facing reason.
+type CleanupSkippedSession struct {
+	SessionID domain.SessionID `json:"sessionId"`
+	Reason    string           `json:"reason"`
+}
+
 // CleanupSessionsResponse is the body of POST /api/v1/sessions/cleanup.
 type CleanupSessionsResponse struct {
-	OK      bool               `json:"ok"`
-	Cleaned []domain.SessionID `json:"cleaned"`
+	OK      bool                    `json:"ok"`
+	Cleaned []domain.SessionID      `json:"cleaned"`
+	Skipped []CleanupSkippedSession `json:"skipped"`
 }
 
 // SendSessionMessageRequest is the body of POST /api/v1/sessions/{sessionId}/send.

@@ -3,7 +3,11 @@ package project_test
 import (
 	"context"
 	"errors"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -287,4 +291,373 @@ func TestManager_GetUpdateRemoveErrors(t *testing.T) {
 	if _, err := m.Add(ctx, project.AddInput{Path: repo, ProjectID: ptr("p")}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
+}
+
+func configureCommitter(t *testing.T) {
+	t.Helper()
+	t.Setenv("GIT_AUTHOR_NAME", "AO Test")
+	t.Setenv("GIT_AUTHOR_EMAIL", "ao@example.com")
+	t.Setenv("GIT_COMMITTER_NAME", "AO Test")
+	t.Setenv("GIT_COMMITTER_EMAIL", "ao@example.com")
+}
+
+func gitRepoWithCommit(t *testing.T, dir string) string {
+	t.Helper()
+	if out, err := exec.Command("git", "init", "-b", "main", dir).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v (%s)", err, out)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatalf("write readme: %v", err)
+	}
+	if out, err := exec.Command("git", "-C", dir, "add", "README.md").CombinedOutput(); err != nil {
+		t.Fatalf("git add: %v (%s)", err, out)
+	}
+	if out, err := exec.Command("git", "-C", dir, "commit", "-m", "initial").CombinedOutput(); err != nil {
+		t.Fatalf("git commit: %v (%s)", err, out)
+	}
+	return dir
+}
+
+func TestManager_AddWorkspaceInitializesPlainParent(t *testing.T) {
+	configureCommitter(t)
+	ctx := context.Background()
+	m := newManager(t)
+	parent := t.TempDir()
+	if err := os.WriteFile(filepath.Join(parent, "package.json"), []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitRepoWithCommit(t, filepath.Join(parent, "cli"))
+	gitRepoWithCommit(t, filepath.Join(parent, "api"))
+
+	proj, err := m.Add(ctx, project.AddInput{Path: parent, ProjectID: ptr("ws"), AsWorkspace: true})
+	if err != nil {
+		t.Fatalf("Add workspace: %v", err)
+	}
+	if proj.Kind != domain.ProjectKindWorkspace {
+		t.Fatalf("Kind = %q, want workspace", proj.Kind)
+	}
+	if len(proj.WorkspaceRepos) != 2 || proj.WorkspaceRepos[0].Name != "api" || proj.WorkspaceRepos[1].Name != "cli" {
+		t.Fatalf("WorkspaceRepos = %#v", proj.WorkspaceRepos)
+	}
+	ignored, err := os.ReadFile(filepath.Join(parent, ".gitignore"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"/api/", "/cli/", "node_modules/", "dist/"} {
+		if !strings.Contains(string(ignored), want) {
+			t.Fatalf(".gitignore missing %q:\n%s", want, ignored)
+		}
+	}
+	out, err := exec.Command("git", "-C", parent, "ls-files", "-s").CombinedOutput()
+	if err != nil {
+		t.Fatalf("git ls-files: %v (%s)", err, out)
+	}
+	if strings.Contains(string(out), "160000") {
+		t.Fatalf("parent tracked a child repo as a gitlink:\n%s", out)
+	}
+	if !strings.Contains(string(out), "package.json") || !strings.Contains(string(out), ".gitignore") {
+		t.Fatalf("parent root files not committed:\n%s", out)
+	}
+
+	got, err := m.Get(ctx, "ws")
+	if err != nil {
+		t.Fatalf("Get workspace: %v", err)
+	}
+	if got.Project == nil || got.Project.Kind != domain.ProjectKindWorkspace || len(got.Project.WorkspaceRepos) != 2 {
+		t.Fatalf("Get = %#v", got)
+	}
+}
+
+func TestManager_AddWorkspaceRejectsUncommittedChild(t *testing.T) {
+	configureCommitter(t)
+	ctx := context.Background()
+	m := newManager(t)
+	parent := t.TempDir()
+	child := filepath.Join(parent, "cli")
+	if out, err := exec.Command("git", "init", "-b", "main", child).CombinedOutput(); err != nil {
+		t.Fatalf("git init child: %v (%s)", err, out)
+	}
+
+	_, err := m.Add(ctx, project.AddInput{Path: parent, ProjectID: ptr("ws"), AsWorkspace: true})
+	wantCode(t, err, "WORKSPACE_CHILD_UNBORN")
+}
+
+// TestManager_AddWorkspaceAdoptsExistingParent verifies that when the parent is
+// already a git repo, Add commits only .gitignore changes, preserves the prior
+// commit history, and registers the children.
+func TestManager_AddWorkspaceAdoptsExistingParent(t *testing.T) {
+	configureCommitter(t)
+	ctx := context.Background()
+	m := newManager(t)
+
+	parent := t.TempDir()
+	// Parent is an existing repo with one commit and a pre-existing .gitignore.
+	gitRepoWithCommit(t, parent)
+	if err := os.WriteFile(filepath.Join(parent, ".gitignore"), []byte("*.log\n"), 0o644); err != nil {
+		t.Fatalf("write .gitignore: %v", err)
+	}
+	if out, err := exec.Command("git", "-C", parent, "add", ".gitignore").CombinedOutput(); err != nil {
+		t.Fatalf("git add .gitignore: %v (%s)", err, out)
+	}
+	if out, err := exec.Command("git", "-C", parent, "commit", "-m", "add gitignore").CombinedOutput(); err != nil {
+		t.Fatalf("git commit .gitignore: %v (%s)", err, out)
+	}
+
+	gitRepoWithCommit(t, filepath.Join(parent, "api"))
+	gitRepoWithCommit(t, filepath.Join(parent, "backend"))
+
+	proj, err := m.Add(ctx, project.AddInput{Path: parent, ProjectID: ptr("ws2"), AsWorkspace: true})
+	if err != nil {
+		t.Fatalf("Add workspace: %v", err)
+	}
+	if proj.Kind != domain.ProjectKindWorkspace {
+		t.Fatalf("Kind = %q, want workspace", proj.Kind)
+	}
+	if len(proj.WorkspaceRepos) != 2 {
+		t.Fatalf("WorkspaceRepos = %#v, want 2", proj.WorkspaceRepos)
+	}
+
+	// Original .gitignore line must be preserved.
+	ignored, err := os.ReadFile(filepath.Join(parent, ".gitignore"))
+	if err != nil {
+		t.Fatalf("read .gitignore: %v", err)
+	}
+	if !strings.Contains(string(ignored), "*.log") {
+		t.Fatalf(".gitignore lost original line; got:\n%s", ignored)
+	}
+	for _, want := range []string{"/api/", "/backend/"} {
+		if !strings.Contains(string(ignored), want) {
+			t.Fatalf(".gitignore missing %q:\n%s", want, ignored)
+		}
+	}
+
+	// Exactly one new commit must have been created, touching only .gitignore.
+	logOut, err := exec.Command("git", "-C", parent, "log", "--format=%s").CombinedOutput()
+	if err != nil {
+		t.Fatalf("git log: %v (%s)", err, logOut)
+	}
+	lines := strings.Split(strings.TrimSpace(string(logOut)), "\n")
+	// Expect: AO workspace commit + "add gitignore" + "initial" = 3 commits.
+	if len(lines) != 3 {
+		t.Fatalf("expected 3 commits, got %d:\n%s", len(lines), logOut)
+	}
+
+	showOut, err := exec.Command("git", "-C", parent, "show", "--name-only", "--format=", "HEAD").CombinedOutput()
+	if err != nil {
+		t.Fatalf("git show HEAD: %v (%s)", err, showOut)
+	}
+	files := strings.TrimSpace(string(showOut))
+	if files != ".gitignore" {
+		t.Fatalf("HEAD touched files other than .gitignore: %q", files)
+	}
+}
+
+// TestManager_AddWorkspaceRejectsWorktreeParent verifies that a linked worktree
+// of another repository is rejected as a workspace parent.
+func TestManager_AddWorkspaceRejectsWorktreeParent(t *testing.T) {
+	configureCommitter(t)
+	ctx := context.Background()
+	m := newManager(t)
+
+	base := t.TempDir()
+	mainRepo := filepath.Join(base, "main")
+	wtDir := filepath.Join(base, "wt")
+	gitRepoWithCommit(t, mainRepo)
+
+	// Create a linked worktree from the main repo.
+	if out, err := exec.Command("git", "-C", mainRepo, "worktree", "add", wtDir).CombinedOutput(); err != nil {
+		t.Fatalf("git worktree add: %v (%s)", err, out)
+	}
+
+	// Put a committed child repo inside the worktree dir.
+	gitRepoWithCommit(t, filepath.Join(wtDir, "child"))
+
+	_, err := m.Add(ctx, project.AddInput{Path: wtDir, ProjectID: ptr("wt"), AsWorkspace: true})
+	wantCode(t, err, "WORKSPACE_PARENT_IS_WORKTREE")
+}
+
+// TestManager_AddWorkspaceAdoptsSeparateGitDirParent verifies that a parent repo
+// created with `git init --separate-git-dir=<elsewhere>` (whose .git is a file,
+// not a dir) is correctly identified as a standalone repo and NOT rejected as a
+// linked worktree. Add with AsWorkspace must succeed and register the child.
+func TestManager_AddWorkspaceAdoptsSeparateGitDirParent(t *testing.T) {
+	configureCommitter(t)
+	ctx := context.Background()
+	m := newManager(t)
+
+	base := t.TempDir()
+	parent := filepath.Join(base, "parent")
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		t.Fatalf("mkdir parent: %v", err)
+	}
+	// The git directory lives outside the parent tree — this is the
+	// separate-git-dir scenario. .git inside parent will be a file.
+	separateGitDir := filepath.Join(base, "parent.git")
+	if out, err := exec.Command("git", "init", "--separate-git-dir="+separateGitDir, "-b", "main", parent).CombinedOutput(); err != nil {
+		t.Fatalf("git init --separate-git-dir: %v (%s)", err, out)
+	}
+	// Commit a file in the parent so the parent is a valid (non-bare) repo.
+	if err := os.WriteFile(filepath.Join(parent, "README.md"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatalf("write readme: %v", err)
+	}
+	if out, err := exec.Command("git", "-C", parent, "add", "README.md").CombinedOutput(); err != nil {
+		t.Fatalf("git add: %v (%s)", err, out)
+	}
+	if out, err := exec.Command("git", "-C", parent, "commit", "-m", "initial").CombinedOutput(); err != nil {
+		t.Fatalf("git commit: %v (%s)", err, out)
+	}
+
+	// Put a committed child repo inside the parent.
+	gitRepoWithCommit(t, filepath.Join(parent, "svc"))
+
+	proj, err := m.Add(ctx, project.AddInput{Path: parent, ProjectID: ptr("sgd"), AsWorkspace: true})
+	if err != nil {
+		t.Fatalf("Add workspace with separate-git-dir parent: %v", err)
+	}
+	if proj.Kind != domain.ProjectKindWorkspace {
+		t.Fatalf("Kind = %q, want workspace", proj.Kind)
+	}
+	if len(proj.WorkspaceRepos) != 1 || proj.WorkspaceRepos[0].Name != "svc" {
+		t.Fatalf("WorkspaceRepos = %#v, want [{svc}]", proj.WorkspaceRepos)
+	}
+}
+
+// TestManager_AddWorkspaceRejectsWorktreeChild verifies that a child whose .git
+// is a file (linked worktree) is rejected.
+func TestManager_AddWorkspaceRejectsWorktreeChild(t *testing.T) {
+	configureCommitter(t)
+	ctx := context.Background()
+	m := newManager(t)
+
+	base := t.TempDir()
+	parent := filepath.Join(base, "parent")
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		t.Fatalf("mkdir parent: %v", err)
+	}
+	// An external standalone repo used as the source for a worktree child.
+	extRepo := filepath.Join(base, "ext")
+	gitRepoWithCommit(t, extRepo)
+
+	// child is a linked worktree of extRepo, placed inside parent.
+	child := filepath.Join(parent, "child")
+	if out, err := exec.Command("git", "-C", extRepo, "worktree", "add", child).CombinedOutput(); err != nil {
+		t.Fatalf("git worktree add child: %v (%s)", err, out)
+	}
+
+	_, err := m.Add(ctx, project.AddInput{Path: parent, ProjectID: ptr("wc"), AsWorkspace: true})
+	wantCode(t, err, "WORKSPACE_CHILD_IS_WORKTREE")
+}
+
+// TestManager_AddWorkspaceRejectsReservedChildName verifies that a child repo
+// named __root__ is rejected to avoid a PK collision in session_worktrees.
+func TestManager_AddWorkspaceRejectsReservedChildName(t *testing.T) {
+	configureCommitter(t)
+	ctx := context.Background()
+	m := newManager(t)
+
+	parent := t.TempDir()
+	gitRepoWithCommit(t, filepath.Join(parent, domain.RootWorkspaceRepoName))
+
+	_, err := m.Add(ctx, project.AddInput{Path: parent, ProjectID: ptr("res"), AsWorkspace: true})
+	wantCode(t, err, "WORKSPACE_CHILD_RESERVED_NAME")
+}
+
+// TestManager_AddWorkspaceInitRollsBackOnNestedGitlink verifies that when a
+// nested git repo at depth ≥2 causes guardNoGitlinks to fail, initWorkspaceParent
+// rolls back the .git dir and .gitignore so the folder is exactly as it was.
+// A retry of the same Add must fail with the same error, not a stranded-state error.
+func TestManager_AddWorkspaceInitRollsBackOnNestedGitlink(t *testing.T) {
+	configureCommitter(t)
+	ctx := context.Background()
+	m := newManager(t)
+
+	parent := t.TempDir()
+	// One direct committed child repo — valid on its own.
+	gitRepoWithCommit(t, filepath.Join(parent, "app"))
+	// A nested git repo at packages/foo — depth 2 relative to parent.
+	// detectWorkspaceChildren never registers it (packages/ itself is not a repo),
+	// but git add -A would stage it as a gitlink.
+	pkgs := filepath.Join(parent, "packages")
+	if err := os.MkdirAll(pkgs, 0o755); err != nil {
+		t.Fatalf("mkdir packages: %v", err)
+	}
+	gitRepoWithCommit(t, filepath.Join(pkgs, "foo"))
+
+	_, err := m.Add(ctx, project.AddInput{Path: parent, ProjectID: ptr("rbt"), AsWorkspace: true})
+	wantCode(t, err, "WORKSPACE_PARENT_GITLINK")
+
+	// Rollback: .git must not exist.
+	if _, statErr := os.Lstat(filepath.Join(parent, ".git")); statErr == nil {
+		t.Fatal(".git still exists after rollback")
+	}
+	// Rollback: .gitignore must not exist (it didn't exist before the call).
+	if _, statErr := os.Lstat(filepath.Join(parent, ".gitignore")); statErr == nil {
+		t.Fatal(".gitignore still exists after rollback")
+	}
+
+	// Retry must fail with the same error, not a different stranded-state error.
+	_, err2 := m.Add(ctx, project.AddInput{Path: parent, ProjectID: ptr("rbt"), AsWorkspace: true})
+	wantCode(t, err2, "WORKSPACE_PARENT_GITLINK")
+}
+
+// TestManager_AddWorkspaceConcurrentSamePath verifies that two goroutines racing
+// on the same parent path result in exactly one success and one PATH_ALREADY_REGISTERED
+// error. The -race detector will catch any unsynchronised access.
+func TestManager_AddWorkspaceConcurrentSamePath(t *testing.T) {
+	configureCommitter(t)
+	ctx := context.Background()
+	m := newManager(t)
+
+	parent := t.TempDir()
+	gitRepoWithCommit(t, filepath.Join(parent, "svc"))
+
+	type result struct {
+		proj project.Project
+		err  error
+	}
+	results := make([]result, 2)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	for i := range results {
+		go func() {
+			defer wg.Done()
+			p, err := m.Add(ctx, project.AddInput{Path: parent, ProjectID: ptr("con"), AsWorkspace: true})
+			results[i] = result{p, err}
+		}()
+	}
+	wg.Wait()
+
+	successes, failures := 0, 0
+	for _, r := range results {
+		if r.err == nil {
+			successes++
+		} else {
+			failures++
+			wantCode(t, r.err, "PATH_ALREADY_REGISTERED")
+		}
+	}
+	if successes != 1 || failures != 1 {
+		t.Fatalf("expected 1 success and 1 PATH_ALREADY_REGISTERED; got successes=%d failures=%d (errors: %v %v)",
+			successes, failures, results[0].err, results[1].err)
+	}
+}
+
+// TestManager_AddWorkspaceRejectsBareParent verifies that a bare git repository
+// is rejected as a workspace parent before any mutation occurs.
+func TestManager_AddWorkspaceRejectsBareParent(t *testing.T) {
+	configureCommitter(t)
+	ctx := context.Background()
+	m := newManager(t)
+
+	base := t.TempDir()
+	bareParent := filepath.Join(base, "bare.git")
+	if out, err := exec.Command("git", "init", "--bare", bareParent).CombinedOutput(); err != nil {
+		t.Fatalf("git init --bare: %v (%s)", err, out)
+	}
+
+	// Place a committed child repo inside the bare parent directory.
+	gitRepoWithCommit(t, filepath.Join(bareParent, "child"))
+
+	_, err := m.Add(ctx, project.AddInput{Path: bareParent, ProjectID: ptr("bare"), AsWorkspace: true})
+	wantCode(t, err, "WORKSPACE_PARENT_BARE")
 }

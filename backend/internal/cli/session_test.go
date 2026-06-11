@@ -69,7 +69,7 @@ func sessionCommandServer(t *testing.T) (*httptest.Server, *sessionRequestLog) {
 			}
 			_, _ = io.WriteString(w, `{"ok":true,"sessionId":"demo-1","prs":[{"url":`+jsonQuote(req.PR)+`,"number":142,"state":"open","ci":"passing","review":"review_required","mergeability":"mergeable","reviewComments":false,"updatedAt":"2026-06-04T12:00:00Z"}],"branchChanged":true,"takenOverFrom":["demo-0"]}`)
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions/cleanup":
-			_, _ = io.WriteString(w, `{"ok":true,"cleaned":["demo-old","demo-orch"]}`)
+			_, _ = io.WriteString(w, `{"ok":true,"cleaned":["demo-old","demo-orch"],"skipped":[]}`)
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions/demo-1/kill":
 			_, _ = io.WriteString(w, `{"ok":true,"sessionId":"demo-1","freed":true}`)
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions/demo-1/restore":
@@ -225,6 +225,33 @@ func TestSessionKill_SuccessWithProjectScope(t *testing.T) {
 	}
 }
 
+// TestSessionKill_PreservedWorkspaceNote: freed=false means the daemon
+// terminated the session but kept the worktree (uncommitted changes are never
+// force-deleted) — the CLI must say so instead of implying a full teardown.
+func TestSessionKill_PreservedWorkspaceNote(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions/demo-1/kill" {
+			_, _ = io.WriteString(w, `{"ok":true,"sessionId":"demo-1","freed":false}`)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	writeRunFileFor(t, cfg, srv)
+
+	out, errOut, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "session", "kill", "demo-1")
+	if err != nil {
+		t.Fatalf("session kill failed: %v\nstderr=%s", err, errOut)
+	}
+	if !strings.Contains(out, "session demo-1 killed (workspace preserved)") {
+		t.Fatalf("unexpected kill output:\n%s", out)
+	}
+}
+
 func TestSessionRestore_SuccessWithProjectScope(t *testing.T) {
 	cfg := setConfigEnv(t)
 	srv, log := sessionCommandServer(t)
@@ -271,6 +298,45 @@ func TestSessionCleanup_YesSkipsPrompt(t *testing.T) {
 	}
 	if got := log.all(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("requests = %#v, want %#v", got, want)
+	}
+}
+
+// TestSessionCleanup_ReportsSkippedWorkspaces: a session whose workspace was
+// preserved must be listed with its reason and counted in the summary —
+// previously the CLI printed "Would clean N" then "0 sessions cleaned" with no
+// explanation, leaking workspaces invisibly.
+func TestSessionCleanup_ReportsSkippedWorkspaces(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/sessions":
+			_, _ = io.WriteString(w, `{"sessions":[`+
+				sessionJSON("demo-old", "demo", "worker", "terminated", true)+`,`+
+				sessionJSON("demo-orch", "demo", "orchestrator", "terminated", true)+`]}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions/cleanup":
+			_, _ = io.WriteString(w, `{"ok":true,"cleaned":["demo-old"],"skipped":[{"sessionId":"demo-orch","reason":"workspace has uncommitted changes"}]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	writeRunFileFor(t, cfg, srv)
+
+	out, errOut, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "session", "cleanup", "--project", "demo", "--yes")
+	if err != nil {
+		t.Fatalf("session cleanup failed: %v\nstderr=%s", err, errOut)
+	}
+	for _, want := range []string{
+		"Cleaned: demo-old",
+		"Skipped: demo-orch (workspace has uncommitted changes)",
+		"Cleanup complete. 1 session cleaned, 1 skipped.",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("cleanup output missing %q:\n%s", want, out)
+		}
 	}
 }
 

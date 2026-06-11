@@ -84,6 +84,9 @@ func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfi
 		return fmt.Errorf("agy.GetAgentHooks: %w", err)
 	}
 
+	if err := hookutil.EnsureWorkspaceGitignore(filepath.Dir(hooksPath), agyHooksFileName); err != nil {
+		return fmt.Errorf("agy.GetAgentHooks: gitignore: %w", err)
+	}
 	return nil
 }
 

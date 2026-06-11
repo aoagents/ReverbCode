@@ -31,7 +31,7 @@ type SessionService interface {
 	Restore(ctx context.Context, id domain.SessionID) (domain.Session, error)
 	Kill(ctx context.Context, id domain.SessionID) (bool, error)
 	RollbackSpawn(ctx context.Context, id domain.SessionID) (sessionsvc.RollbackOutcome, error)
-	Cleanup(ctx context.Context, project domain.ProjectID) ([]domain.SessionID, error)
+	Cleanup(ctx context.Context, project domain.ProjectID) (sessionsvc.CleanupOutcome, error)
 	Rename(ctx context.Context, id domain.SessionID, displayName string) error
 	Send(ctx context.Context, id domain.SessionID, message string) error
 	ListPRs(ctx context.Context, id domain.SessionID) ([]domain.PRFacts, error)
@@ -244,12 +244,16 @@ func (c *SessionsController) cleanup(w http.ResponseWriter, r *http.Request) {
 		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/cleanup")
 		return
 	}
-	cleaned, err := c.Svc.Cleanup(r.Context(), domain.ProjectID(r.URL.Query().Get("project")))
+	out, err := c.Svc.Cleanup(r.Context(), domain.ProjectID(r.URL.Query().Get("project")))
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return
 	}
-	envelope.WriteJSON(w, http.StatusOK, CleanupSessionsResponse{OK: true, Cleaned: cleaned})
+	skipped := make([]CleanupSkippedSession, 0, len(out.Skipped))
+	for _, skip := range out.Skipped {
+		skipped = append(skipped, CleanupSkippedSession{SessionID: skip.SessionID, Reason: skip.Reason})
+	}
+	envelope.WriteJSON(w, http.StatusOK, CleanupSessionsResponse{OK: true, Cleaned: out.Cleaned, Skipped: skipped})
 }
 
 func (c *SessionsController) send(w http.ResponseWriter, r *http.Request) {

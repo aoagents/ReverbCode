@@ -108,7 +108,7 @@ type Workspace interface {
 	Restore(ctx context.Context, cfg WorkspaceConfig) (WorkspaceInfo, error)
 }
 
-// Workspace-level sentinels surfaced through Create/Restore so the HTTP layer
+// Workspace-level sentinels surfaced through Create/Restore/Destroy so callers
 // can map them to typed errors rather than collapsing every adapter failure
 // into an opaque 500. Adapters wrap these via fmt.Errorf("...: %w", sentinel).
 var (
@@ -118,6 +118,10 @@ var (
 	// ErrWorkspaceBranchNotFetched reports the requested branch exists nowhere
 	// reachable (no local head, no remote-tracking branch, no tag).
 	ErrWorkspaceBranchNotFetched = errors.New("workspace: branch is not fetched")
+	// ErrWorkspaceDirty reports Destroy refused to remove a workspace because
+	// it holds uncommitted changes or untracked files. Teardown is never
+	// forced; callers treat the workspace as intentionally preserved.
+	ErrWorkspaceDirty = errors.New("workspace: uncommitted changes present")
 )
 
 // WorkspaceConfig is the spec for creating or restoring a session's workspace.

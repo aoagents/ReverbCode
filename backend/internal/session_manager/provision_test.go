@@ -2,6 +2,7 @@ package sessionmanager
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -23,6 +24,78 @@ func TestSpawnEnvProjectVarsCannotOverrideInternal(t *testing.T) {
 	}
 	if env[EnvProjectID] != "mer" {
 		t.Fatalf("AO_PROJECT_ID = %q, want mer (internal wins)", env[EnvProjectID])
+	}
+}
+
+func TestHookPATH(t *testing.T) {
+	sep := string(os.PathListSeparator)
+	daemonExe := filepath.Join("/opt", "aod", "ao")
+	daemonDir := filepath.Dir(daemonExe)
+	exeOK := func() (string, error) { return daemonExe, nil }
+
+	cases := []struct {
+		name       string
+		executable func() (string, error)
+		daemonPATH string
+		projectEnv map[string]string
+		want       string
+		wantErr    bool
+	}{
+		{
+			name:       "prepends daemon dir to inherited PATH",
+			executable: exeOK,
+			daemonPATH: "/usr/bin" + sep + "/bin",
+			want:       daemonDir + sep + "/usr/bin" + sep + "/bin",
+		},
+		{
+			name:       "project PATH override is the base",
+			executable: exeOK,
+			daemonPATH: "/usr/bin",
+			projectEnv: map[string]string{"PATH": "/proj/bin"},
+			want:       daemonDir + sep + "/proj/bin",
+		},
+		{
+			name:       "empty base PATH yields the daemon dir alone",
+			executable: exeOK,
+			want:       daemonDir,
+		},
+		{
+			name:       "unresolvable executable fails",
+			executable: func() (string, error) { return "", errors.New("no exe") },
+			daemonPATH: "/usr/bin",
+			wantErr:    true,
+		},
+		{
+			// A daemon binary not named "ao" cannot anchor `ao` resolution by
+			// having its directory prepended, so the pin must be refused.
+			name:       "executable not named ao fails",
+			executable: func() (string, error) { return filepath.Join("/opt", "aod", "ao-daemon"), nil },
+			daemonPATH: "/usr/bin",
+			wantErr:    true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			getenv := func(key string) string {
+				if key == "PATH" {
+					return tc.daemonPATH
+				}
+				return ""
+			}
+			got, err := hookPATH(tc.executable, getenv, tc.projectEnv)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("hookPATH = %q, want error", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("hookPATH: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("hookPATH = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 

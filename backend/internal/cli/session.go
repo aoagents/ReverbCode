@@ -68,6 +68,7 @@ type sessionResponse struct {
 
 type killSessionResponse struct {
 	SessionID string `json:"sessionId"`
+	Freed     bool   `json:"freed"`
 }
 
 type restoreSessionResponse struct {
@@ -80,8 +81,14 @@ type renameSessionResponse struct {
 	DisplayName string `json:"displayName"`
 }
 
+type cleanupSkippedSession struct {
+	SessionID string `json:"sessionId"`
+	Reason    string `json:"reason"`
+}
+
 type cleanupSessionsResponse struct {
-	Cleaned []string `json:"cleaned"`
+	Cleaned []string                `json:"cleaned"`
+	Skipped []cleanupSkippedSession `json:"skipped"`
 }
 
 type claimPRRequest struct {
@@ -431,7 +438,13 @@ func (c *commandContext) killSession(ctx context.Context, cmd *cobra.Command, id
 	if err := c.postJSON(ctx, "sessions/"+url.PathEscape(id)+"/kill", struct{}{}, &res); err != nil {
 		return err
 	}
-	_, err := fmt.Fprintf(cmd.OutOrStdout(), "session %s killed\n", res.SessionID)
+	if res.Freed {
+		_, err := fmt.Fprintf(cmd.OutOrStdout(), "session %s killed\n", res.SessionID)
+		return err
+	}
+	// freed=false: the workspace was preserved (e.g. uncommitted changes) — the
+	// session is terminated either way, but the worktree is left for inspection.
+	_, err := fmt.Fprintf(cmd.OutOrStdout(), "session %s killed (workspace preserved)\n", res.SessionID)
 	return err
 }
 
@@ -530,7 +543,20 @@ func (c *commandContext) cleanupSessions(ctx context.Context, cmd *cobra.Command
 			return err
 		}
 	}
-	_, err = fmt.Fprintf(out, "\nCleanup complete. %d session%s cleaned.\n", len(cleaned), pluralS(len(cleaned)))
+	for _, skip := range res.Skipped {
+		label := skip.SessionID
+		if mapped := labelByID[skip.SessionID]; mapped != "" {
+			label = mapped
+		}
+		if _, err := fmt.Fprintf(out, "  Skipped: %s (%s)\n", label, skip.Reason); err != nil {
+			return err
+		}
+	}
+	summary := fmt.Sprintf("\nCleanup complete. %d session%s cleaned", len(cleaned), pluralS(len(cleaned)))
+	if len(res.Skipped) > 0 {
+		summary += fmt.Sprintf(", %d skipped", len(res.Skipped))
+	}
+	_, err = fmt.Fprintf(out, "%s.\n", summary)
 	return err
 }
 

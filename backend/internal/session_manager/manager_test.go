@@ -1,9 +1,13 @@
 package sessionmanager
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -15,10 +19,11 @@ import (
 var ctx = context.Background()
 
 type fakeStore struct {
-	sessions map[domain.SessionID]domain.SessionRecord
-	pr       map[domain.SessionID]domain.PRFacts
-	projects map[string]domain.ProjectRecord
-	num      int
+	sessions  map[domain.SessionID]domain.SessionRecord
+	pr        map[domain.SessionID]domain.PRFacts
+	projects  map[string]domain.ProjectRecord
+	num       int
+	deleteErr error
 }
 
 func newFakeStore() *fakeStore {
@@ -59,6 +64,9 @@ func (f *fakeStore) ListAllSessions(context.Context) ([]domain.SessionRecord, er
 	return out, nil
 }
 func (f *fakeStore) DeleteSession(_ context.Context, id domain.SessionID) (bool, error) {
+	if f.deleteErr != nil {
+		return false, f.deleteErr
+	}
 	rec, ok := f.sessions[id]
 	if !ok {
 		return false, nil
@@ -164,6 +172,7 @@ type singleAgent struct{ agent ports.Agent }
 func (s singleAgent) Agent(domain.AgentHarness) (ports.Agent, bool) { return s.agent, true }
 
 type fakeWorkspace struct {
+	createErr  error
 	destroyErr error
 	destroyed  int
 	lastCfg    ports.WorkspaceConfig
@@ -173,6 +182,9 @@ type fakeWorkspace struct {
 }
 
 func (w *fakeWorkspace) Create(_ context.Context, cfg ports.WorkspaceConfig) (ports.WorkspaceInfo, error) {
+	if w.createErr != nil {
+		return ports.WorkspaceInfo{}, w.createErr
+	}
 	w.lastCfg = cfg
 	path := w.path
 	if path == "" {
@@ -290,6 +302,41 @@ func TestSpawn_RollsBackOnRuntimeFailure(t *testing.T) {
 		t.Fatal("orphaned spawn should be terminated")
 	}
 }
+
+// TestSpawn_DeletesSeedRowOnWorkspaceFailure covers the failed-spawn cleanup:
+// when workspace materialization fails (e.g. gitworktree refuses a branch
+// checked out elsewhere), nothing observable was built, so the seed row is
+// deleted outright rather than parked as a terminated orphan that clutters
+// session lists.
+func TestSpawn_DeletesSeedRowOnWorkspaceFailure(t *testing.T) {
+	m, st, rt, ws := newManager()
+	ws.createErr = ports.ErrWorkspaceBranchCheckedOutElsewhere
+	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if !errors.Is(err, ports.ErrWorkspaceBranchCheckedOutElsewhere) {
+		t.Fatalf("err = %v, want ports.ErrWorkspaceBranchCheckedOutElsewhere", err)
+	}
+	if rec, present := st.sessions["mer-1"]; present {
+		t.Fatalf("seed row must be deleted, got %+v", rec)
+	}
+	if rt.created != 0 {
+		t.Fatal("runtime.Create must not run when workspace materialization fails")
+	}
+}
+
+// TestSpawn_ParksRowTerminatedWhenSeedDeleteFails asserts the fallback: if the
+// seed-row delete itself fails, the failed spawn still parks the row as
+// terminated so it never looks live.
+func TestSpawn_ParksRowTerminatedWhenSeedDeleteFails(t *testing.T) {
+	m, st, _, ws := newManager()
+	ws.createErr = ports.ErrWorkspaceBranchNotFetched
+	st.deleteErr = errors.New("db locked")
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); !errors.Is(err, ports.ErrWorkspaceBranchNotFetched) {
+		t.Fatalf("err = %v, want ports.ErrWorkspaceBranchNotFetched", err)
+	}
+	if !st.sessions["mer-1"].IsTerminated {
+		t.Fatal("row must fall back to terminated when the seed delete fails")
+	}
+}
 func TestKill_TearsDownRuntimeAndWorkspace(t *testing.T) {
 	m, st, rt, ws := newManager()
 	st.sessions["mer-1"] = mkLive("mer-1")
@@ -306,6 +353,41 @@ func TestKill_RefusesIncompleteHandle(t *testing.T) {
 	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Activity: domain.Activity{State: domain.ActivityActive}}
 	if _, err := m.Kill(ctx, "mer-1"); !errors.Is(err, ErrIncompleteHandle) {
 		t.Fatalf("want ErrIncompleteHandle, got %v", err)
+	}
+}
+
+// TestKill_DirtyWorkspaceTerminatesAndPreserves: a workspace teardown refused
+// because of uncommitted work must NOT fail the kill — the session terminates,
+// the runtime is gone, and freed=false reports the preserved worktree. This is
+// the normal path for any session with in-progress changes, so an error here
+// would turn every such kill into a 500.
+func TestKill_DirtyWorkspaceTerminatesAndPreserves(t *testing.T) {
+	m, st, rt, ws := newManager()
+	st.sessions["mer-1"] = mkLive("mer-1")
+	ws.destroyErr = fmt.Errorf("gitworktree: refusing to remove: %w", ports.ErrWorkspaceDirty)
+	freed, err := m.Kill(ctx, "mer-1")
+	if err != nil {
+		t.Fatalf("kill dirty workspace err = %v, want nil", err)
+	}
+	if freed {
+		t.Fatal("freed = true, want false for preserved workspace")
+	}
+	if rt.destroyed != 1 {
+		t.Fatal("runtime should be destroyed")
+	}
+	if !st.sessions["mer-1"].IsTerminated {
+		t.Fatal("session should be terminated")
+	}
+}
+
+// TestKill_OtherWorkspaceErrorStillFails: only the typed dirty refusal is a
+// success-with-preserved-workspace; any other teardown failure keeps erroring.
+func TestKill_OtherWorkspaceErrorStillFails(t *testing.T) {
+	m, st, _, ws := newManager()
+	st.sessions["mer-1"] = mkLive("mer-1")
+	ws.destroyErr = errors.New("disk on fire")
+	if _, err := m.Kill(ctx, "mer-1"); err == nil || !strings.Contains(err.Error(), "disk on fire") {
+		t.Fatalf("kill err = %v, want workspace error surfaced", err)
 	}
 }
 func TestRestore_ReopensTerminal(t *testing.T) {
@@ -349,15 +431,55 @@ func TestCleanup_ReclaimsTerminalWorkspaces(t *testing.T) {
 	m, st, _, ws := newManager()
 	seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/mer-1"})
 	st.sessions["mer-2"] = mkLive("mer-2")
-	cleaned, err := m.Cleanup(ctx, "mer")
+	res, err := m.Cleanup(ctx, "mer")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(cleaned) != 1 || cleaned[0] != "mer-1" {
-		t.Fatalf("got %v", cleaned)
+	if len(res.Cleaned) != 1 || res.Cleaned[0] != "mer-1" {
+		t.Fatalf("got %v", res.Cleaned)
+	}
+	if len(res.Skipped) != 0 {
+		t.Fatalf("skipped = %v, want none", res.Skipped)
 	}
 	if ws.destroyed != 1 {
 		t.Fatal("live workspace must not be destroyed")
+	}
+}
+
+// TestCleanup_ReportsSkippedWorkspaces: a refused teardown must be visible in
+// the result with a reason — a silent skip leaves users staring at
+// "Would clean N … 0 sessions cleaned" with no explanation.
+func TestCleanup_ReportsSkippedWorkspaces(t *testing.T) {
+	m, st, _, ws := newManager()
+	seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/mer-1"})
+	ws.destroyErr = fmt.Errorf("gitworktree: refusing to remove: %w", ports.ErrWorkspaceDirty)
+	res, err := m.Cleanup(ctx, "mer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Cleaned) != 0 {
+		t.Fatalf("cleaned = %v, want none", res.Cleaned)
+	}
+	if len(res.Skipped) != 1 || res.Skipped[0].SessionID != "mer-1" {
+		t.Fatalf("skipped = %v, want mer-1", res.Skipped)
+	}
+	if res.Skipped[0].Reason != "workspace has uncommitted changes" {
+		t.Fatalf("reason = %q", res.Skipped[0].Reason)
+	}
+
+	// A non-dirty teardown failure is reported too — but with a fixed public
+	// reason: the raw cause carries internal filesystem paths and belongs in
+	// the server log, not the API response.
+	ws.destroyErr = errors.New("disk on fire")
+	res, err = m.Cleanup(ctx, "mer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Skipped) != 1 || res.Skipped[0].Reason != "workspace teardown failed" {
+		t.Fatalf("skipped = %v, want fixed teardown-failed reason", res.Skipped)
+	}
+	if strings.Contains(res.Skipped[0].Reason, "disk on fire") {
+		t.Fatalf("raw internal error leaked into public reason: %q", res.Skipped[0].Reason)
 	}
 }
 
@@ -519,6 +641,112 @@ func TestSpawn_RejectsMissingAgentBinary(t *testing.T) {
 	}
 	if !st.sessions["mer-1"].IsTerminated {
 		t.Fatal("the orphan row should be marked terminated after the failed spawn")
+	}
+}
+
+// pathPinManager builds a manager whose Executable dep is stubbed, plus a
+// buffer capturing its log output, for the hook PATH pin tests.
+func pathPinManager(executable func() (string, error)) (*Manager, *fakeStore, *fakeRuntime, *bytes.Buffer) {
+	st := newFakeStore()
+	rt := &fakeRuntime{}
+	logBuf := &bytes.Buffer{}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{
+		Runtime: rt, Agents: fakeAgents{}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath: lookPath, Executable: executable,
+		Logger: slog.New(slog.NewTextHandler(logBuf, nil)),
+	})
+	return m, st, rt, logBuf
+}
+
+// TestSpawnAndRestore_PinHookPATHToDaemonBinary covers the activity-tracking
+// fix: the spawned session's PATH must put the daemon executable's directory
+// first, so the bare `ao` in the workspace hook commands resolves to the
+// daemon that installed them, not a foreign `ao` earlier on the user's PATH
+// (e.g. the legacy TypeScript CLI, which has no `hooks` command and silently
+// kills activity tracking).
+func TestSpawnAndRestore_PinHookPATHToDaemonBinary(t *testing.T) {
+	daemonExe := filepath.Join(t.TempDir(), "ao")
+	want := filepath.Dir(daemonExe) + string(os.PathListSeparator) + "/usr/bin"
+	executable := func() (string, error) { return daemonExe, nil }
+
+	cases := []struct {
+		name   string
+		launch func(m *Manager, st *fakeStore) error
+	}{
+		{
+			name: "spawn",
+			launch: func(m *Manager, _ *fakeStore) error {
+				_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+				return err
+			},
+		},
+		{
+			name: "restore",
+			launch: func(m *Manager, st *fakeStore) error {
+				seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "b", AgentSessionID: "agent-x"})
+				_, err := m.Restore(ctx, "mer-1")
+				return err
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("PATH", "/usr/bin")
+			m, st, rt, _ := pathPinManager(executable)
+			if err := tc.launch(m, st); err != nil {
+				t.Fatal(err)
+			}
+			if got := rt.lastCfg.Env["PATH"]; got != want {
+				t.Fatalf("runtime env PATH = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+// TestSpawn_HookPATHPinUnavailable asserts the degraded path is loud, not
+// silent: when the daemon executable cannot anchor `ao` resolution, PATH is
+// left to the runtime's inherited default and a warning is logged.
+func TestSpawn_HookPATHPinUnavailable(t *testing.T) {
+	cases := []struct {
+		name       string
+		executable func() (string, error)
+	}{
+		{"executable unresolvable", func() (string, error) { return "", errors.New("no exe") }},
+		{"executable not named ao", func() (string, error) { return "/opt/aod/ao-daemon", nil }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m, _, rt, logBuf := pathPinManager(tc.executable)
+			if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
+				t.Fatal(err)
+			}
+			if got, ok := rt.lastCfg.Env["PATH"]; ok {
+				t.Fatalf("runtime env PATH = %q, want unset when the pin cannot be applied", got)
+			}
+			if !strings.Contains(logBuf.String(), "not pinned") {
+				t.Fatalf("expected a 'not pinned' warning in the log, got %q", logBuf.String())
+			}
+		})
+	}
+}
+
+// TestSpawn_ProjectPATHIsPinBase asserts a project's PATH override survives the
+// pin as its base rather than being clobbered or clobbering: the daemon dir
+// still comes first.
+func TestSpawn_ProjectPATHIsPinBase(t *testing.T) {
+	daemonExe := filepath.Join(t.TempDir(), "ao")
+	m, st, rt, _ := pathPinManager(func() (string, error) { return daemonExe, nil })
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
+		Env: map[string]string{"PATH": "/proj/bin"},
+	}}
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Dir(daemonExe) + string(os.PathListSeparator) + "/proj/bin"
+	if got := rt.lastCfg.Env["PATH"]; got != want {
+		t.Fatalf("runtime env PATH = %q, want %q", got, want)
 	}
 }
 

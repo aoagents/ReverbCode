@@ -11,10 +11,11 @@ type GetResult struct {
 
 // AddInput is the body shape for POST /api/v1/projects.
 type AddInput struct {
-	Path      string                `json:"path"`
-	ProjectID *string               `json:"projectId,omitempty"`
-	Name      *string               `json:"name,omitempty"`
-	Config    *domain.ProjectConfig `json:"config,omitempty"`
+	Path        string                `json:"path"`
+	ProjectID   *string               `json:"projectId,omitempty"`
+	Name        *string               `json:"name,omitempty"`
+	Config      *domain.ProjectConfig `json:"config,omitempty"`
+	AsWorkspace bool                  `json:"asWorkspace,omitempty"`
 }
 
 // SetConfigInput is the body shape for PUT /api/v1/projects/{id}/config. Config

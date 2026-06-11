@@ -269,6 +269,39 @@ func TestSessionUpdateActivityAndTermination(t *testing.T) {
 	}
 }
 
+func TestSessionFirstSignalRoundTrip(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	r, _ := s.CreateSession(ctx, sampleRecord("mer"))
+
+	// Fresh sessions have no signal receipt: NULL round-trips as zero time.
+	got, _, _ := s.GetSession(ctx, r.ID)
+	if !got.FirstSignalAt.IsZero() {
+		t.Fatalf("fresh session has receipt: %v", got.FirstSignalAt)
+	}
+
+	stamp := time.Now().UTC().Truncate(time.Second)
+	got.FirstSignalAt = stamp
+	if err := s.UpdateSession(ctx, got); err != nil {
+		t.Fatal(err)
+	}
+	again, _, _ := s.GetSession(ctx, r.ID)
+	if !again.FirstSignalAt.Equal(stamp) {
+		t.Fatalf("receipt not persisted: got %v want %v", again.FirstSignalAt, stamp)
+	}
+
+	// Clearing it (spawn/restore re-proves the hook pipeline) round-trips too.
+	again.FirstSignalAt = time.Time{}
+	if err := s.UpdateSession(ctx, again); err != nil {
+		t.Fatal(err)
+	}
+	final, _, _ := s.GetSession(ctx, r.ID)
+	if !final.FirstSignalAt.IsZero() {
+		t.Fatalf("receipt not cleared: %v", final.FirstSignalAt)
+	}
+}
+
 func TestPRCRUD(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -658,5 +691,51 @@ func TestConcurrentSessionCreateAssignsUniqueNums(t *testing.T) {
 	}
 	if all, _ := s.ListAllSessions(ctx); len(all) != n {
 		t.Fatalf("created %d sessions, want %d", len(all), n)
+	}
+}
+
+func TestSessionWorktreesRoundTrip(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "ws")
+	rec, err := s.CreateSession(ctx, sampleRecord("ws"))
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	rows := []domain.SessionWorktreeRecord{
+		{SessionID: rec.ID, RepoName: domain.RootWorkspaceRepoName, Branch: "ao/ws-1", BaseSHA: "root-base", WorktreePath: "/managed/ws/ws-1", State: "active"},
+		{SessionID: rec.ID, RepoName: "api", Branch: "ao/ws-1", BaseSHA: "api-base", WorktreePath: "/managed/ws/ws-1/api", PreservedRef: "refs/ao/preserved/ws-1", State: "removed"},
+	}
+	for _, row := range rows {
+		if err := s.UpsertSessionWorktree(ctx, row); err != nil {
+			t.Fatalf("upsert worktree %s: %v", row.RepoName, err)
+		}
+	}
+	got, err := s.ListSessionWorktrees(ctx, rec.ID)
+	if err != nil {
+		t.Fatalf("list worktrees: %v", err)
+	}
+	if !reflect.DeepEqual(got, rows) {
+		t.Fatalf("worktrees = %#v, want %#v", got, rows)
+	}
+	one, ok, err := s.GetSessionWorktree(ctx, rec.ID, "api")
+	if err != nil || !ok || one.PreservedRef != "refs/ao/preserved/ws-1" {
+		t.Fatalf("get api = %#v ok=%v err=%v", one, ok, err)
+	}
+	rows[1].State = "active"
+	rows[1].PreservedRef = ""
+	if err := s.UpsertSessionWorktree(ctx, rows[1]); err != nil {
+		t.Fatalf("update api worktree: %v", err)
+	}
+	one, ok, err = s.GetSessionWorktree(ctx, rec.ID, "api")
+	if err != nil || !ok || one.State != "active" || one.PreservedRef != "" {
+		t.Fatalf("updated api = %#v ok=%v err=%v", one, ok, err)
+	}
+	if err := s.DeleteSessionWorktrees(ctx, rec.ID); err != nil {
+		t.Fatalf("delete worktrees: %v", err)
+	}
+	got, err = s.ListSessionWorktrees(ctx, rec.ID)
+	if err != nil || len(got) != 0 {
+		t.Fatalf("after delete = %#v err=%v", got, err)
 	}
 }

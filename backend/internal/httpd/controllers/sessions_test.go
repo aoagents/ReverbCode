@@ -22,6 +22,7 @@ type fakeSessionService struct {
 	sent            string
 	cleanupProjects []domain.ProjectID
 	cleanupResult   []domain.SessionID
+	cleanupSkipped  []sessionsvc.CleanupSkipped
 	claimErr        error
 	listPRErr       error
 }
@@ -100,12 +101,13 @@ func (f *fakeSessionService) RollbackSpawn(_ context.Context, id domain.SessionI
 	return sessionsvc.RollbackOutcome{}, nil
 }
 
-func (f *fakeSessionService) Cleanup(_ context.Context, project domain.ProjectID) ([]domain.SessionID, error) {
+func (f *fakeSessionService) Cleanup(_ context.Context, project domain.ProjectID) (sessionsvc.CleanupOutcome, error) {
 	f.cleanupProjects = append(f.cleanupProjects, project)
-	if f.cleanupResult != nil {
-		return f.cleanupResult, nil
+	cleaned := f.cleanupResult
+	if cleaned == nil {
+		cleaned = []domain.SessionID{"ao-1"}
 	}
-	return []domain.SessionID{"ao-1"}, nil
+	return sessionsvc.CleanupOutcome{Cleaned: cleaned, Skipped: f.cleanupSkipped}, nil
 }
 
 func (f *fakeSessionService) Rename(_ context.Context, id domain.SessionID, displayName string) error {
@@ -318,6 +320,7 @@ func TestSessionsAPI_SendValidation(t *testing.T) {
 func TestSessionsAPI_CleanupWithProjectFilter(t *testing.T) {
 	svc := newFakeSessionService()
 	svc.cleanupResult = []domain.SessionID{"ao-1"}
+	svc.cleanupSkipped = []sessionsvc.CleanupSkipped{{SessionID: "ao-2", Reason: "workspace has uncommitted changes"}}
 	srv := newSessionTestServer(t, svc)
 
 	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/cleanup?project=ao", "")
@@ -327,10 +330,17 @@ func TestSessionsAPI_CleanupWithProjectFilter(t *testing.T) {
 	var got struct {
 		OK      bool     `json:"ok"`
 		Cleaned []string `json:"cleaned"`
+		Skipped []struct {
+			SessionID string `json:"sessionId"`
+			Reason    string `json:"reason"`
+		} `json:"skipped"`
 	}
 	mustJSON(t, body, &got)
 	if !got.OK || len(got.Cleaned) != 1 || got.Cleaned[0] != "ao-1" {
 		t.Fatalf("cleanup response = %#v", got)
+	}
+	if len(got.Skipped) != 1 || got.Skipped[0].SessionID != "ao-2" || got.Skipped[0].Reason != "workspace has uncommitted changes" {
+		t.Fatalf("cleanup skipped = %#v, want preserved workspace with reason", got.Skipped)
 	}
 	if len(svc.cleanupProjects) != 1 || svc.cleanupProjects[0] != "ao" {
 		t.Fatalf("cleanupProjects = %#v, want [ao]", svc.cleanupProjects)

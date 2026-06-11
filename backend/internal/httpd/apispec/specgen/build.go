@@ -141,6 +141,7 @@ var schemaNames = map[string]string{
 	"ControllersRenameSessionResponse":      "RenameSessionResponse",
 	"ControllersRestoreSessionResponse":     "RestoreSessionResponse",
 	"ControllersCleanupSessionsResponse":    "CleanupSessionsResponse",
+	"ControllersCleanupSkippedSession":      "CleanupSkippedSession",
 	"ControllersKillSessionResponse":        "KillSessionResponse",
 	"ControllersRollbackSessionResponse":    "RollbackSessionResponse",
 	"ControllersSendSessionMessageRequest":  "SendSessionMessageRequest",
@@ -172,6 +173,7 @@ var schemaNames = map[string]string{
 	"ProjectAddInput":       "AddProjectInput",
 	"ProjectRemoveResult":   "RemoveProjectResult",
 	"ProjectSetConfigInput": "SetProjectConfigInput",
+	"ProjectWorkspaceRepo":  "WorkspaceRepo",
 }
 
 // markRequestBodyRequired sets requestBody.required: true on the operation's

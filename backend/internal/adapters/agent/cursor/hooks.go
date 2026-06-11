@@ -93,6 +93,9 @@ func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfi
 	if err := writeCursorHooks(hooksPath, topLevel, rawHooks); err != nil {
 		return fmt.Errorf("cursor.GetAgentHooks: %w", err)
 	}
+	if err := hookutil.EnsureWorkspaceGitignore(filepath.Dir(hooksPath), cursorHooksFileName); err != nil {
+		return fmt.Errorf("cursor.GetAgentHooks: gitignore: %w", err)
+	}
 	return nil
 }
 

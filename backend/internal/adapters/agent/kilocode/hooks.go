@@ -10,6 +10,7 @@ import (
 
 	_ "embed"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/hookutil"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -93,6 +94,9 @@ func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfi
 	}
 	if err := atomicWriteFile(pluginPath, []byte(kilocodePluginSource), 0o600); err != nil {
 		return fmt.Errorf("kilocode.GetAgentHooks: write plugin: %w", err)
+	}
+	if err := hookutil.EnsureWorkspaceGitignore(filepath.Dir(pluginPath), kilocodePluginFileName); err != nil {
+		return fmt.Errorf("kilocode.GetAgentHooks: gitignore: %w", err)
 	}
 	return nil
 }

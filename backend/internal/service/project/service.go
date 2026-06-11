@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -38,6 +39,11 @@ type Manager interface {
 // Service implements project registration and lookup use-cases for controllers.
 type Service struct {
 	store Store
+	// addMu serialises the whole body of Add. Workspace registration performs
+	// filesystem mutations (git init, .gitignore writes, commits) that are not
+	// covered by the store's own writeMu, so path/id conflict checks plus the
+	// subsequent mutation must be atomic from the perspective of concurrent callers.
+	addMu sync.Mutex
 }
 
 var _ Manager = (*Service)(nil)
@@ -59,6 +65,7 @@ func (m *Service) List(ctx context.Context) ([]Summary, error) {
 			ID:            domain.ProjectID(row.ID),
 			Name:          displayName(row),
 			Path:          row.Path,
+			Kind:          row.Kind.WithDefault(),
 			SessionPrefix: resolveSessionPrefix(row),
 		})
 	}
@@ -78,19 +85,27 @@ func (m *Service) Get(ctx context.Context, id domain.ProjectID) (GetResult, erro
 		return GetResult{}, apierr.NotFound("PROJECT_NOT_FOUND", "Unknown project")
 	}
 	p := projectFromRow(row)
+	if row.Kind.WithDefault() == domain.ProjectKindWorkspace {
+		repos, err := m.store.ListWorkspaceRepos(ctx, row.ID)
+		if err != nil {
+			return GetResult{}, apierr.Internal("PROJECT_LOAD_FAILED", "Failed to load workspace repositories")
+		}
+		p.WorkspaceRepos = workspaceReposFromRecords(repos)
+	}
 	return GetResult{Status: "ok", Project: &p}, nil
 }
 
 // Add registers a local git repository as a project.
+//
+// The whole method body is serialised by addMu because workspace registration
+// mutates the filesystem (git init, .gitignore, commits) between the conflict
+// check and the store write — two concurrent calls for the same path would both
+// pass FindProjectByPath and then race on those mutations.
 func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 	path, err := normalizePath(in.Path)
 	if err != nil {
 		return Project{}, err
 	}
-	if !isGitRepo(path) {
-		return Project{}, apierr.Invalid("NOT_A_GIT_REPO", "Repository path must point to a git repository", nil)
-	}
-
 	id := defaultProjectID(path)
 	if in.ProjectID != nil {
 		id = domain.ProjectID(strings.TrimSpace(*in.ProjectID))
@@ -98,6 +113,9 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 	if err := validateProjectID(id); err != nil {
 		return Project{}, err
 	}
+
+	m.addMu.Lock()
+	defer m.addMu.Unlock()
 
 	name := string(id)
 	if in.Name != nil {
@@ -132,14 +150,33 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 		config = *in.Config
 	}
 
+	registeredAt := time.Now()
 	row := domain.ProjectRecord{
-		ID:            string(id),
-		Path:          path,
-		RepoOriginURL: resolveGitOriginURL(path),
-		DisplayName:   name,
-		RegisteredAt:  time.Now(),
-		Config:        config,
+		ID:           string(id),
+		Path:         path,
+		DisplayName:  name,
+		RegisteredAt: registeredAt,
+		Kind:         domain.ProjectKindSingleRepo,
+		Config:       config,
 	}
+	if in.AsWorkspace {
+		repos, err := prepareWorkspaceProject(ctx, path, domain.ProjectID(row.ID), registeredAt)
+		if err != nil {
+			return Project{}, err
+		}
+		row.Kind = domain.ProjectKindWorkspace
+		row.RepoOriginURL = resolveGitOriginURL(path)
+		if err := m.store.UpsertWorkspaceProject(ctx, row, repos); err != nil {
+			return Project{}, apierr.Internal("PROJECT_ADD_FAILED", "Failed to register workspace project")
+		}
+		p := projectFromRow(row)
+		p.WorkspaceRepos = workspaceReposFromRecords(repos)
+		return p, nil
+	}
+	if !isGitRepo(path) {
+		return Project{}, apierr.Invalid("NOT_A_GIT_REPO", "Repository path must point to a git repository", nil)
+	}
+	row.RepoOriginURL = resolveGitOriginURL(path)
 	if err := m.store.UpsertProject(ctx, row); err != nil {
 		return Project{}, apierr.Internal("PROJECT_ADD_FAILED", "Failed to register project")
 	}
@@ -209,6 +246,7 @@ func projectFromRow(row domain.ProjectRecord) Project {
 	p := Project{
 		ID:            domain.ProjectID(row.ID),
 		Name:          displayName(row),
+		Kind:          row.Kind.WithDefault(),
 		Path:          row.Path,
 		Repo:          row.RepoOriginURL,
 		DefaultBranch: row.Config.WithDefaults().DefaultBranch,

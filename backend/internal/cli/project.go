@@ -15,9 +15,10 @@ import (
 )
 
 type projectAddOptions struct {
-	path string
-	id   string
-	name string
+	path        string
+	id          string
+	name        string
+	asWorkspace bool
 }
 
 type projectListOptions struct {
@@ -36,27 +37,37 @@ type projectRemoveOptions struct {
 // addProjectRequest mirrors the daemon's project AddInput body for
 // POST /api/v1/projects. projectId and name are optional (pointers omit them).
 type addProjectRequest struct {
-	Path      string  `json:"path"`
-	ProjectID *string `json:"projectId,omitempty"`
-	Name      *string `json:"name,omitempty"`
+	Path        string  `json:"path"`
+	ProjectID   *string `json:"projectId,omitempty"`
+	Name        *string `json:"name,omitempty"`
+	AsWorkspace bool    `json:"asWorkspace,omitempty"`
 }
 
 type projectSummary struct {
 	ID            string `json:"id"`
 	Name          string `json:"name"`
+	Kind          string `json:"kind"`
 	SessionPrefix string `json:"sessionPrefix"`
 	ResolveError  string `json:"resolveError,omitempty"`
 }
 
 type projectDetails struct {
-	ID             string         `json:"id"`
-	Name           string         `json:"name"`
-	Path           string         `json:"path"`
-	Repo           string         `json:"repo"`
-	DefaultBranch  string         `json:"defaultBranch"`
-	DefaultHarness string         `json:"agent,omitempty"`
-	Config         *projectConfig `json:"config,omitempty"`
-	ResolveError   string         `json:"resolveError,omitempty"`
+	ID             string                 `json:"id"`
+	Name           string                 `json:"name"`
+	Kind           string                 `json:"kind"`
+	Path           string                 `json:"path"`
+	Repo           string                 `json:"repo"`
+	DefaultBranch  string                 `json:"defaultBranch"`
+	DefaultHarness string                 `json:"agent,omitempty"`
+	Config         *projectConfig         `json:"config,omitempty"`
+	WorkspaceRepos []workspaceRepoDetails `json:"workspaceRepos,omitempty"`
+	ResolveError   string                 `json:"resolveError,omitempty"`
+}
+
+type workspaceRepoDetails struct {
+	Name         string `json:"name"`
+	RelativePath string `json:"relativePath"`
+	Repo         string `json:"repo"`
 }
 
 // agentConfig mirrors the daemon's typed domain.AgentConfig for the CLI client.
@@ -200,13 +211,15 @@ func newProjectAddCommand(ctx *commandContext) *cobra.Command {
 		Use:   "add",
 		Short: "Register a local git repo as a project",
 		Long: "Register a local git repo as a project so sessions can be spawned in it.\n\n" +
-			"The path must be an existing git repository on disk.",
+			"The path must be an existing git repository on disk. With --as-workspace, " +
+			"the path may be a parent folder containing direct child git repositories; " +
+			"AO initializes/adopts the parent as the root repo and gitignores children.",
 		Args: noArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if opts.path == "" {
 				return usageError{fmt.Errorf("--path is required")}
 			}
-			req := addProjectRequest{Path: opts.path}
+			req := addProjectRequest{Path: opts.path, AsWorkspace: opts.asWorkspace}
 			if opts.id != "" {
 				req.ProjectID = &opts.id
 			}
@@ -225,6 +238,7 @@ func newProjectAddCommand(ctx *commandContext) *cobra.Command {
 	f.StringVar(&opts.path, "path", "", "Absolute path to the local git repo (required)")
 	f.StringVar(&opts.id, "id", "", "Project id (default: derived by the daemon from the path)")
 	f.StringVar(&opts.name, "name", "", "Display name")
+	f.BoolVar(&opts.asWorkspace, "as-workspace", false, "Register a parent folder as a workspace project (root-as-repo plus direct child repos)")
 	return cmd
 }
 
@@ -395,7 +409,7 @@ func writeProjectList(cmd *cobra.Command, projects []projectSummary) error {
 	}
 
 	tw := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
-	if _, err := fmt.Fprintln(tw, "ID\tNAME\tSESSION PREFIX\tSTATUS"); err != nil {
+	if _, err := fmt.Fprintln(tw, "ID\tNAME\tKIND\tSESSION PREFIX\tSTATUS"); err != nil {
 		return err
 	}
 	for _, p := range projects {
@@ -403,7 +417,11 @@ func writeProjectList(cmd *cobra.Command, projects []projectSummary) error {
 		if p.ResolveError != "" {
 			status = "degraded: " + p.ResolveError
 		}
-		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", p.ID, p.Name, p.SessionPrefix, status); err != nil {
+		kind := p.Kind
+		if kind == "" {
+			kind = "single_repo"
+		}
+		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", p.ID, p.Name, kind, p.SessionPrefix, status); err != nil {
 			return err
 		}
 	}
@@ -421,6 +439,7 @@ func writeProjectDetails(cmd *cobra.Command, res projectGetResult) error {
 		value string
 	}{
 		{label: "name", value: p.Name},
+		{label: "kind", value: p.Kind},
 		{label: "path", value: p.Path},
 		{label: "repo", value: p.Repo},
 		{label: "default branch", value: p.DefaultBranch},
@@ -434,6 +453,20 @@ func writeProjectDetails(cmd *cobra.Command, res projectGetResult) error {
 		}
 		if _, err := fmt.Fprintf(out, "  %s: %s\n", f.label, f.value); err != nil {
 			return err
+		}
+	}
+	if len(p.WorkspaceRepos) > 0 {
+		if _, err := fmt.Fprintln(out, "  workspace repos:"); err != nil {
+			return err
+		}
+		for _, repo := range p.WorkspaceRepos {
+			desc := repo.RelativePath
+			if repo.Repo != "" {
+				desc += " (" + repo.Repo + ")"
+			}
+			if _, err := fmt.Fprintf(out, "    %s: %s\n", repo.Name, desc); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

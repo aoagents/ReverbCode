@@ -31,7 +31,7 @@ func (q *Queries) ArchiveProject(ctx context.Context, arg ArchiveProjectParams) 
 }
 
 const findProjectByPath = `-- name: FindProjectByPath :one
-SELECT id, path, repo_origin_url, display_name, registered_at, archived_at, config
+SELECT id, path, repo_origin_url, display_name, registered_at, archived_at, config, kind
 FROM projects WHERE path = ? AND archived_at IS NULL
 `
 
@@ -46,12 +46,13 @@ func (q *Queries) FindProjectByPath(ctx context.Context, path string) (Project, 
 		&i.RegisteredAt,
 		&i.ArchivedAt,
 		&i.Config,
+		&i.Kind,
 	)
 	return i, err
 }
 
 const getProject = `-- name: GetProject :one
-SELECT id, path, repo_origin_url, display_name, registered_at, archived_at, config
+SELECT id, path, repo_origin_url, display_name, registered_at, archived_at, config, kind
 FROM projects WHERE id = ?
 `
 
@@ -66,12 +67,13 @@ func (q *Queries) GetProject(ctx context.Context, id domain.ProjectID) (Project,
 		&i.RegisteredAt,
 		&i.ArchivedAt,
 		&i.Config,
+		&i.Kind,
 	)
 	return i, err
 }
 
 const listProjects = `-- name: ListProjects :many
-SELECT id, path, repo_origin_url, display_name, registered_at, archived_at, config
+SELECT id, path, repo_origin_url, display_name, registered_at, archived_at, config, kind
 FROM projects WHERE archived_at IS NULL ORDER BY id
 `
 
@@ -92,6 +94,7 @@ func (q *Queries) ListProjects(ctx context.Context) ([]Project, error) {
 			&i.RegisteredAt,
 			&i.ArchivedAt,
 			&i.Config,
+			&i.Kind,
 		); err != nil {
 			return nil, err
 		}
@@ -107,14 +110,15 @@ func (q *Queries) ListProjects(ctx context.Context) ([]Project, error) {
 }
 
 const upsertProject = `-- name: UpsertProject :exec
-INSERT INTO projects (id, path, repo_origin_url, display_name, registered_at, archived_at, config)
-VALUES (?, ?, ?, ?, ?, ?, ?)
+INSERT INTO projects (id, path, repo_origin_url, display_name, registered_at, archived_at, config, kind)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (id) DO UPDATE SET
     path = excluded.path,
     repo_origin_url = excluded.repo_origin_url,
     display_name = excluded.display_name,
     archived_at = excluded.archived_at,
-    config = excluded.config
+    config = excluded.config,
+    kind = excluded.kind
 `
 
 type UpsertProjectParams struct {
@@ -125,6 +129,7 @@ type UpsertProjectParams struct {
 	RegisteredAt  time.Time
 	ArchivedAt    sql.NullTime
 	Config        sql.NullString
+	Kind          string
 }
 
 func (q *Queries) UpsertProject(ctx context.Context, arg UpsertProjectParams) error {
@@ -136,6 +141,7 @@ func (q *Queries) UpsertProject(ctx context.Context, arg UpsertProjectParams) er
 		arg.RegisteredAt,
 		arg.ArchivedAt,
 		arg.Config,
+		arg.Kind,
 	)
 	return err
 }

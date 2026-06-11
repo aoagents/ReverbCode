@@ -2,6 +2,26 @@ package domain
 
 import "time"
 
+const (
+	// ProjectKindSingleRepo is the existing one-repository project shape.
+	ProjectKindSingleRepo ProjectKind = "single_repo"
+	// ProjectKindWorkspace is a parent root-as-repo plus child repositories.
+	ProjectKindWorkspace ProjectKind = "workspace"
+	// RootWorkspaceRepoName is the reserved repo_name used for the parent root repo.
+	RootWorkspaceRepoName = "__root__"
+)
+
+// ProjectKind describes how a registered project materialises session workspaces.
+type ProjectKind string
+
+// WithDefault returns ProjectKindSingleRepo when the stored value predates the kind column.
+func (k ProjectKind) WithDefault() ProjectKind {
+	if k == "" {
+		return ProjectKindSingleRepo
+	}
+	return k
+}
+
 // ProjectRecord is the durable project registry row used by storage and services.
 type ProjectRecord struct {
 	ID            string
@@ -10,7 +30,31 @@ type ProjectRecord struct {
 	DisplayName   string
 	RegisteredAt  time.Time
 	ArchivedAt    time.Time
+	Kind          ProjectKind
 	// Config holds the typed per-project configuration AO resolves at spawn. An
 	// IsZero value means unset.
 	Config ProjectConfig
+}
+
+// WorkspaceRepoRecord is a child repo registered under a workspace project.
+// The root repo itself is represented by ProjectRecord and by session_worktrees
+// rows using RootWorkspaceRepoName; workspace_repos contains direct children.
+type WorkspaceRepoRecord struct {
+	ProjectID     ProjectID
+	Name          string
+	RelativePath  string
+	RepoOriginURL string
+	RegisteredAt  time.Time
+}
+
+// SessionWorktreeRecord tracks one repo worktree in a session. Workspace
+// projects create one root row plus one child row per WorkspaceRepoRecord.
+type SessionWorktreeRecord struct {
+	SessionID    SessionID
+	RepoName     string
+	Branch       string
+	BaseSHA      string
+	WorktreePath string
+	PreservedRef string
+	State        string
 }

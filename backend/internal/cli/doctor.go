@@ -13,9 +13,11 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/codex"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/zellij"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 )
@@ -141,7 +143,7 @@ func (c *commandContext) runDoctor(ctx context.Context) []doctorCheck {
 		)
 	}
 
-	checks = append(checks, checkStore(cfg.DataDir))
+	checks = append(checks, checkStore(cfg.DataDir), checkHooksLog(cfg.DataDir, time.Now()))
 
 	st, err := c.inspectDaemon(ctx)
 	if err != nil {
@@ -167,11 +169,12 @@ func (c *commandContext) runDoctor(ctx context.Context) []doctorCheck {
 	checks = append(checks,
 		c.checkGit(ctx),
 		c.checkZellij(ctx),
+		c.checkAOBinary(),
 	)
 	for _, harness := range doctorHarnesses {
 		checks = append(checks, c.checkHarness(ctx, harness))
 	}
-	checks = append(checks, c.checkGitHubToken(ctx))
+	checks = append(checks, c.checkCodexLaunchFlags(ctx), c.checkGitHubToken(ctx))
 	return checks
 }
 
@@ -221,6 +224,47 @@ func checkDataDirWritable(dataDir string) doctorCheck {
 	return doctorCheck{Level: doctorPass, Section: doctorSectionCore, Name: "data-dir-write", Message: "write probe succeeded"}
 }
 
+// checkAOBinary verifies the `ao` that workspace hooks would invoke. Agent
+// adapters install hook commands as a bare `ao hooks <agent> <event>`, so an
+// `ao` earlier on PATH that is not this binary (e.g. a legacy CLI without the
+// hooks command) fails every callback and silently kills activity tracking.
+// The daemon pins PATH inside the sessions it spawns, so a mismatch here is a
+// warning about every other context (manual runs, foreign panes), not a hard
+// failure.
+func (c *commandContext) checkAOBinary() doctorCheck {
+	const name = "ao-binary"
+	self, err := c.deps.Executable()
+	if err != nil {
+		return doctorCheck{Level: doctorWarn, Section: doctorSectionTools, Name: name, Message: fmt.Sprintf("could not resolve the running executable: %v", err)}
+	}
+	onPath, err := c.deps.LookPath("ao")
+	if err != nil || onPath == "" {
+		return doctorCheck{
+			Level: doctorWarn, Section: doctorSectionTools, Name: name,
+			Message: "ao not found in PATH; workspace hooks invoke `ao hooks <agent> <event>` (daemon-spawned sessions pin PATH to the daemon binary and are unaffected)",
+		}
+	}
+	if sameBinary(self, onPath) {
+		return doctorCheck{Level: doctorPass, Section: doctorSectionTools, Name: name, Message: fmt.Sprintf("ao in PATH is this binary (%s)", onPath)}
+	}
+	return doctorCheck{
+		Level: doctorWarn, Section: doctorSectionTools, Name: name,
+		Message: fmt.Sprintf("ao in PATH is %s, not this binary (%s); workspace hooks run `ao hooks` and a foreign ao breaks activity tracking outside daemon-spawned sessions", onPath, self),
+	}
+}
+
+// sameBinary reports whether two paths name the same file, tolerating symlinks
+// via os.SameFile and falling back to cleaned-path equality when either stat
+// fails.
+func sameBinary(a, b string) bool {
+	ai, aErr := os.Stat(a)
+	bi, bErr := os.Stat(b)
+	if aErr == nil && bErr == nil {
+		return os.SameFile(ai, bi)
+	}
+	return filepath.Clean(a) == filepath.Clean(b)
+}
+
 func (c *commandContext) checkGit(ctx context.Context) doctorCheck {
 	path, err := c.deps.LookPath("git")
 	if err != nil || path == "" {
@@ -264,6 +308,48 @@ func (c *commandContext) checkZellij(ctx context.Context) doctorCheck {
 	return doctorCheck{Level: doctorPass, Section: doctorSectionTools, Name: "zellij", Message: fmt.Sprintf("%s (version %s; require >= %s)", path, version, zellij.RequiredVersion())}
 }
 
+// checkHooksLog surfaces recent agent hook delivery failures. `ao hooks`
+// callbacks deliberately swallow errors (a hook must never break the user's
+// agent), so $AO_DATA_DIR/hooks.log is the only place a dead activity feed
+// becomes visible. Lines start with an RFC3339 timestamp (see appendHooksLog).
+func checkHooksLog(dataDir string, now time.Time) doctorCheck {
+	const name = "hooks-log"
+	path := filepath.Join(dataDir, hooksLogName)
+	data, err := os.ReadFile(path) //nolint:gosec // path rooted in AO's own data dir
+	if errors.Is(err, fs.ErrNotExist) {
+		return doctorCheck{Level: doctorPass, Section: doctorSectionCore, Name: name, Message: "no hook delivery failures recorded"}
+	}
+	if err != nil {
+		return doctorCheck{Level: doctorWarn, Section: doctorSectionCore, Name: name, Message: err.Error()}
+	}
+
+	recent := 0
+	latest := ""
+	for line := range strings.SplitSeq(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		stamp, _, ok := strings.Cut(line, " ")
+		if !ok {
+			continue
+		}
+		ts, err := time.Parse(time.RFC3339, stamp)
+		if err != nil || now.Sub(ts) > 24*time.Hour {
+			continue
+		}
+		recent++
+		latest = line
+	}
+	if recent == 0 {
+		return doctorCheck{Level: doctorPass, Section: doctorSectionCore, Name: name, Message: fmt.Sprintf("no hook delivery failures in the last 24h (%s)", path)}
+	}
+	return doctorCheck{
+		Level: doctorWarn, Section: doctorSectionCore, Name: name,
+		Message: fmt.Sprintf("%d hook delivery failure(s) in the last 24h — activity tracking may be degraded; latest: %s (full log: %s)", recent, latest, path),
+	}
+}
+
 func (c *commandContext) checkHarness(ctx context.Context, harness harnessProbe) doctorCheck {
 	path, err := c.deps.LookPath(harness.BinaryName)
 	if err != nil || path == "" {
@@ -289,6 +375,39 @@ func (c *commandContext) checkHarness(ctx context.Context, harness harnessProbe)
 		version = "version output was empty"
 	}
 	return doctorCheck{Level: doctorPass, Section: doctorSectionAgents, Name: harness.Name, Message: fmt.Sprintf("%s resolves to %s (%s)", harness.BinaryName, path, version)}
+}
+
+// checkCodexLaunchFlags smoke-tests AO's codex launch surface against the
+// installed binary: the hook-trust bypass flag and the `-c` session-flag
+// config AO injects at spawn (activity hooks, worktree trust, nudge
+// suppression). Codex has no stable hook-config contract, so a codex upgrade
+// can silently break activity tracking; this canary turns that breakage into
+// a doctor warning. The probes come from the codex adapter itself so they
+// cannot drift from the real spawn argv.
+func (c *commandContext) checkCodexLaunchFlags(ctx context.Context) doctorCheck {
+	const name = "codex-launch-flags"
+	path, err := c.deps.LookPath("codex")
+	if err != nil || path == "" {
+		return doctorCheck{Level: doctorPass, Section: doctorSectionAgents, Name: name, Message: "skipped: codex not found in PATH"}
+	}
+	for _, probe := range codex.DoctorLaunchProbes() {
+		reqCtx, cancel := context.WithTimeout(ctx, probeTimeout)
+		out, err := c.deps.CommandOutput(reqCtx, path, probe...)
+		cancel()
+		if err != nil {
+			return doctorCheck{
+				Level: doctorWarn, Section: doctorSectionAgents, Name: name,
+				Message: fmt.Sprintf("codex rejected AO's launch flags (`codex %s`: %v) — codex sessions may spawn without activity hooks; a codex CLI update likely changed its flag/config surface", strings.Join(probe, " "), err),
+			}
+		}
+		if strings.Contains(string(out), "unknown configuration field") {
+			return doctorCheck{
+				Level: doctorWarn, Section: doctorSectionAgents, Name: name,
+				Message: fmt.Sprintf("codex no longer recognizes one of AO's config overrides (%s) — codex sessions may spawn without activity hooks", firstOutputLine(out)),
+			}
+		}
+	}
+	return doctorCheck{Level: doctorPass, Section: doctorSectionAgents, Name: name, Message: "codex accepts AO's hook/trust launch flags"}
 }
 
 func (c *commandContext) checkGitHubToken(ctx context.Context) doctorCheck {

@@ -40,7 +40,7 @@ type commander interface {
 	Restore(ctx context.Context, id domain.SessionID) (domain.SessionRecord, error)
 	Kill(ctx context.Context, id domain.SessionID) (bool, error)
 	Send(ctx context.Context, id domain.SessionID, message string) error
-	Cleanup(ctx context.Context, project domain.ProjectID) ([]domain.SessionID, error)
+	Cleanup(ctx context.Context, project domain.ProjectID) (sessionmanager.CleanupResult, error)
 	RollbackSpawn(ctx context.Context, id domain.SessionID) (deleted, killed bool, err error)
 }
 
@@ -50,6 +50,19 @@ type commander interface {
 type RollbackOutcome struct {
 	Deleted bool `json:"deleted"`
 	Killed  bool `json:"killed"`
+}
+
+// CleanupOutcome reports what session cleanup reclaimed and what it preserved.
+type CleanupOutcome struct {
+	Cleaned []domain.SessionID `json:"cleaned"`
+	Skipped []CleanupSkipped   `json:"skipped"`
+}
+
+// CleanupSkipped is one terminal session whose workspace was preserved by
+// cleanup (never force-deleted), with the user-facing reason.
+type CleanupSkipped struct {
+	SessionID domain.SessionID `json:"sessionId"`
+	Reason    string           `json:"reason"`
 }
 
 type scmProvider interface {
@@ -67,6 +80,11 @@ type Service struct {
 	prClaimer ports.PRClaimer
 	scm       scmProvider
 	clock     func() time.Time
+	// signalCapable reports whether a harness has a hook pipeline that can
+	// deliver activity signals at all. Only capable harnesses are eligible for
+	// the no_signal downgrade — a hook-less harness staying silent forever is
+	// normal, not a broken pipeline. nil means "unknown": never downgrade.
+	signalCapable func(domain.AgentHarness) bool
 }
 
 // New wires a controller-facing session service over an internal session Manager.
@@ -83,11 +101,15 @@ type Deps struct {
 	PRClaimer ports.PRClaimer
 	SCM       scmProvider
 	Clock     func() time.Time
+	// SignalCapable gates the no_signal status downgrade per harness; daemon
+	// wiring passes activitydispatch.SupportsHarness. Left nil, no session is
+	// ever downgraded to no_signal.
+	SignalCapable func(domain.AgentHarness) bool
 }
 
 // NewWithDeps wires a session service with optional PR-claim dependencies.
 func NewWithDeps(d Deps) *Service {
-	s := &Service{manager: d.Manager, store: d.Store, prClaimer: d.PRClaimer, scm: d.SCM, clock: d.Clock}
+	s := &Service{manager: d.Manager, store: d.Store, prClaimer: d.PRClaimer, scm: d.SCM, clock: d.Clock, signalCapable: d.SignalCapable}
 	if s.prClaimer == nil {
 		if w, ok := d.Store.(ports.PRClaimer); ok {
 			s.prClaimer = w
@@ -202,9 +224,21 @@ func (s *Service) Rename(ctx context.Context, id domain.SessionID, displayName s
 	return nil
 }
 
-// Cleanup delegates terminal workspace cleanup to the internal manager.
-func (s *Service) Cleanup(ctx context.Context, project domain.ProjectID) ([]domain.SessionID, error) {
-	return s.manager.Cleanup(ctx, project)
+// Cleanup delegates terminal workspace cleanup to the internal manager and
+// reports both reclaimed and preserved (skipped) workspaces.
+func (s *Service) Cleanup(ctx context.Context, project domain.ProjectID) (CleanupOutcome, error) {
+	res, err := s.manager.Cleanup(ctx, project)
+	if err != nil {
+		return CleanupOutcome{}, err
+	}
+	out := CleanupOutcome{Cleaned: res.Cleaned, Skipped: make([]CleanupSkipped, 0, len(res.Skipped))}
+	if out.Cleaned == nil {
+		out.Cleaned = []domain.SessionID{}
+	}
+	for _, skip := range res.Skipped {
+		out.Skipped = append(out.Skipped, CleanupSkipped{SessionID: skip.SessionID, Reason: skip.Reason})
+	}
+	return out, nil
 }
 
 // List returns sessions as enriched display models after applying API filters.
@@ -301,7 +335,26 @@ func (s *Service) toSession(ctx context.Context, rec domain.SessionRecord) (doma
 		return domain.Session{}, fmt.Errorf("pr facts %s: %w", rec.ID, err)
 	}
 	if !ok {
-		return domain.Session{SessionRecord: rec, Status: deriveStatus(rec, nil), TerminalHandleID: rec.Metadata.RuntimeHandleID}, nil
+		return domain.Session{SessionRecord: rec, Status: deriveStatus(rec, nil, s.now(), s.harnessSignals(rec.Harness)), TerminalHandleID: rec.Metadata.RuntimeHandleID}, nil
 	}
-	return domain.Session{SessionRecord: rec, Status: deriveStatus(rec, &pr), TerminalHandleID: rec.Metadata.RuntimeHandleID}, nil
+	return domain.Session{SessionRecord: rec, Status: deriveStatus(rec, &pr, s.now(), s.harnessSignals(rec.Harness)), TerminalHandleID: rec.Metadata.RuntimeHandleID}, nil
+}
+
+// now tolerates a zero-value Service (tests construct the struct literally
+// without going through New, which is where clock gets its default).
+func (s *Service) now() time.Time {
+	if s.clock == nil {
+		return time.Now()
+	}
+	return s.clock()
+}
+
+// harnessSignals tolerates a zero-value Service the same way now does. Without
+// an injected capability predicate the service cannot tell a broken pipeline
+// from a hook-less harness, so it never claims no_signal.
+func (s *Service) harnessSignals(h domain.AgentHarness) bool {
+	if s.signalCapable == nil {
+		return false
+	}
+	return s.signalCapable(h)
 }
