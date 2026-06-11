@@ -103,9 +103,7 @@ export function ContextMenu({ menu, onClose }: { menu: ContextMenuState; onClose
 						<button
 							className={cn(
 								"flex h-[30px] w-full items-center gap-2 rounded-md px-2 text-left text-[12.5px] transition-colors",
-								item.tone === "danger" || armed
-									? "text-error hover:bg-error/10"
-									: "text-foreground hover:bg-overlay",
+								item.tone === "danger" || armed ? "text-error hover:bg-error/10" : "text-foreground hover:bg-overlay",
 								item.disabled && "cursor-default opacity-40 hover:bg-transparent",
 							)}
 							disabled={item.disabled || Boolean(busyId)}
@@ -117,7 +115,9 @@ export function ContextMenu({ menu, onClose }: { menu: ContextMenuState; onClose
 							<span className="grid h-3.5 w-3.5 shrink-0 place-items-center [&_svg]:h-3.5 [&_svg]:w-3.5">
 								{busy ? <LoaderCircle className="animate-spin" aria-hidden="true" /> : item.icon}
 							</span>
-							<span className="min-w-0 flex-1 truncate">{armed && item.confirmLabel ? item.confirmLabel : item.label}</span>
+							<span className="min-w-0 flex-1 truncate">
+								{armed && item.confirmLabel ? item.confirmLabel : item.label}
+							</span>
 						</button>
 					);
 				})}

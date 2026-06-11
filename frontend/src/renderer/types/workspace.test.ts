@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
+	attentionZone,
 	sessionIsActive,
 	sessionNeedsAttention,
 	toAgentProvider,
 	toSessionStatus,
 	workerDisplayStatus,
 	workerStatusPulses,
+	type AttentionZone,
+	type SessionStatus,
 	type WorkspaceSession,
 } from "./workspace";
 
@@ -26,7 +29,6 @@ function sessionWith(overrides: Partial<WorkspaceSession>): WorkspaceSession {
 describe("toSessionStatus", () => {
 	it("passes through a known status", () => {
 		expect(toSessionStatus("mergeable")).toBe("mergeable");
-		expect(toSessionStatus("no_signal")).toBe("no_signal");
 	});
 
 	it("overrides to terminated when the session is terminated", () => {
@@ -51,7 +53,6 @@ describe("workerDisplayStatus", () => {
 		["needs_input", "needs_you"],
 		["changes_requested", "needs_you"],
 		["review_pending", "needs_you"],
-		["no_signal", "needs_you"],
 		["ci_failed", "ci_failed"],
 		["approved", "mergeable"],
 		["mergeable", "mergeable"],
@@ -104,5 +105,31 @@ describe("toAgentProvider", () => {
 	it("defaults unknown and undefined providers to codex", () => {
 		expect(toAgentProvider("totally-unknown")).toBe("codex");
 		expect(toAgentProvider(undefined)).toBe("codex");
+	});
+});
+
+describe("attentionZone", () => {
+	const cases: Array<[SessionStatus, AttentionZone]> = [
+		["mergeable", "merge"],
+		["approved", "merge"],
+		["needs_input", "action"],
+		["ci_failed", "action"],
+		["changes_requested", "action"],
+		["review_pending", "pending"],
+		["pr_open", "pending"],
+		["draft", "pending"],
+		["working", "working"],
+		["idle", "working"],
+		["merged", "done"],
+		["terminated", "done"],
+	];
+
+	it.each(cases)("buckets %s into the %s zone", (status, zone) => {
+		expect(attentionZone(sessionWith({ status }))).toBe(zone);
+	});
+
+	it("prioritizes merge as the highest-ROI zone", () => {
+		// merge is checked before action/pending so an approved PR always surfaces.
+		expect(attentionZone(sessionWith({ status: "approved" }))).toBe("merge");
 	});
 });

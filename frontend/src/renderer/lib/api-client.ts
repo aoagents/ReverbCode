@@ -72,3 +72,20 @@ export const apiClient = createClient<paths>({
 	baseUrl: initialApiBaseUrl,
 	fetch: runtimeFetch,
 });
+
+/**
+ * Human-readable message from an openapi-fetch `error` value. The daemon's
+ * error body is `{ error, code, message, requestId }` (backend apierr) — a
+ * plain object, so `String(error)` renders "[object Object]". Falls back
+ * through Error instances and strings.
+ */
+export function apiErrorMessage(error: unknown, fallback = "Request failed"): string {
+	if (error instanceof Error) return error.message;
+	if (typeof error === "string" && error !== "") return error;
+	if (typeof error === "object" && error !== null) {
+		const body = error as { message?: unknown; error?: unknown };
+		if (typeof body.message === "string" && body.message !== "") return body.message;
+		if (typeof body.error === "string" && body.error !== "") return body.error;
+	}
+	return fallback;
+}

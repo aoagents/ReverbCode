@@ -5,6 +5,43 @@
 > - Radix/shadcn + xterm, in `frontend/src/renderer`). Read this before any visual
 >   or UI change. Created by `/design-consultation` on 2026-06-09.
 
+## ⚠️ Design direction — clone agent-orchestrator verbatim (SUPERSEDES emdash · 2026-06-10)
+
+By explicit user decision (2026-06-10), the renderer **clones the
+agent-orchestrator web app verbatim** in looks and design. This **supersedes the
+"match emdash" direction** documented in _Aesthetic Direction_ and the palette
+sections below — where they conflict, **agent-orchestrator wins**. Do not re-flag
+"this doesn't match emdash" in QA/review; flag divergence from **agent-orchestrator**.
+
+- **Reference (the user's own app):** `~/Projects/agent-orchestrator/packages/web/src`
+  — `app/globals.css`, `app/mc-board.css`, `app/mc-sidebar.css`,
+  `components/{ProjectSidebar,Dashboard,SessionCard,SessionDetailHeader,SessionInspector,StatusBadge}.tsx`.
+- **Palette (live in `frontend/src/renderer/styles.css` `:root`):** `--bg #0a0b0d`,
+  `--bg-1 #15171b`, `--fg #f4f5f7`, `--fg-muted #9ba1aa`, `--fg-passive #646a73`,
+  hairline white-alpha borders, accent `--accent #4d8dff`; status: working=orange
+  `#f59f4c`, needs-you=amber `#e8c14a`, mergeable=green `#74b98a`, fail=red `#ef6b6b`.
+  The sidebar rail is the cooler `#08090b`.
+- **Cloned surfaces:** the four-column gradient kanban board, the `ProjectSidebar`
+  (brand + project disclosure + nested session rows + Settings menu footer), the
+  session topbar (Kanban back button + identity + breathing `StatusBadge` pill), and
+  the shared `DashboardTopbar`/`DashboardSubhead` chrome (Coding/Reviews tabs · "N
+  working" pill · subhead) reused across board/review/PR/settings.
+- **Build with shadcn primitives** where a component fits (`components/ui/*`:
+  dropdown-menu, select, card, table, tooltip, …); agent-orchestrator's own
+  hand-rolled CSS components are structure/behaviour reference only.
+- The one carried-over divergence still holds: the **accent is refined blue**, and
+  the **terminal keeps its own palette**. Everything else tracks agent-orchestrator.
+- **Approved divergence (2026-06-10):** on macOS, a titlebar cluster (sidebar toggle +
+  back/forward history arrows, `TitlebarNav`) sits beside the traffic lights,
+  VS Code-style — the web reference has no window chrome, so no analogue exists.
+- **Approved divergence (2026-06-10):** the session inspector rail is fully
+  collapsible, built on the shadcn resizable primitive (`pnpm dlx shadcn add
+resizable`, react-resizable-panels v4 `collapsible` panel + imperative API,
+  user-requested). The panel animates to 0% via a flex-grow transition while the
+  content keeps a stable min-width (yyork-style, no mid-animation reflow). Toggled
+  by a `PanelRight` icon button in the session topbar and ⌘⇧B; open state + split
+  width persist. The AO reference keeps the rail always visible.
+
 ## Product Context
 
 - **What this is:** ReverbCode is an Electron desktop app for supervising many parallel
@@ -43,6 +80,11 @@ ReverbCode is **orchestrator-led**, which is the one thing that differs from emd
   Never store display status; keep session facts small.
 
 ## Aesthetic Direction
+
+> **Superseded (2026-06-10):** see the _Design direction — clone agent-orchestrator
+> verbatim_ banner at the top. The emdash framing below is retained for history; the
+> live look tracks agent-orchestrator (same flat near-black / hairline family, so most
+> of this still reads true).
 
 - **Direction:** match **emdash** exactly — flat, near-black, hairline-bordered,
   utilitarian. Industrial control surface, calm chrome, the terminal as the center of gravity.

@@ -10,19 +10,37 @@
 	--font-sans:
 		-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Fira Sans", "Helvetica Neue",
 		sans-serif;
-	--font-mono: Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+	/* Nerd Font stack (ported from yyork): the terminal reads --font-mono so
+   * agent TUIs get powerline separators and file-type icons. These are
+   * system-installed fonts — the app bundles none — and the browser picks the
+   * first one present, falling back to plain monospace (no icon glyphs) if a
+   * user has no Nerd Font. JetBrainsMono Nerd Font is the primary target. */
+	--font-mono:
+		"JetBrainsMono Nerd Font Mono", "JetBrainsMono Nerd Font", "FiraCode Nerd Font Mono", "FiraCode Nerd Font",
+		"MesloLGS NF", "CaskaydiaCove Nerd Font Mono", "CaskaydiaCove Nerd Font", "Hack Nerd Font Mono", "Hack Nerd Font",
+		"Symbols Nerd Font Mono", "Symbols Nerd Font", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+		"Liberation Mono", "Courier New", monospace;
 
 	/* Surfaces */
 	--color-background: var(--bg);
 	--color-foreground: var(--fg);
 	--color-surface: var(--bg-1);
 	--color-card: var(--bg-1);
+	--color-card-foreground: var(--fg);
 	--color-raised: var(--bg-2);
 	--color-overlay: var(--bg-3);
 	--color-popover: var(--bg-1);
 	--color-popover-foreground: var(--fg);
-	--color-sidebar: var(--bg);
+	/* shadcn input border uses border-input; map to our hairline border */
+	--color-input: var(--border);
+	--color-sidebar: var(--sidebar-bg);
 	--color-sidebar-foreground: var(--fg-muted);
+	--color-sidebar-primary: var(--accent);
+	--color-sidebar-primary-foreground: var(--accent-fg);
+	--color-sidebar-accent: var(--bg-2);
+	--color-sidebar-accent-foreground: var(--fg);
+	--color-sidebar-border: var(--border);
+	--color-sidebar-ring: var(--accent);
 	--color-terminal: var(--term-bg);
 
 	/* Text */
@@ -45,11 +63,21 @@
 	--color-border: var(--border);
 	--color-border-strong: var(--border-1);
 
-	/* Status — map 1:1 to the daemon's derived statuses */
+	/* Status — map 1:1 to the daemon's derived statuses (agent-orchestrator
+   * palette): working=orange, needs-you=amber, mergeable=green, fail=red. */
+	--color-working: var(--orange);
 	--color-success: var(--green);
 	--color-success-strong: var(--green-strong);
 	--color-warning: var(--amber);
 	--color-error: var(--red);
+
+	/* shadcn "destructive" → our error red (Button destructive, Alert, etc.) */
+	--color-destructive: var(--red);
+	--color-destructive-foreground: #ffffff;
+
+	/* Theme-adaptive interactive surfaces (sidebar hovers, tabs, kanban chrome) */
+	--color-interactive-hover: var(--interactive-hover);
+	--color-interactive-active: var(--interactive-active);
 
 	--radius-sm: 4px;
 	--radius-md: 6px;
@@ -62,31 +90,41 @@
 }
 
 :root {
-	/* Dark — primary. sRGB approximations of emdash's display-p3 neutral ramp. */
-	--bg: #111111;
-	--bg-1: #191919;
-	--bg-2: #222222;
-	--bg-3: #2a2a2a;
-	--fg: #eeeeee;
-	--fg-muted: #b4b4b4;
-	--fg-passive: #6e6e6e;
-	--border: #3a3a3a;
-	--border-1: #484848;
-	--accent: #5b9dff;
-	--accent-fg: #0b0d12;
-	--accent-weak: rgb(91 157 255 / 0.16);
-	--accent-dim: #2a4a7a;
-	--green: #6cb16c;
-	--green-strong: #7bd88f;
-	--amber: #ffcc4a;
-	--red: #d4544f;
-	--term-bg: #161616;
+	/* Dark — cloned from the agent-orchestrator web app (packages/web). #0a0b0d
+   * base, #15171b is the only bordered surface, hairline white-alpha lines,
+   * blue accent, orange=working / amber=needs-you / green=mergeable / red=fail. */
+	--bg: #0a0b0d;
+	--bg-1: #15171b;
+	--bg-2: #1b1d22;
+	--bg-3: #212329;
+	--fg: #f4f5f7;
+	--fg-muted: #9ba1aa;
+	--fg-passive: #646a73;
+	--border: rgb(255 255 255 / 0.06);
+	--border-1: rgb(255 255 255 / 0.1);
+	--accent: #4d8dff;
+	--accent-fg: #ffffff;
+	--accent-weak: rgb(77 141 255 / 0.16);
+	--accent-dim: #24406e;
+	--orange: #f59f4c;
+	--green: #74b98a;
+	--green-strong: #74b98a;
+	--amber: #e8c14a;
+	--red: #ef6b6b;
+	/* Terminal — dark palette (light override below). */
+	--term-bg: #15171b;
 	--term-fg: #d7d7d2;
-	--term-green: #7bd88f;
+	--term-green: #74b98a;
 	--term-dim: #7c7c7c;
-	--term-blue: #5b9dff;
-	--term-amber: #ffcc4a;
-	--shadow: 0 1px 0 rgb(0 0 0 / 0.4), 0 12px 32px rgb(0 0 0 / 0.45);
+	--term-blue: #4d8dff;
+	--term-amber: #e8c14a;
+	--shadow: 0 1px 0 rgb(0 0 0 / 0.4), 0 12px 32px rgb(0 0 0 / 0.5);
+	/* Sidebar surface sits a step below --bg (cloned #08090b). */
+	--sidebar-bg: #08090b;
+	--interactive-hover: rgb(255 255 255 / 0.04);
+	--interactive-active: rgb(255 255 255 / 0.07);
+	--kanban-column-bg: rgb(255 255 255 / 0.018);
+	--kanban-pending-glow: rgb(255 255 255 / 0.02);
 }
 
 :root[data-theme="light"] {
@@ -104,17 +142,22 @@
 	--accent-fg: #ffffff;
 	--accent-weak: rgb(37 99 235 / 0.12);
 	--accent-dim: #bcd2f7;
+	--sidebar-bg: var(--bg);
+	--orange: #c2410c;
 	--green: #1a7f37;
 	--green-strong: #1a7f37;
 	--amber: #9a6b00;
 	--red: #c0392b;
-	/* Terminal keeps its own dark palette in both themes (it is the agent CLI). */
-	--term-bg: #161616;
-	--term-fg: #d7d7d2;
-	--term-green: #7bd88f;
-	--term-dim: #7c7c7c;
-	--term-blue: #5b9dff;
-	--term-amber: #ffcc4a;
+	--interactive-hover: rgb(0 0 0 / 0.04);
+	--interactive-active: rgb(0 0 0 / 0.07);
+	--kanban-column-bg: rgb(0 0 0 / 0.02);
+	--kanban-pending-glow: rgb(0 0 0 / 0.03);
+	--term-bg: #fafafa;
+	--term-fg: #24292f;
+	--term-green: #1a7f37;
+	--term-dim: #6b7280;
+	--term-blue: #2563eb;
+	--term-amber: #9a6b00;
 	--shadow: 0 1px 0 rgb(0 0 0 / 0.03), 0 12px 30px rgb(20 30 50 / 0.1);
 }
 
@@ -150,6 +193,14 @@ select {
 	height: 100%;
 }
 
+:root[data-theme="light"] .xterm .xterm-viewport::-webkit-scrollbar-thumb {
+	background: rgb(0 0 0 / 0.12);
+}
+
+:root[data-theme="light"] .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb {
+	background: rgb(0 0 0 / 0.2);
+}
+
 @keyframes status-pulse {
 	0%,
 	100% {
@@ -178,4 +229,747 @@ select {
 		opacity: 1;
 		transform: translate(-50%, -50%) scale(1);
 	}
+}
+
+/* ── Resizable panel handles (sidebar + inspector) ──────────────────────── */
+.resize-handle {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	width: 7px;
+	z-index: 5;
+	cursor: col-resize;
+	background: transparent;
+	touch-action: none;
+}
+
+.resize-handle--right {
+	right: -3px;
+}
+
+.resize-handle--left {
+	left: -3px;
+}
+
+.resize-handle::after {
+	content: "";
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: 50%;
+	width: 1px;
+	transform: translateX(-50%);
+	background: transparent;
+	transition: background 0.12s ease;
+}
+
+.resize-handle:hover::after,
+body.is-resizing-x .resize-handle::after {
+	background: var(--color-accent);
+}
+
+body.is-resizing-x {
+	cursor: col-resize;
+	user-select: none;
+}
+
+/* No width transition while actively dragging the sidebar resize handle
+ * (shadcn's sidebar animates width for collapse/expand). */
+body.is-resizing-x [data-slot="sidebar-gap"],
+body.is-resizing-x [data-slot="sidebar-container"] {
+	transition: none;
+}
+
+/* ── Dashboard / session topbar (agent-orchestrator .dashboard-app-header) ─ */
+.dashboard-app-header {
+	display: flex;
+	height: 56px;
+	flex-shrink: 0;
+	align-items: center;
+	gap: 13px;
+	padding: 0 20px;
+	border-bottom: 1px solid var(--border);
+	background: var(--bg);
+	z-index: 10;
+}
+
+.dashboard-app-header__project {
+	font-size: 14.5px;
+	font-weight: 600;
+	letter-spacing: -0.01em;
+	line-height: 1;
+	color: var(--fg);
+	white-space: nowrap;
+}
+
+.topbar-project-line {
+	display: inline-flex;
+	min-width: 0;
+	align-items: center;
+	gap: 6px;
+}
+
+.dashboard-app-header__tabs {
+	display: inline-flex;
+	align-items: center;
+	gap: 2px;
+}
+
+.dashboard-app-header__tab {
+	display: inline-flex;
+	height: 28px;
+	align-items: center;
+	border-radius: 6px;
+	padding: 0 11px;
+	font-size: 12.5px;
+	line-height: 1;
+	color: var(--fg-passive);
+	transition:
+		background 0.12s ease,
+		color 0.12s ease;
+}
+
+.dashboard-app-header__tab:hover {
+	color: var(--fg);
+}
+
+.dashboard-app-header__tab.is-active {
+	background: var(--interactive-active);
+	color: var(--fg);
+}
+
+.dashboard-app-header__spacer {
+	flex: 1;
+	min-width: 0;
+}
+
+.dashboard-app-header__actions {
+	display: flex;
+	flex-shrink: 0;
+	align-items: center;
+	gap: 6px;
+}
+
+.dashboard-app-header__icon-btn {
+	display: grid;
+	width: 34px;
+	height: 34px;
+	place-items: center;
+	border-radius: 7px;
+	color: var(--fg-muted);
+	transition:
+		background 0.12s ease,
+		color 0.12s ease;
+}
+
+.dashboard-app-header__icon-btn:hover {
+	background: var(--interactive-hover);
+	color: var(--fg);
+}
+
+.dashboard-app-header__primary-btn {
+	display: inline-flex;
+	height: 34px;
+	align-items: center;
+	gap: 6px;
+	border-radius: 7px;
+	padding: 0 15px;
+	font-size: 13px;
+	font-weight: 600;
+	line-height: 1;
+	background: var(--accent);
+	color: var(--accent-fg);
+	transition: filter 0.12s ease;
+}
+
+.dashboard-app-header__primary-btn:hover {
+	filter: brightness(1.08);
+}
+
+.dashboard-app-header__primary-btn:disabled {
+	opacity: 0.6;
+}
+
+.dashboard-app-header__accent-btn {
+	display: inline-flex;
+	height: 34px;
+	align-items: center;
+	gap: 6px;
+	border-radius: 7px;
+	border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+	padding: 0 15px;
+	font-size: 13px;
+	font-weight: 600;
+	line-height: 1;
+	background: var(--accent-weak);
+	color: var(--accent);
+	transition: background 0.12s ease;
+}
+
+.dashboard-app-header__accent-btn:hover {
+	background: color-mix(in srgb, var(--accent-weak) 80%, transparent);
+}
+
+.session-topbar.dashboard-app-header {
+	height: 56px;
+	gap: 13px;
+	padding: 0 16px 0 14px;
+}
+
+.session-topbar__lead {
+	display: flex;
+	min-width: 0;
+	align-items: center;
+	gap: 13px;
+}
+
+/* ── macOS titlebar cluster (TitlebarNav) ─────────────────────────────────
+ * Fixed beside the traffic lights so the toggle/history buttons occupy the
+ * exact same spot in both sidebar states. Lights span x=14–66 (y center 20);
+ * 28px buttons in a 40px strip share that center, and the 6.5px icon inset
+ * puts the first glyph at ~76px — the standard 10px gap after the lights. */
+.titlebar-nav {
+	position: fixed;
+	top: 0;
+	left: 70px;
+	z-index: 20;
+	display: flex;
+	height: 40px;
+	align-items: center;
+	gap: 2px;
+}
+
+.titlebar-nav__btn {
+	width: 28px;
+	height: 28px;
+}
+
+/* Collapsed-rail topbars start their content past the fixed cluster:
+ * cluster right edge 70 + 3×28 + 2×2 = 158px, + the header's 13px gap,
+ * − the 48px icon rail = 123px. Transition mirrors the sidebar's width
+ * animation (200ms linear) so content tracks the moving sidebar edge. */
+.dashboard-app-header {
+	transition: padding-left 0.2s linear;
+}
+
+.dashboard-app-header.is-under-titlebar-nav {
+	padding-left: 123px;
+}
+
+.topbar-project-pills-group {
+	display: inline-flex;
+	min-width: 0;
+	align-items: center;
+	gap: 8px;
+}
+
+.topbar-identity-sep {
+	font-size: 12px;
+	line-height: 1;
+	color: var(--fg-passive);
+}
+
+.session-detail-mode-badge {
+	display: inline-flex;
+	height: 24px;
+	align-items: center;
+	gap: 4px;
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	padding: 0 8px;
+	font-size: 10px;
+	font-weight: 600;
+	line-height: 1;
+	letter-spacing: 0.05em;
+}
+
+.session-detail-mode-badge--neutral {
+	background: var(--surface);
+	color: var(--fg-muted);
+}
+
+.session-topbar__identity {
+	display: flex;
+	min-width: 0;
+	align-items: center;
+	gap: 11px;
+}
+
+.session-topbar__branch {
+	display: inline-flex;
+	min-width: 0;
+	align-items: center;
+	gap: 5px;
+	font-family: var(--font-mono);
+	font-size: 10.5px;
+	line-height: 1;
+	color: var(--fg-passive);
+}
+
+/* ── Session inspector rail (agent-orchestrator SessionInspector) ───────── */
+.session-inspector {
+	display: flex;
+	height: 100%;
+	min-height: 0;
+	flex-direction: column;
+	overflow: hidden;
+	background: var(--bg);
+	border-left: 1px solid var(--border);
+}
+
+.session-inspector__tabs {
+	display: flex;
+	align-items: center;
+	gap: 3px;
+	height: 47px;
+	flex-shrink: 0;
+	padding: 0 11px;
+	border-bottom: 1px solid var(--border);
+}
+
+.session-inspector__tab {
+	flex: 1;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 6px;
+	min-width: 0;
+	padding: 7px 6px;
+	border-radius: 7px;
+	font-size: 11.5px;
+	font-weight: 600;
+	color: var(--fg-passive);
+	cursor: pointer;
+	transition:
+		background 0.12s ease,
+		color 0.12s ease;
+}
+
+.session-inspector__tab:hover {
+	background: var(--interactive-hover);
+	color: var(--fg);
+}
+
+.session-inspector__tab.is-active {
+	background: var(--interactive-active);
+	color: var(--fg);
+}
+
+.session-inspector__tab-icon {
+	display: inline-flex;
+	flex-shrink: 0;
+}
+
+.session-inspector__tab-icon svg {
+	width: 14px;
+	height: 14px;
+}
+
+.session-inspector__tab-label {
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.session-inspector__body {
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
+	padding: 18px 18px 40px;
+}
+
+/* Inspector resize handle (shadcn resizable separator, AO visual): a 7px
+ * transparent grab strip whose centered 1px line lights accent on hover, drag
+ * (rrp sets data-separator="active"), and keyboard focus. */
+.session-inspector__resize-handle {
+	width: 7px;
+	cursor: col-resize;
+	background: transparent;
+	touch-action: none;
+}
+
+.session-inspector__resize-handle::after {
+	content: "";
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: 50%;
+	width: 1px;
+	transform: translateX(-50%);
+	background: transparent;
+	transition: background 0.12s ease;
+}
+
+.session-inspector__resize-handle:hover::after,
+.session-inspector__resize-handle:focus-visible::after,
+.session-inspector__resize-handle[data-separator="active"]::after {
+	background: var(--accent);
+}
+
+/* Collapse/expand animation for the inspector panel: rrp v4 drives panel
+ * sizes via flex-grow, which is animatable. Suppress it while the separator
+ * is actively dragged so resizing tracks the pointer 1:1. */
+.session-split #inspector[data-panel] {
+	transition: flex-grow 0.2s linear;
+}
+
+.session-split:has([data-separator="active"]) #inspector[data-panel] {
+	transition: none;
+}
+
+.inspector-section {
+	margin-bottom: 22px;
+}
+
+.inspector-section__head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	margin-bottom: 11px;
+	font-size: 10.5px;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.09em;
+	color: var(--fg-passive);
+}
+
+.inspector-section__link {
+	font-size: 11px;
+	font-weight: 500;
+	text-transform: none;
+	letter-spacing: 0;
+	color: var(--accent);
+}
+
+.inspector-section__link:hover {
+	text-decoration: underline;
+}
+
+.inspector-empty {
+	font-size: 12px;
+	color: var(--fg-muted);
+	line-height: 1.5;
+}
+
+.inspector-empty--center {
+	padding: 24px 8px;
+	text-align: center;
+}
+
+.inspector-empty--browser {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 9px;
+	padding: 48px 18px;
+	text-align: center;
+}
+
+.inspector-empty--browser svg {
+	width: 30px;
+	height: 30px;
+	color: var(--fg-passive);
+}
+
+.inspector-empty--browser p {
+	font-size: 12.5px;
+	color: var(--fg-muted);
+}
+
+.inspector-empty--browser span {
+	font-size: 11.5px;
+	color: var(--fg-passive);
+	line-height: 1.5;
+}
+
+.inspector-kv {
+	display: flex;
+	flex-direction: column;
+	gap: 1px;
+}
+
+.inspector-kv__row {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 6px 2px;
+	font-size: 12.5px;
+}
+
+.inspector-kv__k {
+	width: 74px;
+	flex-shrink: 0;
+	color: var(--fg-muted);
+}
+
+.inspector-kv__v {
+	min-width: 0;
+	color: var(--fg);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.inspector-kv__v--mono {
+	font-family: var(--font-mono);
+	font-size: 11.5px;
+}
+
+.inspector-timeline {
+	position: relative;
+	padding-left: 20px;
+}
+
+.inspector-timeline::before {
+	content: "";
+	position: absolute;
+	left: 5px;
+	top: 4px;
+	bottom: 6px;
+	width: 1px;
+	background: var(--border);
+}
+
+.inspector-timeline__ev {
+	position: relative;
+	padding: 0 0 15px;
+}
+
+.inspector-timeline__ev:last-child {
+	padding-bottom: 0;
+}
+
+.inspector-timeline__node {
+	position: absolute;
+	left: -18px;
+	top: 3px;
+	width: 9px;
+	height: 9px;
+	border-radius: 50%;
+	background: var(--fg-passive);
+	box-shadow: 0 0 0 3px var(--bg);
+}
+
+.inspector-timeline__ev--now .inspector-timeline__node {
+	background: var(--orange);
+	box-shadow:
+		0 0 0 3px var(--bg),
+		0 0 8px var(--orange);
+}
+
+.inspector-timeline__ev--good .inspector-timeline__node {
+	background: var(--green);
+}
+
+.inspector-timeline__ev--warn .inspector-timeline__node {
+	background: var(--amber);
+}
+
+.inspector-timeline__et {
+	font-size: 12px;
+	color: var(--fg);
+	line-height: 1.45;
+}
+
+.inspector-timeline__et b {
+	font-weight: 600;
+}
+
+.inspector-timeline__badge {
+	display: inline-flex;
+	vertical-align: middle;
+}
+
+.inspector-timeline__detail {
+	color: var(--fg-muted);
+}
+
+.inspector-timeline__ets {
+	font-size: 10.5px;
+	color: var(--fg-passive);
+	font-family: var(--font-mono);
+	margin-top: 2px;
+}
+
+/* Changes tab — git rail (second screenshot) */
+.inspector-changes__head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin: -6px -6px 10px;
+	padding: 0 6px 10px;
+	border-bottom: 1px solid var(--border);
+}
+
+.inspector-changes__title {
+	font-size: 13px;
+	font-weight: 600;
+	color: var(--fg);
+}
+
+.inspector-changes__count {
+	font-family: var(--font-mono);
+	font-size: 11px;
+	color: var(--fg-passive);
+}
+
+.inspector-changes__actions {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	margin-bottom: 8px;
+	font-size: 12px;
+}
+
+.inspector-changes__action {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	color: var(--fg-muted);
+	transition: color 0.12s ease;
+}
+
+.inspector-changes__action:hover {
+	color: var(--fg);
+}
+
+.inspector-changes__action--danger {
+	color: var(--red);
+}
+
+.inspector-changes__action--danger:hover {
+	opacity: 0.85;
+}
+
+.inspector-changes__action--end {
+	margin-left: auto;
+}
+
+.inspector-changes__list {
+	min-height: 120px;
+	margin-bottom: 12px;
+}
+
+.inspector-changes__file {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	height: 28px;
+	padding: 0 8px;
+	border-radius: 6px;
+	font-family: var(--font-mono);
+	font-size: 12px;
+	transition: background 0.12s ease;
+}
+
+.inspector-changes__file:hover {
+	background: var(--interactive-hover);
+}
+
+.inspector-changes__path {
+	min-width: 0;
+	flex: 1;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--fg);
+}
+
+.inspector-changes__add {
+	flex-shrink: 0;
+	color: var(--green);
+}
+
+.inspector-changes__del {
+	flex-shrink: 0;
+	color: var(--red);
+}
+
+.inspector-changes__stage {
+	width: 13px;
+	height: 13px;
+	flex-shrink: 0;
+	color: var(--fg-passive);
+}
+
+.inspector-changes__stage.is-staged {
+	color: var(--accent);
+}
+
+.inspector-changes__commit {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding-top: 12px;
+	border-top: 1px solid var(--border);
+}
+
+.inspector-changes__input,
+.inspector-changes__textarea {
+	width: 100%;
+	border-radius: 6px;
+	border: 1px solid var(--border);
+	background: transparent;
+	padding: 6px 10px;
+	font-size: 12.5px;
+	color: var(--fg);
+}
+
+.inspector-changes__input::placeholder,
+.inspector-changes__textarea::placeholder {
+	color: var(--fg-passive);
+}
+
+.inspector-changes__input:focus-visible,
+.inspector-changes__textarea:focus-visible {
+	border-color: var(--accent);
+	outline: 2px solid var(--accent-weak);
+	outline-offset: 0;
+}
+
+.inspector-changes__textarea {
+	resize: none;
+}
+
+.inspector-changes__footer {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-top: 12px;
+	padding-top: 12px;
+	border-top: 1px solid var(--border);
+	font-family: var(--font-mono);
+	font-size: 11px;
+	color: var(--fg-passive);
+}
+
+.inspector-changes__footer svg {
+	width: 12px;
+	height: 12px;
+	flex-shrink: 0;
+}
+
+.inspector-changes__branch {
+	min-width: 0;
+	flex: 1;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--fg-muted);
+}
+
+.inspector-changes__pr {
+	display: inline-flex;
+	flex-shrink: 0;
+	align-items: center;
+	gap: 4px;
+	border-radius: 6px;
+	border: 1px solid var(--border);
+	padding: 2px 8px;
+	color: var(--fg-muted);
+	transition: background 0.12s ease;
+}
+
+.inspector-changes__pr:hover {
+	background: var(--interactive-hover);
 }

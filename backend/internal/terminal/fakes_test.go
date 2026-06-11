@@ -41,6 +41,13 @@ func (f *fakeSource) setAlive(v bool) {
 	f.mu.Unlock()
 }
 
+func (f *fakeSource) setAliveResult(v bool, err error) {
+	f.mu.Lock()
+	f.alive = v
+	f.aliveErr = err
+	f.mu.Unlock()
+}
+
 // fakePTY is a scripted ptyProcess: Read drains the out channel, Write records,
 // Resize records, and Close unblocks reads.
 type fakePTY struct {

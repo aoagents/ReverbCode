@@ -79,7 +79,7 @@ function createFakeMux(): FakeMux {
 
 type FakeTerminal = AttachableTerminal & {
 	lines: string[];
-	resets: number;
+	clears: number;
 	typeKeys(data: string): void;
 	emitResize(cols: number, rows: number): void;
 };
@@ -91,11 +91,11 @@ function createFakeTerminal(): FakeTerminal {
 		cols: 80,
 		rows: 24,
 		lines: [],
-		resets: 0,
+		clears: 0,
 		write: (bytes) => terminal.lines.push(new TextDecoder().decode(bytes)),
 		writeln: (line) => terminal.lines.push(line),
-		reset: () => {
-			terminal.resets += 1;
+		clear: () => {
+			terminal.clears += 1;
 		},
 		onData: (listener) => {
 			dataListeners.add(listener);
@@ -167,7 +167,18 @@ describe("useTerminalSession", () => {
 		terminal.typeKeys("ls\r");
 		expect(muxes[0].inputs).toEqual([["handle-1", "ls\r"]]);
 		terminal.emitResize(120, 40);
+		act(() => void vi.advanceTimersByTime(100));
 		expect(muxes[0].resizes).toContainEqual(["handle-1", 120, 40]);
+	});
+
+	it("collapses a drag's burst of grid changes into one trailing PTY resize", () => {
+		const { terminal, muxes } = setup();
+		const initialResizes = muxes[0].resizes.length; // connect() sends the opening size
+		terminal.emitResize(100, 30);
+		terminal.emitResize(110, 34);
+		terminal.emitResize(120, 40);
+		act(() => void vi.advanceTimersByTime(100));
+		expect(muxes[0].resizes.slice(initialResizes)).toEqual([["handle-1", 120, 40]]);
 	});
 
 	it("marks exit in the terminal and refetches workspace state instead of writing status", () => {
@@ -189,7 +200,7 @@ describe("useTerminalSession", () => {
 		expect(muxes).toHaveLength(1);
 	});
 
-	it("reattaches with a fresh mux after a socket drop, resetting the stale screen", () => {
+	it("reattaches with a fresh mux after a socket drop, clearing the stale screen", () => {
 		const { view, terminal, muxes } = setup();
 		act(() => muxes[0].emitOpened("handle-1"));
 		act(() => muxes[0].emitConnection("closed"));
@@ -197,7 +208,7 @@ describe("useTerminalSession", () => {
 		act(() => void vi.advanceTimersByTime(500));
 		expect(muxes).toHaveLength(2);
 		expect(muxes[0].disposed).toBe(true);
-		expect(terminal.resets).toBe(1); // the server replays the output ring on open
+		expect(terminal.clears).toBe(1); // the server replays the output ring on open
 		expect(muxes[1].opens).toEqual([["handle-1", 80, 24]]);
 		act(() => muxes[1].emitOpened("handle-1"));
 		expect(view.result.current.state).toBe("attached");
