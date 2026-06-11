@@ -41,8 +41,8 @@ type Finding struct {
 
 // Run is one code-review execution against a session's PR.
 type Run struct {
-	ID        string    `json:"id"`
-	SessionID string    `json:"sessionId"`
+	ID        string `json:"id"`
+	SessionID string `json:"sessionId"`
 	// Status is one of: pending | complete | sent.
 	Status    string    `json:"status"`
 	CreatedAt time.Time `json:"createdAt"`
