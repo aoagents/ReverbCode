@@ -1,0 +1,255 @@
+backend/internal/cli/dto_drift_e2e_test.go
+  s_15e9729d3cec0a::t_b118d176388b30 225,241-242
+backend/internal/service/session/status.go
+  s_15e9729d3cec0a::t_b118d176388b30 3-4,6-22,46-51
+frontend/src/shared/daemon-status.ts
+  s_15e9729d3cec0a::t_b118d176388b30 1-8
+backend/internal/config/config.go
+  s_15e9729d3cec0a::t_b118d176388b30 13,37-48,70-72,93,103,137-153
+frontend/src/renderer/hooks/useWorkspaceQuery.test.tsx
+  s_15e9729d3cec0a::t_b118d176388b30 1-141
+frontend/src/renderer/types/workspace.test.ts
+  s_15e9729d3cec0a::t_b118d176388b30 1-108
+frontend/src/renderer/stores/ui-store.ts
+  s_15e9729d3cec0a::t_b118d176388b30 1-65
+frontend/src/renderer/types/workspace.ts
+  s_15e9729d3cec0a::t_b118d176388b30 1-192
+frontend/src/renderer/components/SpawnWorkerModal.tsx
+  s_15e9729d3cec0a::t_b118d176388b30 1-289
+docs/agent/README.md
+  s_15e9729d3cec0a::t_b118d176388b30 59-60,70-77,81
+frontend/src/preload.ts
+  s_15e9729d3cec0a::t_b118d176388b30 1-25
+frontend/pnpm-lock.yaml
+  s_15e9729d3cec0a::t_98581635c2ac32 1-8089
+frontend/src/renderer/hooks/useTerminalSession.ts
+  s_15e9729d3cec0a::t_b118d176388b30 1-221
+backend/internal/service/project/service_test.go
+  s_15e9729d3cec0a::t_b118d176388b30 6,8-10,295-662
+backend/internal/cli/hooks_test.go
+  s_15e9729d3cec0a::t_b118d176388b30 5,7,10-11,217-306
+frontend/src/shared/daemon-discovery.test.ts
+  s_15e9729d3cec0a::t_b118d176388b30 1-118
+backend/internal/domain/status.go
+  s_15e9729d3cec0a::t_b118d176388b30 21-25
+frontend/src/renderer/lib/bridge.ts
+  s_15e9729d3cec0a::t_b118d176388b30 1-19
+frontend/tsconfig.json
+  s_15e9729d3cec0a::t_b118d176388b30 4-9,12-14,22-31
+frontend/src/renderer/hooks/useDaemonStatus.test.tsx
+  s_15e9729d3cec0a::t_b118d176388b30 1-102
+frontend/src/renderer/lib/api-client.test.ts
+  s_15e9729d3cec0a::t_b118d176388b30 1-143
+frontend/src/renderer/components/CenterPane.tsx
+  s_15e9729d3cec0a::t_b118d176388b30 1-48
+backend/internal/domain/session.go
+  s_15e9729d3cec0a::t_b118d176388b30 39-55,62-63
+frontend/src/renderer/lib/events-connection.ts
+  s_15e9729d3cec0a::t_b118d176388b30 1-27
+frontend/src/renderer/components/ui/tabs.tsx
+  s_15e9729d3cec0a::t_b118d176388b30 1-29
+frontend/src/renderer/main.tsx
+  s_15e9729d3cec0a::t_b118d176388b30 1-24
+frontend/src/renderer/routes/workspaces.$workspaceId.tsx
+  s_15e9729d3cec0a::t_b118d176388b30 1-11
+frontend/src/renderer/lib/terminal-mux.test.ts
+  s_15e9729d3cec0a::t_b118d176388b30 1-188
+backend/internal/storage/sqlite/store/store_test.go
+  s_15e9729d3cec0a::t_b118d176388b30 272-304,696-739
+frontend/src/renderer/hooks/useTerminalSession.test.tsx
+  s_15e9729d3cec0a::t_b118d176388b30 1-239
+backend/internal/httpd/controllers/projects_test.go
+  s_15e9729d3cec0a::t_b118d176388b30 189-197,419
+backend/internal/httpd/cors_test.go
+  s_15e9729d3cec0a::t_b118d176388b30 1-173
+frontend/src/renderer/styles.css
+  s_15e9729d3cec0a::t_b118d176388b30 1-181
+backend/internal/httpd/apispec/openapi.yaml
+  s_15e9729d3cec0a::t_b118d176388b30 964-965,1054-1055,1065,1157-1158,1165-1168,1172,1231-1232,1235-1236,1244-1245,1368-1369,1518-1529
+DESIGN.md
+  s_15e9729d3cec0a::t_b118d176388b30 1-226
+frontend/src/renderer/lib/mock-data.ts
+  s_15e9729d3cec0a::t_b118d176388b30 1-47
+backend/internal/adapters/agent/codex/hooks.go
+  s_15e9729d3cec0a::t_98581635c2ac32 16-28,33-35,37-40,60,66-68,76-82,84,86-111,113-128,131-133,135-142,144-145,147-148,153,155,163-167,169-171,178,181-182,184-189,191-194,196-200,202-203,205,208-209,227,229-230,302-303,306-312,314
+frontend/src/renderer/components/TerminalPane.tsx
+  s_15e9729d3cec0a::t_b118d176388b30 1-172
+frontend/package-lock.json
+  s_15e9729d3cec0a::t_98581635c2ac32 10-33,35-42,44-53,56-66,70-74,77-91,93-94,97-100,104,107-117,121-123,126,129-132,135-136,139-142,144-147,149-152,156-159,162-165,167-179,182-185,187-196,198-203,206-209,211-220,223-231,234-237,239-248,250-255,257-260,262-279,282-285,287-296,299,302-305,309-314,317,320-330,334-335,338-341,343,345,348-360,362-363,366-369,373-376,382-385,388-389,391-392,395,397-398,402,405-408,412-418,421,423-424,427-430,434-436,439,442-445,449-452,455,458-461,465-468,471-474,478,481-484,486-498,500,503-506,509-513,515,518-521,524-529,531-534,537-538,540-541,544,546-547,549-559,561,563-566,569,572-588,590-591,594-604,608,611-614,619-620,623,626-629,633,635-636,639-642,644,646,649-652,655-658,660,662,665-668,673-674,677-680,684-685,688-691,694,696,699-702,704-715,717-720,723,726-734,736-739,742,744-746,749-752,755-758,761-766,768-771,774-776,779-782,786-787,790-793,797,800-5579,5586-7471,7475-7584,7587-7590,7593-7602,7605-7608,7612-7615,7617,7620-7622,7624,7627-7630,7633-7657,7659-7714,7717-7720,7723-7725,7727,7730-7733,7737-7741,7744-7747,7749,7751,7754-7757,7760-7761,7764-7767,7769,7771-7773,7776,7779-7782,7785-7787,7789-7792,7795-7798,7801-7810,7812-7815,7819-7821,7827,7830-7833,7835,7837-7840,7844,7847-7850,7852,7854,7857-7860,7862-7869,7871,7874-7877,7879,7881-7891,7894-7902,7904,7907-7910,7912-7915,7927-7967
+backend/internal/storage/sqlite/queries/projects.sql
+  s_15e9729d3cec0a::t_b118d176388b30 2-3,9-10,13,17,21
+frontend/src/renderer/components/ui/badge.tsx
+  s_15e9729d3cec0a::t_b118d176388b30 1-27
+backend/internal/storage/sqlite/store/session_worktree_store.go
+  s_15e9729d3cec0a::t_b118d176388b30 1-70
+backend/internal/session_manager/provision_test.go
+  s_15e9729d3cec0a::t_b118d176388b30 5,30-98
+backend/internal/lifecycle/manager.go
+  s_15e9729d3cec0a::t_b118d176388b30 88-93,97-99,121-124
+frontend/src/renderer/hooks/useWorkspaceQuery.ts
+  s_15e9729d3cec0a::t_b118d176388b30 1-46
+frontend/src/api/schema.ts
+  s_15e9729d3cec0a::t_b118d176388b30 332,364,404,408,433,435,490,541-544
+frontend/index.html
+  s_15e9729d3cec0a::t_b118d176388b30 1-12
+frontend/src/renderer/components/Sidebar.tsx
+  s_15e9729d3cec0a::t_b118d176388b30 1-310
+backend/internal/storage/sqlite/gen/models.go
+  s_15e9729d3cec0a::t_b118d176388b30 111,132-150
+frontend/vite.renderer.config.ts
+  s_15e9729d3cec0a::t_b118d176388b30 1-71
+backend/internal/storage/sqlite/store/project_store.go
+  s_15e9729d3cec0a::t_b118d176388b30 23-78,86,148
+frontend/playwright.config.ts
+  s_15e9729d3cec0a::t_b118d176388b30 1-15
+frontend/src/renderer/routes/__root.tsx
+  s_15e9729d3cec0a::t_b118d176388b30 1-17
+backend/internal/cli/doctor.go
+  s_15e9729d3cec0a::t_b118d176388b30 16,20,146,172,177,227-267,311-352,380-410
+backend/internal/lifecycle/manager_test.go
+  s_15e9729d3cec0a::t_b118d176388b30 500-548
+backend/internal/cli/project.go
+  s_15e9729d3cec0a::t_b118d176388b30 18-21,40-43,49,55-70,214-216,222,241,412,420-424,442,458-469
+frontend/src/renderer/components/Topbar.tsx
+  s_15e9729d3cec0a::t_b118d176388b30 1-194
+frontend/src/renderer/router.tsx
+  s_15e9729d3cec0a::t_b118d176388b30 1-18
+backend/internal/cli/doctor_test.go
+  s_15e9729d3cec0a::t_b118d176388b30 11-12,15,117-122,124-125,295-358,406-516
+frontend/src/main.ts
+  s_15e9729d3cec0a::t_b118d176388b30 1-77,80-88,90,93,97-305,309,311,320-323
+backend/internal/httpd/cors.go
+  s_15e9729d3cec0a::t_b118d176388b30 1-94
+backend/internal/httpd/controllers/sessions_test.go
+  s_15e9729d3cec0a::t_b118d176388b30 32,179,372-379
+backend/internal/storage/sqlite/migrations/0009_workspace_projects.sql
+  s_15e9729d3cec0a::t_b118d176388b30 1-37
+.gitignore
+  s_15e9729d3cec0a::t_b118d176388b30 52-55
+backend/internal/adapters/agent/codex/codex.go
+  s_15e9729d3cec0a::t_b118d176388b30 60-63,72,75-76,118,121,124-125,232-252,257-264,266-269
+.github/workflows/frontend-release.yml
+  s_15e9729d3cec0a::t_b118d176388b30 1-43
+backend/internal/storage/sqlite/gen/workspace.sql.go
+  s_15e9729d3cec0a::t_b118d176388b30 1-193
+backend/internal/service/project/types.go
+  s_15e9729d3cec0a::t_b118d176388b30 7-12,17-25,30-41
+backend/internal/session_manager/manager_test.go
+  s_15e9729d3cec0a::t_b118d176388b30 4,8-10,22-26,67-69,175,185-187,305-339,642-744
+frontend/e2e/workbench.spec.ts
+  s_15e9729d3cec0a::t_b118d176388b30 1-30
+backend/internal/config/config_test.go
+  s_15e9729d3cec0a::t_b118d176388b30 88-89,102-136
+backend/internal/storage/sqlite/queries/workspace.sql
+  s_15e9729d3cec0a::t_b118d176388b30 1-40
+frontend/src/renderer/hooks/useDaemonStatus.ts
+  s_15e9729d3cec0a::t_b118d176388b30 1-48
+backend/internal/service/project/workspace_registration.go
+  s_15e9729d3cec0a::t_b118d176388b30 1-367
+backend/internal/service/project/store.go
+  s_15e9729d3cec0a::t_b118d176388b30 16-17
+frontend/src/renderer/routes/index.tsx
+  s_15e9729d3cec0a::t_b118d176388b30 1-6
+backend/internal/storage/sqlite/gen/projects.sql.go
+  s_15e9729d3cec0a::t_b118d176388b30 34,49,55,70,76,97,113-114,120-121,132,144
+frontend/src/renderer/lib/query-client.ts
+  s_15e9729d3cec0a::t_b118d176388b30 1-10
+frontend/src/renderer/global.d.ts
+  s_15e9729d3cec0a::t_b118d176388b30 1-9
+backend/internal/httpd/apispec/specgen/build.go
+  s_15e9729d3cec0a::t_b118d176388b30 167
+frontend/src/renderer/components/ui/button.tsx
+  s_15e9729d3cec0a::t_b118d176388b30 1-44
+backend/internal/adapters/agent/activitydispatch/dispatch.go
+  s_15e9729d3cec0a::t_b118d176388b30 60-70
+backend/internal/session_manager/manager.go
+  s_15e9729d3cec0a::t_b118d176388b30 9,42-47,90-94,113-119,126-136,144-149,154-156,191-194,242,312-313,318-331,446,634-679
+backend/internal/domain/project.go
+  s_15e9729d3cec0a::t_b118d176388b30 5-24,33,38-59
+backend/internal/storage/sqlite/migrations/0010_add_first_signal_at.sql
+  s_15e9729d3cec0a::t_b118d176388b30 1-60
+frontend/vite.main.config.ts
+  s_15e9729d3cec0a::t_b118d176388b30 1-5
+frontend/src/renderer/components/ui/input.tsx
+  s_15e9729d3cec0a::t_b118d176388b30 1-18
+backend/internal/cli/hooks.go
+  s_15e9729d3cec0a::t_b118d176388b30 9,12,24-34,72-75,86-88,92-124
+frontend/forge.config.ts
+  s_15e9729d3cec0a::t_b118d176388b30 1-52
+frontend/src/renderer/components/ui/tooltip.tsx
+  s_15e9729d3cec0a::t_b118d176388b30 1-25
+CLAUDE.md
+  s_15e9729d3cec0a::t_b118d176388b30 4-11
+frontend/src/shared/daemon-discovery.ts
+  s_15e9729d3cec0a::t_b118d176388b30 1-112
+frontend/src/renderer/lib/terminal-mux.ts
+  s_15e9729d3cec0a::t_b118d176388b30 1-231
+frontend/src/renderer/routeTree.gen.ts
+  s_15e9729d3cec0a::t_b118d176388b30 1-76
+backend/internal/storage/sqlite/gen/sessions.sql.go
+  s_15e9729d3cec0a::t_b118d176388b30 10,19,44,52,55,68,90,106,137,155,186,257,270,289
+backend/internal/adapters/agent/codex/codex_test.go
+  s_15e9729d3cec0a::t_b118d176388b30 9,16-39,42,49,58,62-67,73-89,143-197,222-269,272-273,276,298-299,302-309,311,313-334,338-339,343,346,350-351,354-355,358,361,363,393,398-399,412,417-421,552-574
+frontend/src/renderer/lib/event-transport.ts
+  s_15e9729d3cec0a::t_b118d176388b30 1-118
+frontend/vite.preload.config.ts
+  s_15e9729d3cec0a::t_b118d176388b30 1-4
+backend/internal/service/project/service.go
+  s_15e9729d3cec0a::t_b118d176388b30 11,42-46,67-68,88-94,99-103,117-119,153,155-177,179,249
+frontend/src/renderer/hooks/useEventsConnection.ts
+  s_15e9729d3cec0a::t_b118d176388b30 1-11
+frontend/src/renderer/components/SideRail.tsx
+  s_15e9729d3cec0a::t_b118d176388b30 1-206
+backend/internal/storage/sqlite/store/session_store.go
+  s_15e9729d3cec0a::t_b118d176388b30 183-184,209,231,242-255
+frontend/src/renderer/App.test.tsx
+  s_15e9729d3cec0a::t_b118d176388b30 1-195
+backend/internal/adapters/agent/activitydispatch/dispatch_test.go
+  s_15e9729d3cec0a::t_b118d176388b30 1-33
+backend/internal/storage/sqlite/queries/sessions.sql
+  s_15e9729d3cec0a::t_b118d176388b30 7,10,15,23,29,35
+frontend/src/renderer/routes/workspaces.$workspaceId_.sessions.$sessionId.tsx
+  s_15e9729d3cec0a::t_b118d176388b30 1-11
+frontend/docs/desktop-release.md
+  s_15e9729d3cec0a::t_b118d176388b30 1-48
+backend/internal/service/project/dto.go
+  s_15e9729d3cec0a::t_b118d176388b30 14-18
+backend/internal/service/session/status_test.go
+  s_15e9729d3cec0a::t_b118d176388b30 5,10-13,15-27,37-40,42-71,75,81-93
+frontend/package.json
+  s_15e9729d3cec0a::t_b118d176388b30 6-10,12-16,18-20,23-38,40-70
+frontend/src/renderer/App.tsx
+  s_15e9729d3cec0a::t_b118d176388b30 1-209
+frontend/src/renderer/test/setup.ts
+  s_15e9729d3cec0a::t_b118d176388b30 1-59
+backend/internal/httpd/router.go
+  s_15e9729d3cec0a::t_b118d176388b30 37,49
+backend/sqlc.yaml
+  s_15e9729d3cec0a::t_b118d176388b30 63-70
+frontend/src/renderer/lib/api-client.ts
+  s_15e9729d3cec0a::t_b118d176388b30 1-74
+backend/internal/daemon/lifecycle_wiring.go
+  s_15e9729d3cec0a::t_b118d176388b30 10,82,88-96
+frontend/src/renderer/lib/event-transport.test.ts
+  s_15e9729d3cec0a::t_b118d176388b30 1-193
+frontend/src/renderer/lib/utils.ts
+  s_15e9729d3cec0a::t_b118d176388b30 1-6
+backend/internal/service/session/service.go
+  s_15e9729d3cec0a::t_b118d176388b30 83-87,104-107,112,338,340-359
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "878f06ee042130f14bfda4fc23ac321d1ae66e30",
+  "prompts": {},
+  "sessions": {
+    "s_15e9729d3cec0a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3eeeab3d-700c-4821-81b2-0fce22448046",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    }
+  }
+}
