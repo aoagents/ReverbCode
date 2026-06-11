@@ -153,7 +153,12 @@ func scmObservationIsReadyToMerge(o ports.SCMObservation) bool {
 	if o.PR.Merged || o.PR.Closed || o.PR.Draft {
 		return false
 	}
-	if domain.CIState(o.CI.Summary) == domain.CIFailing {
+	ci := domain.CIState(o.CI.Summary)
+	if ci == "" {
+		ci = domain.CIUnknown
+	}
+	switch ci {
+	case domain.CIFailing, domain.CIPending, domain.CIUnknown:
 		return false
 	}
 	if domain.ReviewDecision(o.Review.Decision) == domain.ReviewChangesRequest || hasUnresolvedSCMComments(o.Review.Threads) {
