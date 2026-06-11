@@ -1,0 +1,33 @@
+frontend/vitest.config.ts
+  s_15e9729d3cec0a::t_972be7ae6530bf 1-6
+frontend/src/renderer/App.test.tsx
+  s_15e9729d3cec0a::t_7c81d7f62dfc13 9,11,43,65,168-169,178-212,238-262
+  s_15e9729d3cec0a::t_dba2e57a98ebf4 6
+  s_15e9729d3cec0a::t_2d6e12e123d1e7 53,56-58
+frontend/vite.renderer.config.ts
+  s_15e9729d3cec0a::t_7f747475071446 1-3
+frontend/src/renderer/routes/workspaces.$workspaceId_.sessions.$sessionId.tsx
+  s_15e9729d3cec0a::t_48a4beef3a5fde 4
+frontend/src/renderer/App.tsx
+  s_15e9729d3cec0a::t_7c81d7f62dfc13 27-45,128,143-146,157,162-172,184,186
+frontend/src/renderer/routeTree.gen.ts
+  s_15e9729d3cec0a::t_48a4beef3a5fde 3,5,7-9,11-14,16-31,34-36,39-41,44-47,50-65,68-70,73-97,99-107
+frontend/src/renderer/components/SpawnWorkerModal.tsx
+  s_15e9729d3cec0a::t_7c81d7f62dfc13 30,71,162-170
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "36eb77eaf181c4dc50abaa5d88840dcd04b4b353",
+  "prompts": {},
+  "sessions": {
+    "s_15e9729d3cec0a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3eeeab3d-700c-4821-81b2-0fce22448046",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    }
+  }
+}
