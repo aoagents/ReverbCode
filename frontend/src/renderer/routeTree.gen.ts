@@ -8,100 +8,86 @@
 // You should NOT make any changes in this file as it will be overwritten.
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
-import { Route as rootRouteImport } from './routes/__root'
-import { Route as IndexRouteImport } from './routes/index'
-import { Route as WorkspacesWorkspaceIdRouteImport } from './routes/workspaces.$workspaceId'
-import { Route as WorkspacesWorkspaceIdSessionsSessionIdRouteImport } from './routes/workspaces.$workspaceId_.sessions.$sessionId'
+import { Route as rootRouteImport } from "./routes/__root";
+import { Route as IndexRouteImport } from "./routes/index";
+import { Route as WorkspacesWorkspaceIdRouteImport } from "./routes/workspaces.$workspaceId";
+import { Route as WorkspacesWorkspaceIdSessionsSessionIdRouteImport } from "./routes/workspaces.$workspaceId_.sessions.$sessionId";
 
 const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
-  getParentRoute: () => rootRouteImport,
-} as any)
+	id: "/",
+	path: "/",
+	getParentRoute: () => rootRouteImport,
+} as any);
 const WorkspacesWorkspaceIdRoute = WorkspacesWorkspaceIdRouteImport.update({
-  id: '/workspaces/$workspaceId',
-  path: '/workspaces/$workspaceId',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const WorkspacesWorkspaceIdSessionsSessionIdRoute =
-  WorkspacesWorkspaceIdSessionsSessionIdRouteImport.update({
-    id: '/workspaces/$workspaceId_/sessions/$sessionId',
-    path: '/workspaces/$workspaceId/sessions/$sessionId',
-    getParentRoute: () => rootRouteImport,
-  } as any)
+	id: "/workspaces/$workspaceId",
+	path: "/workspaces/$workspaceId",
+	getParentRoute: () => rootRouteImport,
+} as any);
+const WorkspacesWorkspaceIdSessionsSessionIdRoute = WorkspacesWorkspaceIdSessionsSessionIdRouteImport.update({
+	id: "/workspaces/$workspaceId_/sessions/$sessionId",
+	path: "/workspaces/$workspaceId/sessions/$sessionId",
+	getParentRoute: () => rootRouteImport,
+} as any);
 
 export interface FileRoutesByFullPath {
-  '/': typeof IndexRoute
-  '/workspaces/$workspaceId': typeof WorkspacesWorkspaceIdRoute
-  '/workspaces/$workspaceId/sessions/$sessionId': typeof WorkspacesWorkspaceIdSessionsSessionIdRoute
+	"/": typeof IndexRoute;
+	"/workspaces/$workspaceId": typeof WorkspacesWorkspaceIdRoute;
+	"/workspaces/$workspaceId/sessions/$sessionId": typeof WorkspacesWorkspaceIdSessionsSessionIdRoute;
 }
 export interface FileRoutesByTo {
-  '/': typeof IndexRoute
-  '/workspaces/$workspaceId': typeof WorkspacesWorkspaceIdRoute
-  '/workspaces/$workspaceId/sessions/$sessionId': typeof WorkspacesWorkspaceIdSessionsSessionIdRoute
+	"/": typeof IndexRoute;
+	"/workspaces/$workspaceId": typeof WorkspacesWorkspaceIdRoute;
+	"/workspaces/$workspaceId/sessions/$sessionId": typeof WorkspacesWorkspaceIdSessionsSessionIdRoute;
 }
 export interface FileRoutesById {
-  __root__: typeof rootRouteImport
-  '/': typeof IndexRoute
-  '/workspaces/$workspaceId': typeof WorkspacesWorkspaceIdRoute
-  '/workspaces/$workspaceId_/sessions/$sessionId': typeof WorkspacesWorkspaceIdSessionsSessionIdRoute
+	__root__: typeof rootRouteImport;
+	"/": typeof IndexRoute;
+	"/workspaces/$workspaceId": typeof WorkspacesWorkspaceIdRoute;
+	"/workspaces/$workspaceId_/sessions/$sessionId": typeof WorkspacesWorkspaceIdSessionsSessionIdRoute;
 }
 export interface FileRouteTypes {
-  fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths:
-    | '/'
-    | '/workspaces/$workspaceId'
-    | '/workspaces/$workspaceId/sessions/$sessionId'
-  fileRoutesByTo: FileRoutesByTo
-  to:
-    | '/'
-    | '/workspaces/$workspaceId'
-    | '/workspaces/$workspaceId/sessions/$sessionId'
-  id:
-    | '__root__'
-    | '/'
-    | '/workspaces/$workspaceId'
-    | '/workspaces/$workspaceId_/sessions/$sessionId'
-  fileRoutesById: FileRoutesById
+	fileRoutesByFullPath: FileRoutesByFullPath;
+	fullPaths: "/" | "/workspaces/$workspaceId" | "/workspaces/$workspaceId/sessions/$sessionId";
+	fileRoutesByTo: FileRoutesByTo;
+	to: "/" | "/workspaces/$workspaceId" | "/workspaces/$workspaceId/sessions/$sessionId";
+	id: "__root__" | "/" | "/workspaces/$workspaceId" | "/workspaces/$workspaceId_/sessions/$sessionId";
+	fileRoutesById: FileRoutesById;
 }
 export interface RootRouteChildren {
-  IndexRoute: typeof IndexRoute
-  WorkspacesWorkspaceIdRoute: typeof WorkspacesWorkspaceIdRoute
-  WorkspacesWorkspaceIdSessionsSessionIdRoute: typeof WorkspacesWorkspaceIdSessionsSessionIdRoute
+	IndexRoute: typeof IndexRoute;
+	WorkspacesWorkspaceIdRoute: typeof WorkspacesWorkspaceIdRoute;
+	WorkspacesWorkspaceIdSessionsSessionIdRoute: typeof WorkspacesWorkspaceIdSessionsSessionIdRoute;
 }
 
-declare module '@tanstack/react-router' {
-  interface FileRoutesByPath {
-    '/': {
-      id: '/'
-      path: '/'
-      fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/workspaces/$workspaceId': {
-      id: '/workspaces/$workspaceId'
-      path: '/workspaces/$workspaceId'
-      fullPath: '/workspaces/$workspaceId'
-      preLoaderRoute: typeof WorkspacesWorkspaceIdRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/workspaces/$workspaceId_/sessions/$sessionId': {
-      id: '/workspaces/$workspaceId_/sessions/$sessionId'
-      path: '/workspaces/$workspaceId/sessions/$sessionId'
-      fullPath: '/workspaces/$workspaceId/sessions/$sessionId'
-      preLoaderRoute: typeof WorkspacesWorkspaceIdSessionsSessionIdRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-  }
+declare module "@tanstack/react-router" {
+	interface FileRoutesByPath {
+		"/": {
+			id: "/";
+			path: "/";
+			fullPath: "/";
+			preLoaderRoute: typeof IndexRouteImport;
+			parentRoute: typeof rootRouteImport;
+		};
+		"/workspaces/$workspaceId": {
+			id: "/workspaces/$workspaceId";
+			path: "/workspaces/$workspaceId";
+			fullPath: "/workspaces/$workspaceId";
+			preLoaderRoute: typeof WorkspacesWorkspaceIdRouteImport;
+			parentRoute: typeof rootRouteImport;
+		};
+		"/workspaces/$workspaceId_/sessions/$sessionId": {
+			id: "/workspaces/$workspaceId_/sessions/$sessionId";
+			path: "/workspaces/$workspaceId/sessions/$sessionId";
+			fullPath: "/workspaces/$workspaceId/sessions/$sessionId";
+			preLoaderRoute: typeof WorkspacesWorkspaceIdSessionsSessionIdRouteImport;
+			parentRoute: typeof rootRouteImport;
+		};
+	}
 }
 
 const rootRouteChildren: RootRouteChildren = {
-  IndexRoute: IndexRoute,
-  WorkspacesWorkspaceIdRoute: WorkspacesWorkspaceIdRoute,
-  WorkspacesWorkspaceIdSessionsSessionIdRoute:
-    WorkspacesWorkspaceIdSessionsSessionIdRoute,
-}
-export const routeTree = rootRouteImport
-  ._addFileChildren(rootRouteChildren)
-  ._addFileTypes<FileRouteTypes>()
+	IndexRoute: IndexRoute,
+	WorkspacesWorkspaceIdRoute: WorkspacesWorkspaceIdRoute,
+	WorkspacesWorkspaceIdSessionsSessionIdRoute: WorkspacesWorkspaceIdSessionsSessionIdRoute,
+};
+export const routeTree = rootRouteImport._addFileChildren(rootRouteChildren)._addFileTypes<FileRouteTypes>();
