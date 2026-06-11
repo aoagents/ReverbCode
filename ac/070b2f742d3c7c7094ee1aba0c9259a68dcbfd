@@ -1,0 +1,19 @@
+.github/workflows/frontend.yml
+  s_15e9729d3cec0a::t_c083a273300146 1-41
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "ac070b2f742d3c7c7094ee1aba0c9259a68dcbfd",
+  "prompts": {},
+  "sessions": {
+    "s_15e9729d3cec0a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3eeeab3d-700c-4821-81b2-0fce22448046",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    }
+  }
+}
