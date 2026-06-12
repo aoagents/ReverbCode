@@ -112,6 +112,14 @@ func TestActivity_InvalidIsIgnored(t *testing.T) {
 	}
 }
 
+func TestActivity_MissingSessionReturnsNotFound(t *testing.T) {
+	m, _, _ := newManager()
+	err := m.ApplyActivitySignal(ctx, "missing-1", ports.ActivitySignal{Valid: true, State: domain.ActivityWaitingInput})
+	if !errors.Is(err, ports.ErrSessionNotFound) {
+		t.Fatalf("err = %v, want ErrSessionNotFound", err)
+	}
+}
+
 func TestMarkTerminated(t *testing.T) {
 	m, st, _ := newManager()
 	st.sessions["mer-1"] = working("mer-1")
@@ -181,6 +189,18 @@ func TestSCMObservationProjectsToExistingPRReactions(t *testing.T) {
 	}
 	if len(msg.msgs) != 1 || !strings.Contains(msg.msgs[0], "boom") {
 		t.Fatalf("want SCM CI nudge with log tail, got %v", msg.msgs)
+	}
+}
+
+func TestSCMObservation_MissingSessionIsIgnored(t *testing.T) {
+	st := newFakeStore()
+	m := New(st, nil)
+	o := ports.SCMObservation{
+		Fetched: true,
+		PR:      ports.SCMPRObservation{URL: "pr1", Number: 1},
+	}
+	if err := m.ApplySCMObservation(ctx, "missing-1", o); err != nil {
+		t.Fatalf("ApplySCMObservation missing session: %v", err)
 	}
 }
 
@@ -544,5 +564,146 @@ func TestMarkSpawnedClearsFirstSignal(t *testing.T) {
 	}
 	if got := st.sessions["mer-1"]; !got.FirstSignalAt.IsZero() {
 		t.Fatalf("spawn/restore must clear the receipt, got %+v", got)
+	}
+}
+
+type fakeNotificationSink struct {
+	intents []ports.NotificationIntent
+	err     error
+}
+
+func (f *fakeNotificationSink) Notify(_ context.Context, intent ports.NotificationIntent) error {
+	f.intents = append(f.intents, intent)
+	return f.err
+}
+
+func TestActivity_WaitingInputTransitionEmitsNotification(t *testing.T) {
+	st := newFakeStore()
+	sink := &fakeNotificationSink{}
+	m := New(st, nil, WithNotificationSink(sink))
+	now := time.Date(2026, 6, 11, 10, 0, 0, 0, time.UTC)
+	m.clock = func() time.Time { return now }
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", DisplayName: "checkout-flow", Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: now.Add(-time.Minute)}, FirstSignalAt: now.Add(-time.Minute)}
+
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityWaitingInput}); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.intents) != 1 {
+		t.Fatalf("intents = %d, want 1", len(sink.intents))
+	}
+	intent := sink.intents[0]
+	if intent.Type != domain.NotificationNeedsInput || intent.SessionID != "mer-1" || intent.ProjectID != "mer" || intent.SessionDisplayName != "checkout-flow" {
+		t.Fatalf("intent = %+v", intent)
+	}
+}
+
+func TestActivity_WaitingInputSameStateDoesNotEmitNotification(t *testing.T) {
+	st := newFakeStore()
+	sink := &fakeNotificationSink{}
+	m := New(st, nil, WithNotificationSink(sink))
+	now := time.Now()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Activity: domain.Activity{State: domain.ActivityWaitingInput, LastActivityAt: now}, FirstSignalAt: now}
+
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityWaitingInput}); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.intents) != 0 {
+		t.Fatalf("same-state waiting_input emitted %+v", sink.intents)
+	}
+}
+
+func TestActivity_TerminatedSessionDoesNotEmitNotification(t *testing.T) {
+	st := newFakeStore()
+	sink := &fakeNotificationSink{}
+	m := New(st, nil, WithNotificationSink(sink))
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", IsTerminated: true, Activity: domain.Activity{State: domain.ActivityExited}}
+
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityWaitingInput}); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.intents) != 0 {
+		t.Fatalf("terminated session emitted %+v", sink.intents)
+	}
+}
+
+func TestSCMObservation_Notifications(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		obs  ports.SCMObservation
+		want domain.NotificationType
+	}{
+		{
+			name: "ready",
+			obs:  ports.SCMObservation{Fetched: true, PR: ports.SCMPRObservation{URL: "https://github.com/o/r/pull/1", Number: 1, Title: "checkout"}, CI: ports.SCMCIObservation{Summary: string(domain.CIPassing)}, Review: ports.SCMReviewObservation{Decision: string(domain.ReviewApproved)}, Mergeability: ports.SCMMergeabilityObservation{State: string(domain.MergeMergeable)}},
+			want: domain.NotificationReadyToMerge,
+		},
+		{
+			name: "merged",
+			obs:  ports.SCMObservation{Fetched: true, PR: ports.SCMPRObservation{URL: "https://github.com/o/r/pull/2", Number: 2, Merged: true}},
+			want: domain.NotificationPRMerged,
+		},
+		{
+			name: "closed",
+			obs:  ports.SCMObservation{Fetched: true, PR: ports.SCMPRObservation{URL: "https://github.com/o/r/pull/3", Number: 3, Closed: true}},
+			want: domain.NotificationPRClosedUnmerged,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := newFakeStore()
+			sink := &fakeNotificationSink{}
+			m := New(st, nil, WithNotificationSink(sink))
+			st.sessions["mer-1"] = working("mer-1")
+			if err := m.ApplySCMObservation(ctx, "mer-1", tc.obs); err != nil {
+				t.Fatal(err)
+			}
+			if len(sink.intents) != 1 {
+				t.Fatalf("intents = %d, want 1", len(sink.intents))
+			}
+			if got := sink.intents[0]; got.Type != tc.want || got.PRURL != tc.obs.PR.URL || got.PRNumber != tc.obs.PR.Number {
+				t.Fatalf("intent = %+v, want type %s", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestSCMObservation_NotReadyWhenCIOrReviewBlocks(t *testing.T) {
+	for _, obs := range []ports.SCMObservation{
+		{Fetched: true, PR: ports.SCMPRObservation{URL: "https://github.com/o/r/pull/1", Number: 1}, CI: ports.SCMCIObservation{Summary: string(domain.CIFailing)}, Mergeability: ports.SCMMergeabilityObservation{State: string(domain.MergeMergeable)}},
+		{Fetched: true, PR: ports.SCMPRObservation{URL: "https://github.com/o/r/pull/1", Number: 1}, CI: ports.SCMCIObservation{Summary: string(domain.CIPending)}, Mergeability: ports.SCMMergeabilityObservation{State: string(domain.MergeMergeable)}},
+		{Fetched: true, PR: ports.SCMPRObservation{URL: "https://github.com/o/r/pull/1", Number: 1}, CI: ports.SCMCIObservation{Summary: string(domain.CIUnknown)}, Mergeability: ports.SCMMergeabilityObservation{State: string(domain.MergeMergeable)}},
+		{Fetched: true, PR: ports.SCMPRObservation{URL: "https://github.com/o/r/pull/1", Number: 1}, Mergeability: ports.SCMMergeabilityObservation{State: string(domain.MergeMergeable)}},
+		{Fetched: true, PR: ports.SCMPRObservation{URL: "https://github.com/o/r/pull/1", Number: 1}, CI: ports.SCMCIObservation{Summary: string(domain.CIPassing)}, Review: ports.SCMReviewObservation{Decision: string(domain.ReviewChangesRequest)}, Mergeability: ports.SCMMergeabilityObservation{State: string(domain.MergeMergeable)}},
+	} {
+		st := newFakeStore()
+		sink := &fakeNotificationSink{}
+		m := New(st, nil, WithNotificationSink(sink))
+		st.sessions["mer-1"] = working("mer-1")
+		if err := m.ApplySCMObservation(ctx, "mer-1", obs); err != nil {
+			t.Fatal(err)
+		}
+		if len(sink.intents) != 0 {
+			t.Fatalf("blocked PR emitted %+v", sink.intents)
+		}
+	}
+}
+
+func TestSCMObservation_ReadyToMergeSuppressedWhileWaitingInput(t *testing.T) {
+	st := newFakeStore()
+	sink := &fakeNotificationSink{}
+	m := New(st, nil, WithNotificationSink(sink))
+	rec := working("mer-1")
+	rec.Activity.State = domain.ActivityWaitingInput
+	st.sessions["mer-1"] = rec
+	obs := ports.SCMObservation{
+		Fetched:      true,
+		PR:           ports.SCMPRObservation{URL: "https://github.com/o/r/pull/1", Number: 1},
+		CI:           ports.SCMCIObservation{Summary: string(domain.CIPassing)},
+		Mergeability: ports.SCMMergeabilityObservation{State: string(domain.MergeMergeable)},
+	}
+	if err := m.ApplySCMObservation(ctx, "mer-1", obs); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.intents) != 0 {
+		t.Fatalf("waiting-input session emitted ready notification: %+v", sink.intents)
 	}
 }

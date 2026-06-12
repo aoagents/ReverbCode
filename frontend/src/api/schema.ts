@@ -21,6 +21,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/notifications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List unread notifications */
+        get: operations["listNotifications"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/notifications/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Stream created notifications */
+        get: operations["streamNotifications"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orchestrators": {
         parameters: {
             query?: never;
@@ -431,6 +465,9 @@ export interface components {
             ok: boolean;
             sessionId: string;
         };
+        ListNotificationsResponse: {
+            notifications: components["schemas"]["NotificationResponse"][];
+        };
         ListProjectsResponse: {
             projects: components["schemas"]["ProjectSummary"][];
         };
@@ -448,6 +485,27 @@ export interface components {
             method: string;
             ok: boolean;
             prNumber: number;
+        };
+        NotificationResponse: {
+            body: string;
+            /** Format: date-time */
+            createdAt: string;
+            id: string;
+            prUrl: string;
+            projectId: string;
+            sessionId: string;
+            /** @enum {string} */
+            status: "unread" | "read";
+            target: components["schemas"]["NotificationTarget"];
+            title: string;
+            /** @enum {string} */
+            type: "needs_input" | "ready_to_merge" | "pr_merged" | "pr_closed_unmerged";
+        };
+        NotificationTarget: {
+            /** @enum {string} */
+            kind: "session" | "pr";
+            prUrl?: string;
+            sessionId: string;
         };
         OrchestratorResponse: {
             id: string;
@@ -656,6 +714,99 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    listNotifications: {
+        parameters: {
+            query?: {
+                /** @description Notification status filter. V1 supports only unread. */
+                status?: "unread";
+                /** @description Maximum notifications to return. Defaults to 50; capped at 100. */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListNotificationsResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    streamNotifications: {
+        parameters: {
+            query?: {
+                /** @description Optional project id filter for live notifications. */
+                projectId?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": string;
                 };
             };
             /** @description Internal Server Error */

@@ -51,6 +51,87 @@ paths:
       summary: Stream CDC events with durable replay
       tags:
       - events
+  /api/v1/notifications:
+    get:
+      operationId: listNotifications
+      parameters:
+      - description: Notification status filter. V1 supports only unread.
+        in: query
+        name: status
+        schema:
+          description: Notification status filter. V1 supports only unread.
+          enum:
+          - unread
+          type: string
+      - description: Maximum notifications to return. Defaults to 50; capped at 100.
+        in: query
+        name: limit
+        schema:
+          description: Maximum notifications to return. Defaults to 50; capped at
+            100.
+          maximum: 100
+          minimum: 1
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListNotificationsResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: List unread notifications
+      tags:
+      - notifications
+  /api/v1/notifications/stream:
+    get:
+      operationId: streamNotifications
+      parameters:
+      - description: Optional project id filter for live notifications.
+        in: query
+        name: projectId
+        schema:
+          description: Optional project id filter for live notifications.
+          type: string
+      responses:
+        "200":
+          content:
+            text/event-stream:
+              schema:
+                type: string
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Stream created notifications
+      tags:
+      - notifications
   /api/v1/orchestrators:
     get:
       operationId: listOrchestrators
@@ -1186,6 +1267,15 @@ components:
       - ok
       - sessionId
       type: object
+    ListNotificationsResponse:
+      properties:
+        notifications:
+          items:
+            $ref: '#/components/schemas/NotificationResponse'
+          type: array
+      required:
+      - notifications
+      type: object
     ListProjectsResponse:
       properties:
         projects:
@@ -1237,6 +1327,64 @@ components:
       - ok
       - prNumber
       - method
+      type: object
+    NotificationResponse:
+      properties:
+        body:
+          type: string
+        createdAt:
+          format: date-time
+          type: string
+        id:
+          type: string
+        prUrl:
+          type: string
+        projectId:
+          type: string
+        sessionId:
+          type: string
+        status:
+          enum:
+          - unread
+          - read
+          type: string
+        target:
+          $ref: '#/components/schemas/NotificationTarget'
+        title:
+          type: string
+        type:
+          enum:
+          - needs_input
+          - ready_to_merge
+          - pr_merged
+          - pr_closed_unmerged
+          type: string
+      required:
+      - id
+      - sessionId
+      - projectId
+      - prUrl
+      - type
+      - title
+      - body
+      - status
+      - createdAt
+      - target
+      type: object
+    NotificationTarget:
+      properties:
+        kind:
+          enum:
+          - session
+          - pr
+          type: string
+        prUrl:
+          type: string
+        sessionId:
+          type: string
+      required:
+      - kind
+      - sessionId
       type: object
     OrchestratorResponse:
       properties:
@@ -1691,5 +1839,7 @@ tags:
   name: prs
 - description: Code-review runs and findings
   name: reviews
+- description: Durable dashboard notifications
+  name: notifications
 - description: Server-sent CDC event stream with durable replay
   name: events

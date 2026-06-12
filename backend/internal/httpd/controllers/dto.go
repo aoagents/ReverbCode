@@ -262,6 +262,43 @@ type OrchestratorResponse struct {
 	ProjectName string           `json:"projectName,omitempty"`
 }
 
+// ListNotificationsQuery is the query string accepted by GET /api/v1/notifications.
+type ListNotificationsQuery struct {
+	Status string `query:"status,omitempty" enum:"unread" description:"Notification status filter. V1 supports only unread."`
+	Limit  int    `query:"limit,omitempty" minimum:"1" maximum:"100" description:"Maximum notifications to return. Defaults to 50; capped at 100."`
+}
+
+// NotificationStreamQuery is the query string accepted by GET /api/v1/notifications/stream.
+type NotificationStreamQuery struct {
+	ProjectID string `query:"projectId,omitempty" description:"Optional project id filter for live notifications."`
+}
+
+// NotificationTarget is the dashboard navigation target for a notification.
+type NotificationTarget struct {
+	Kind      string `json:"kind" enum:"session,pr"`
+	SessionID string `json:"sessionId"`
+	PRURL     string `json:"prUrl,omitempty"`
+}
+
+// NotificationResponse is one stored notification returned by the API.
+type NotificationResponse struct {
+	ID        string             `json:"id"`
+	SessionID string             `json:"sessionId"`
+	ProjectID string             `json:"projectId"`
+	PRURL     string             `json:"prUrl"`
+	Type      string             `json:"type" enum:"needs_input,ready_to_merge,pr_merged,pr_closed_unmerged"`
+	Title     string             `json:"title"`
+	Body      string             `json:"body"`
+	Status    string             `json:"status" enum:"unread,read"`
+	CreatedAt time.Time          `json:"createdAt"`
+	Target    NotificationTarget `json:"target"`
+}
+
+// ListNotificationsResponse is the body of GET /api/v1/notifications.
+type ListNotificationsResponse struct {
+	Notifications []NotificationResponse `json:"notifications"`
+}
+
 // PRIDParam is the {id} path parameter shared by the /prs/{id} routes.
 type PRIDParam struct {
 	ID string `path:"id" description:"PR number."`

@@ -63,6 +63,8 @@ func Build() ([]byte, error) {
 			"Pull-request actions (SCM lane)"),
 		*(&openapi31.Tag{Name: "reviews"}).WithDescription(
 			"Code-review runs and findings"),
+		*(&openapi31.Tag{Name: "notifications"}).WithDescription(
+			"Durable dashboard notifications"),
 		*(&openapi31.Tag{Name: "events"}).WithDescription(
 			"Server-sent CDC event stream with durable replay"),
 	}
@@ -155,6 +157,11 @@ var schemaNames = map[string]string{
 	"ControllersSpawnOrchestratorRequest":   "SpawnOrchestratorRequest",
 	"ControllersSpawnOrchestratorResponse":  "SpawnOrchestratorResponse",
 	"ControllersOrchestratorResponse":       "OrchestratorResponse",
+	"ControllersListNotificationsQuery":     "ListNotificationsQuery",
+	"ControllersNotificationStreamQuery":    "NotificationStreamQuery",
+	"ControllersNotificationTarget":         "NotificationTarget",
+	"ControllersNotificationResponse":       "NotificationResponse",
+	"ControllersListNotificationsResponse":  "ListNotificationsResponse",
 	// httpd/controllers — PR wire envelopes
 	"ControllersMergePRResponse":         "MergePRResponse",
 	"ControllersResolveCommentsRequest":  "ResolveCommentsRequest",
@@ -252,7 +259,35 @@ func operations() []operation {
 	ops = append(ops, sessionOperations()...)
 	ops = append(ops, prOperations()...)
 	ops = append(ops, reviewOperations()...)
+	ops = append(ops, notificationOperations()...)
 	return ops
+}
+
+func notificationOperations() []operation {
+	return []operation{
+		{
+			method: http.MethodGet, path: "/api/v1/notifications", id: "listNotifications", tag: "notifications",
+			summary:    "List unread notifications",
+			pathParams: []any{controllers.ListNotificationsQuery{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ListNotificationsResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/notifications/stream", id: "streamNotifications", tag: "notifications",
+			summary:    "Stream created notifications",
+			pathParams: []any{controllers.NotificationStreamQuery{}},
+			resps: []respUnit{
+				{http.StatusOK, ""},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+			contentTypes: map[int]string{http.StatusOK: "text/event-stream"},
+		},
+	}
 }
 
 // reviewOperations declares the /reviews operations. Must stay 1:1 with the

@@ -14,7 +14,9 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/zellij"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd"
+	"github.com/aoagents/agent-orchestrator/backend/internal/notify"
 	"github.com/aoagents/agent-orchestrator/backend/internal/runfile"
+	notificationsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/notification"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 	reviewsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/review"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
@@ -82,11 +84,14 @@ func Run() error {
 	// Built before the Lifecycle Manager so the LCM can use it for SCM-driven
 	// agent nudges (CI failure, review feedback, merge conflict).
 	messenger := newSessionMessenger(store, runtimeAdapter, log)
+	notificationHub := notify.NewHub()
+	notifier := notificationsvc.New(notificationsvc.Deps{Store: store})
+	notificationWriter := notify.New(notify.Deps{Store: store, Publisher: notificationHub})
 
 	// Bring up the Lifecycle Manager and the reaper first: it makes the session
 	// lifecycle write path live (reducer write -> store -> DB trigger ->
 	// change_log -> poller -> broadcaster) and gives startSession the shared LCM.
-	lcStack := startLifecycle(ctx, store, runtimeAdapter, messenger, log)
+	lcStack := startLifecycle(ctx, store, runtimeAdapter, messenger, notificationWriter, log)
 	lcStack.scmDone = startSCMObserver(ctx, store, lcStack.LCM, log)
 
 	// Wire the controller-facing session service over the same store + LCM, the
@@ -104,12 +109,14 @@ func Run() error {
 	}
 
 	srv, err := httpd.NewWithDeps(cfg, log, termMgr, httpd.APIDeps{
-		Projects: projectsvc.New(store),
-		Sessions: sessionSvc,
-		Reviews:  reviewsvc.NewInMemory(),
-		CDC:      store,
-		Events:   cdcPipe.Broadcaster,
-		Activity: lcStack.LCM,
+		Projects:           projectsvc.New(store),
+		Sessions:           sessionSvc,
+		Reviews:            reviewsvc.NewInMemory(),
+		Notifications:      notifier,
+		NotificationStream: notificationHub,
+		CDC:                store,
+		Events:             cdcPipe.Broadcaster,
+		Activity:           lcStack.LCM,
 	})
 	if err != nil {
 		stop()
