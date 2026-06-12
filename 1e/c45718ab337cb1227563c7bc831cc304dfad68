@@ -1,0 +1,32 @@
+backend/internal/httpd/apispec/openapi.yaml
+  s_1c9ec74f457ab0::t_82789de47c7828 1395-1396
+backend/internal/httpd/controllers/dto.go
+  s_1c9ec74f457ab0::t_2a411da8a3461f 243-245,252
+backend/internal/httpd/controllers/sessions.go
+  s_1c9ec74f457ab0::t_8105807d65cce5 383-397
+frontend/src/api/schema.ts
+  s_1c9ec74f457ab0::t_82789de47c7828 508
+backend/internal/httpd/controllers/sessions_test.go
+  s_1c9ec74f457ab0::t_1fab5912551284 185-187
+  s_1c9ec74f457ab0::t_09e5cb6148d576 577-579,591-627
+  s_1c9ec74f457ab0::t_dc7a9d278bf29f 5
+  s_1c9ec74f457ab0::t_488e5dd72940af 31
+frontend/src/renderer/hooks/useSessionGit.ts
+  s_1c9ec74f457ab0::t_342d0869b7f239 82,87-92
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "1ec45718ab337cb1227563c7bc831cc304dfad68",
+  "prompts": {},
+  "sessions": {
+    "s_1c9ec74f457ab0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "40514750-edbd-42cf-8eb3-9af733edbbbb",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    }
+  }
+}
