@@ -13,7 +13,7 @@ import (
 )
 
 const getLatestReviewRunBySession = `-- name: GetLatestReviewRunBySession :one
-SELECT id, review_id, session_id, harness, pr_url, status, verdict, iteration, body, created_at, updated_at
+SELECT id, review_id, session_id, harness, pr_url, status, verdict, iteration, body, created_at
 FROM review_run WHERE session_id = ? ORDER BY iteration DESC, created_at DESC LIMIT 1
 `
 
@@ -31,7 +31,6 @@ func (q *Queries) GetLatestReviewRunBySession(ctx context.Context, sessionID dom
 		&i.Iteration,
 		&i.Body,
 		&i.CreatedAt,
-		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -57,8 +56,8 @@ func (q *Queries) GetReviewBySession(ctx context.Context, sessionID domain.Sessi
 }
 
 const insertReviewRun = `-- name: InsertReviewRun :exec
-INSERT INTO review_run (id, review_id, session_id, harness, pr_url, status, verdict, iteration, body, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO review_run (id, review_id, session_id, harness, pr_url, status, verdict, iteration, body, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertReviewRunParams struct {
@@ -72,7 +71,6 @@ type InsertReviewRunParams struct {
 	Iteration int64
 	Body      string
 	CreatedAt time.Time
-	UpdatedAt time.Time
 }
 
 func (q *Queries) InsertReviewRun(ctx context.Context, arg InsertReviewRunParams) error {
@@ -87,13 +85,12 @@ func (q *Queries) InsertReviewRun(ctx context.Context, arg InsertReviewRunParams
 		arg.Iteration,
 		arg.Body,
 		arg.CreatedAt,
-		arg.UpdatedAt,
 	)
 	return err
 }
 
 const listReviewRunsBySession = `-- name: ListReviewRunsBySession :many
-SELECT id, review_id, session_id, harness, pr_url, status, verdict, iteration, body, created_at, updated_at
+SELECT id, review_id, session_id, harness, pr_url, status, verdict, iteration, body, created_at
 FROM review_run WHERE session_id = ? ORDER BY iteration DESC, created_at DESC
 `
 
@@ -117,7 +114,6 @@ func (q *Queries) ListReviewRunsBySession(ctx context.Context, sessionID domain.
 			&i.Iteration,
 			&i.Body,
 			&i.CreatedAt,
-			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -133,15 +129,14 @@ func (q *Queries) ListReviewRunsBySession(ctx context.Context, sessionID domain.
 }
 
 const updateReviewRunResult = `-- name: UpdateReviewRunResult :exec
-UPDATE review_run SET status = ?, verdict = ?, body = ?, updated_at = ? WHERE id = ?
+UPDATE review_run SET status = ?, verdict = ?, body = ? WHERE id = ?
 `
 
 type UpdateReviewRunResultParams struct {
-	Status    domain.ReviewRunStatus
-	Verdict   domain.ReviewVerdict
-	Body      string
-	UpdatedAt time.Time
-	ID        string
+	Status  domain.ReviewRunStatus
+	Verdict domain.ReviewVerdict
+	Body    string
+	ID      string
 }
 
 func (q *Queries) UpdateReviewRunResult(ctx context.Context, arg UpdateReviewRunResultParams) error {
@@ -149,7 +144,6 @@ func (q *Queries) UpdateReviewRunResult(ctx context.Context, arg UpdateReviewRun
 		arg.Status,
 		arg.Verdict,
 		arg.Body,
-		arg.UpdatedAt,
 		arg.ID,
 	)
 	return err

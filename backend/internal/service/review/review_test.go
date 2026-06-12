@@ -40,7 +40,7 @@ func (f *fakeStore) InsertReviewRun(_ context.Context, r domain.ReviewRun) error
 	f.runs = append(f.runs, r)
 	return nil
 }
-func (f *fakeStore) UpdateReviewRunResult(_ context.Context, id string, status domain.ReviewRunStatus, verdict domain.ReviewVerdict, body string, updatedAt time.Time) error {
+func (f *fakeStore) UpdateReviewRunResult(_ context.Context, id string, status domain.ReviewRunStatus, verdict domain.ReviewVerdict, body string) error {
 	if f.updateErr != nil {
 		return f.updateErr
 	}
@@ -49,7 +49,6 @@ func (f *fakeStore) UpdateReviewRunResult(_ context.Context, id string, status d
 			f.runs[i].Status = status
 			f.runs[i].Verdict = verdict
 			f.runs[i].Body = body
-			f.runs[i].UpdatedAt = updatedAt
 		}
 	}
 	return nil
@@ -130,7 +129,7 @@ func TestTriggerCreatesPendingRunAndLaunchesReviewer(t *testing.T) {
 		t.Fatalf("Trigger: %v", err)
 	}
 	// A configured reviewer wins over the worker harness.
-	if run.Status != domain.ReviewRunPending || run.Iteration != 1 || run.Harness != domain.HarnessAider {
+	if run.Status != domain.ReviewRunRunning || run.Iteration != 1 || run.Harness != domain.HarnessAider {
 		t.Fatalf("run = %+v", run)
 	}
 	if !runner.ran || runner.spec.WorkspacePath != "/ws/mer-1" || runner.spec.Harness != domain.HarnessAider {
@@ -221,7 +220,7 @@ func TestTriggerLaunchFailureMarksRunFailed(t *testing.T) {
 }
 
 func TestSubmitRecordsVerdictAndBody(t *testing.T) {
-	store := &fakeStore{runs: []domain.ReviewRun{{ID: "run-1", PRURL: "u", Status: domain.ReviewRunPending}}}
+	store := &fakeStore{runs: []domain.ReviewRun{{ID: "run-1", PRURL: "u", Status: domain.ReviewRunRunning}}}
 	svc := newServiceForTest(store, fakeSessions{rec: liveWorker(), ok: true}, fakePRs{}, fakeProjects{}, &fakeRunner{})
 
 	run, err := svc.Submit(context.Background(), "mer-1", domain.VerdictChangesRequested, "please fix")
@@ -237,7 +236,7 @@ func TestSubmitRecordsVerdictAndBody(t *testing.T) {
 }
 
 func TestSubmitValidation(t *testing.T) {
-	store := &fakeStore{runs: []domain.ReviewRun{{ID: "run-1", Status: domain.ReviewRunPending}}}
+	store := &fakeStore{runs: []domain.ReviewRun{{ID: "run-1", Status: domain.ReviewRunRunning}}}
 	svc := newServiceForTest(store, fakeSessions{rec: liveWorker(), ok: true}, fakePRs{}, fakeProjects{}, &fakeRunner{})
 
 	if _, err := svc.Submit(context.Background(), "mer-1", "garbage", "b"); !errors.Is(err, ErrInvalid) {

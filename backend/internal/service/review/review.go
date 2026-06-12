@@ -30,7 +30,7 @@ type Store interface {
 	UpsertReview(ctx context.Context, r domain.Review) error
 	GetReviewBySession(ctx context.Context, id domain.SessionID) (domain.Review, bool, error)
 	InsertReviewRun(ctx context.Context, r domain.ReviewRun) error
-	UpdateReviewRunResult(ctx context.Context, id string, status domain.ReviewRunStatus, verdict domain.ReviewVerdict, body string, updatedAt time.Time) error
+	UpdateReviewRunResult(ctx context.Context, id string, status domain.ReviewRunStatus, verdict domain.ReviewVerdict, body string) error
 	GetLatestReviewRunBySession(ctx context.Context, id domain.SessionID) (domain.ReviewRun, bool, error)
 	ListReviewRunsBySession(ctx context.Context, id domain.SessionID) ([]domain.ReviewRun, error)
 }
@@ -160,11 +160,10 @@ func (s *Service) Trigger(ctx context.Context, workerID domain.SessionID) (domai
 		SessionID: workerID,
 		Harness:   harness,
 		PRURL:     prURL,
-		Status:    domain.ReviewRunPending,
+		Status:    domain.ReviewRunRunning,
 		Verdict:   domain.VerdictNone,
 		Iteration: s.nextIteration(ctx, workerID),
 		CreatedAt: now,
-		UpdatedAt: now,
 	}
 	if err := s.store.InsertReviewRun(ctx, run); err != nil {
 		return domain.ReviewRun{}, err
@@ -176,9 +175,9 @@ func (s *Service) Trigger(ctx context.Context, workerID domain.SessionID) (domai
 		WorkspacePath: worker.Metadata.WorkspacePath,
 		PRURL:         prURL,
 	}); err != nil {
-		// The pass never launched; record it as failed so a stale pending row
+		// The pass never launched; record it as failed so a stale running row
 		// does not look like an in-flight review forever.
-		_ = s.store.UpdateReviewRunResult(ctx, run.ID, domain.ReviewRunFailed, domain.VerdictNone, "", s.clock())
+		_ = s.store.UpdateReviewRunResult(ctx, run.ID, domain.ReviewRunFailed, domain.VerdictNone, "")
 		return domain.ReviewRun{}, fmt.Errorf("launch reviewer: %w", err)
 	}
 	return run, nil
@@ -206,14 +205,12 @@ func (s *Service) Submit(ctx context.Context, workerID domain.SessionID, verdict
 		return domain.ReviewRun{}, fmt.Errorf("%w: no review run for worker %q", ErrNotFound, workerID)
 	}
 
-	now := s.clock()
-	if err := s.store.UpdateReviewRunResult(ctx, run.ID, domain.ReviewRunComplete, verdict, body, now); err != nil {
+	if err := s.store.UpdateReviewRunResult(ctx, run.ID, domain.ReviewRunComplete, verdict, body); err != nil {
 		return domain.ReviewRun{}, err
 	}
 	run.Status = domain.ReviewRunComplete
 	run.Verdict = verdict
 	run.Body = body
-	run.UpdatedAt = now
 	return run, nil
 }
 

@@ -49,12 +49,12 @@ func TestReviewUpsertReusesRowAndRunRoundTrip(t *testing.T) {
 	// A run inserts pending and updates to complete/changes_requested.
 	if err := s.InsertReviewRun(ctx, domain.ReviewRun{
 		ID: "run-1", ReviewID: got.ID, SessionID: rec.ID, Harness: domain.HarnessAider,
-		PRURL: got.PRURL, Status: domain.ReviewRunPending, Verdict: domain.VerdictNone,
-		Iteration: 1, CreatedAt: now, UpdatedAt: now,
+		PRURL: got.PRURL, Status: domain.ReviewRunRunning, Verdict: domain.VerdictNone,
+		Iteration: 1, CreatedAt: now,
 	}); err != nil {
 		t.Fatalf("insert run: %v", err)
 	}
-	if err := s.UpdateReviewRunResult(ctx, "run-1", domain.ReviewRunComplete, domain.VerdictChangesRequested, "please fix", now.Add(2*time.Second)); err != nil {
+	if err := s.UpdateReviewRunResult(ctx, "run-1", domain.ReviewRunComplete, domain.VerdictChangesRequested, "please fix"); err != nil {
 		t.Fatalf("update run: %v", err)
 	}
 

@@ -1463,9 +1463,6 @@ components:
           type: string
         status:
           type: string
-        updatedAt:
-          format: date-time
-          type: string
         verdict:
           type: string
       required:
@@ -1479,7 +1476,6 @@ components:
       - iteration
       - body
       - createdAt
-      - updatedAt
       type: object
     ReviewRunResponse:
       properties:

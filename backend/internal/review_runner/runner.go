@@ -64,15 +64,15 @@ func reviewerEnv(spec reviewsvc.RunSpec) map[string]string {
 }
 
 func reviewPrompt(spec reviewsvc.RunSpec) string {
-	return fmt.Sprintf(`You are an AO code reviewer. The current working directory is a git worktree containing the changes for pull request %s. Review only this PR's changes — do not start unrelated work.
+	return fmt.Sprintf(`You are an AO code reviewer. The current working directory is a checkout containing the changes for pull request %s. Review only this PR's changes — do not start unrelated work.
 
 Steps:
-1. Find what the PR changed: run `+"`git diff $(git merge-base HEAD origin/HEAD)...HEAD`"+` (or compare against the PR base branch) to see the diff under review.
+1. Inspect what the PR changed by diffing the checkout against the PR's base branch.
 2. Review for correctness bugs, missing error handling, security issues, test coverage, and clear deviations from the surrounding code's conventions. Prefer a few high-confidence findings over nitpicks.
-3. Post your review on the PR with the GitHub CLI: `+"`gh pr review %s`"+` — use --request-changes (with a summary and inline --comment items) if it needs work, or --approve if it is ready.
+3. Post your review on the pull request using whatever review tooling is available for this provider (request changes if it needs work, approve if it is ready), with inline comments for specific findings.
 4. Record the outcome with AO so the worker is nudged: write your full review to review.md, then run
 
      ao review submit --verdict <approved|changes_requested> --body review.md
 
-Constraints: do not push commits, edit files, or modify the branch — review only. If you cannot determine the diff or post the review, still run `+"`ao review submit`"+` with your verdict and findings so the result is recorded.`, spec.PRURL, spec.PRURL)
+Constraints: do not push commits, edit files, or modify the branch — review only. If you cannot post the review on the provider, still run `+"`ao review submit`"+` with your verdict and findings so the result is recorded.`, spec.PRURL)
 }

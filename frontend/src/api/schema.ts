@@ -526,8 +526,6 @@ export interface components {
             reviewId: string;
             sessionId: string;
             status: string;
-            /** Format: date-time */
-            updatedAt: string;
             verdict: string;
         };
         ReviewRunResponse: {

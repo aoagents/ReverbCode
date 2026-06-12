@@ -132,7 +132,6 @@ type ReviewRun struct {
 	Iteration int64
 	Body      string
 	CreatedAt time.Time
-	UpdatedAt time.Time
 }
 
 type Session struct {

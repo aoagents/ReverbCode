@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/gen"
@@ -54,20 +53,18 @@ func (s *Store) InsertReviewRun(ctx context.Context, r domain.ReviewRun) error {
 		Iteration: int64(r.Iteration),
 		Body:      r.Body,
 		CreatedAt: r.CreatedAt,
-		UpdatedAt: r.UpdatedAt,
 	})
 }
 
 // UpdateReviewRunResult sets the status/verdict/body of a review pass.
-func (s *Store) UpdateReviewRunResult(ctx context.Context, id string, status domain.ReviewRunStatus, verdict domain.ReviewVerdict, body string, updatedAt time.Time) error {
+func (s *Store) UpdateReviewRunResult(ctx context.Context, id string, status domain.ReviewRunStatus, verdict domain.ReviewVerdict, body string) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	return s.qw.UpdateReviewRunResult(ctx, gen.UpdateReviewRunResultParams{
-		Status:    status,
-		Verdict:   verdict,
-		Body:      body,
-		UpdatedAt: updatedAt,
-		ID:        id,
+		Status:  status,
+		Verdict: verdict,
+		Body:    body,
+		ID:      id,
 	})
 }
 
@@ -121,6 +118,5 @@ func reviewRunFromRow(r gen.ReviewRun) domain.ReviewRun {
 		Iteration: int(r.Iteration),
 		Body:      r.Body,
 		CreatedAt: r.CreatedAt,
-		UpdatedAt: r.UpdatedAt,
 	}
 }

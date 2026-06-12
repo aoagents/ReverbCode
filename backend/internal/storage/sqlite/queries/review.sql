@@ -11,16 +11,16 @@ SELECT id, session_id, project_id, harness, pr_url, created_at, updated_at
 FROM review WHERE session_id = ?;
 
 -- name: InsertReviewRun :exec
-INSERT INTO review_run (id, review_id, session_id, harness, pr_url, status, verdict, iteration, body, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+INSERT INTO review_run (id, review_id, session_id, harness, pr_url, status, verdict, iteration, body, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: UpdateReviewRunResult :exec
-UPDATE review_run SET status = ?, verdict = ?, body = ?, updated_at = ? WHERE id = ?;
+UPDATE review_run SET status = ?, verdict = ?, body = ? WHERE id = ?;
 
 -- name: GetLatestReviewRunBySession :one
-SELECT id, review_id, session_id, harness, pr_url, status, verdict, iteration, body, created_at, updated_at
+SELECT id, review_id, session_id, harness, pr_url, status, verdict, iteration, body, created_at
 FROM review_run WHERE session_id = ? ORDER BY iteration DESC, created_at DESC LIMIT 1;
 
 -- name: ListReviewRunsBySession :many
-SELECT id, review_id, session_id, harness, pr_url, status, verdict, iteration, body, created_at, updated_at
+SELECT id, review_id, session_id, harness, pr_url, status, verdict, iteration, body, created_at
 FROM review_run WHERE session_id = ? ORDER BY iteration DESC, created_at DESC;

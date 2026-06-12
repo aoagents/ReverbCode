@@ -29,7 +29,6 @@ type ReviewRun struct {
 	// own tracking; the reviewer also posts the review to the PR itself.
 	Body      string    `json:"body"`
 	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
 }
 
 // ReviewRunStatus is the lifecycle state of a single review pass.
@@ -37,7 +36,7 @@ type ReviewRunStatus string
 
 // Review run statuses.
 const (
-	ReviewRunPending  ReviewRunStatus = "pending"
+	ReviewRunRunning  ReviewRunStatus = "running"
 	ReviewRunComplete ReviewRunStatus = "complete"
 	ReviewRunFailed   ReviewRunStatus = "failed"
 )

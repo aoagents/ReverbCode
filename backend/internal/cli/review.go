@@ -22,7 +22,6 @@ type reviewRun struct {
 	Iteration int       `json:"iteration"`
 	Body      string    `json:"body"`
 	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
 }
 
 // reviewRunResponse mirrors controllers.ReviewRunResponse.
