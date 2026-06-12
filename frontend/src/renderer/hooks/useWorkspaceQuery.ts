@@ -32,7 +32,9 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 						: session.kind === "worker"
 							? ("worker" as const)
 							: undefined,
-				branch: `session/${session.id}`,
+				// Prefer the worktree branch the daemon reports; fall back to the
+				// synthesized name only when a session has no branch metadata yet.
+				branch: session.branch || `session/${session.id}`,
 				status: toSessionStatus(session.status, session.isTerminated),
 				archived: session.isArchived ?? false,
 				createdAt: session.createdAt,

@@ -49,6 +49,7 @@ describe("useWorkspaceQuery", () => {
 							displayName: "fix-bug",
 							harness: "claude-code",
 							status: "mergeable",
+							branch: "feat/custom-worktree",
 							isTerminated: false,
 							updatedAt: "2026-06-10T16:15:04Z",
 						},
@@ -82,12 +83,16 @@ describe("useWorkspaceQuery", () => {
 			title: "fix-bug",
 			provider: "claude-code",
 			status: "mergeable",
+			// The daemon's real worktree branch is preserved, not overwritten.
+			branch: "feat/custom-worktree",
 		});
 		expect(workspace.sessions[1]).toMatchObject({
 			id: "sess-2",
 			title: "sess-2",
 			provider: "codex",
 			status: "working",
+			// No branch from the daemon yet: falls back to the synthesized name.
+			branch: "session/sess-2",
 		});
 	});
 
