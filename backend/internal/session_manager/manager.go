@@ -82,7 +82,11 @@ type Manager struct {
 	messenger ports.AgentMessenger
 	lcm       lifecycleRecorder
 	dataDir   string
-	clock     func() time.Time
+	// defaultHarness is the daemon's configured default agent (AO_AGENT). A spawn
+	// that names no harness resolves to it before the seed row is written, so the
+	// stored/returned harness matches the agent the resolver actually launches.
+	defaultHarness domain.AgentHarness
+	clock          func() time.Time
 	// lookPath is exec.LookPath in production; tests substitute a stub so
 	// they don't need real binaries on PATH. Returns ports.ErrAgentBinaryNotFound
 	// when the binary is missing so the sentinel propagates through toAPIError.
@@ -105,7 +109,12 @@ type Deps struct {
 	// DataDir is exported to spawned agents as AO_DATA_DIR so their hook
 	// commands can open the same store.
 	DataDir string
-	Clock   func() time.Time
+	// DefaultHarness is the daemon's configured default agent (AO_AGENT), used to
+	// resolve a spawn that names no harness. Wiring passes config.DefaultAgent;
+	// left empty, an unspecified harness stays empty (the resolver still defaults
+	// it at launch, but the record won't reflect the real agent).
+	DefaultHarness domain.AgentHarness
+	Clock          func() time.Time
 	// LookPath overrides exec.LookPath for the pre-launch agent-binary check.
 	// Production wiring leaves this nil and the manager defaults to
 	// exec.LookPath; tests inject a stub so they need not seed real binaries.
@@ -123,17 +132,18 @@ type Deps struct {
 // time.Now when Deps.Clock is nil.
 func New(d Deps) *Manager {
 	m := &Manager{
-		runtime:    d.Runtime,
-		agents:     d.Agents,
-		workspace:  d.Workspace,
-		store:      d.Store,
-		messenger:  d.Messenger,
-		lcm:        d.Lifecycle,
-		dataDir:    d.DataDir,
-		clock:      d.Clock,
-		lookPath:   d.LookPath,
-		executable: d.Executable,
-		logger:     d.Logger,
+		runtime:        d.Runtime,
+		agents:         d.Agents,
+		workspace:      d.Workspace,
+		store:          d.Store,
+		messenger:      d.Messenger,
+		lcm:            d.Lifecycle,
+		dataDir:        d.DataDir,
+		defaultHarness: d.DefaultHarness,
+		clock:          d.Clock,
+		lookPath:       d.LookPath,
+		executable:     d.Executable,
+		logger:         d.Logger,
 	}
 	if m.clock == nil {
 		m.clock = time.Now
@@ -162,6 +172,13 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	// A per-project role override picks the harness when the spawn names none,
 	// so a project can default workers to one agent and orchestrators to another.
 	cfg.Harness = effectiveHarness(cfg.Harness, cfg.Kind, project.Config)
+	// Resolve an unspecified harness to the daemon default BEFORE the seed row is
+	// written, so the stored/returned harness matches the agent the resolver
+	// launches (otherwise a default-agent session persists an empty harness and
+	// the UI can't tell which agent is running).
+	if cfg.Harness == "" {
+		cfg.Harness = m.defaultHarness
+	}
 
 	prompt, systemPrompt, err := m.buildSpawnTexts(ctx, cfg)
 	if err != nil {
