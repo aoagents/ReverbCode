@@ -192,6 +192,22 @@ func TestSCMObservationProjectsToExistingPRReactions(t *testing.T) {
 	}
 }
 
+func TestSCMObservation_MissingSessionIsIgnored(t *testing.T) {
+	st := newFakeStore()
+	sink := &fakeNotificationSink{}
+	m := New(st, nil, WithNotificationSink(sink))
+	o := ports.SCMObservation{
+		Fetched: true,
+		PR:      ports.SCMPRObservation{URL: "pr1", Number: 1},
+	}
+	if err := m.ApplySCMObservation(ctx, "missing-1", o); err != nil {
+		t.Fatalf("ApplySCMObservation missing session: %v", err)
+	}
+	if len(sink.intents) != 0 {
+		t.Fatalf("missing session emitted notifications: %+v", sink.intents)
+	}
+}
+
 func TestSCMObservationUsesPRHeadWhenCIHeadMissing(t *testing.T) {
 	m, st, msg := newManager()
 	st.sessions["mer-1"] = working("mer-1")

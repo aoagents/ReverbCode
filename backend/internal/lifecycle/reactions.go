@@ -3,7 +3,6 @@ package lifecycle
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -114,7 +113,7 @@ func (m *Manager) notificationIntentForCurrentSCM(ctx context.Context, id domain
 		return nil, err
 	}
 	if !ok {
-		return nil, fmt.Errorf("%w: %s", ports.ErrSessionNotFound, id)
+		return nil, nil
 	}
 	return m.notificationIntentForSCM(rec, o), nil
 }
