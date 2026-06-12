@@ -56,12 +56,12 @@ function AttachedTerminal({ session, theme, daemonReady }: TerminalPaneProps) {
 		if (!terminal) return;
 		// Reuse means the previous session's screen would linger; clear before
 		// re-pointing. Screen-clear only, never reset(): every pane PTY is
-		// `zellij attach` with identical modes, and a full RIS would wipe the
-		// mouse-tracking mode zellij enabled at attach — the 50KB ring replay
-		// can't re-enable it, leaving wheel scroll dead after the first session
-		// switch (yyork's frozen-scroll regression, solved there the same way).
-		// Skipped on the very first attachment: the buffer is empty and the first
-		// fit may not have run yet.
+		// `zellij attach` with identical modes, so the previous session's mouse
+		// tracking stays valid while the new attach's handshake + repaint stream
+		// in — a full RIS would leave wheel scroll dead for that window (yyork's
+		// frozen-scroll regression, solved there the same way). Skipped on the
+		// very first attachment: the buffer is empty and the first fit may not
+		// have run yet.
 		if (hadAttachmentRef.current) {
 			terminal.clear();
 		}

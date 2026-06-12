@@ -25,9 +25,9 @@ export type AttachableTerminal = {
 	writeln: (line: string) => void;
 	/**
 	 * Erase screen + scrollback and home the cursor, preserving terminal modes.
-	 * Never a full reset (RIS): that would drop the mouse-tracking mode zellij
-	 * enabled at attach, which the ring replay cannot re-establish — killing
-	 * wheel scroll (see XtermTerminal's CLEAR_SEQUENCE).
+	 * Never a full reset (RIS): that would drop zellij's mouse-tracking mode
+	 * for the gap until the fresh attach's handshake re-asserts it — a window
+	 * with wheel scroll dead (see XtermTerminal's CLEAR_SEQUENCE).
 	 */
 	clear: () => void;
 	onData: (listener: (data: string) => void) => { dispose: () => void };
@@ -55,6 +55,15 @@ const RETRY_MAX_MS = 8_000;
 // sizes; the attached program should get one SIGWINCH when the drag settles,
 // not dozens (yyork's terminal-panel does the same at its socket layer).
 const RESIZE_DEBOUNCE_MS = 100;
+// One follow-up frame with the same grid after each settled resize. xterm only
+// fires onResize on actual grid changes and the kernel only raises SIGWINCH on
+// actual size changes, so a resize update the zellij client loses (raced
+// mid-attach, coalesced during a drag) would otherwise desync the session's
+// layout from the pane until the NEXT real change — the terminal keeps
+// painting at the old size. The backend answers every resize frame with an
+// explicit SIGWINCH (pty_unix.go), so this re-assert makes the client re-read
+// and re-report its grid; when everything is already in sync it's a no-op.
+const RESIZE_REASSERT_MS = 250;
 
 function defaultCreateMux(): TerminalMux {
 	// Resolved per connect, not per hook: a daemon restart can change the port.
@@ -161,11 +170,16 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		const input = terminal.onData((data) => mux.sendInput(handle, data));
 		// xterm only fires onResize when the grid actually changed; the debounce
 		// additionally collapses a drag's burst of changes into one PTY resize.
+		// Each settled resize is re-asserted once (see RESIZE_REASSERT_MS); both
+		// stages share resizeTimer so a new burst or teardown cancels either.
 		const resize = terminal.onResize(({ cols, rows }) => {
 			if (r.resizeTimer) clearTimeout(r.resizeTimer);
 			r.resizeTimer = setTimeout(() => {
-				r.resizeTimer = null;
 				mux.resize(handle, cols, rows);
+				r.resizeTimer = setTimeout(() => {
+					r.resizeTimer = null;
+					mux.resize(handle, cols, rows);
+				}, RESIZE_REASSERT_MS);
 			}, RESIZE_DEBOUNCE_MS);
 		});
 		r.disposers.push(
@@ -174,10 +188,11 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		);
 
 		// Connection status is chrome (the pane's banner), never buffer content —
-		// the PTY owns the buffer. On reattach the server replays the recent-output
-		// ring (backend internal/terminal/ring.go); clear the stale screen so it
-		// isn't doubled. Screen-clear only, never reset(): RIS would wipe zellij's
-		// mouse-tracking mode and freeze wheel scrolling after every reconnect.
+		// the PTY owns the buffer. Each open spawns a fresh server-side `zellij
+		// attach` (backend internal/terminal/attachment.go) that answers with its
+		// init handshake + a full repaint; clear the stale screen so the repaint
+		// lands on a blank grid. Screen-clear only, never reset(): RIS would drop
+		// zellij's mouse-tracking mode until the handshake lands.
 		if (!r.firstAttach) {
 			terminal.clear();
 		}
