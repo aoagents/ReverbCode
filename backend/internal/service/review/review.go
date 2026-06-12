@@ -1,11 +1,10 @@
-// Package review is the daemon's code-review surface: a configured reviewer
-// agent reviews a worker's PR over the worker's own worktree, and the result is
-// posted to the SCM provider. The worker picks the feedback up through the
-// existing SCM observer → review-nudge path.
+// Package review is the daemon's code-review surface: triggering a review spawns
+// a configured reviewer agent over the worker's worktree with its own review
+// prompt. The reviewer agent posts its review to the PR itself; the worker picks
+// the feedback up through the existing SCM observer → review-nudge path.
 //
 // V1 is manual and one-shot: a review runs only when triggered. The reviewer is
-// not modeled as a session — it is tracked by the review (one per worker) and
-// review_run (one per pass) tables.
+// tracked by the review (one per worker) and review_run (one per pass) tables.
 package review
 
 import (
@@ -17,7 +16,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
-	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 // ErrInvalid and ErrNotFound let the HTTP layer map service failures to 422/404.
@@ -68,7 +66,6 @@ type RunSpec struct {
 // Manager is the reviews surface the HTTP controller depends on.
 type Manager interface {
 	Trigger(ctx context.Context, workerID domain.SessionID) (domain.ReviewRun, error)
-	Submit(ctx context.Context, workerID domain.SessionID, verdict domain.ReviewVerdict, body string) (domain.ReviewRun, error)
 	List(ctx context.Context, workerID domain.SessionID) ([]domain.ReviewRun, error)
 }
 
@@ -79,7 +76,6 @@ type Deps struct {
 	PRs      PRs
 	Projects Projects
 	Runner   Runner
-	Poster   ports.PRReviewPoster
 
 	// Clock and NewID are injectable for deterministic tests.
 	Clock func() time.Time
@@ -93,7 +89,6 @@ type Service struct {
 	prs      PRs
 	projects Projects
 	runner   Runner
-	poster   ports.PRReviewPoster
 	clock    func() time.Time
 	newID    func() string
 }
@@ -116,7 +111,6 @@ func New(d Deps) *Service {
 		prs:      d.PRs,
 		projects: d.Projects,
 		runner:   d.Runner,
-		poster:   d.Poster,
 		clock:    clock,
 		newID:    newID,
 	}
@@ -148,7 +142,7 @@ func (s *Service) Trigger(ctx context.Context, workerID domain.SessionID) (domai
 		return domain.ReviewRun{}, err
 	}
 
-	harness, err := s.reviewerHarness(ctx, worker.ProjectID)
+	harness, err := s.reviewerHarness(ctx, worker)
 	if err != nil {
 		return domain.ReviewRun{}, err
 	}
@@ -189,45 +183,6 @@ func (s *Service) Trigger(ctx context.Context, workerID domain.SessionID) (domai
 	return run, nil
 }
 
-// Submit records a reviewer's result for a worker's active review pass and posts
-// it to the PR. The review body is not persisted — it lives on the PR.
-func (s *Service) Submit(ctx context.Context, workerID domain.SessionID, verdict domain.ReviewVerdict, body string) (domain.ReviewRun, error) {
-	if workerID == "" {
-		return domain.ReviewRun{}, fmt.Errorf("%w: worker session id is required", ErrInvalid)
-	}
-	if !verdict.Valid() {
-		return domain.ReviewRun{}, fmt.Errorf("%w: verdict must be %q or %q", ErrInvalid, domain.VerdictApproved, domain.VerdictChangesRequested)
-	}
-	if verdict == domain.VerdictChangesRequested && body == "" {
-		return domain.ReviewRun{}, fmt.Errorf("%w: a changes_requested review requires a body", ErrInvalid)
-	}
-	if s.poster == nil {
-		return domain.ReviewRun{}, fmt.Errorf("%w: review posting is unavailable (no SCM credentials)", ErrInvalid)
-	}
-
-	run, ok, err := s.store.GetLatestReviewRunBySession(ctx, workerID)
-	if err != nil {
-		return domain.ReviewRun{}, err
-	}
-	if !ok {
-		return domain.ReviewRun{}, fmt.Errorf("%w: no review run for worker %q", ErrNotFound, workerID)
-	}
-
-	if err := s.poster.PostPRReview(ctx, run.PRURL, verdict, body); err != nil {
-		_ = s.store.UpdateReviewRunResult(ctx, run.ID, domain.ReviewRunFailed, verdict, s.clock())
-		return domain.ReviewRun{}, fmt.Errorf("post review: %w", err)
-	}
-
-	now := s.clock()
-	if err := s.store.UpdateReviewRunResult(ctx, run.ID, domain.ReviewRunComplete, verdict, now); err != nil {
-		return domain.ReviewRun{}, err
-	}
-	run.Status = domain.ReviewRunComplete
-	run.Verdict = verdict
-	run.UpdatedAt = now
-	return run, nil
-}
-
 // List returns the review passes recorded for a worker, newest first.
 func (s *Service) List(ctx context.Context, workerID domain.SessionID) ([]domain.ReviewRun, error) {
 	if workerID == "" {
@@ -247,18 +202,19 @@ func (s *Service) workerPRURL(ctx context.Context, workerID domain.SessionID) (s
 	return prs[0].URL, nil
 }
 
-func (s *Service) reviewerHarness(ctx context.Context, projectID domain.ProjectID) (domain.AgentHarness, error) {
+// reviewerHarness resolves which harness reviews the worker's PR: a configured
+// reviewer wins, otherwise the worker's own harness is reused (falling back to
+// claude-code), per domain.ResolveReviewerHarness.
+func (s *Service) reviewerHarness(ctx context.Context, worker domain.SessionRecord) (domain.AgentHarness, error) {
 	var cfg domain.ProjectConfig
 	if s.projects != nil {
-		if proj, ok, err := s.projects.GetProject(ctx, string(projectID)); err != nil {
+		if proj, ok, err := s.projects.GetProject(ctx, string(worker.ProjectID)); err != nil {
 			return "", err
 		} else if ok {
 			cfg = proj.Config
 		}
 	}
-	reviewers := cfg.ResolvedReviewers()
-	// V1 runs a single reviewer; the first configured (or default) one.
-	return reviewers[0].Harness, nil
+	return cfg.ResolveReviewerHarness(worker.Harness), nil
 }
 
 func (s *Service) upsertReview(ctx context.Context, worker domain.SessionRecord, harness domain.AgentHarness, prURL string, now time.Time) (domain.Review, error) {

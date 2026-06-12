@@ -38,8 +38,8 @@ type ProjectConfig struct {
 	Orchestrator RoleOverride `json:"orchestrator,omitempty"`
 
 	// Reviewers names the agent(s) that review a worker's PR when a review is
-	// triggered. An empty list resolves to one default reviewer
-	// (see ResolvedReviewers).
+	// triggered. It is configured independently of the Worker override; an empty
+	// list falls back to the worker's own harness (see ResolveReviewerHarness).
 	Reviewers []ReviewerConfig `json:"reviewers,omitempty"`
 }
 
@@ -48,16 +48,21 @@ type ReviewerConfig struct {
 	Harness AgentHarness `json:"harness"`
 }
 
-// DefaultReviewerHarness is the reviewer used when a project configures none.
-const DefaultReviewerHarness = HarnessClaudeCode
+// FallbackReviewerHarness is the reviewer used when a project configures none
+// and the worker's harness cannot be reused.
+const FallbackReviewerHarness = HarnessClaudeCode
 
-// ResolvedReviewers returns the configured reviewers, or a single default
-// reviewer when the project sets none.
-func (c ProjectConfig) ResolvedReviewers() []ReviewerConfig {
-	if len(c.Reviewers) == 0 {
-		return []ReviewerConfig{{Harness: DefaultReviewerHarness}}
+// ResolveReviewerHarness picks the reviewer harness for a worker. A configured
+// reviewer wins; otherwise it reuses the worker's own harness when that is
+// supported, falling back to claude-code.
+func (c ProjectConfig) ResolveReviewerHarness(workerHarness AgentHarness) AgentHarness {
+	if len(c.Reviewers) > 0 {
+		return c.Reviewers[0].Harness
 	}
-	return c.Reviewers
+	if workerHarness.IsKnown() {
+		return workerHarness
+	}
+	return FallbackReviewerHarness
 }
 
 // RoleOverride overrides the harness and/or agent config for a session role.

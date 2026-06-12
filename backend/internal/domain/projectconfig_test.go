@@ -68,17 +68,21 @@ func TestProjectConfigWithDefaults(t *testing.T) {
 	}
 }
 
-func TestResolvedReviewers(t *testing.T) {
-	// Empty config resolves to the single default reviewer.
-	got := (ProjectConfig{}).ResolvedReviewers()
-	if len(got) != 1 || got[0].Harness != DefaultReviewerHarness {
-		t.Fatalf("ResolvedReviewers() = %#v, want one default reviewer", got)
+func TestResolveReviewerHarness(t *testing.T) {
+	// A configured reviewer always wins, regardless of the worker harness.
+	cfg := ProjectConfig{Reviewers: []ReviewerConfig{{Harness: HarnessCodex}}}
+	if got := cfg.ResolveReviewerHarness(HarnessAider); got != HarnessCodex {
+		t.Fatalf("configured reviewer = %q, want codex", got)
 	}
 
-	// A configured list is returned as-is.
-	cfg := ProjectConfig{Reviewers: []ReviewerConfig{{Harness: HarnessCodex}, {Harness: HarnessAider}}}
-	if got := cfg.ResolvedReviewers(); len(got) != 2 || got[0].Harness != HarnessCodex {
-		t.Fatalf("ResolvedReviewers() = %#v, want configured list", got)
+	// No reviewer configured: reuse the worker harness when supported.
+	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessAider); got != HarnessAider {
+		t.Fatalf("default = %q, want worker harness aider", got)
+	}
+
+	// Unknown/empty worker harness falls back to claude-code.
+	if got := (ProjectConfig{}).ResolveReviewerHarness("nope"); got != FallbackReviewerHarness {
+		t.Fatalf("fallback = %q, want %q", got, FallbackReviewerHarness)
 	}
 }
 

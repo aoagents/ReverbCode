@@ -72,13 +72,6 @@ type AgentMessenger interface {
 	Send(ctx context.Context, id domain.SessionID, message string) error
 }
 
-// PRReviewPoster posts an AO code-review result to a PR on the SCM provider.
-// The worker picks the posted review up through the SCM observer's review-nudge
-// path, so no separate in-process delivery is needed.
-type PRReviewPoster interface {
-	PostPRReview(ctx context.Context, prURL string, verdict domain.ReviewVerdict, body string) error
-}
-
 // ---- runtime / agent / workspace plugin ports ----
 
 // Runtime is the full runtime adapter contract: session creation/teardown plus

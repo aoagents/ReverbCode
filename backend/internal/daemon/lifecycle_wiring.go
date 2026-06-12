@@ -95,20 +95,15 @@ func startSession(cfg config.Config, runtime ports.Runtime, store *sqlite.Store,
 		// activity hooks; the deriver registry is the source of truth for that.
 		SignalCapable: activitydispatch.SupportsHarness,
 	})
-	// The reviewer runs over the worker's own worktree (reusing the agent
-	// resolver + runtime) and posts its result to the PR. A nil scmProvider
-	// leaves the poster unset; Submit then fails loudly rather than panicking.
-	var poster ports.PRReviewPoster
-	if scmProvider != nil {
-		poster = scmProvider
-	}
+	// Triggering a review spawns the reviewer agent over the worker's worktree
+	// (reusing the agent resolver + runtime); the reviewer posts its review to
+	// the PR itself, so the review service needs no SCM writer.
 	reviewSvc := reviewsvc.New(reviewsvc.Deps{
 		Store:    store,
 		Sessions: store,
 		PRs:      store,
 		Projects: store,
 		Runner:   reviewsvc.NewAgentRunner(agents, runtime),
-		Poster:   poster,
 	})
 	return sessionSvc, reviewSvc, nil
 }

@@ -1,7 +1,6 @@
 package controllers
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 
@@ -18,15 +17,9 @@ type ListReviewsResponse struct {
 	Reviews []domain.ReviewRun `json:"reviews"`
 }
 
-// ReviewRunResponse is the { review } body of trigger (201) and submit (200).
+// ReviewRunResponse is the { review } body of trigger (201).
 type ReviewRunResponse struct {
 	Review domain.ReviewRun `json:"review"`
-}
-
-// SubmitReviewInput is the body of POST /api/v1/sessions/{sessionId}/reviews/submit.
-type SubmitReviewInput struct {
-	Verdict string `json:"verdict" description:"Review verdict: approved or changes_requested."`
-	Body    string `json:"body" description:"Review body, posted to the PR. Required for changes_requested."`
 }
 
 // ReviewsController owns the session-scoped /reviews routes. A nil Svc returns 501.
@@ -38,7 +31,6 @@ type ReviewsController struct {
 func (c *ReviewsController) Register(r chi.Router) {
 	r.Get("/sessions/{sessionId}/reviews", c.list)
 	r.Post("/sessions/{sessionId}/reviews/trigger", c.trigger)
-	r.Post("/sessions/{sessionId}/reviews/submit", c.submit)
 }
 
 func (c *ReviewsController) list(w http.ResponseWriter, r *http.Request) {
@@ -68,24 +60,6 @@ func (c *ReviewsController) trigger(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	envelope.WriteJSON(w, http.StatusCreated, ReviewRunResponse{Review: run})
-}
-
-func (c *ReviewsController) submit(w http.ResponseWriter, r *http.Request) {
-	if c.Svc == nil {
-		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/{sessionId}/reviews/submit")
-		return
-	}
-	var in SubmitReviewInput
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_BODY", "Invalid request body", nil)
-		return
-	}
-	run, err := c.Svc.Submit(r.Context(), sessionID(r), domain.ReviewVerdict(in.Verdict), in.Body)
-	if err != nil {
-		writeReviewError(w, r, err)
-		return
-	}
-	envelope.WriteJSON(w, http.StatusOK, ReviewRunResponse{Review: run})
 }
 
 func writeReviewError(w http.ResponseWriter, r *http.Request, err error) {

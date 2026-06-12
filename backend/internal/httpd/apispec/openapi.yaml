@@ -853,57 +853,6 @@ paths:
       summary: List a worker's code-review runs
       tags:
       - reviews
-  /api/v1/sessions/{sessionId}/reviews/submit:
-    post:
-      operationId: submitReview
-      parameters:
-      - description: Session identifier, e.g. project-1.
-        in: path
-        name: sessionId
-        required: true
-        schema:
-          description: Session identifier, e.g. project-1.
-          type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/SubmitReviewInput'
-        required: true
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ReviewRunResponse'
-          description: OK
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Bad Request
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Not Found
-        "422":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Unprocessable Entity
-        "501":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Not Implemented
-      summary: Submit a reviewer's result for a worker's PR
-      tags:
-      - reviews
   /api/v1/sessions/{sessionId}/reviews/trigger:
     post:
       operationId: triggerReview
@@ -1700,18 +1649,6 @@ components:
           type: string
       required:
       - projectId
-      type: object
-    SubmitReviewInput:
-      properties:
-        body:
-          description: Review body, posted to the PR. Required for changes_requested.
-          type: string
-        verdict:
-          description: 'Review verdict: approved or changes_requested.'
-          type: string
-      required:
-      - verdict
-      - body
       type: object
     WorkspaceRepo:
       properties:

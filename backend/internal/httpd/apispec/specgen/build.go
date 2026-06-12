@@ -162,7 +162,6 @@ var schemaNames = map[string]string{
 	// httpd/controllers — review wire envelopes
 	"ControllersListReviewsResponse": "ListReviewsResponse",
 	"ControllersReviewRunResponse":   "ReviewRunResponse",
-	"ControllersSubmitReviewInput":   "SubmitReviewInput",
 	// domain review entities
 	"DomainReviewRun": "ReviewRun",
 	// service/project entities + DTOs
@@ -275,19 +274,6 @@ func reviewOperations() []operation {
 			pathParams: []any{controllers.SessionIDParam{}},
 			resps: []respUnit{
 				{http.StatusCreated, controllers.ReviewRunResponse{}},
-				{http.StatusUnprocessableEntity, envelope.APIError{}},
-				{http.StatusNotFound, envelope.APIError{}},
-				{http.StatusNotImplemented, envelope.APIError{}},
-			},
-		},
-		{
-			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/reviews/submit", id: "submitReview", tag: "reviews",
-			summary:    "Submit a reviewer's result for a worker's PR",
-			pathParams: []any{controllers.SessionIDParam{}},
-			reqBody:    controllers.SubmitReviewInput{},
-			resps: []respUnit{
-				{http.StatusOK, controllers.ReviewRunResponse{}},
-				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusUnprocessableEntity, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
