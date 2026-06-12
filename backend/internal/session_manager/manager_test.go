@@ -326,6 +326,25 @@ func TestSpawn_AssignsIDAndGoesIdle(t *testing.T) {
 		t.Fatal("handle not folded")
 	}
 }
+
+// TestSpawn_StampsUTCTimestamps locks the default clock to UTC so spawn-stamped
+// CreatedAt/UpdatedAt match every other session write (rename, activity), which
+// all use time.Now().UTC(). A local default produced mixed-timezone timestamps
+// in `ao session get` (created in local time, updated in UTC).
+func TestSpawn_StampsUTCTimestamps(t *testing.T) {
+	m, st, _, _ := newManager()
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
+		t.Fatal(err)
+	}
+	rec := st.sessions["mer-1"]
+	if loc := rec.CreatedAt.Location(); loc != time.UTC {
+		t.Fatalf("CreatedAt location = %v, want UTC", loc)
+	}
+	if loc := rec.UpdatedAt.Location(); loc != time.UTC {
+		t.Fatalf("UpdatedAt location = %v, want UTC", loc)
+	}
+}
+
 func TestSpawn_RollsBackOnRuntimeFailure(t *testing.T) {
 	m, st, _, ws := newManager()
 	m.runtime = &fakeRuntime{createErr: errors.New("boom")}

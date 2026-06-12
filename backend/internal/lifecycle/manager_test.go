@@ -146,6 +146,21 @@ func TestMarkSpawnedStoresRuntimeMetadata(t *testing.T) {
 	}
 }
 
+// TestMarkSpawned_StampsUTCActivity locks the lifecycle clock to UTC so
+// activity-driven timestamps match the session manager's spawn timestamps. A
+// local clock here left `ao session get` showing created in UTC but updated in
+// local time.
+func TestMarkSpawned_StampsUTCActivity(t *testing.T) {
+	m, st, _ := newManager()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", IsTerminated: true}
+	if err := m.MarkSpawned(ctx, "mer-1", domain.SessionMetadata{RuntimeHandleID: "h1"}); err != nil {
+		t.Fatal(err)
+	}
+	if loc := st.sessions["mer-1"].Activity.LastActivityAt.Location(); loc != time.UTC {
+		t.Fatalf("LastActivityAt location = %v, want UTC", loc)
+	}
+}
+
 func TestPRObservation_CIFailingNudgesAgentWithLogs(t *testing.T) {
 	m, st, msg := newManager()
 	st.sessions["mer-1"] = working("mer-1")
