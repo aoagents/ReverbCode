@@ -36,6 +36,28 @@ type ProjectConfig struct {
 	// Worker and Orchestrator are role-specific harness/agent-config overrides.
 	Worker       RoleOverride `json:"worker,omitempty"`
 	Orchestrator RoleOverride `json:"orchestrator,omitempty"`
+
+	// Reviewers names the agent(s) that review a worker's PR when a review is
+	// triggered. An empty list resolves to one default reviewer
+	// (see ResolvedReviewers).
+	Reviewers []ReviewerConfig `json:"reviewers,omitempty"`
+}
+
+// ReviewerConfig names one reviewer agent by harness.
+type ReviewerConfig struct {
+	Harness AgentHarness `json:"harness"`
+}
+
+// DefaultReviewerHarness is the reviewer used when a project configures none.
+const DefaultReviewerHarness = HarnessClaudeCode
+
+// ResolvedReviewers returns the configured reviewers, or a single default
+// reviewer when the project sets none.
+func (c ProjectConfig) ResolvedReviewers() []ReviewerConfig {
+	if len(c.Reviewers) == 0 {
+		return []ReviewerConfig{{Harness: DefaultReviewerHarness}}
+	}
+	return c.Reviewers
 }
 
 // RoleOverride overrides the harness and/or agent config for a session role.
@@ -89,6 +111,11 @@ func (c ProjectConfig) Validate() error {
 	for _, s := range c.Symlinks {
 		if err := validateRepoRelative(s); err != nil {
 			return fmt.Errorf("symlink %q: %w", s, err)
+		}
+	}
+	for i, rv := range c.Reviewers {
+		if !rv.Harness.IsKnown() {
+			return fmt.Errorf("reviewers[%d].harness: unknown harness %q", i, rv.Harness)
 		}
 	}
 	return nil

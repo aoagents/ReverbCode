@@ -19,6 +19,9 @@ func TestProjectConfigValidate(t *testing.T) {
 		{"symlink parent escape", ProjectConfig{Symlinks: []string{"../escape"}}, true},
 		{"symlink embedded parent", ProjectConfig{Symlinks: []string{"a/../../b"}}, true},
 		{"symlink bare ..", ProjectConfig{Symlinks: []string{".."}}, true},
+		{"good reviewers", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: HarnessCodex}}}, false},
+		{"unknown reviewer harness", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: "nope"}}}, true},
+		{"empty reviewer harness", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ""}}}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -62,6 +65,20 @@ func TestProjectConfigWithDefaults(t *testing.T) {
 	}
 	if got.AgentConfig.Model != "m" {
 		t.Fatalf("WithDefaults dropped a set field: %#v", got.AgentConfig)
+	}
+}
+
+func TestResolvedReviewers(t *testing.T) {
+	// Empty config resolves to the single default reviewer.
+	got := (ProjectConfig{}).ResolvedReviewers()
+	if len(got) != 1 || got[0].Harness != DefaultReviewerHarness {
+		t.Fatalf("ResolvedReviewers() = %#v, want one default reviewer", got)
+	}
+
+	// A configured list is returned as-is.
+	cfg := ProjectConfig{Reviewers: []ReviewerConfig{{Harness: HarnessCodex}, {Harness: HarnessAider}}}
+	if got := cfg.ResolvedReviewers(); len(got) != 2 || got[0].Harness != HarnessCodex {
+		t.Fatalf("ResolvedReviewers() = %#v, want configured list", got)
 	}
 }
 
