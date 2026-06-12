@@ -136,7 +136,10 @@ func New(d Deps) *Manager {
 		logger:     d.Logger,
 	}
 	if m.clock == nil {
-		m.clock = time.Now
+		// UTC so spawn-stamped CreatedAt/UpdatedAt match every other session
+		// write (rename, activity) — all of which use time.Now().UTC(). A local
+		// default produced mixed-timezone timestamps in `ao session get`.
+		m.clock = func() time.Time { return time.Now().UTC() }
 	}
 	if m.lookPath == nil {
 		m.lookPath = exec.LookPath
