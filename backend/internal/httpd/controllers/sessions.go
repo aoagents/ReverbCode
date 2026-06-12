@@ -36,6 +36,10 @@ type SessionService interface {
 	Send(ctx context.Context, id domain.SessionID, message string) error
 	ListPRs(ctx context.Context, id domain.SessionID) ([]domain.PRFacts, error)
 	ClaimPR(ctx context.Context, id domain.SessionID, ref string, opts sessionsvc.ClaimPROptions) (sessionsvc.ClaimPRResult, error)
+	GitStatus(ctx context.Context, id domain.SessionID) (ports.GitStatus, error)
+	GitStageAll(ctx context.Context, id domain.SessionID) error
+	GitDiscardAll(ctx context.Context, id domain.SessionID) error
+	GitCommitAll(ctx context.Context, id domain.SessionID, message string, push bool) (ports.GitCommitResult, error)
 }
 
 // ActivityRecorder applies an agent activity-state signal to a session. It is
@@ -68,6 +72,10 @@ func (c *SessionsController) Register(r chi.Router) {
 	r.Post("/sessions/{sessionId}/rollback", c.rollback)
 	r.Post("/sessions/{sessionId}/send", c.send)
 	r.Post("/sessions/{sessionId}/activity", c.activity)
+	r.Get("/sessions/{sessionId}/git", c.gitStatus)
+	r.Post("/sessions/{sessionId}/git/stage", c.gitStage)
+	r.Post("/sessions/{sessionId}/git/discard", c.gitDiscard)
+	r.Post("/sessions/{sessionId}/git/commit", c.gitCommit)
 	r.Get("/orchestrators", c.listOrchestrators)
 	r.Post("/orchestrators", c.spawnOrchestrator)
 	r.Get("/orchestrators/{id}", c.getOrchestrator)
@@ -308,6 +316,89 @@ func (c *SessionsController) activity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	envelope.WriteJSON(w, http.StatusOK, SetActivityResponse{OK: true, SessionID: sessionID(r), State: in.State})
+}
+
+func (c *SessionsController) gitStatus(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "GET", "/api/v1/sessions/{sessionId}/git")
+		return
+	}
+	status, err := c.Svc.GitStatus(r.Context(), sessionID(r))
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	files := make([]GitFileChange, 0, len(status.Files))
+	for _, file := range status.Files {
+		files = append(files, GitFileChange{Path: file.Path, Additions: file.Additions, Deletions: file.Deletions, Staged: file.Staged})
+	}
+	envelope.WriteJSON(w, http.StatusOK, SessionGitStatusResponse{SessionID: sessionID(r), Branch: status.Branch, Files: files})
+}
+
+func (c *SessionsController) gitStage(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/{sessionId}/git/stage")
+		return
+	}
+	if err := c.Svc.GitStageAll(r.Context(), sessionID(r)); err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, GitActionResponse{OK: true, SessionID: sessionID(r)})
+}
+
+func (c *SessionsController) gitDiscard(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/{sessionId}/git/discard")
+		return
+	}
+	if err := c.Svc.GitDiscardAll(r.Context(), sessionID(r)); err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, GitActionResponse{OK: true, SessionID: sessionID(r)})
+}
+
+func (c *SessionsController) gitCommit(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/{sessionId}/git/commit")
+		return
+	}
+	var in GitCommitRequest
+	if err := decodeJSON(r, &in); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+		return
+	}
+	message := strings.TrimSpace(in.Message)
+	if message == "" {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "MESSAGE_REQUIRED", "Commit message is required", nil)
+		return
+	}
+	if len(message) > maxMessageLen {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "MESSAGE_TOO_LONG", "Commit message is too long", nil)
+		return
+	}
+	result, err := c.Svc.GitCommitAll(r.Context(), sessionID(r), message, in.Push)
+	if err != nil {
+		// A non-empty SHA means the commit landed and only the push leg failed
+		// (CommitAll resolves the SHA before it ever attempts to push). Writing
+		// the bare error would 409 and drop the SHA, leaving committed work the
+		// user can't see; surface it as a 200 with a push warning instead.
+		if result.SHA != "" {
+			envelope.WriteJSON(w, http.StatusOK, GitCommitResponse{
+				OK:        true,
+				SessionID: sessionID(r),
+				SHA:       result.SHA,
+				Branch:    result.Branch,
+				Pushed:    false,
+				PushError: err.Error(),
+			})
+			return
+		}
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, GitCommitResponse{OK: true, SessionID: sessionID(r), SHA: result.SHA, Branch: result.Branch, Pushed: result.Pushed})
 }
 
 func (c *SessionsController) spawnOrchestrator(w http.ResponseWriter, r *http.Request) {

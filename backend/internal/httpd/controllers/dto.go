@@ -212,6 +212,46 @@ type ListSessionPRsResponse struct {
 	PRs       []SessionPRFacts `json:"prs"`
 }
 
+// GitFileChange is one changed path in a session workspace's diff.
+type GitFileChange struct {
+	Path      string `json:"path"`
+	Additions int    `json:"additions"`
+	Deletions int    `json:"deletions"`
+	Staged    bool   `json:"staged"`
+}
+
+// SessionGitStatusResponse is the body of GET /sessions/{sessionId}/git.
+type SessionGitStatusResponse struct {
+	SessionID domain.SessionID `json:"sessionId"`
+	Branch    string           `json:"branch"`
+	Files     []GitFileChange  `json:"files"`
+}
+
+// GitActionResponse is the body of the stage/discard git routes.
+type GitActionResponse struct {
+	OK        bool             `json:"ok"`
+	SessionID domain.SessionID `json:"sessionId"`
+}
+
+// GitCommitRequest is the body of POST /sessions/{sessionId}/git/commit.
+type GitCommitRequest struct {
+	Message string `json:"message" minLength:"1"`
+	Push    bool   `json:"push,omitempty"`
+}
+
+// GitCommitResponse is the body of POST /sessions/{sessionId}/git/commit.
+// PushError is set when the commit landed but the push leg failed: the response
+// is still a 200 carrying the SHA so the committed work is never lost, and the
+// caller renders PushError as a warning rather than treating the commit as failed.
+type GitCommitResponse struct {
+	OK        bool             `json:"ok"`
+	SessionID domain.SessionID `json:"sessionId"`
+	SHA       string           `json:"sha"`
+	Branch    string           `json:"branch"`
+	Pushed    bool             `json:"pushed"`
+	PushError string           `json:"pushError,omitempty"`
+}
+
 // ClaimPRRequest is the body of POST /sessions/{sessionId}/pr/claim.
 type ClaimPRRequest struct {
 	PR            string `json:"pr" minLength:"1"`

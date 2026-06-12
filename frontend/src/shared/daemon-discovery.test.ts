@@ -1,5 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
-import { createListenPortScanner, defaultRunFilePath, parseDaemonListenPort, parseRunFile } from "./daemon-discovery";
+import {
+	createListenPortScanner,
+	defaultRunFilePath,
+	isDaemonHealthz,
+	parseDaemonListenPort,
+	parseRunFile,
+} from "./daemon-discovery";
+import { daemonStatusEquals } from "./daemon-status";
 
 // Real shape emitted by slog's TextHandler in backend/internal/httpd/server.go.
 const LISTEN_LINE = 'time=2026-06-10T09:15:04.221-07:00 level=INFO msg="daemon listening" addr=127.0.0.1:3001 pid=4242';
@@ -87,6 +94,37 @@ describe("parseRunFile", () => {
 	it("treats a missing or unparseable startedAt as epoch zero", () => {
 		expect(parseRunFile(JSON.stringify({ pid: 1, port: 3001 }))?.startedAtMs).toBe(0);
 		expect(parseRunFile(JSON.stringify({ pid: 1, port: 3001, startedAt: "not-a-date" }))?.startedAtMs).toBe(0);
+	});
+});
+
+describe("isDaemonHealthz", () => {
+	it("accepts the daemon's healthz payload", () => {
+		expect(isDaemonHealthz('{"pid":57329,"service":"agent-orchestrator-daemon","status":"ok"}')).toBe(true);
+	});
+
+	it("rejects foreign services squatting on a stale run-file port", () => {
+		expect(isDaemonHealthz('{"service":"something-else","status":"ok"}')).toBe(false);
+		expect(isDaemonHealthz('{"status":"ok"}')).toBe(false);
+	});
+
+	it("rejects non-ok status and malformed bodies", () => {
+		expect(isDaemonHealthz('{"service":"agent-orchestrator-daemon","status":"degraded"}')).toBe(false);
+		expect(isDaemonHealthz("<html>not json</html>")).toBe(false);
+		expect(isDaemonHealthz("")).toBe(false);
+		expect(isDaemonHealthz("null")).toBe(false);
+	});
+});
+
+describe("daemonStatusEquals", () => {
+	it("treats identical state, port, and message as equal", () => {
+		expect(daemonStatusEquals({ state: "ready", port: 3001 }, { state: "ready", port: 3001 })).toBe(true);
+		expect(daemonStatusEquals({ state: "stopped" }, { state: "stopped" })).toBe(true);
+	});
+
+	it("distinguishes differing state, port, or message", () => {
+		expect(daemonStatusEquals({ state: "ready", port: 3001 }, { state: "ready", port: 3002 })).toBe(false);
+		expect(daemonStatusEquals({ state: "stopped" }, { state: "ready", port: 3001 })).toBe(false);
+		expect(daemonStatusEquals({ state: "stopped", message: "a" }, { state: "stopped", message: "b" })).toBe(false);
 	});
 });
 

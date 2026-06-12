@@ -85,6 +85,7 @@ type Service struct {
 	// the no_signal downgrade — a hook-less harness staying silent forever is
 	// normal, not a broken pipeline. nil means "unknown": never downgrade.
 	signalCapable func(domain.AgentHarness) bool
+	workspaceGit  ports.WorkspaceGit
 }
 
 // New wires a controller-facing session service over an internal session Manager.
@@ -105,11 +106,14 @@ type Deps struct {
 	// wiring passes activitydispatch.SupportsHarness. Left nil, no session is
 	// ever downgraded to no_signal.
 	SignalCapable func(domain.AgentHarness) bool
+	// WorkspaceGit backs the session git routes (status, stage, discard,
+	// commit). Left nil, those routes report git as unavailable.
+	WorkspaceGit ports.WorkspaceGit
 }
 
 // NewWithDeps wires a session service with optional PR-claim dependencies.
 func NewWithDeps(d Deps) *Service {
-	s := &Service{manager: d.Manager, store: d.Store, prClaimer: d.PRClaimer, scm: d.SCM, clock: d.Clock, signalCapable: d.SignalCapable}
+	s := &Service{manager: d.Manager, store: d.Store, prClaimer: d.PRClaimer, scm: d.SCM, clock: d.Clock, signalCapable: d.SignalCapable, workspaceGit: d.WorkspaceGit}
 	if s.prClaimer == nil {
 		if w, ok := d.Store.(ports.PRClaimer); ok {
 			s.prClaimer = w
@@ -335,9 +339,9 @@ func (s *Service) toSession(ctx context.Context, rec domain.SessionRecord) (doma
 		return domain.Session{}, fmt.Errorf("pr facts %s: %w", rec.ID, err)
 	}
 	if !ok {
-		return domain.Session{SessionRecord: rec, Status: deriveStatus(rec, nil, s.now(), s.harnessSignals(rec.Harness)), TerminalHandleID: rec.Metadata.RuntimeHandleID}, nil
+		return domain.Session{SessionRecord: rec, Status: deriveStatus(rec, nil, s.now(), s.harnessSignals(rec.Harness)), TerminalHandleID: rec.Metadata.RuntimeHandleID, Branch: rec.Metadata.Branch}, nil
 	}
-	return domain.Session{SessionRecord: rec, Status: deriveStatus(rec, &pr, s.now(), s.harnessSignals(rec.Harness)), TerminalHandleID: rec.Metadata.RuntimeHandleID}, nil
+	return domain.Session{SessionRecord: rec, Status: deriveStatus(rec, &pr, s.now(), s.harnessSignals(rec.Harness)), TerminalHandleID: rec.Metadata.RuntimeHandleID, Branch: rec.Metadata.Branch}, nil
 }
 
 // now tolerates a zero-value Service (tests construct the struct literally

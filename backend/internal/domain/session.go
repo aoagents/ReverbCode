@@ -61,4 +61,7 @@ type Session struct {
 	SessionRecord
 	Status           SessionStatus `json:"status"`
 	TerminalHandleID string        `json:"terminalHandleId,omitempty"`
+	// Branch is the session's worktree branch, surfaced from Metadata (which
+	// stays internal) so the UI's git rail can label the workspace.
+	Branch string `json:"branch,omitempty"`
 }

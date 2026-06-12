@@ -124,6 +124,49 @@ var (
 	ErrWorkspaceDirty = errors.New("workspace: uncommitted changes present")
 )
 
+// WorkspaceGit inspects and commits uncommitted work inside a session's
+// workspace. Paths come from session records (daemon-managed worktrees),
+// never from API input.
+type WorkspaceGit interface {
+	Status(ctx context.Context, path string) (GitStatus, error)
+	StageAll(ctx context.Context, path string) error
+	// DiscardAll throws away all uncommitted work: tracked changes reset to
+	// HEAD and untracked files removed.
+	DiscardAll(ctx context.Context, path string) error
+	// CommitAll stages everything, commits with message, and optionally pushes
+	// the workspace branch to its remote.
+	CommitAll(ctx context.Context, path, message string, push bool) (GitCommitResult, error)
+}
+
+// WorkspaceGit sentinels, mapped to typed API errors at the service boundary.
+var (
+	// ErrGitNothingToCommit reports CommitAll found no staged or unstaged work.
+	ErrGitNothingToCommit = errors.New("workspace git: nothing to commit")
+	// ErrGitNoRemote reports a push was requested but the repo has no remote.
+	ErrGitNoRemote = errors.New("workspace git: no remote to push to")
+)
+
+// GitFileChange is one changed path in a workspace's uncommitted diff.
+type GitFileChange struct {
+	Path      string
+	Additions int
+	Deletions int
+	Staged    bool
+}
+
+// GitStatus is a point-in-time view of a workspace's uncommitted work.
+type GitStatus struct {
+	Branch string
+	Files  []GitFileChange
+}
+
+// GitCommitResult reports a CommitAll outcome.
+type GitCommitResult struct {
+	SHA    string
+	Branch string
+	Pushed bool
+}
+
 // WorkspaceConfig is the spec for creating or restoring a session's workspace.
 type WorkspaceConfig struct {
 	ProjectID domain.ProjectID

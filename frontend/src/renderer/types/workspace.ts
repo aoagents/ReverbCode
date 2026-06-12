@@ -232,6 +232,9 @@ export type WorkspaceSummary = {
 		number: number;
 		state: "open" | "draft" | "merged" | "closed";
 	};
+	/** The project's live orchestrator session (kind=orchestrator, not terminated). */
+	orchestrator?: WorkspaceSession;
+	/** Worker sessions only; the orchestrator is surfaced separately above. */
 	sessions: WorkspaceSession[];
 };
 

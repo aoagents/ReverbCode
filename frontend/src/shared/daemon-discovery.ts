@@ -88,6 +88,23 @@ export function parseRunFile(contents: string): RunFileInfo | null {
 }
 
 /**
+ * Whether a /healthz response body identifies the agent-orchestrator daemon
+ * (backend/internal/httpd/router.go handleHealthz). Guards external-daemon
+ * discovery against a foreign process squatting on a stale run-file port.
+ */
+export function isDaemonHealthz(body: string): boolean {
+	let raw: unknown;
+	try {
+		raw = JSON.parse(body);
+	} catch {
+		return false;
+	}
+	if (typeof raw !== "object" || raw === null) return false;
+	const { service, status } = raw as { service?: unknown; status?: unknown };
+	return service === "agent-orchestrator-daemon" && status === "ok";
+}
+
+/**
  * Where the daemon writes running.json when AO_RUN_FILE is unset. Mirrors Go's
  * os.UserConfigDir() + "agent-orchestrator/running.json" resolution in
  * backend/internal/config so the supervisor reads the same file the daemon

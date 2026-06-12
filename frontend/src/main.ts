@@ -5,8 +5,8 @@ import { readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { createListenPortScanner, defaultRunFilePath, parseRunFile } from "./shared/daemon-discovery";
-import type { DaemonStatus } from "./shared/daemon-status";
+import { createListenPortScanner, defaultRunFilePath, isDaemonHealthz, parseRunFile } from "./shared/daemon-discovery";
+import { daemonStatusEquals, type DaemonStatus } from "./shared/daemon-status";
 
 // Globals injected at compile time by @electron-forge/plugin-vite.
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
@@ -75,6 +75,7 @@ function preloadPath(): string {
 }
 
 function setDaemonStatus(nextStatus: DaemonStatus): void {
+	if (daemonStatusEquals(daemonStatus, nextStatus)) return;
 	daemonStatus = nextStatus;
 	mainWindow?.webContents.send("daemon:status", daemonStatus);
 }
@@ -263,6 +264,58 @@ function startDaemon(): DaemonStatus {
 	return daemonStatus;
 }
 
+// The supervisor only learns about daemons it spawned, but in dev (and any
+// setup where `ao start` runs outside the app) the daemon is external. Poll
+// the running.json handshake and confirm over /healthz so the status pill
+// reflects the daemon actually serving the renderer instead of reporting
+// "stopped" forever.
+const EXTERNAL_PROBE_INTERVAL_MS = 2_500;
+const EXTERNAL_PROBE_TIMEOUT_MS = 1_500;
+
+async function probeExternalDaemon(): Promise<DaemonStatus> {
+	const handshakePath = runFilePath();
+	if (!handshakePath) return { state: "stopped" };
+
+	let contents: string;
+	try {
+		contents = await readFile(handshakePath, "utf8");
+	} catch {
+		return { state: "stopped" };
+	}
+	const info = parseRunFile(contents);
+	if (!info) return { state: "stopped" };
+
+	try {
+		const response = await fetch(`http://127.0.0.1:${info.port}/healthz`, {
+			signal: AbortSignal.timeout(EXTERNAL_PROBE_TIMEOUT_MS),
+		});
+		if (response.ok && isDaemonHealthz(await response.text())) {
+			return { state: "ready", port: info.port };
+		}
+	} catch {
+		// Stale run file or a daemon mid-restart; report stopped until it answers.
+	}
+	return { state: "stopped" };
+}
+
+function startExternalDaemonObserver(): void {
+	let probing = false;
+	const tick = async () => {
+		// A supervised daemon reports through its own lifecycle events; the
+		// observer only speaks for daemons this app did not spawn.
+		if (daemonProcess || probing) return;
+		probing = true;
+		try {
+			const observed = await probeExternalDaemon();
+			if (!daemonProcess) setDaemonStatus(observed);
+		} finally {
+			probing = false;
+		}
+	};
+	void tick();
+	setInterval(() => void tick(), EXTERNAL_PROBE_INTERVAL_MS);
+}
+
 // Signal the daemon's whole process group so the kill reaches the real daemon
 // behind the /bin/sh wrapper (and any PTY children it forked), not just the
 // shell. Falls back to a direct kill if the group signal can't be delivered
@@ -316,6 +369,13 @@ app.whenReady().then(() => {
 	registerRendererProtocol();
 	createWindow();
 	initAutoUpdates();
+
+	// Supervise the daemon when configured; otherwise (dev, external `ao start`)
+	// the observer below discovers the daemon that is already running.
+	if (process.env.AO_DAEMON_COMMAND) {
+		startDaemon();
+	}
+	startExternalDaemonObserver();
 
 	app.on("activate", () => {
 		if (BrowserWindow.getAllWindows().length === 0) {

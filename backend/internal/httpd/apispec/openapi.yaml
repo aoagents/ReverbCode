@@ -729,6 +729,198 @@ paths:
       summary: Report an agent activity-state signal for a session
       tags:
       - sessions
+  /api/v1/sessions/{sessionId}/git:
+    get:
+      operationId: getSessionGitStatus
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionGitStatusResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Inspect a session workspace's branch and uncommitted files
+      tags:
+      - sessions
+  /api/v1/sessions/{sessionId}/git/commit:
+    post:
+      operationId: commitSessionGit
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GitCommitRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GitCommitResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Commit all changes in a session workspace, optionally pushing the branch
+      tags:
+      - sessions
+  /api/v1/sessions/{sessionId}/git/discard:
+    post:
+      operationId: discardSessionGit
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GitActionResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Discard all uncommitted changes in a session workspace
+      tags:
+      - sessions
+  /api/v1/sessions/{sessionId}/git/stage:
+    post:
+      operationId: stageSessionGit
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GitActionResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Stage all changes in a session workspace
+      tags:
+      - sessions
   /api/v1/sessions/{sessionId}/kill:
     post:
       operationId: killSession
@@ -1174,6 +1366,63 @@ components:
       required:
       - sessionId
       type: object
+    GitActionResponse:
+      properties:
+        ok:
+          type: boolean
+        sessionId:
+          type: string
+      required:
+      - ok
+      - sessionId
+      type: object
+    GitCommitRequest:
+      properties:
+        message:
+          minLength: 1
+          type: string
+        push:
+          type: boolean
+      required:
+      - message
+      type: object
+    GitCommitResponse:
+      properties:
+        branch:
+          type: string
+        ok:
+          type: boolean
+        pushError:
+          type: string
+        pushed:
+          type: boolean
+        sessionId:
+          type: string
+        sha:
+          type: string
+      required:
+      - ok
+      - sessionId
+      - sha
+      - branch
+      - pushed
+      type: object
+    GitFileChange:
+      properties:
+        additions:
+          type: integer
+        deletions:
+          type: integer
+        path:
+          type: string
+        staged:
+          type: boolean
+      required:
+      - path
+      - additions
+      - deletions
+      - staged
+      type: object
     KillSessionResponse:
       properties:
         freed:
@@ -1500,6 +1749,8 @@ components:
       properties:
         activity:
           $ref: '#/components/schemas/DomainActivity'
+        branch:
+          type: string
         createdAt:
           format: date-time
           type: string
@@ -1533,6 +1784,21 @@ components:
       - createdAt
       - updatedAt
       - status
+      type: object
+    SessionGitStatusResponse:
+      properties:
+        branch:
+          type: string
+        files:
+          items:
+            $ref: '#/components/schemas/GitFileChange'
+          type: array
+        sessionId:
+          type: string
+      required:
+      - sessionId
+      - branch
+      - files
       type: object
     SessionPRFacts:
       properties:

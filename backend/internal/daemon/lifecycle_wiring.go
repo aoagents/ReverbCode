@@ -93,6 +93,7 @@ func startSession(cfg config.Config, runtime ports.Runtime, store *sqlite.Store,
 		// no_signal only makes sense for harnesses whose adapters install
 		// activity hooks; the deriver registry is the source of truth for that.
 		SignalCapable: activitydispatch.SupportsHarness,
+		WorkspaceGit:  gitworktree.NewGitOps(),
 	}), nil
 }
 

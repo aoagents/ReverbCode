@@ -6,3 +6,8 @@ export type DaemonStatus = {
 	port?: number;
 	message?: string;
 };
+
+/** Value equality so status emitters can skip no-op broadcasts. */
+export function daemonStatusEquals(a: DaemonStatus, b: DaemonStatus): boolean {
+	return a.state === b.state && a.port === b.port && a.message === b.message;
+}

@@ -2,6 +2,7 @@ package controllers_test
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -25,6 +26,13 @@ type fakeSessionService struct {
 	cleanupSkipped  []sessionsvc.CleanupSkipped
 	claimErr        error
 	listPRErr       error
+	gitStatus       ports.GitStatus
+	gitErr          error
+	gitErrResult    ports.GitCommitResult // result returned alongside gitErr (push-leg failures carry a SHA)
+	gitStaged       []domain.SessionID
+	gitDiscarded    []domain.SessionID
+	gitCommits      []string
+	gitPushes       []bool
 }
 
 func newFakeSessionService() *fakeSessionService {
@@ -144,6 +152,46 @@ func (f *fakeSessionService) ClaimPR(_ context.Context, id domain.SessionID, ref
 	}
 	prs, _ := f.ListPRs(context.Background(), id)
 	return sessionsvc.ClaimPRResult{PRs: prs, TakenOverFrom: []domain.SessionID{}, BranchChanged: true}, nil
+}
+
+func (f *fakeSessionService) GitStatus(_ context.Context, id domain.SessionID) (ports.GitStatus, error) {
+	if f.gitErr != nil {
+		return ports.GitStatus{}, f.gitErr
+	}
+	if _, ok := f.sessions[id]; !ok {
+		return ports.GitStatus{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	return f.gitStatus, nil
+}
+
+func (f *fakeSessionService) GitStageAll(_ context.Context, id domain.SessionID) error {
+	if f.gitErr != nil {
+		return f.gitErr
+	}
+	f.gitStaged = append(f.gitStaged, id)
+	return nil
+}
+
+func (f *fakeSessionService) GitDiscardAll(_ context.Context, id domain.SessionID) error {
+	if f.gitErr != nil {
+		return f.gitErr
+	}
+	f.gitDiscarded = append(f.gitDiscarded, id)
+	return nil
+}
+
+func (f *fakeSessionService) GitCommitAll(_ context.Context, id domain.SessionID, message string, push bool) (ports.GitCommitResult, error) {
+	if f.gitErr != nil {
+		// gitErrResult is zero for genuine pre-commit failures and carries a SHA
+		// for push-leg failures, mirroring CommitAll's real contract.
+		return f.gitErrResult, f.gitErr
+	}
+	if _, ok := f.sessions[id]; !ok {
+		return ports.GitCommitResult{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	f.gitCommits = append(f.gitCommits, message)
+	f.gitPushes = append(f.gitPushes, push)
+	return ports.GitCommitResult{SHA: "abc1234", Branch: "ao/ao-1", Pushed: push}, nil
 }
 
 func newSessionTestServer(t *testing.T, svc *fakeSessionService) *httptest.Server {
@@ -443,6 +491,140 @@ func TestSessionsAPI_ClaimPRErrors(t *testing.T) {
 			srv := newSessionTestServer(t, svc)
 			body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/pr/claim", tc.body)
 			assertErrorCode(t, body, status, tc.code, tc.want)
+		})
+	}
+}
+
+func TestSessionsAPI_GitStatusAndActions(t *testing.T) {
+	svc := newFakeSessionService()
+	svc.gitStatus = ports.GitStatus{
+		Branch: "ao/ao-1",
+		Files:  []ports.GitFileChange{{Path: "main.go", Additions: 3, Deletions: 1, Staged: true}},
+	}
+	srv := newSessionTestServer(t, svc)
+
+	body, status, headers := doRequest(t, srv, "GET", "/api/v1/sessions/ao-1/git", "")
+	assertJSON(t, headers)
+	if status != http.StatusOK {
+		t.Fatalf("GET git = %d, want 200; body=%s", status, body)
+	}
+	var got struct {
+		SessionID string `json:"sessionId"`
+		Branch    string `json:"branch"`
+		Files     []struct {
+			Path      string `json:"path"`
+			Additions int    `json:"additions"`
+			Deletions int    `json:"deletions"`
+			Staged    bool   `json:"staged"`
+		} `json:"files"`
+	}
+	mustJSON(t, body, &got)
+	if got.SessionID != "ao-1" || got.Branch != "ao/ao-1" || len(got.Files) != 1 {
+		t.Fatalf("git status shape = %#v", got)
+	}
+	if f := got.Files[0]; f.Path != "main.go" || f.Additions != 3 || f.Deletions != 1 || !f.Staged {
+		t.Fatalf("git file shape = %#v", f)
+	}
+
+	body, status, _ = doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/git/stage", "")
+	if status != http.StatusOK {
+		t.Fatalf("POST stage = %d, want 200; body=%s", status, body)
+	}
+	if len(svc.gitStaged) != 1 || svc.gitStaged[0] != "ao-1" {
+		t.Fatalf("staged sessions = %v", svc.gitStaged)
+	}
+
+	body, status, _ = doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/git/discard", "")
+	if status != http.StatusOK {
+		t.Fatalf("POST discard = %d, want 200; body=%s", status, body)
+	}
+	if len(svc.gitDiscarded) != 1 || svc.gitDiscarded[0] != "ao-1" {
+		t.Fatalf("discarded sessions = %v", svc.gitDiscarded)
+	}
+
+	body, status, _ = doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/git/commit", `{"message":"fix: wire git rail","push":true}`)
+	if status != http.StatusOK {
+		t.Fatalf("POST commit = %d, want 200; body=%s", status, body)
+	}
+	var committed struct {
+		OK     bool   `json:"ok"`
+		SHA    string `json:"sha"`
+		Branch string `json:"branch"`
+		Pushed bool   `json:"pushed"`
+	}
+	mustJSON(t, body, &committed)
+	if !committed.OK || committed.SHA != "abc1234" || committed.Branch != "ao/ao-1" || !committed.Pushed {
+		t.Fatalf("commit shape = %#v", committed)
+	}
+	if len(svc.gitCommits) != 1 || svc.gitCommits[0] != "fix: wire git rail" || !svc.gitPushes[0] {
+		t.Fatalf("commit recorded = %v pushes=%v", svc.gitCommits, svc.gitPushes)
+	}
+}
+
+func TestSessionsAPI_GitCommitErrors(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		err  error
+		code int
+		want string
+	}{
+		{"bad json", `{`, nil, http.StatusBadRequest, "INVALID_JSON"},
+		{"missing message", `{}`, nil, http.StatusBadRequest, "MESSAGE_REQUIRED"},
+		{"blank message", `{"message":"   "}`, nil, http.StatusBadRequest, "MESSAGE_REQUIRED"},
+		{"nothing to commit", `{"message":"m"}`, apierr.Conflict("GIT_NOTHING_TO_COMMIT", "No changes to commit", nil), http.StatusConflict, "GIT_NOTHING_TO_COMMIT"},
+		{"no workspace", `{"message":"m"}`, apierr.Conflict("SESSION_NO_WORKSPACE", "Session has no workspace", nil), http.StatusConflict, "SESSION_NO_WORKSPACE"},
+		// A push-leg failure (GIT_NO_REMOTE / push rejected) is NOT in this table:
+		// the commit lands first, so it returns 200 with the SHA — see
+		// TestSessionsAPI_GitCommitPushFailureKeepsSHA.
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := newFakeSessionService()
+			svc.gitErr = tc.err
+			srv := newSessionTestServer(t, svc)
+			body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/git/commit", tc.body)
+			assertErrorCode(t, body, status, tc.code, tc.want)
+		})
+	}
+}
+
+// A failure on the push leg must not lose the commit: CommitAll has already
+// resolved the SHA, so the controller returns 200 with the SHA and a PushError
+// warning rather than a bare 409 that would leave the committed work invisible.
+func TestSessionsAPI_GitCommitPushFailureKeepsSHA(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+	}{
+		{"no remote", apierr.Conflict("GIT_NO_REMOTE", "no remote to push to", nil)},
+		{"push rejected", errors.New("gitops: committed deadbeef, push failed: rejected")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := newFakeSessionService()
+			svc.gitErr = tc.err
+			svc.gitErrResult = ports.GitCommitResult{SHA: "deadbeef", Branch: "ao/ao-1"}
+			srv := newSessionTestServer(t, svc)
+
+			body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/git/commit", `{"message":"m","push":true}`)
+			if status != http.StatusOK {
+				t.Fatalf("POST commit = %d, want 200; body=%s", status, body)
+			}
+			var got struct {
+				OK        bool   `json:"ok"`
+				SHA       string `json:"sha"`
+				Branch    string `json:"branch"`
+				Pushed    bool   `json:"pushed"`
+				PushError string `json:"pushError"`
+			}
+			mustJSON(t, body, &got)
+			if !got.OK || got.SHA != "deadbeef" || got.Branch != "ao/ao-1" || got.Pushed {
+				t.Fatalf("commit shape = %#v", got)
+			}
+			if got.PushError != tc.err.Error() {
+				t.Fatalf("pushError = %q, want %q", got.PushError, tc.err.Error())
+			}
 		})
 	}
 }

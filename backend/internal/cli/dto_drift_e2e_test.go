@@ -102,6 +102,22 @@ func (f *fakeSessionService) ClaimPR(context.Context, domain.SessionID, string, 
 	return sessionsvc.ClaimPRResult{}, nil
 }
 
+func (f *fakeSessionService) GitStatus(context.Context, domain.SessionID) (ports.GitStatus, error) {
+	return ports.GitStatus{}, nil
+}
+
+func (f *fakeSessionService) GitStageAll(context.Context, domain.SessionID) error {
+	return nil
+}
+
+func (f *fakeSessionService) GitDiscardAll(context.Context, domain.SessionID) error {
+	return nil
+}
+
+func (f *fakeSessionService) GitCommitAll(context.Context, domain.SessionID, string, bool) (ports.GitCommitResult, error) {
+	return ports.GitCommitResult{}, nil
+}
+
 // fakeProjectManager captures the project.AddInput the controller decodes from
 // the CLI's request body. Every other method is a no-op so it satisfies the
 // projectsvc.Manager interface.
