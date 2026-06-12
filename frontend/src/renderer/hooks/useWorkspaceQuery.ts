@@ -30,7 +30,9 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 				title: session.displayName ?? session.issueId ?? session.id,
 				provider: toAgentProvider(session.harness),
 				kind: session.kind === "orchestrator" ? "orchestrator" : session.kind === "worker" ? "worker" : undefined,
-				branch: `session/${session.id}`,
+				// Prefer the worktree branch the daemon reports; fall back to the
+				// synthesized name only when a session has no branch metadata yet.
+				branch: session.branch || `session/${session.id}`,
 				status: toSessionStatus(session.status, session.isTerminated),
 				createdAt: session.createdAt,
 				updatedAt: session.updatedAt,
