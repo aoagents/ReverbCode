@@ -240,12 +240,16 @@ type GitCommitRequest struct {
 }
 
 // GitCommitResponse is the body of POST /sessions/{sessionId}/git/commit.
+// PushError is set when the commit landed but the push leg failed: the response
+// is still a 200 carrying the SHA so the committed work is never lost, and the
+// caller renders PushError as a warning rather than treating the commit as failed.
 type GitCommitResponse struct {
 	OK        bool             `json:"ok"`
 	SessionID domain.SessionID `json:"sessionId"`
 	SHA       string           `json:"sha"`
 	Branch    string           `json:"branch"`
 	Pushed    bool             `json:"pushed"`
+	PushError string           `json:"pushError,omitempty"`
 }
 
 // ClaimPRRequest is the body of POST /sessions/{sessionId}/pr/claim.

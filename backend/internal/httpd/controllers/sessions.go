@@ -380,6 +380,21 @@ func (c *SessionsController) gitCommit(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := c.Svc.GitCommitAll(r.Context(), sessionID(r), message, in.Push)
 	if err != nil {
+		// A non-empty SHA means the commit landed and only the push leg failed
+		// (CommitAll resolves the SHA before it ever attempts to push). Writing
+		// the bare error would 409 and drop the SHA, leaving committed work the
+		// user can't see; surface it as a 200 with a push warning instead.
+		if result.SHA != "" {
+			envelope.WriteJSON(w, http.StatusOK, GitCommitResponse{
+				OK:        true,
+				SessionID: sessionID(r),
+				SHA:       result.SHA,
+				Branch:    result.Branch,
+				Pushed:    false,
+				PushError: err.Error(),
+			})
+			return
+		}
 		envelope.WriteError(w, r, err)
 		return
 	}

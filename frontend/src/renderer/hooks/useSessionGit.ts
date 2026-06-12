@@ -79,11 +79,17 @@ export function useSessionGit(sessionId: string | undefined) {
 		(message: string, description: string) =>
 			runAction(async () => {
 				const fullMessage = description.trim() ? `${message.trim()}\n\n${description.trim()}` : message.trim();
-				const { error } = await apiClient.POST("/api/v1/sessions/{sessionId}/git/commit", {
+				const { data, error } = await apiClient.POST("/api/v1/sessions/{sessionId}/git/commit", {
 					params: { path: { sessionId: sessionId ?? "" } },
 					body: { message: fullMessage, push: true },
 				});
 				if (error) throw new Error(apiErrorMessage(error, "Could not commit"));
+				// The commit landed even when the push leg fails (the daemon returns
+				// the SHA with a pushError warning); surface that as a non-fatal
+				// notice instead of dropping it, since the work is already committed.
+				if (data?.pushError) {
+					setActionError(`Committed ${data.sha.slice(0, 7)} but push failed: ${data.pushError}`);
+				}
 			}),
 		[runAction, sessionId],
 	);
