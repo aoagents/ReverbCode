@@ -119,6 +119,17 @@ function ShellLayout() {
 		[navigate, updateWorkspaces],
 	);
 
+	const removeProject = useCallback(
+		async (projectId: string) => {
+			const { error } = await apiClient.DELETE("/api/v1/projects/{id}", {
+				params: { path: { id: projectId } },
+			});
+			if (error) throw new Error(apiErrorMessage(error));
+			updateWorkspaces((current) => current.filter((item) => item.id !== projectId));
+		},
+		[updateWorkspaces],
+	);
+
 	useEffect(() => {
 		document.documentElement.dataset.theme = theme;
 		document.documentElement.style.colorScheme = theme;
@@ -174,6 +185,7 @@ function ShellLayout() {
 					<Sidebar
 						daemonStatus={daemonStatus}
 						onCreateProject={createProject}
+						onRemoveProject={removeProject}
 						workspaceError={workspaceQuery.isError ? errorMessage(workspaceQuery.error) : undefined}
 						workspaces={workspaces}
 					/>
