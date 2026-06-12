@@ -34,6 +34,7 @@ var (
 var (
 	ErrBranchCheckedOutElsewhere = ports.ErrWorkspaceBranchCheckedOutElsewhere
 	ErrBranchNotFetched          = ports.ErrWorkspaceBranchNotFetched
+	ErrBranchInvalid             = ports.ErrWorkspaceBranchInvalid
 )
 
 // RepoResolver maps a project to the absolute path of its source git repo.
@@ -262,7 +263,7 @@ func (w *Workspace) addWorktree(ctx context.Context, repo, path, branch, baseBra
 
 func (w *Workspace) validateBranch(ctx context.Context, repo, branch string) error {
 	if _, err := w.run(ctx, w.binary, checkRefFormatBranchArgs(repo, branch)...); err != nil {
-		return fmt.Errorf("gitworktree: invalid branch %q: %w", branch, err)
+		return fmt.Errorf("%w: %q (%w)", ErrBranchInvalid, branch, err)
 	}
 	return nil
 }
