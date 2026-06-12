@@ -28,11 +28,24 @@ func newManager(t *testing.T) project.Manager {
 	return project.New(store)
 }
 
-// gitRepo creates a real git repository in a fresh temp dir and returns its path.
+// gitRepo creates a real git repository in a fresh temp dir and returns its
+// path. It pins the initial branch to `main` so default-branch detection is
+// deterministic regardless of the host's init.defaultBranch.
 func gitRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	if out, err := exec.Command("git", "init", dir).CombinedOutput(); err != nil {
+	if out, err := exec.Command("git", "init", "-b", "main", dir).CombinedOutput(); err != nil {
+		t.Fatalf("git unavailable: %v (%s)", err, out)
+	}
+	return dir
+}
+
+// gitRepoOnBranch creates a real git repository whose initial branch is
+// `branch`, used to exercise default-branch detection for non-`main` repos.
+func gitRepoOnBranch(t *testing.T, branch string) string {
+	t.Helper()
+	dir := t.TempDir()
+	if out, err := exec.Command("git", "init", "-b", branch, dir).CombinedOutput(); err != nil {
 		t.Fatalf("git unavailable: %v (%s)", err, out)
 	}
 	return dir
@@ -130,6 +143,45 @@ func TestManager_DefaultsWhenUnconfigured(t *testing.T) {
 	}
 	if list[0].SessionPrefix != "ao" {
 		t.Fatalf("default session prefix = %q, want derived 'ao'", list[0].SessionPrefix)
+	}
+}
+
+func TestManager_AddDetectsNonMainDefaultBranch(t *testing.T) {
+	ctx := context.Background()
+	m := newManager(t)
+	repo := gitRepoOnBranch(t, "master")
+
+	proj, err := m.Add(ctx, project.AddInput{Path: repo, ProjectID: ptr("ao")})
+	if err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	// A repo whose checked-out branch is not `main` must record that branch so
+	// session worktrees base off a ref that exists (otherwise spawn fails
+	// BRANCH_NOT_FETCHED).
+	if proj.DefaultBranch != "master" {
+		t.Fatalf("DefaultBranch = %q, want master", proj.DefaultBranch)
+	}
+
+	got, err := m.Get(ctx, "ao")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Project == nil || got.Project.DefaultBranch != "master" {
+		t.Fatalf("Get DefaultBranch = %#v, want master", got.Project)
+	}
+
+	// An explicit config wins over detection.
+	mainRepo := gitRepoOnBranch(t, "trunk")
+	proj2, err := m.Add(ctx, project.AddInput{
+		Path:      mainRepo,
+		ProjectID: ptr("ao2"),
+		Config:    &domain.ProjectConfig{DefaultBranch: "release"},
+	})
+	if err != nil {
+		t.Fatalf("Add with config: %v", err)
+	}
+	if proj2.DefaultBranch != "release" {
+		t.Fatalf("explicit DefaultBranch = %q, want release", proj2.DefaultBranch)
 	}
 }
 
