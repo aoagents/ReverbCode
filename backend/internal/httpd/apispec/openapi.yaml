@@ -537,6 +537,16 @@ paths:
           type:
           - "null"
           - boolean
+      - description: When true, return only archived sessions; when false, exclude
+          archived sessions. Omitted, both are returned.
+        in: query
+        name: archived
+        schema:
+          description: When true, return only archived sessions; when false, exclude
+            archived sessions. Omitted, both are returned.
+          type:
+          - "null"
+          - boolean
       responses:
         "200":
           content:
@@ -727,6 +737,45 @@ paths:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
       summary: Report an agent activity-state signal for a session
+      tags:
+      - sessions
+  /api/v1/sessions/{sessionId}/archive:
+    post:
+      operationId: archiveSession
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ArchiveSessionResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Archive a terminated session (soft-hide it from default lists)
       tags:
       - sessions
   /api/v1/sessions/{sessionId}/git:
@@ -1186,6 +1235,39 @@ paths:
       summary: Send a message to a running session's agent
       tags:
       - sessions
+  /api/v1/sessions/{sessionId}/unarchive:
+    post:
+      operationId: unarchiveSession
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnarchiveSessionResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Return an archived session to default lists
+      tags:
+      - sessions
   /api/v1/sessions/cleanup:
     post:
       operationId: cleanupSessions
@@ -1265,6 +1347,16 @@ components:
           type: string
         permissions:
           type: string
+      type: object
+    ArchiveSessionResponse:
+      properties:
+        ok:
+          type: boolean
+        sessionId:
+          type: string
+      required:
+      - ok
+      - sessionId
       type: object
     ClaimPRRequest:
       properties:
@@ -1760,6 +1852,8 @@ components:
           type: string
         id:
           type: string
+        isArchived:
+          type: boolean
         isTerminated:
           type: boolean
         issueId:
@@ -1934,6 +2028,16 @@ components:
           type: string
       required:
       - projectId
+      type: object
+    UnarchiveSessionResponse:
+      properties:
+        ok:
+          type: boolean
+        sessionId:
+          type: string
+      required:
+      - ok
+      - sessionId
       type: object
     WorkspaceRepo:
       properties:

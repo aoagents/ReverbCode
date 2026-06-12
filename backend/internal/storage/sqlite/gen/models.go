@@ -130,6 +130,7 @@ type Session struct {
 	UpdatedAt       time.Time
 	DisplayName     string
 	FirstSignalAt   sql.NullTime
+	ArchivedAt      sql.NullTime
 }
 
 type SessionWorktree struct {

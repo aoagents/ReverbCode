@@ -54,6 +54,28 @@ function ShellLayout() {
 		[queryClient],
 	);
 
+	const archiveSession = useCallback(
+		async (sessionId: string) => {
+			const { error } = await apiClient.POST("/api/v1/sessions/{sessionId}/archive", {
+				params: { path: { sessionId } },
+			});
+			if (error) throw new Error(apiErrorMessage(error));
+			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+		},
+		[queryClient],
+	);
+
+	const unarchiveSession = useCallback(
+		async (sessionId: string) => {
+			const { error } = await apiClient.POST("/api/v1/sessions/{sessionId}/unarchive", {
+				params: { path: { sessionId } },
+			});
+			if (error) throw new Error(apiErrorMessage(error));
+			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+		},
+		[queryClient],
+	);
+
 	const createProject = useCallback(
 		async (input: { path: string }) => {
 			const { data, error } = await apiClient.POST("/api/v1/projects", { body: { path: input.path } });
@@ -164,8 +186,10 @@ function ShellLayout() {
 			>
 				<Sidebar
 					daemonStatus={daemonStatus}
+					onArchiveSession={archiveSession}
 					onCreateProject={createProject}
 					onNewWorker={openSpawn}
+					onUnarchiveSession={unarchiveSession}
 					workspaceError={workspaceQuery.isError ? errorMessage(workspaceQuery.error) : undefined}
 					workspaces={workspaces}
 				/>

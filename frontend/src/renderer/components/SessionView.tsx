@@ -49,7 +49,11 @@ export function SessionView({ sessionId, projectId }: SessionViewProps) {
 	const { daemonStatus } = useShell();
 	const inspectorRef = useRef<PanelImperativeHandle | null>(null);
 
-	const session = workspaces.flatMap((workspace) => workspace.sessions).find((s) => s.id === sessionId);
+	// Archived sessions stay reachable: their sidebar disclosure rows navigate
+	// here like any other worker.
+	const session = workspaces
+		.flatMap((workspace) => [...workspace.sessions, ...(workspace.archivedSessions ?? [])])
+		.find((s) => s.id === sessionId);
 	const isOrchestrator = session ? isOrchestratorSession(session) : false;
 	const workspace =
 		(session && workspaces.find((w) => w.id === session.workspaceId)) ??

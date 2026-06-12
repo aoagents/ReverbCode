@@ -16,11 +16,8 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 
 	if (projectsError || sessionsError) throw projectsError ?? sessionsError;
 
-	return (projectsData?.projects ?? []).map((project) => ({
-		id: project.id,
-		name: project.name,
-		path: project.path,
-		sessions: (sessionsData?.sessions ?? [])
+	return (projectsData?.projects ?? []).map((project) => {
+		const projectSessions = (sessionsData?.sessions ?? [])
 			.filter((session) => session.projectId === project.id)
 			.map((session) => ({
 				id: session.id,
@@ -29,15 +26,32 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 				workspaceName: project.name,
 				title: session.displayName ?? session.issueId ?? session.id,
 				provider: toAgentProvider(session.harness),
-				kind: session.kind === "orchestrator" ? "orchestrator" : session.kind === "worker" ? "worker" : undefined,
+				kind:
+					session.kind === "orchestrator"
+						? ("orchestrator" as const)
+						: session.kind === "worker"
+							? ("worker" as const)
+							: undefined,
 				// Prefer the worktree branch the daemon reports; fall back to the
 				// synthesized name only when a session has no branch metadata yet.
 				branch: session.branch || `session/${session.id}`,
 				status: toSessionStatus(session.status, session.isTerminated),
+				archived: session.isArchived ?? false,
 				createdAt: session.createdAt,
 				updatedAt: session.updatedAt,
-			})),
-	}));
+			}));
+
+		// Archived workers split out so every default surface (sidebar rows and
+		// counts, kanban board) ignores them; the sidebar shows them behind an
+		// "Archived (n)" disclosure.
+		return {
+			id: project.id,
+			name: project.name,
+			path: project.path,
+			sessions: projectSessions.filter((session) => !session.archived),
+			archivedSessions: projectSessions.filter((session) => session.archived),
+		};
+	});
 }
 
 // Shared so route loaders can prefetch via queryClient.ensureQueryData (paired

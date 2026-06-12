@@ -1,10 +1,22 @@
 import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
-import { ChevronRight, GitPullRequest, Moon, Plus, Search, Settings, Sun, Waypoints } from "lucide-react";
+import {
+	Archive,
+	ArchiveRestore,
+	ChevronRight,
+	GitPullRequest,
+	Moon,
+	Plus,
+	Search,
+	Settings,
+	Sun,
+	Waypoints,
+} from "lucide-react";
 import { useState } from "react";
 import { attentionZone, type WorkspaceSession, type WorkspaceSummary, workerSessions } from "../types/workspace";
 import { aoBridge } from "../lib/bridge";
 import { useEventsConnection } from "../hooks/useEventsConnection";
 import { useResizable } from "../hooks/useResizable";
+import { ContextMenu, useContextMenu, type ContextMenuItem } from "./ui/context-menu";
 import {
 	DropdownMenu,
 	DropdownMenuContent,
@@ -49,6 +61,8 @@ type SidebarProps = {
 	workspaces: WorkspaceSummary[];
 	onCreateProject: (input: { path: string }) => Promise<void>;
 	onNewWorker: (projectId: string) => void;
+	onArchiveSession: (sessionId: string) => Promise<void>;
+	onUnarchiveSession: (sessionId: string) => Promise<void>;
 };
 
 // Selection state comes from the URL: which project/session is active is the
@@ -91,12 +105,52 @@ function SessionDot({ session }: { session: WorkspaceSession }) {
 // _shell owns open state (synced to the ui-store) and `collapsible="icon"`
 // replaces the old hand-rolled CollapsedRail — the same tree restyles itself
 // via group-data-[collapsible=icon] into the 48px letter rail.
-export function Sidebar({ daemonStatus, workspaceError, workspaces, onCreateProject, onNewWorker }: SidebarProps) {
+export function Sidebar({
+	daemonStatus,
+	workspaceError,
+	workspaces,
+	onCreateProject,
+	onNewWorker,
+	onArchiveSession,
+	onUnarchiveSession,
+}: SidebarProps) {
 	const selection = useSelection();
 	const eventsConnection = useEventsConnection();
 	const { state } = useSidebar();
 	const theme = useUiStore((s) => s.theme);
 	const toggleTheme = useUiStore((s) => s.toggleTheme);
+	const { menu, openMenu, closeMenu } = useContextMenu();
+
+	// Right-click actions on worker rows. Running workers get no menu (kill from
+	// the row is follow-up work); archive is terminated-only, mirroring the
+	// daemon's SESSION_NOT_TERMINATED guard.
+	const sessionMenuItems = (session: WorkspaceSession): ContextMenuItem[] => {
+		if (session.archived) {
+			return [
+				{
+					id: "unarchive",
+					label: "Unarchive worker",
+					icon: <ArchiveRestore aria-hidden="true" />,
+					onSelect: () => onUnarchiveSession(session.id),
+				},
+			];
+		}
+		if (session.status === "terminated") {
+			return [
+				{
+					id: "archive",
+					label: "Archive worker",
+					icon: <Archive aria-hidden="true" />,
+					onSelect: () => onArchiveSession(session.id),
+				},
+			];
+		}
+		return [];
+	};
+	const onSessionContextMenu = (event: React.MouseEvent, session: WorkspaceSession) => {
+		const items = sessionMenuItems(session);
+		if (items.length > 0) openMenu(event, items);
+	};
 	// Disclosure state: projects are expanded by default; a project id present in
 	// this set is collapsed (sessions hidden).
 	const [collapsedIds, setCollapsedIds] = useState<ReadonlySet<string>>(() => new Set());
@@ -201,6 +255,7 @@ export function Sidebar({ daemonStatus, workspaceError, workspaces, onCreateProj
 										selection={selection}
 										onToggle={() => toggleCollapsed(workspace.id)}
 										onNewWorker={() => onNewWorker(workspace.id)}
+										onSessionContextMenu={onSessionContextMenu}
 									/>
 								))}
 							</SidebarMenu>
@@ -296,6 +351,8 @@ export function Sidebar({ daemonStatus, workspaceError, workspaces, onCreateProj
 				onDoubleClick={onResizeDoubleClick}
 				style={noDragStyle}
 			/>
+
+			{menu && <ContextMenu menu={menu} onClose={closeMenu} />}
 		</SidebarRoot>
 	);
 }
@@ -308,14 +365,18 @@ function ProjectItem({
 	selection,
 	onToggle,
 	onNewWorker,
+	onSessionContextMenu,
 }: {
 	workspace: WorkspaceSummary;
 	expanded: boolean;
 	selection: Selection;
 	onToggle: () => void;
 	onNewWorker: () => void;
+	onSessionContextMenu: (event: React.MouseEvent, session: WorkspaceSession) => void;
 }) {
 	const projectActive = selection.activeProjectId === workspace.id && !selection.activeSessionId;
+	const archivedSessions = workspace.archivedSessions ?? [];
+	const [archivedOpen, setArchivedOpen] = useState(false);
 
 	const onProjectClick = () => {
 		if (!expanded) {
@@ -378,43 +439,100 @@ function ProjectItem({
 			</Tooltip>
 
 			{/* project-sidebar__sessions */}
-			{expanded && workerSessions(workspace.sessions).length > 0 && (
+			{expanded && (workerSessions(workspace.sessions).length > 0 || archivedSessions.length > 0) && (
 				<SidebarMenuSub className="mx-0 translate-x-0 gap-0 border-0 px-0 pb-2 pl-1 pt-0.5">
-					{workerSessions(workspace.sessions).map((session) => {
-						const active = selection.activeSessionId === session.id;
-						return (
-							<SidebarMenuSubItem key={session.id}>
-								<SidebarMenuSubButton asChild isActive={active}>
-									<button
-										aria-current={active ? "page" : undefined}
-										aria-label={`Open ${session.title}`}
-										className={cn(
-											"h-auto w-full translate-x-0 gap-[9px] rounded-[5px] py-[5px] pl-2 pr-1.5 text-left transition-colors",
-											"hover:bg-interactive-hover data-[active=true]:bg-interactive-active",
-										)}
-										onClick={() => selection.goSession(workspace.id, session.id)}
-										type="button"
-									>
-										<SessionDot session={session} />
-										<span className="min-w-0 flex-1">
-											<span
-												className={cn(
-													"block truncate text-[12px]",
-													active ? "text-foreground" : "text-muted-foreground",
-												)}
-											>
-												{session.title}
-											</span>
-											<span className="block truncate font-mono text-[10px] text-passive">{session.id}</span>
-										</span>
-									</button>
-								</SidebarMenuSubButton>
+					{workerSessions(workspace.sessions).map((session) => (
+						<SessionSubRow
+							key={session.id}
+							active={selection.activeSessionId === session.id}
+							onContextMenu={(event) => onSessionContextMenu(event, session)}
+							onSelect={() => selection.goSession(workspace.id, session.id)}
+							session={session}
+						/>
+					))}
+
+					{/* Archived workers stay out of the default list behind a quiet
+              disclosure; rows keep their context menu so Unarchive is one
+              right-click away. */}
+					{archivedSessions.length > 0 && (
+						<>
+							<SidebarMenuSubItem>
+								<button
+									aria-expanded={archivedOpen}
+									aria-label={`Archived workers in ${workspace.name}`}
+									className="flex h-auto w-full items-center gap-[9px] rounded-[5px] py-[5px] pl-2 pr-1.5 text-left text-[11px] text-passive transition-colors hover:bg-interactive-hover"
+									onClick={() => setArchivedOpen((open) => !open)}
+									type="button"
+								>
+									<ChevronRight
+										aria-hidden="true"
+										className={cn("h-[9px] w-[9px] shrink-0 transition-transform", archivedOpen && "rotate-90")}
+										strokeWidth={2.5}
+									/>
+									<span>Archived ({archivedSessions.length})</span>
+								</button>
 							</SidebarMenuSubItem>
-						);
-					})}
+							{archivedOpen &&
+								archivedSessions.map((session) => (
+									<SessionSubRow
+										key={session.id}
+										active={selection.activeSessionId === session.id}
+										dimmed
+										onContextMenu={(event) => onSessionContextMenu(event, session)}
+										onSelect={() => selection.goSession(workspace.id, session.id)}
+										session={session}
+									/>
+								))}
+						</>
+					)}
 				</SidebarMenuSub>
 			)}
 		</SidebarMenuItem>
+	);
+}
+
+function SessionSubRow({
+	session,
+	active,
+	dimmed,
+	onSelect,
+	onContextMenu,
+}: {
+	session: WorkspaceSession;
+	active: boolean;
+	dimmed?: boolean;
+	onSelect: () => void;
+	onContextMenu: (event: React.MouseEvent) => void;
+}) {
+	return (
+		<SidebarMenuSubItem>
+			<SidebarMenuSubButton asChild isActive={active}>
+				<button
+					aria-current={active ? "page" : undefined}
+					aria-label={`Open ${session.title}`}
+					className={cn(
+						"h-auto w-full translate-x-0 gap-[9px] rounded-[5px] py-[5px] pl-2 pr-1.5 text-left transition-colors",
+						"hover:bg-interactive-hover data-[active=true]:bg-interactive-active",
+					)}
+					onClick={onSelect}
+					onContextMenu={onContextMenu}
+					type="button"
+				>
+					<SessionDot session={session} />
+					<span className="min-w-0 flex-1">
+						<span
+							className={cn(
+								"block truncate text-[12px]",
+								active ? "text-foreground" : dimmed ? "text-passive" : "text-muted-foreground",
+							)}
+						>
+							{session.title}
+						</span>
+						<span className="block truncate font-mono text-[10px] text-passive">{session.id}</span>
+					</span>
+				</button>
+			</SidebarMenuSubButton>
+		</SidebarMenuSubItem>
 	);
 }
 

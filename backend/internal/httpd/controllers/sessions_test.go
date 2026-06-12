@@ -20,6 +20,7 @@ import (
 
 type fakeSessionService struct {
 	sessions        map[domain.SessionID]domain.Session
+	listFilters     []sessionsvc.ListFilter
 	sent            string
 	cleanupProjects []domain.ProjectID
 	cleanupResult   []domain.SessionID
@@ -42,6 +43,7 @@ func newFakeSessionService() *fakeSessionService {
 }
 
 func (f *fakeSessionService) List(_ context.Context, filter sessionsvc.ListFilter) ([]domain.Session, error) {
+	f.listFilters = append(f.listFilters, filter)
 	var out []domain.Session
 	for _, s := range f.sessions {
 		if filter.ProjectID != "" && s.ProjectID != filter.ProjectID {
@@ -88,9 +90,33 @@ func (f *fakeSessionService) Get(_ context.Context, id domain.SessionID) (domain
 func (f *fakeSessionService) Restore(_ context.Context, id domain.SessionID) (domain.Session, error) {
 	s := f.sessions[id]
 	s.IsTerminated = false
+	s.IsArchived = false
 	s.Status = domain.StatusIdle
 	f.sessions[id] = s
 	return s, nil
+}
+
+func (f *fakeSessionService) Archive(_ context.Context, id domain.SessionID) error {
+	s, ok := f.sessions[id]
+	if !ok {
+		return apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	if !s.IsTerminated {
+		return apierr.Conflict("SESSION_NOT_TERMINATED", "Kill the worker before archiving it", nil)
+	}
+	s.IsArchived = true
+	f.sessions[id] = s
+	return nil
+}
+
+func (f *fakeSessionService) Unarchive(_ context.Context, id domain.SessionID) error {
+	s, ok := f.sessions[id]
+	if !ok {
+		return apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	s.IsArchived = false
+	f.sessions[id] = s
+	return nil
 }
 
 func (f *fakeSessionService) Kill(_ context.Context, id domain.SessionID) (bool, error) {
@@ -363,6 +389,56 @@ func TestSessionsAPI_SendValidation(t *testing.T) {
 
 	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/send", `{"message":""}`)
 	assertErrorCode(t, body, status, http.StatusBadRequest, "MESSAGE_REQUIRED")
+}
+
+func TestSessionsAPI_ArchiveLifecycle(t *testing.T) {
+	svc := newFakeSessionService()
+	srv := newSessionTestServer(t, svc)
+
+	// Archiving a running session conflicts — kill first.
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/archive", "")
+	assertErrorCode(t, body, status, http.StatusConflict, "SESSION_NOT_TERMINATED")
+
+	if body, status, _ = doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/kill", ""); status != http.StatusOK {
+		t.Fatalf("kill = %d, want 200; body=%s", status, body)
+	}
+	body, status, _ = doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/archive", "")
+	if status != http.StatusOK {
+		t.Fatalf("archive = %d, want 200; body=%s", status, body)
+	}
+	var archived struct {
+		OK        bool   `json:"ok"`
+		SessionID string `json:"sessionId"`
+	}
+	mustJSON(t, body, &archived)
+	if !archived.OK || archived.SessionID != "ao-1" || !svc.sessions["ao-1"].IsArchived {
+		t.Fatalf("archive response = %#v, session = %+v", archived, svc.sessions["ao-1"])
+	}
+
+	body, status, _ = doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/unarchive", "")
+	if status != http.StatusOK || svc.sessions["ao-1"].IsArchived {
+		t.Fatalf("unarchive = %d body=%s session=%+v", status, body, svc.sessions["ao-1"])
+	}
+
+	body, status, _ = doRequest(t, srv, "POST", "/api/v1/sessions/missing-1/archive", "")
+	assertErrorCode(t, body, status, http.StatusNotFound, "SESSION_NOT_FOUND")
+}
+
+func TestSessionsAPI_ListArchivedFilter(t *testing.T) {
+	svc := newFakeSessionService()
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "GET", "/api/v1/sessions?archived=true", "")
+	if status != http.StatusOK {
+		t.Fatalf("GET sessions = %d, want 200; body=%s", status, body)
+	}
+	last := svc.listFilters[len(svc.listFilters)-1]
+	if last.Archived == nil || !*last.Archived {
+		t.Fatalf("archived filter not parsed: %#v", last)
+	}
+
+	body, status, _ = doRequest(t, srv, "GET", "/api/v1/sessions?archived=banana", "")
+	assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_QUERY")
 }
 
 func TestSessionsAPI_CleanupWithProjectFilter(t *testing.T) {

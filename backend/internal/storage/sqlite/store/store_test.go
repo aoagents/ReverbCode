@@ -302,6 +302,73 @@ func TestSessionFirstSignalRoundTrip(t *testing.T) {
 	}
 }
 
+func TestSessionArchiveRoundTrip(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	r, _ := s.CreateSession(ctx, sampleRecord("mer"))
+	at := time.Now().UTC().Truncate(time.Second)
+
+	// A running session never archives: the is_terminated guard is in the SQL.
+	if ok, err := s.ArchiveSession(ctx, r.ID, at); err != nil || ok {
+		t.Fatalf("archive of running session: ok=%v err=%v", ok, err)
+	}
+
+	r.IsTerminated = true
+	if err := s.UpdateSession(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := s.ArchiveSession(ctx, r.ID, at); err != nil || !ok {
+		t.Fatalf("archive: ok=%v err=%v", ok, err)
+	}
+	got, _, _ := s.GetSession(ctx, r.ID)
+	if !got.ArchivedAt.Equal(at) {
+		t.Fatalf("archived_at = %v, want %v", got.ArchivedAt, at)
+	}
+	// Re-archiving is a no-op so the timestamp never moves.
+	if ok, _ := s.ArchiveSession(ctx, r.ID, at.Add(time.Hour)); ok {
+		t.Fatalf("repeat archive must not match a row")
+	}
+
+	// A full lifecycle update must not clobber the archive fact.
+	got.Activity.State = domain.ActivityIdle
+	if err := s.UpdateSession(ctx, got); err != nil {
+		t.Fatal(err)
+	}
+	kept, _, _ := s.GetSession(ctx, r.ID)
+	if !kept.ArchivedAt.Equal(at) {
+		t.Fatalf("UpdateSession clobbered archived_at: %v", kept.ArchivedAt)
+	}
+
+	// Archive flips fan out CDC events (session_created + archive + unarchive;
+	// the activity update above also logs one).
+	if ok, err := s.UnarchiveSession(ctx, r.ID, at.Add(time.Minute)); err != nil || !ok {
+		t.Fatalf("unarchive: ok=%v err=%v", ok, err)
+	}
+	cleared, _, _ := s.GetSession(ctx, r.ID)
+	if !cleared.ArchivedAt.IsZero() {
+		t.Fatalf("archived_at not cleared: %v", cleared.ArchivedAt)
+	}
+	if ok, _ := s.UnarchiveSession(ctx, r.ID, at); ok {
+		t.Fatalf("repeat unarchive must not match a row")
+	}
+
+	evs, err := s.EventsAfter(ctx, 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var updates int
+	for _, e := range evs {
+		if string(e.Type) == "session_updated" {
+			updates++
+		}
+	}
+	// terminate + archive + activity flip + unarchive = 4 update events.
+	if updates != 4 {
+		t.Fatalf("session_updated events = %d, want 4 (archive flips must reach the change log)", updates)
+	}
+}
+
 func TestPRCRUD(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

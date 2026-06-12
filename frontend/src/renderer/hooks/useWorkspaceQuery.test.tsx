@@ -121,6 +121,43 @@ describe("useWorkspaceQuery", () => {
 		expect(result.current.data?.[0].sessions[0].status).toBe("terminated");
 	});
 
+	it("splits archived workers out of the default session list", async () => {
+		respondWith({
+			projects: { data: { projects: [{ id: "proj-1", name: "my-app", path: "/p" }] }, error: undefined },
+			sessions: {
+				data: {
+					sessions: [
+						{
+							id: "sess-1",
+							projectId: "proj-1",
+							status: "working",
+							isTerminated: false,
+							updatedAt: "2026-06-10T16:15:04Z",
+						},
+						{
+							id: "sess-2",
+							projectId: "proj-1",
+							status: "terminated",
+							isTerminated: true,
+							isArchived: true,
+							updatedAt: "2026-06-10T16:15:04Z",
+						},
+					],
+				},
+				error: undefined,
+			},
+		});
+
+		const { result } = renderHook(() => useWorkspaceQuery(), { wrapper });
+		await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+		const [workspace] = result.current.data ?? [];
+		expect(workspace.sessions).toHaveLength(1);
+		expect(workspace.sessions[0]).toMatchObject({ id: "sess-1", archived: false });
+		expect(workspace.archivedSessions).toHaveLength(1);
+		expect(workspace.archivedSessions?.[0]).toMatchObject({ id: "sess-2", archived: true, status: "terminated" });
+	});
+
 	it("surfaces a projects fetch error", async () => {
 		const failure = new TypeError("Failed to fetch");
 		respondWith({ projects: { data: undefined, error: failure } });

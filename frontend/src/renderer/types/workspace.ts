@@ -77,6 +77,8 @@ export type WorkspaceSession = {
 	kind?: SessionKind;
 	branch: string;
 	status: SessionStatus;
+	/** Soft-hidden from the default worker list (terminated workers only). */
+	archived?: boolean;
 	/** ISO timestamp from the daemon — used for relative time in the inspector. */
 	createdAt?: string;
 	/** ISO timestamp from the daemon. */
@@ -228,6 +230,12 @@ export type WorkspaceSummary = {
 	orchestrator?: WorkspaceSession;
 	/** Worker sessions only; the orchestrator is surfaced separately above. */
 	sessions: WorkspaceSession[];
+	/**
+	 * Archived workers, split out so every default surface (sidebar list, side
+	 * rail, counts) ignores them; the sidebar shows them behind an
+	 * "Archived (n)" disclosure.
+	 */
+	archivedSessions?: WorkspaceSession[];
 };
 
 export function toAgentProvider(provider?: string): AgentProvider {

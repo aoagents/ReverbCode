@@ -48,11 +48,17 @@ type SessionRecord struct {
 	// activity state. Zero means no hook has ever reported, which deriveStatus
 	// surfaces as StatusNoSignal after a grace period. Internal fact, not part
 	// of the API read model.
-	FirstSignalAt time.Time       `json:"-"`
-	IsTerminated  bool            `json:"isTerminated"`
-	Metadata      SessionMetadata `json:"-"`
-	CreatedAt     time.Time       `json:"createdAt"`
-	UpdatedAt     time.Time       `json:"updatedAt"`
+	FirstSignalAt time.Time `json:"-"`
+	IsTerminated  bool      `json:"isTerminated"`
+	// ArchivedAt soft-hides a terminated session from default UI lists without
+	// destroying the row (mirrors ProjectRecord.ArchivedAt). Zero means not
+	// archived. It records user intent via the session service — lifecycle
+	// never sets it, and restore clears it so a running session can never be
+	// hidden. Internal fact; the read model exposes the derived IsArchived.
+	ArchivedAt time.Time       `json:"-"`
+	Metadata   SessionMetadata `json:"-"`
+	CreatedAt  time.Time       `json:"createdAt"`
+	UpdatedAt  time.Time       `json:"updatedAt"`
 }
 
 // Session is the read-model returned across the API boundary: a SessionRecord
@@ -60,6 +66,7 @@ type SessionRecord struct {
 type Session struct {
 	SessionRecord
 	Status           SessionStatus `json:"status"`
+	IsArchived       bool          `json:"isArchived,omitempty"`
 	TerminalHandleID string        `json:"terminalHandleId,omitempty"`
 	// Branch is the session's worktree branch, surfaced from Metadata (which
 	// stays internal) so the UI's git rail can label the workspace.

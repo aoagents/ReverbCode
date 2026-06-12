@@ -56,6 +56,35 @@ func (s *Store) RenameSession(ctx context.Context, id domain.SessionID, displayN
 	return rows > 0, nil
 }
 
+// ArchiveSession soft-hides a terminated session. Returns ok=false when no
+// row matched: the session is absent, not terminated, or already archived
+// (the caller distinguishes those by reading the record first).
+func (s *Store) ArchiveSession(ctx context.Context, id domain.SessionID, at time.Time) (bool, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	rows, err := s.qw.ArchiveSession(ctx, gen.ArchiveSessionParams{
+		ArchivedAt: timeToNullTime(at),
+		UpdatedAt:  at,
+		ID:         id,
+	})
+	if err != nil {
+		return false, fmt.Errorf("archive session %s: %w", id, err)
+	}
+	return rows > 0, nil
+}
+
+// UnarchiveSession clears a session's archived_at. Returns ok=false when the
+// session was absent or not archived (both benign no-ops for callers).
+func (s *Store) UnarchiveSession(ctx context.Context, id domain.SessionID, at time.Time) (bool, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	rows, err := s.qw.UnarchiveSession(ctx, gen.UnarchiveSessionParams{UpdatedAt: at, ID: id})
+	if err != nil {
+		return false, fmt.Errorf("unarchive session %s: %w", id, err)
+	}
+	return rows > 0, nil
+}
+
 // DeleteSession removes a session row, but only if it is still in seed state
 // (no workspace, no runtime handle, no agent session id, no prompt, and not
 // already terminated). Rows that have observable spawn output are immutable
@@ -182,6 +211,7 @@ func rowToRecord(row gen.Session) domain.SessionRecord {
 		},
 		FirstSignalAt: nullTimeToTime(row.FirstSignalAt),
 		IsTerminated:  row.IsTerminated,
+		ArchivedAt:    nullTimeToTime(row.ArchivedAt),
 		Metadata: domain.SessionMetadata{
 			Branch:          row.Branch,
 			WorkspacePath:   row.WorkspacePath,

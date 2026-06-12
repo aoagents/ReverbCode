@@ -19,6 +19,8 @@ type Store interface {
 	ListSessions(ctx context.Context, project domain.ProjectID) ([]domain.SessionRecord, error)
 	ListAllSessions(ctx context.Context) ([]domain.SessionRecord, error)
 	RenameSession(ctx context.Context, id domain.SessionID, displayName string, updatedAt time.Time) (bool, error)
+	ArchiveSession(ctx context.Context, id domain.SessionID, at time.Time) (bool, error)
+	UnarchiveSession(ctx context.Context, id domain.SessionID, at time.Time) (bool, error)
 	GetDisplayPRFactsForSession(ctx context.Context, id domain.SessionID) (domain.PRFacts, bool, error)
 	ListPRsBySession(ctx context.Context, sessionID domain.SessionID) ([]domain.PullRequest, error)
 	ListPRComments(ctx context.Context, prURL string) ([]domain.PullRequestComment, error)
@@ -31,6 +33,9 @@ type ListFilter struct {
 	Active           *bool
 	OrchestratorOnly bool
 	Fresh            bool
+	// Archived selects only archived (true) or only non-archived (false)
+	// sessions; nil includes both.
+	Archived *bool
 }
 
 // commander is the command-side surface Service delegates to: the
@@ -181,12 +186,59 @@ func (s *Service) SpawnOrchestrator(ctx context.Context, projectID domain.Projec
 }
 
 // Restore relaunches a terminated session and returns the API-facing read model.
+// A restore also unarchives: archived is a "hidden from default lists" fact
+// that must never apply to a running session.
 func (s *Service) Restore(ctx context.Context, id domain.SessionID) (domain.Session, error) {
 	rec, err := s.manager.Restore(ctx, id)
 	if err != nil {
 		return domain.Session{}, toAPIError(err)
 	}
+	if !rec.ArchivedAt.IsZero() {
+		if _, err := s.store.UnarchiveSession(ctx, id, s.now().UTC()); err != nil {
+			return domain.Session{}, fmt.Errorf("unarchive restored %s: %w", id, err)
+		}
+		rec.ArchivedAt = time.Time{}
+	}
 	return s.toSession(ctx, rec)
+}
+
+// Archive soft-hides a terminated session from default UI lists. Archiving a
+// session that is still running is rejected: the worker must be killed first
+// so an active agent can never be hidden. Re-archiving is a no-op.
+func (s *Service) Archive(ctx context.Context, id domain.SessionID) error {
+	rec, ok, err := s.store.GetSession(ctx, id)
+	if err != nil {
+		return fmt.Errorf("archive %s: %w", id, err)
+	}
+	if !ok {
+		return apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	if !rec.IsTerminated {
+		return apierr.Conflict("SESSION_NOT_TERMINATED", "Kill the worker before archiving it", nil)
+	}
+	if !rec.ArchivedAt.IsZero() {
+		return nil
+	}
+	if _, err := s.store.ArchiveSession(ctx, id, s.now().UTC()); err != nil {
+		return fmt.Errorf("archive %s: %w", id, err)
+	}
+	return nil
+}
+
+// Unarchive returns an archived session to default UI lists. Unarchiving a
+// session that is not archived is a no-op.
+func (s *Service) Unarchive(ctx context.Context, id domain.SessionID) error {
+	_, ok, err := s.store.GetSession(ctx, id)
+	if err != nil {
+		return fmt.Errorf("unarchive %s: %w", id, err)
+	}
+	if !ok {
+		return apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	if _, err := s.store.UnarchiveSession(ctx, id, s.now().UTC()); err != nil {
+		return fmt.Errorf("unarchive %s: %w", id, err)
+	}
+	return nil
 }
 
 // Kill delegates terminal intent and teardown to the internal manager.
@@ -290,6 +342,9 @@ func matchesSessionFilter(rec domain.SessionRecord, filter ListFilter) bool {
 	if filter.Fresh && rec.IsTerminated {
 		return false
 	}
+	if filter.Archived != nil && *filter.Archived == rec.ArchivedAt.IsZero() {
+		return false
+	}
 	return true
 }
 
@@ -339,9 +394,9 @@ func (s *Service) toSession(ctx context.Context, rec domain.SessionRecord) (doma
 		return domain.Session{}, fmt.Errorf("pr facts %s: %w", rec.ID, err)
 	}
 	if !ok {
-		return domain.Session{SessionRecord: rec, Status: deriveStatus(rec, nil, s.now(), s.harnessSignals(rec.Harness)), TerminalHandleID: rec.Metadata.RuntimeHandleID, Branch: rec.Metadata.Branch}, nil
+		return domain.Session{SessionRecord: rec, Status: deriveStatus(rec, nil, s.now(), s.harnessSignals(rec.Harness)), IsArchived: !rec.ArchivedAt.IsZero(), TerminalHandleID: rec.Metadata.RuntimeHandleID, Branch: rec.Metadata.Branch}, nil
 	}
-	return domain.Session{SessionRecord: rec, Status: deriveStatus(rec, &pr, s.now(), s.harnessSignals(rec.Harness)), TerminalHandleID: rec.Metadata.RuntimeHandleID, Branch: rec.Metadata.Branch}, nil
+	return domain.Session{SessionRecord: rec, Status: deriveStatus(rec, &pr, s.now(), s.harnessSignals(rec.Harness)), IsArchived: !rec.ArchivedAt.IsZero(), TerminalHandleID: rec.Metadata.RuntimeHandleID, Branch: rec.Metadata.Branch}, nil
 }
 
 // now tolerates a zero-value Service (tests construct the struct literally

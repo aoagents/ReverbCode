@@ -13,10 +13,33 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
+const archiveSession = `-- name: ArchiveSession :execrows
+UPDATE sessions SET archived_at = ?, updated_at = ?
+WHERE id = ? AND is_terminated = 1 AND archived_at IS NULL
+`
+
+type ArchiveSessionParams struct {
+	ArchivedAt sql.NullTime
+	UpdatedAt  time.Time
+	ID         domain.SessionID
+}
+
+// ArchiveSession soft-hides a terminated session. The is_terminated guard is
+// in the statement so a concurrent restore can't race the service's
+// pre-check; the archived_at IS NULL guard makes a repeat archive a no-op
+// (0 rows) instead of moving the timestamp.
+func (q *Queries) ArchiveSession(ctx context.Context, arg ArchiveSessionParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, archiveSession, arg.ArchivedAt, arg.UpdatedAt, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const getSession = `-- name: GetSession :one
 SELECT id, project_id, num, issue_id, kind, harness,
     activity_state, activity_last_at, is_terminated, branch, workspace_path,
-    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at
+    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at, archived_at
 FROM sessions WHERE id = ?
 `
 
@@ -42,6 +65,7 @@ func (q *Queries) GetSession(ctx context.Context, id domain.SessionID) (Session,
 		&i.UpdatedAt,
 		&i.DisplayName,
 		&i.FirstSignalAt,
+		&i.ArchivedAt,
 	)
 	return i, err
 }
@@ -103,7 +127,7 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) er
 const listAllSessions = `-- name: ListAllSessions :many
 SELECT id, project_id, num, issue_id, kind, harness,
     activity_state, activity_last_at, is_terminated, branch, workspace_path,
-    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at
+    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at, archived_at
 FROM sessions ORDER BY project_id, num
 `
 
@@ -135,6 +159,7 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]Session, error) {
 			&i.UpdatedAt,
 			&i.DisplayName,
 			&i.FirstSignalAt,
+			&i.ArchivedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -152,7 +177,7 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]Session, error) {
 const listSessionsByProject = `-- name: ListSessionsByProject :many
 SELECT id, project_id, num, issue_id, kind, harness,
     activity_state, activity_last_at, is_terminated, branch, workspace_path,
-    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at
+    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at, archived_at
 FROM sessions WHERE project_id = ? ORDER BY num
 `
 
@@ -184,6 +209,7 @@ func (q *Queries) ListSessionsByProject(ctx context.Context, projectID domain.Pr
 			&i.UpdatedAt,
 			&i.DisplayName,
 			&i.FirstSignalAt,
+			&i.ArchivedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -249,6 +275,24 @@ func (q *Queries) SessionIsSeed(ctx context.Context, id domain.SessionID) (bool,
 	var is_seed bool
 	err := row.Scan(&is_seed)
 	return is_seed, err
+}
+
+const unarchiveSession = `-- name: UnarchiveSession :execrows
+UPDATE sessions SET archived_at = NULL, updated_at = ?
+WHERE id = ? AND archived_at IS NOT NULL
+`
+
+type UnarchiveSessionParams struct {
+	UpdatedAt time.Time
+	ID        domain.SessionID
+}
+
+func (q *Queries) UnarchiveSession(ctx context.Context, arg UnarchiveSessionParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, unarchiveSession, arg.UpdatedAt, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const updateSession = `-- name: UpdateSession :exec

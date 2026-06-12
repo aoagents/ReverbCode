@@ -30,6 +30,8 @@ type SessionService interface {
 	Get(ctx context.Context, id domain.SessionID) (domain.Session, error)
 	Restore(ctx context.Context, id domain.SessionID) (domain.Session, error)
 	Kill(ctx context.Context, id domain.SessionID) (bool, error)
+	Archive(ctx context.Context, id domain.SessionID) error
+	Unarchive(ctx context.Context, id domain.SessionID) error
 	RollbackSpawn(ctx context.Context, id domain.SessionID) (sessionsvc.RollbackOutcome, error)
 	Cleanup(ctx context.Context, project domain.ProjectID) (sessionsvc.CleanupOutcome, error)
 	Rename(ctx context.Context, id domain.SessionID, displayName string) error
@@ -69,6 +71,8 @@ func (c *SessionsController) Register(r chi.Router) {
 	r.Patch("/sessions/{sessionId}", c.rename)
 	r.Post("/sessions/{sessionId}/restore", c.restore)
 	r.Post("/sessions/{sessionId}/kill", c.kill)
+	r.Post("/sessions/{sessionId}/archive", c.archive)
+	r.Post("/sessions/{sessionId}/unarchive", c.unarchive)
 	r.Post("/sessions/{sessionId}/rollback", c.rollback)
 	r.Post("/sessions/{sessionId}/send", c.send)
 	r.Post("/sessions/{sessionId}/activity", c.activity)
@@ -226,6 +230,33 @@ func (c *SessionsController) kill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	envelope.WriteJSON(w, http.StatusOK, KillSessionResponse{OK: true, SessionID: sessionID(r), Freed: freed})
+}
+
+// archive soft-hides a terminated session from default lists. Conflicts (409
+// SESSION_NOT_TERMINATED) when the session is still running: kill first, so an
+// active agent can never be hidden.
+func (c *SessionsController) archive(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/{sessionId}/archive")
+		return
+	}
+	if err := c.Svc.Archive(r.Context(), sessionID(r)); err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, ArchiveSessionResponse{OK: true, SessionID: sessionID(r)})
+}
+
+func (c *SessionsController) unarchive(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/{sessionId}/unarchive")
+		return
+	}
+	if err := c.Svc.Unarchive(r.Context(), sessionID(r)); err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, UnarchiveSessionResponse{OK: true, SessionID: sessionID(r)})
 }
 
 // rollback undoes a partially-completed spawn: if the session row is still in
@@ -486,6 +517,13 @@ func parseSessionListFilter(r *http.Request) (sessionsvc.ListFilter, error) {
 			return sessionsvc.ListFilter{}, errors.New("fresh must be a boolean")
 		}
 		filter.Fresh = fresh
+	}
+	if raw := q.Get("archived"); raw != "" {
+		archived, err := strconv.ParseBool(raw)
+		if err != nil {
+			return sessionsvc.ListFilter{}, errors.New("archived must be a boolean")
+		}
+		filter.Archived = &archived
 	}
 	return filter, nil
 }

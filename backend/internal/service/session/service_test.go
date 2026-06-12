@@ -65,6 +65,28 @@ func (f *fakeStore) RenameSession(_ context.Context, id domain.SessionID, displa
 	return true, nil
 }
 
+func (f *fakeStore) ArchiveSession(_ context.Context, id domain.SessionID, at time.Time) (bool, error) {
+	r, ok := f.sessions[id]
+	if !ok || !r.IsTerminated || !r.ArchivedAt.IsZero() {
+		return false, nil
+	}
+	r.ArchivedAt = at
+	r.UpdatedAt = at
+	f.sessions[id] = r
+	return true, nil
+}
+
+func (f *fakeStore) UnarchiveSession(_ context.Context, id domain.SessionID, at time.Time) (bool, error) {
+	r, ok := f.sessions[id]
+	if !ok || r.ArchivedAt.IsZero() {
+		return false, nil
+	}
+	r.ArchivedAt = time.Time{}
+	r.UpdatedAt = at
+	f.sessions[id] = r
+	return true, nil
+}
+
 func (f *fakeStore) GetDisplayPRFactsForSession(_ context.Context, id domain.SessionID) (domain.PRFacts, bool, error) {
 	pr, ok := f.pr[id]
 	return pr, ok, nil
@@ -121,6 +143,117 @@ func TestSessionRenameMissingSessionReturnsNotFound(t *testing.T) {
 	var e *apierr.Error
 	if !errors.As(err, &e) || e.Kind != apierr.KindNotFound || e.Code != "SESSION_NOT_FOUND" {
 		t.Fatalf("err = %v, want apierr NotFound SESSION_NOT_FOUND", err)
+	}
+}
+
+func TestArchiveRequiresTerminatedSession(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer"}
+
+	err := (&Service{store: st}).Archive(context.Background(), "mer-1")
+	var e *apierr.Error
+	if !errors.As(err, &e) || e.Kind != apierr.KindConflict || e.Code != "SESSION_NOT_TERMINATED" {
+		t.Fatalf("err = %v, want apierr Conflict SESSION_NOT_TERMINATED", err)
+	}
+	if !st.sessions["mer-1"].ArchivedAt.IsZero() {
+		t.Fatalf("running session must not be archived: %+v", st.sessions["mer-1"])
+	}
+}
+
+func TestArchiveMissingSessionReturnsNotFound(t *testing.T) {
+	err := (&Service{store: newFakeStore()}).Archive(context.Background(), "mer-404")
+	var e *apierr.Error
+	if !errors.As(err, &e) || e.Kind != apierr.KindNotFound || e.Code != "SESSION_NOT_FOUND" {
+		t.Fatalf("err = %v, want apierr NotFound SESSION_NOT_FOUND", err)
+	}
+}
+
+func TestArchiveHidesSessionFromFilteredListAndUnarchiveRestoresIt(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", IsTerminated: true}
+	st.sessions["mer-2"] = domain.SessionRecord{ID: "mer-2", ProjectID: "mer"}
+	svc := &Service{store: st}
+
+	if err := svc.Archive(context.Background(), "mer-1"); err != nil {
+		t.Fatalf("Archive: %v", err)
+	}
+	if st.sessions["mer-1"].ArchivedAt.IsZero() {
+		t.Fatalf("archived_at not set: %+v", st.sessions["mer-1"])
+	}
+	// Re-archiving is a no-op, not an error.
+	if err := svc.Archive(context.Background(), "mer-1"); err != nil {
+		t.Fatalf("repeat Archive: %v", err)
+	}
+
+	archived := true
+	notArchived := false
+	cases := []struct {
+		filter ListFilter
+		want   map[domain.SessionID]bool
+	}{
+		{ListFilter{ProjectID: "mer"}, map[domain.SessionID]bool{"mer-1": true, "mer-2": true}},
+		{ListFilter{ProjectID: "mer", Archived: &notArchived}, map[domain.SessionID]bool{"mer-2": true}},
+		{ListFilter{ProjectID: "mer", Archived: &archived}, map[domain.SessionID]bool{"mer-1": true}},
+	}
+	for _, tc := range cases {
+		list, err := svc.List(context.Background(), tc.filter)
+		if err != nil {
+			t.Fatalf("List(%+v): %v", tc.filter, err)
+		}
+		got := map[domain.SessionID]bool{}
+		for _, s := range list {
+			got[s.ID] = true
+			if s.ID == "mer-1" && !s.IsArchived {
+				t.Fatalf("mer-1 read model must surface isArchived: %+v", s)
+			}
+		}
+		if len(got) != len(tc.want) {
+			t.Fatalf("List(%+v) = %v, want %v", tc.filter, got, tc.want)
+		}
+		for id := range tc.want {
+			if !got[id] {
+				t.Fatalf("List(%+v) = %v, want %v", tc.filter, got, tc.want)
+			}
+		}
+	}
+
+	if err := svc.Unarchive(context.Background(), "mer-1"); err != nil {
+		t.Fatalf("Unarchive: %v", err)
+	}
+	if !st.sessions["mer-1"].ArchivedAt.IsZero() {
+		t.Fatalf("archived_at not cleared: %+v", st.sessions["mer-1"])
+	}
+}
+
+// archivedRestoreCommander returns a canned record from Restore so the test
+// can hand the service an archived-but-just-restored session.
+type archivedRestoreCommander struct {
+	fakeCommander
+	rec domain.SessionRecord
+}
+
+func (c *archivedRestoreCommander) Restore(context.Context, domain.SessionID) (domain.SessionRecord, error) {
+	return c.rec, nil
+}
+
+func TestRestoreClearsArchived(t *testing.T) {
+	archivedAt := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", IsTerminated: true, ArchivedAt: archivedAt}
+	svc := &Service{
+		manager: &archivedRestoreCommander{rec: domain.SessionRecord{ID: "mer-1", ProjectID: "mer", ArchivedAt: archivedAt}},
+		store:   st,
+	}
+
+	sess, err := svc.Restore(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	if sess.IsArchived {
+		t.Fatalf("restored session must not read as archived: %+v", sess)
+	}
+	if !st.sessions["mer-1"].ArchivedAt.IsZero() {
+		t.Fatalf("restore must clear archived_at: %+v", st.sessions["mer-1"])
 	}
 }
 

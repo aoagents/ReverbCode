@@ -104,6 +104,7 @@ type ListSessionsQuery struct {
 	Active           *bool  `query:"active,omitempty" description:"When true, return non-terminated sessions; when false, return terminated sessions."`
 	OrchestratorOnly *bool  `query:"orchestratorOnly,omitempty" description:"When true, return only orchestrator sessions."`
 	Fresh            *bool  `query:"fresh,omitempty" description:"When true, return only fresh non-terminated sessions."`
+	Archived         *bool  `query:"archived,omitempty" description:"When true, return only archived sessions; when false, exclude archived sessions. Omitted, both are returned."`
 }
 
 // CleanupSessionsQuery is the query string accepted by POST /api/v1/sessions/cleanup.
@@ -155,6 +156,18 @@ type KillSessionResponse struct {
 	OK        bool             `json:"ok"`
 	SessionID domain.SessionID `json:"sessionId"`
 	Freed     bool             `json:"freed,omitempty"`
+}
+
+// ArchiveSessionResponse is the body of POST /api/v1/sessions/{sessionId}/archive.
+type ArchiveSessionResponse struct {
+	OK        bool             `json:"ok"`
+	SessionID domain.SessionID `json:"sessionId"`
+}
+
+// UnarchiveSessionResponse is the body of POST /api/v1/sessions/{sessionId}/unarchive.
+type UnarchiveSessionResponse struct {
+	OK        bool             `json:"ok"`
+	SessionID domain.SessionID `json:"sessionId"`
 }
 
 // RollbackSessionResponse is the body of POST /api/v1/sessions/{sessionId}/rollback.

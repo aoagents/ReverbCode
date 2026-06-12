@@ -20,24 +20,36 @@ WHERE id = ?;
 -- name: GetSession :one
 SELECT id, project_id, num, issue_id, kind, harness,
     activity_state, activity_last_at, is_terminated, branch, workspace_path,
-    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at
+    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at, archived_at
 FROM sessions WHERE id = ?;
 
 -- name: ListSessionsByProject :many
 SELECT id, project_id, num, issue_id, kind, harness,
     activity_state, activity_last_at, is_terminated, branch, workspace_path,
-    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at
+    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at, archived_at
 FROM sessions WHERE project_id = ? ORDER BY num;
 
 -- name: ListAllSessions :many
 SELECT id, project_id, num, issue_id, kind, harness,
     activity_state, activity_last_at, is_terminated, branch, workspace_path,
-    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at
+    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at, archived_at
 FROM sessions ORDER BY project_id, num;
 
 
 -- name: RenameSession :execrows
 UPDATE sessions SET display_name = ?, updated_at = ? WHERE id = ?;
+
+-- name: ArchiveSession :execrows
+-- ArchiveSession soft-hides a terminated session. The is_terminated guard is
+-- in the statement so a concurrent restore can't race the service's
+-- pre-check; the archived_at IS NULL guard makes a repeat archive a no-op
+-- (0 rows) instead of moving the timestamp.
+UPDATE sessions SET archived_at = ?, updated_at = ?
+WHERE id = ? AND is_terminated = 1 AND archived_at IS NULL;
+
+-- name: UnarchiveSession :execrows
+UPDATE sessions SET archived_at = NULL, updated_at = ?
+WHERE id = ? AND archived_at IS NOT NULL;
 
 -- name: SessionIsSeed :one
 -- SessionIsSeed reports whether the session id matches a row still in seed

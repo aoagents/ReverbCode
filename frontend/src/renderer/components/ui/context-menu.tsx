@@ -91,7 +91,6 @@ export function ContextMenu({ menu, onClose }: { menu: ContextMenuState; onClose
 
 	return (
 		<div
-			aria-hidden
 			className="fixed inset-0 z-50"
 			onClick={onClose}
 			onContextMenu={(event) => {
