@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
-import { Bell, GitBranch, LayoutGrid, PanelRightClose, PanelRightOpen, Waypoints } from "lucide-react";
+import { GitBranch, LayoutGrid, PanelRightClose, PanelRightOpen, Waypoints } from "lucide-react";
 import { useState } from "react";
 import {
 	findProjectOrchestrator,
@@ -125,10 +125,6 @@ export function ShellTopbar() {
 			<div className="dashboard-app-header__spacer" />
 
 			<div className="dashboard-app-header__actions">
-				{/* Bell leads the actions row, as in AO's SessionDetailHeader. */}
-				<button aria-label="Notifications" className="dashboard-app-header__icon-btn" style={noDragStyle} type="button">
-					<Bell className="h-[15px] w-[15px]" aria-hidden="true" />
-				</button>
 				{isSessionRoute ? (
 					<>
 						<button

@@ -189,23 +189,22 @@ func resolveRunFilePath() (string, error) {
 	if p, ok := os.LookupEnv("AO_RUN_FILE"); ok && p != "" {
 		return p, nil
 	}
-	dir, err := os.UserConfigDir()
+	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("resolve state dir: %w", err)
 	}
-	return filepath.Join(dir, "agent-orchestrator", "running.json"), nil
+	return filepath.Join(home, ".ao", "running.json"), nil
 }
 
 // resolveDataDir picks where durable state (the SQLite DB) lives. An explicit
-// AO_DATA_DIR wins; otherwise it sits under the per-user config directory
-// alongside running.json.
+// AO_DATA_DIR wins; otherwise it defaults to ~/.ao/data/.
 func resolveDataDir() (string, error) {
 	if p, ok := os.LookupEnv("AO_DATA_DIR"); ok && p != "" {
 		return p, nil
 	}
-	dir, err := os.UserConfigDir()
+	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("resolve state dir: %w", err)
 	}
-	return filepath.Join(dir, "agent-orchestrator", "data"), nil
+	return filepath.Join(home, ".ao", "data"), nil
 }

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -101,7 +102,7 @@ func TestManagedPathSafety(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new: %v", err)
 	}
-	path, err := ws.managedPath("proj", "sess")
+	path, err := ws.managedPath(ports.WorkspaceConfig{ProjectID: "proj", SessionID: "sess"})
 	if err != nil {
 		t.Fatalf("managed path: %v", err)
 	}
@@ -114,6 +115,63 @@ func TestManagedPathSafety(t *testing.T) {
 	if _, err := ws.validateManagedPath("relative/path"); !errors.Is(err, ErrUnsafePath) {
 		t.Fatalf("relative error = %v, want ErrUnsafePath", err)
 	}
+}
+
+func TestOrchestratorManagedPath(t *testing.T) {
+	root := t.TempDir()
+	ws, err := New(Options{ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": root}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+
+	t.Run("explicit prefix", func(t *testing.T) {
+		cfg := ports.WorkspaceConfig{
+			ProjectID:     "proj",
+			SessionID:     "proj-1",
+			Kind:          domain.KindOrchestrator,
+			SessionPrefix: "ao-agents",
+		}
+		path, err := ws.managedPath(cfg)
+		if err != nil {
+			t.Fatalf("managed path: %v", err)
+		}
+		want := filepath.Join(ws.managedRoot, "proj", "orchestrator", "ao-agents-orchestrator")
+		if path != want {
+			t.Fatalf("path = %q, want %q", path, want)
+		}
+	})
+
+	t.Run("prefix derived from project id", func(t *testing.T) {
+		cfg := ports.WorkspaceConfig{
+			ProjectID: "longprojectid123",
+			SessionID: "longprojectid123-1",
+			Kind:      domain.KindOrchestrator,
+		}
+		path, err := ws.managedPath(cfg)
+		if err != nil {
+			t.Fatalf("managed path: %v", err)
+		}
+		want := filepath.Join(ws.managedRoot, "longprojectid123", "orchestrator", "longprojecti-orchestrator")
+		if path != want {
+			t.Fatalf("path = %q, want %q", path, want)
+		}
+	})
+
+	t.Run("short project id used as prefix", func(t *testing.T) {
+		cfg := ports.WorkspaceConfig{
+			ProjectID: "proj",
+			SessionID: "proj-1",
+			Kind:      domain.KindOrchestrator,
+		}
+		path, err := ws.managedPath(cfg)
+		if err != nil {
+			t.Fatalf("managed path: %v", err)
+		}
+		want := filepath.Join(ws.managedRoot, "proj", "orchestrator", "proj-orchestrator")
+		if path != want {
+			t.Fatalf("path = %q, want %q", path, want)
+		}
+	})
 }
 
 // TestValidateConfigRejectsPathEscapingIDs covers review item RB: filepath.Join
