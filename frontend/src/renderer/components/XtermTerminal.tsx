@@ -64,12 +64,11 @@ function loadRenderer(term: Terminal): void {
 const terminalThemes = buildTerminalThemes();
 
 // Erase scrollback (3J) + display (2J) and home the cursor — yyork's
-// terminalResetSequence. Deliberately NOT term.reset(): a full RIS also wipes
-// the DEC private modes zellij enabled when its attach process started (SGR
-// mouse tracking, alt screen), and the mux's 50KB ring replay no longer
-// contains those init sequences — after a RIS, xterm never re-enters
-// mouse-tracking mode, wheel events stop being forwarded to zellij, and
-// scrolling goes dead.
+// terminalResetSequence. Deliberately NOT term.reset(): every pane PTY is a
+// fresh per-client `zellij attach` whose handshake re-asserts the DEC private
+// modes (SGR mouse tracking, alt screen) anyway, but a full RIS would drop
+// them for the window until that handshake arrives — a flash where wheel
+// events stop reaching zellij. The clear only wipes pixels; modes stay up.
 const CLEAR_SEQUENCE = "\x1b[3J\x1b[2J\x1b[H";
 
 export function XtermTerminal(props: XtermTerminalProps) {

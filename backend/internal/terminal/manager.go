@@ -34,9 +34,11 @@ const (
 	defaultWriteBuffer = 1024
 )
 
-// Manager owns the set of live terminal sessions and serves WebSocket clients.
-// Sessions outlive any single connection: multiple clients can attach to the
-// same pane, and a client reconnect re-subscribes to the existing session.
+// Manager serves WebSocket clients, spawning one attach PTY per opened pane
+// per connection. There is no shared per-pane state to outlive a connection:
+// the Zellij server owns the session (screen, scrollback, modes), and every
+// fresh attach gets its full handshake + repaint. A client reconnect simply
+// attaches again.
 type Manager struct {
 	src       PTYSource
 	events    EventSource
@@ -44,13 +46,13 @@ type Manager struct {
 	log       *slog.Logger
 	heartbeat time.Duration
 
-	// ctx scopes every session's PTY lifetime; cancelled by Close.
+	// ctx scopes every attachment's PTY lifetime; cancelled by Close.
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	mu       sync.Mutex
-	sessions map[string]*session
-	closed   bool
+	mu          sync.Mutex
+	attachments map[*attachment]struct{}
+	closed      bool
 }
 
 // Option configures a Manager.
@@ -70,14 +72,14 @@ func NewManager(src PTYSource, events EventSource, log *slog.Logger, opts ...Opt
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	m := &Manager{
-		src:       src,
-		events:    events,
-		spawn:     defaultSpawn,
-		log:       log,
-		heartbeat: defaultHeartbeat,
-		ctx:       ctx,
-		cancel:    cancel,
-		sessions:  map[string]*session{},
+		src:         src,
+		events:      events,
+		spawn:       defaultSpawn,
+		log:         log,
+		heartbeat:   defaultHeartbeat,
+		ctx:         ctx,
+		cancel:      cancel,
+		attachments: map[*attachment]struct{}{},
 	}
 	for _, opt := range opts {
 		opt(m)
@@ -85,8 +87,8 @@ func NewManager(src PTYSource, events EventSource, log *slog.Logger, opts ...Opt
 	return m
 }
 
-// Close tears down every session and stops re-attach loops. Safe to call once on
-// daemon shutdown.
+// Close tears down every live attachment and stops re-attach loops. Safe to
+// call once on daemon shutdown.
 func (m *Manager) Close() {
 	m.mu.Lock()
 	if m.closed {
@@ -94,42 +96,35 @@ func (m *Manager) Close() {
 		return
 	}
 	m.closed = true
-	sessions := make([]*session, 0, len(m.sessions))
-	for _, s := range m.sessions {
-		sessions = append(sessions, s)
+	attachments := make([]*attachment, 0, len(m.attachments))
+	for a := range m.attachments {
+		attachments = append(attachments, a)
 	}
-	m.sessions = map[string]*session{}
+	m.attachments = map[*attachment]struct{}{}
 	m.mu.Unlock()
 
 	m.cancel()
-	for _, s := range sessions {
-		s.close()
+	for _, a := range attachments {
+		a.close()
 	}
 }
 
-// openSession returns the live session for id, starting it on first open. The id
-// is the runtime handle id (Zellij handle).
-func (m *Manager) openSession(id string) (*session, error) {
+// track registers a live attachment so Close can tear it down; it refuses new
+// attachments once the manager is closed.
+func (m *Manager) track(a *attachment) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closed {
-		return nil, context.Canceled
+		return context.Canceled
 	}
-	if s, ok := m.sessions[id]; ok {
-		return s, nil
-	}
-	handle := ports.RuntimeHandle{ID: id}
-	s := newSession(id, handle, m.src, m.spawn, m.log)
-	m.sessions[id] = s
-	go func() {
-		s.run(m.ctx)
-		m.mu.Lock()
-		if cur, ok := m.sessions[id]; ok && cur == s {
-			delete(m.sessions, id)
-		}
-		m.mu.Unlock()
-	}()
-	return s, nil
+	m.attachments[a] = struct{}{}
+	return nil
+}
+
+func (m *Manager) forget(a *attachment) {
+	m.mu.Lock()
+	delete(m.attachments, a)
+	m.mu.Unlock()
 }
 
 // Serve runs the protocol loop for one client connection until it errors, the
@@ -144,7 +139,7 @@ func (m *Manager) Serve(ctx context.Context, conn wsConn) {
 		conn:   conn,
 		cancel: cancel,
 		out:    make(chan serverMsg, defaultWriteBuffer),
-		terms:  map[string]func(){},
+		terms:  map[string]*attachment{},
 	}
 	defer c.cleanup()
 
@@ -171,7 +166,7 @@ type connState struct {
 	out    chan serverMsg
 
 	mu        sync.Mutex
-	terms     map[string]func() // terminal id -> unsubscribe
+	terms     map[string]*attachment // terminal id -> this conn's own attach PTY
 	unsubEvts func()
 	closed    bool
 }
@@ -192,25 +187,28 @@ func (c *connState) handle(msg clientMsg) {
 func (c *connState) handleTerminal(msg clientMsg) {
 	switch msg.Type {
 	case msgOpen:
-		c.openTerminal(msg.ID)
+		c.openTerminal(msg.ID, msg.Rows, msg.Cols)
 	case msgData:
 		raw, err := base64.StdEncoding.DecodeString(msg.Data)
 		if err != nil {
 			return
 		}
-		if s := c.lookup(msg.ID); s != nil {
-			_ = s.write(raw)
+		if a := c.lookup(msg.ID); a != nil {
+			_ = a.write(raw)
 		}
 	case msgResize:
-		if s := c.lookup(msg.ID); s != nil {
-			_ = s.resize(msg.Rows, msg.Cols)
+		if a := c.lookup(msg.ID); a != nil {
+			_ = a.resize(msg.Rows, msg.Cols)
 		}
 	case msgClose:
 		c.closeTerminal(msg.ID)
 	}
 }
 
-func (c *connState) openTerminal(id string) {
+// openTerminal spawns this connection's own attach PTY for the pane. rows/cols
+// are the client's grid from the open frame, applied as the PTY's initial size
+// (a resize that raced ahead of the attach would otherwise be lost).
+func (c *connState) openTerminal(id string, rows, cols uint16) {
 	if id == "" {
 		c.enqueue(serverMsg{Ch: chTerminal, Type: msgError, Error: "missing terminal id"})
 		return
@@ -218,29 +216,14 @@ func (c *connState) openTerminal(id string) {
 	c.mu.Lock()
 	if _, ok := c.terms[id]; ok {
 		c.mu.Unlock()
-		return // already open on this conn; avoid duplicate replay
+		return // already open on this conn; avoid a duplicate attach
 	}
 	c.mu.Unlock()
 
-	s, err := c.mgr.openSession(id)
-	if err != nil {
-		c.enqueue(serverMsg{Ch: chTerminal, ID: id, Type: msgError, Error: err.Error()})
-		return
-	}
-
-	// Ack before subscribing so opened always precedes the replay and any
-	// data/exited frames subscribe delivers (the single out channel preserves
-	// this order). Reversing it would let a reconnecting client with buffered
-	// content, or one opening an already-dead pane, see data/exited before the
-	// open acknowledgement.
-	c.enqueue(serverMsg{Ch: chTerminal, ID: id, Type: msgOpened})
-
-	// exitFired guards the subscribe-to-assign window: the session can exit (and
-	// run onExit) at any point after subscribe returns exited=false, including
-	// before c.terms[id] is assigned below. onExit and the assign both read/write
-	// this flag and the map only under c.mu, so no atomic is needed.
-	var exitFired bool
-	unsub, exited := s.subscribe(
+	// a is captured by onExit before assignment; safe because the attach loop —
+	// the only thing that fires onExit — starts after the registration below.
+	var a *attachment
+	a = newAttachment(id, ports.RuntimeHandle{ID: id}, c.mgr.src, c.mgr.spawn,
 		func(data []byte) {
 			c.enqueue(serverMsg{
 				Ch:   chTerminal,
@@ -252,55 +235,53 @@ func (c *connState) openTerminal(id string) {
 		func() {
 			// Clear the connection's entry for this id before sending exited so
 			// a client that reopens the moment it sees exited finds no stale
-			// entry and is served instead of dropped by the open guard. Ordering
-			// the delete after the frame would race that reopen. markExited fires
-			// this without s.mu held, so taking c.mu is safe.
+			// entry and is served instead of dropped by the open guard. Guard on
+			// identity: that reopen may already have installed a fresh
+			// attachment under the same id, which must not be evicted.
 			c.mu.Lock()
-			exitFired = true
-			delete(c.terms, id)
+			if c.terms[id] == a {
+				delete(c.terms, id)
+			}
 			c.mu.Unlock()
 			c.enqueue(serverMsg{Ch: chTerminal, ID: id, Type: msgExited})
 		},
-	)
-	// An already-exited session sent its exited frame from subscribe and has
-	// nothing to unsubscribe. Don't register it: leaving c.terms[id] set would
-	// trip the open guard above and silently drop every later open for this id
-	// on this connection (e.g. after the pane respawns) until close/reconnect.
-	if exited {
+		c.mgr.log)
+	if rows > 0 && cols > 0 {
+		_ = a.resize(rows, cols) // recorded now, applied when the PTY attaches
+	}
+	if err := c.mgr.track(a); err != nil {
+		c.enqueue(serverMsg{Ch: chTerminal, ID: id, Type: msgError, Error: err.Error()})
 		return
 	}
 	c.mu.Lock()
-	c.terms[id] = unsub
-	// If onExit already ran in the subscribe-to-assign window its delete was a
-	// no-op (the key did not exist yet), so the assign above just resurrected a
-	// stale entry for a dead pane. Re-apply the delete while still holding c.mu.
-	if exitFired {
-		delete(c.terms, id)
-	}
+	c.terms[id] = a
 	c.mu.Unlock()
+
+	// Ack before starting the attach loop so opened always precedes any
+	// data/exited frames (the single out channel preserves this order). A
+	// dead pane is reported as opened followed by exited.
+	c.enqueue(serverMsg{Ch: chTerminal, ID: id, Type: msgOpened})
+
+	go func() {
+		a.run(c.mgr.ctx)
+		c.mgr.forget(a)
+	}()
 }
 
 func (c *connState) closeTerminal(id string) {
 	c.mu.Lock()
-	unsub := c.terms[id]
+	a := c.terms[id]
 	delete(c.terms, id)
 	c.mu.Unlock()
-	if unsub != nil {
-		unsub()
+	if a != nil {
+		a.close()
 	}
 }
 
-func (c *connState) lookup(id string) *session {
+func (c *connState) lookup(id string) *attachment {
 	c.mu.Lock()
-	_, open := c.terms[id]
-	c.mu.Unlock()
-	if !open {
-		return nil
-	}
-	c.mgr.mu.Lock()
-	s := c.mgr.sessions[id]
-	c.mgr.mu.Unlock()
-	return s
+	defer c.mu.Unlock()
+	return c.terms[id]
 }
 
 func (c *connState) handleSubscribe(msg clientMsg) {
@@ -332,8 +313,8 @@ func (c *connState) handleSubscribe(msg clientMsg) {
 }
 
 // enqueue pushes a frame to the writer. If the buffer is full the client is too
-// slow to keep up; tear the connection down rather than stall fan-out for other
-// subscribers of the same pane.
+// slow to keep up; tear the connection down rather than block the attachment's
+// PTY read loop behind it.
 func (c *connState) enqueue(msg serverMsg) {
 	select {
 	case c.out <- msg:
@@ -385,19 +366,20 @@ func (c *connState) cleanup() {
 		return
 	}
 	c.closed = true
-	unsubs := make([]func(), 0, len(c.terms)+1)
-	for _, u := range c.terms {
-		unsubs = append(unsubs, u)
+	attachments := make([]*attachment, 0, len(c.terms))
+	for _, a := range c.terms {
+		attachments = append(attachments, a)
 	}
-	c.terms = map[string]func(){}
-	if c.unsubEvts != nil {
-		unsubs = append(unsubs, c.unsubEvts)
-		c.unsubEvts = nil
-	}
+	c.terms = map[string]*attachment{}
+	unsubEvts := c.unsubEvts
+	c.unsubEvts = nil
 	c.mu.Unlock()
 
-	for _, u := range unsubs {
-		u()
+	for _, a := range attachments {
+		a.close()
+	}
+	if unsubEvts != nil {
+		unsubEvts()
 	}
 	_ = c.conn.Close("server: connection closed")
 }

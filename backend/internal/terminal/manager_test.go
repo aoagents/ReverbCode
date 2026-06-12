@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/cdc"
-	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 // fakeConn is an in-memory wsConn driven by channels.
@@ -113,21 +112,15 @@ func nextTerminal(t *testing.T, c *fakeConn) serverMsg {
 	}
 }
 
-// Opening a terminal whose session has already exited but is not yet reaped from
-// m.sessions must (1) send opened before exited and (2) not register the noop
-// unsubscribe, so a later open for the same id on this connection is still
-// served instead of being silently dropped by the already-open guard.
-func TestServeOpenAlreadyExitedSessionDoesNotBlockReopen(t *testing.T) {
-	src := &fakeSource{}
+// Opening a pane whose runtime is already dead must (1) send opened before
+// exited (the dead pane is reported, not errored) and (2) clear the conn's
+// entry, so a later open for the same id on this connection is still served
+// instead of being silently dropped by the already-open guard.
+func TestServeOpenDeadRuntimeReportsExitedAndAllowsReopen(t *testing.T) {
+	src := &fakeSource{alive: false}
 	sp := &fakeSpawner{}
 	mgr := NewManager(src, nil, testLogger(), WithSpawn(sp.spawn), WithHeartbeat(0))
 	defer mgr.Close()
-
-	exited := newSession("t1", ports.RuntimeHandle{ID: "t1"}, src, sp.spawn, testLogger())
-	exited.markExited()
-	mgr.mu.Lock()
-	mgr.sessions["t1"] = exited
-	mgr.mu.Unlock()
 
 	conn := newFakeConn()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -140,6 +133,9 @@ func TestServeOpenAlreadyExitedSessionDoesNotBlockReopen(t *testing.T) {
 	}
 	if m := nextTerminal(t, conn); m.Type != msgExited {
 		t.Fatalf("second frame = %q, want exited", m.Type)
+	}
+	if got := sp.calls(); got != 0 {
+		t.Fatalf("attach must never run against a dead runtime, got %d spawns", got)
 	}
 
 	conn.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgOpen}
@@ -174,38 +170,30 @@ func TestServeExitAfterOpenClearsEntryAllowingReopen(t *testing.T) {
 	recv(t, conn, chTerminal, msgOpened, 2*time.Second)
 }
 
-// The subscribe-to-assign window: a session can exit (running onExit, which
-// deletes c.terms[id]) between subscribe returning exited=false and openTerminal
-// assigning c.terms[id] = unsub. If the assign resurrects that entry without
-// re-checking, the stale entry traps every later open for the id on this
-// connection. Close the pty concurrently with the open (IsAlive false => no
-// re-attach) so the exit races the assign across many iterations; every reopen
-// must be served (opened), never silently dropped by the open guard.
+// An attachment that exits the moment it is opened (dead runtime) fires onExit
+// from its run goroutine, racing the reopen that follows the exited frame. The
+// identity-guarded delete in onExit must never evict a successor attachment
+// registered under the same id: every reopen must be served (opened), never
+// silently dropped by the already-open guard. Stressed across many iterations
+// to shake the exit/reopen interleavings out.
 func TestServeReopenAfterImmediateExitNeverStuck(t *testing.T) {
 	for i := 0; i < 400; i++ {
 		src := &fakeSource{}
-		src.setAlive(false) // dropped pty must not re-attach -> session exits
-		p := newFakePTY()   // alive at subscribe; closed below to race the assign
-		sp := &fakeSpawner{ptys: []*fakePTY{p}}
+		src.setAlive(false) // dead runtime -> the open exits without attaching
+		sp := &fakeSpawner{}
 		mgr := NewManager(src, nil, testLogger(), WithSpawn(sp.spawn), WithHeartbeat(0))
 
 		conn := newFakeConn()
 		ctx, cancel := context.WithCancel(context.Background())
 		go mgr.Serve(ctx, conn)
 
-		// Send the open and close the pty concurrently: the session's exit
-		// (onExit -> delete c.terms[id]) then races openTerminal's assign of
-		// c.terms[id] = unsub. On the iterations where exit lands in the
-		// subscribe-to-assign window, an unguarded assign resurrects a stale
-		// entry for the dead pane, trapping every later open for this id.
 		conn.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgOpen}
-		go p.Close()
 
 		recv(t, conn, chTerminal, msgOpened, time.Second)
 		recv(t, conn, chTerminal, msgExited, time.Second)
 
-		// The reopen must be served even when the first open's session exited in
-		// the subscribe-to-assign window.
+		// The reopen must be served even while the first open's exit teardown is
+		// still in flight.
 		conn.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgOpen}
 		recv(t, conn, chTerminal, msgOpened, time.Second)
 
@@ -290,12 +278,116 @@ func TestServeClosesConnOnReadEnd(t *testing.T) {
 	}
 }
 
+// Each connection opening the same pane gets its OWN attach PTY — that is the
+// per-client model: zellij replays its init handshake + full repaint to every
+// fresh attach, so no client depends on bytes another client consumed. Output
+// pushed to one client's PTY must reach only that client, and closing one
+// client's terminal must not touch the other's PTY.
+func TestServePerClientAttachIsolation(t *testing.T) {
+	src := &fakeSource{alive: true}
+	p1, p2 := newFakePTY(), newFakePTY()
+	sp := &fakeSpawner{ptys: []*fakePTY{p1, p2}}
+	mgr := NewManager(src, nil, testLogger(), WithSpawn(sp.spawn), WithHeartbeat(0))
+	defer mgr.Close()
+
+	connA, connB := newFakeConn(), newFakeConn()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go mgr.Serve(ctx, connA)
+	go mgr.Serve(ctx, connB)
+
+	connA.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgOpen}
+	recv(t, connA, chTerminal, msgOpened, time.Second)
+	eventually(t, time.Second, func() bool { return sp.calls() == 1 })
+
+	connB.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgOpen}
+	recv(t, connB, chTerminal, msgOpened, time.Second)
+	eventually(t, time.Second, func() bool { return sp.calls() == 2 })
+
+	// Zellij fans output out per attach; here each fake PTY stands in for one
+	// attach process, so its bytes must reach exactly its own connection.
+	p1.push([]byte("for-A"))
+	data := recv(t, connA, chTerminal, msgData, time.Second)
+	got, _ := base64.StdEncoding.DecodeString(data.Data)
+	if string(got) != "for-A" {
+		t.Fatalf("conn A data = %q", got)
+	}
+	select {
+	case m := <-connB.out:
+		t.Fatalf("conn B received %s/%s for conn A's PTY output", m.Ch, m.Type)
+	default:
+	}
+
+	// Closing A's terminal detaches A only: B's PTY stays live.
+	connA.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgClose}
+	eventually(t, time.Second, func() bool {
+		select {
+		case <-p1.closed:
+			return true
+		default:
+			return false
+		}
+	})
+	select {
+	case <-p2.closed:
+		t.Fatal("closing conn A's terminal must not close conn B's PTY")
+	default:
+	}
+}
+
+// The open frame carries the client's grid; the PTY must start at that size
+// rather than the kernel default, even though the attach is asynchronous.
+func TestServeOpenAppliesInitialSize(t *testing.T) {
+	src := &fakeSource{alive: true}
+	pty := newFakePTY()
+	sp := &fakeSpawner{ptys: []*fakePTY{pty}}
+	mgr := NewManager(src, nil, testLogger(), WithSpawn(sp.spawn), WithHeartbeat(0))
+	defer mgr.Close()
+
+	conn := newFakeConn()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go mgr.Serve(ctx, conn)
+
+	conn.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgOpen, Rows: 40, Cols: 120}
+	recv(t, conn, chTerminal, msgOpened, time.Second)
+	eventually(t, time.Second, func() bool {
+		rs := pty.resizeCalls()
+		return len(rs) == 1 && rs[0] == [2]uint16{40, 120}
+	})
+}
+
+// Manager.Close must kill every live attach PTY: a PTY left open keeps its
+// attach process running and deadlocks daemon shutdown.
+func TestManagerCloseKillsLiveAttachments(t *testing.T) {
+	src := &fakeSource{alive: true}
+	pty := newFakePTY()
+	sp := &fakeSpawner{ptys: []*fakePTY{pty}}
+	mgr := NewManager(src, nil, testLogger(), WithSpawn(sp.spawn), WithHeartbeat(0))
+
+	conn := newFakeConn()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go mgr.Serve(ctx, conn)
+
+	conn.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgOpen}
+	recv(t, conn, chTerminal, msgOpened, time.Second)
+	eventually(t, time.Second, func() bool { return sp.calls() == 1 })
+
+	mgr.Close()
+	select {
+	case <-pty.closed:
+	case <-time.After(time.Second):
+		t.Fatal("Manager.Close must close live attach PTYs")
+	}
+}
+
 func TestEnqueueOverflowCancelsConn(t *testing.T) {
 	cancelled := make(chan struct{})
 	c := &connState{
 		out:    make(chan serverMsg, 1),
 		cancel: func() { close(cancelled) },
-		terms:  map[string]func(){},
+		terms:  map[string]*attachment{},
 	}
 	c.enqueue(serverMsg{Ch: chTerminal, Type: msgData}) // fills buffer
 	c.enqueue(serverMsg{Ch: chTerminal, Type: msgData}) // overflow -> cancel

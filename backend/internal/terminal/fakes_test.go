@@ -116,14 +116,16 @@ type fakeSpawner struct {
 	n       int
 	err     error
 	created []*fakePTY
+	sizes   [][2]uint16 // rows×cols passed to each spawn call, in order
 }
 
-func (f *fakeSpawner) spawn(context.Context, []string) (ptyProcess, error) {
+func (f *fakeSpawner) spawn(_ context.Context, _ []string, rows, cols uint16) (ptyProcess, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.err != nil {
 		return nil, f.err
 	}
+	f.sizes = append(f.sizes, [2]uint16{rows, cols})
 	var p *fakePTY
 	if f.n < len(f.ptys) {
 		p = f.ptys[f.n]
@@ -139,6 +141,12 @@ func (f *fakeSpawner) calls() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.n
+}
+
+func (f *fakeSpawner) spawnSizes() [][2]uint16 {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([][2]uint16(nil), f.sizes...)
 }
 
 // eventually polls cond until true or the deadline, failing the test otherwise.

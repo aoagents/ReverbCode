@@ -12,8 +12,8 @@ func TestNilLoggerFallsBackToDefault(t *testing.T) {
 	if mgr.log == nil {
 		t.Fatal("manager logger is nil")
 	}
-	s := newSession("t1", ports.RuntimeHandle{ID: "t1"}, &fakeSource{}, (&fakeSpawner{}).spawn, nil)
-	if s.log == nil {
-		t.Fatal("session logger is nil")
+	a := newAttachment("t1", ports.RuntimeHandle{ID: "t1"}, &fakeSource{}, (&fakeSpawner{}).spawn, nil, nil, nil)
+	if a.log == nil {
+		t.Fatal("attachment logger is nil")
 	}
 }
