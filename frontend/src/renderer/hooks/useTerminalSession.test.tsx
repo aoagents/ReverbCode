@@ -171,7 +171,7 @@ describe("useTerminalSession", () => {
 		expect(muxes[0].resizes).toContainEqual(["handle-1", 120, 40]);
 	});
 
-	it("collapses a drag's burst of grid changes into one trailing PTY resize", () => {
+	it("collapses a drag's burst of grid changes into one trailing PTY resize, then re-asserts it", () => {
 		const { terminal, muxes } = setup();
 		const initialResizes = muxes[0].resizes.length; // connect() sends the opening size
 		terminal.emitResize(100, 30);
@@ -179,6 +179,29 @@ describe("useTerminalSession", () => {
 		terminal.emitResize(120, 40);
 		act(() => void vi.advanceTimersByTime(100));
 		expect(muxes[0].resizes.slice(initialResizes)).toEqual([["handle-1", 120, 40]]);
+		// The settled grid goes out once more: paired with the backend's explicit
+		// SIGWINCH (pty_unix.go) it re-syncs a zellij client that lost the
+		// original update, which otherwise kept the session laid out for the old
+		// size until the next real grid change.
+		act(() => void vi.advanceTimersByTime(250));
+		expect(muxes[0].resizes.slice(initialResizes)).toEqual([
+			["handle-1", 120, 40],
+			["handle-1", 120, 40],
+		]);
+	});
+
+	it("a new resize burst supersedes a pending re-assert", () => {
+		const { terminal, muxes } = setup();
+		const initialResizes = muxes[0].resizes.length;
+		terminal.emitResize(100, 30);
+		act(() => void vi.advanceTimersByTime(100)); // settles -> sent, re-assert pending
+		terminal.emitResize(120, 40); // user keeps dragging before the re-assert fires
+		act(() => void vi.advanceTimersByTime(100 + 250));
+		expect(muxes[0].resizes.slice(initialResizes)).toEqual([
+			["handle-1", 100, 30],
+			["handle-1", 120, 40],
+			["handle-1", 120, 40],
+		]);
 	});
 
 	it("marks exit in the terminal and refetches workspace state instead of writing status", () => {
@@ -208,7 +231,7 @@ describe("useTerminalSession", () => {
 		act(() => void vi.advanceTimersByTime(500));
 		expect(muxes).toHaveLength(2);
 		expect(muxes[0].disposed).toBe(true);
-		expect(terminal.clears).toBe(1); // the server replays the output ring on open
+		expect(terminal.clears).toBe(1); // the fresh zellij attach repaints over a blank grid
 		expect(muxes[1].opens).toEqual([["handle-1", 80, 24]]);
 		act(() => muxes[1].emitOpened("handle-1"));
 		expect(view.result.current.state).toBe("attached");
