@@ -62,15 +62,6 @@ func (s *Store) ListUnreadNotifications(ctx context.Context, limit int) ([]domai
 	return notificationsFromGen(rows), nil
 }
 
-// ListUnreadNotificationsByProject returns unread notifications for one project newest-first.
-func (s *Store) ListUnreadNotificationsByProject(ctx context.Context, projectID domain.ProjectID, limit int) ([]domain.NotificationRecord, error) {
-	rows, err := s.qr.ListUnreadNotificationsByProject(ctx, gen.ListUnreadNotificationsByProjectParams{ProjectID: projectID, Limit: int64(limit)})
-	if err != nil {
-		return nil, fmt.Errorf("list unread notifications for %s: %w", projectID, err)
-	}
-	return notificationsFromGen(rows), nil
-}
-
 func (s *Store) getUnreadNotificationByDedupe(ctx context.Context, rec domain.NotificationRecord) (domain.NotificationRecord, bool, error) {
 	row, err := s.qw.GetUnreadNotificationByDedupe(ctx, gen.GetUnreadNotificationByDedupeParams{
 		SessionID: rec.SessionID,

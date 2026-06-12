@@ -264,9 +264,8 @@ type OrchestratorResponse struct {
 
 // ListNotificationsQuery is the query string accepted by GET /api/v1/notifications.
 type ListNotificationsQuery struct {
-	Status    string `query:"status,omitempty" enum:"unread" description:"Notification status filter. V1 supports only unread."`
-	ProjectID string `query:"projectId,omitempty" description:"Optional project id filter."`
-	Limit     int    `query:"limit,omitempty" minimum:"1" maximum:"100" description:"Maximum notifications to return. Defaults to 50; capped at 100."`
+	Status string `query:"status,omitempty" enum:"unread" description:"Notification status filter. V1 supports only unread."`
+	Limit  int    `query:"limit,omitempty" minimum:"1" maximum:"100" description:"Maximum notifications to return. Defaults to 50; capped at 100."`
 }
 
 // NotificationTarget is the dashboard navigation target for a notification.

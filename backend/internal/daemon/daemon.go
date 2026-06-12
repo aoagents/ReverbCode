@@ -83,10 +83,7 @@ func Run() error {
 	// Built before the Lifecycle Manager so the LCM can use it for SCM-driven
 	// agent nudges (CI failure, review feedback, merge conflict).
 	messenger := newSessionMessenger(store, runtimeAdapter, log)
-	notifier := notificationsvc.New(notificationsvc.Deps{
-		Store:      store,
-		Dispatcher: notificationsvc.NewDashboardDispatcher(nil),
-	})
+	notifier := notificationsvc.New(notificationsvc.Deps{Store: store})
 
 	// Bring up the Lifecycle Manager and the reaper first: it makes the session
 	// lifecycle write path live (reducer write -> store -> DB trigger ->

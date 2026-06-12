@@ -15,18 +15,12 @@ CREATE TABLE notifications (
     ),
     title TEXT NOT NULL,
     body TEXT NOT NULL DEFAULT '',
-    status TEXT NOT NULL DEFAULT 'unread' CHECK (status IN ('read', 'unread')),
+    status TEXT NOT NULL DEFAULT 'unread',
     created_at TIMESTAMP NOT NULL
 );
 
-CREATE INDEX idx_notifications_unread
+CREATE INDEX idx_notifications_status
     ON notifications(status, created_at DESC);
-
-CREATE INDEX idx_notifications_project_unread
-    ON notifications(project_id, status, created_at DESC);
-
-CREATE INDEX idx_notifications_session
-    ON notifications(session_id, created_at DESC);
 
 CREATE UNIQUE INDEX idx_notifications_unread_dedupe
     ON notifications(session_id, type, pr_url)
@@ -36,8 +30,6 @@ CREATE UNIQUE INDEX idx_notifications_unread_dedupe
 -- +goose Down
 -- +goose StatementBegin
 DROP INDEX IF EXISTS idx_notifications_unread_dedupe;
-DROP INDEX IF EXISTS idx_notifications_session;
-DROP INDEX IF EXISTS idx_notifications_project_unread;
-DROP INDEX IF EXISTS idx_notifications_unread;
+DROP INDEX IF EXISTS idx_notifications_status;
 DROP TABLE IF EXISTS notifications;
 -- +goose StatementEnd

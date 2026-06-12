@@ -11,12 +11,6 @@ WHERE status = 'unread'
 ORDER BY created_at DESC
 LIMIT ?;
 
--- name: ListUnreadNotificationsByProject :many
-SELECT *
-FROM notifications
-WHERE project_id = ? AND status = 'unread'
-ORDER BY created_at DESC
-LIMIT ?;
 
 -- name: GetUnreadNotificationByDedupe :one
 SELECT *

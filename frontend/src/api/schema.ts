@@ -724,8 +724,6 @@ export interface operations {
             query?: {
                 /** @description Notification status filter. V1 supports only unread. */
                 status?: "unread";
-                /** @description Optional project id filter. */
-                projectId?: string;
                 /** @description Maximum notifications to return. Defaults to 50; capped at 100. */
                 limit?: number;
             };

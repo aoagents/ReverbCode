@@ -7,7 +7,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apispec"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
 	notificationsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/notification"
@@ -50,9 +49,9 @@ func parseNotificationListFilter(r *http.Request) (notificationsvc.ListFilter, e
 	q := r.URL.Query()
 	status := q.Get("status")
 	if status == "" {
-		status = string(domain.NotificationUnread)
+		status = "unread"
 	}
-	if status != string(domain.NotificationUnread) {
+	if status != "unread" {
 		return notificationsvc.ListFilter{}, errNotificationStatusUnsupported
 	}
 	limit := notificationsvc.DefaultListLimit
@@ -66,7 +65,7 @@ func parseNotificationListFilter(r *http.Request) (notificationsvc.ListFilter, e
 	if limit > notificationsvc.MaxListLimit {
 		limit = notificationsvc.MaxListLimit
 	}
-	return notificationsvc.ListFilter{ProjectID: domain.ProjectID(q.Get("projectId")), Limit: limit}, nil
+	return notificationsvc.ListFilter{Limit: limit}, nil
 }
 
 var (

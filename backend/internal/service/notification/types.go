@@ -36,6 +36,5 @@ type Notification struct {
 
 // ListFilter controls unread notification listing.
 type ListFilter struct {
-	ProjectID domain.ProjectID
-	Limit     int
+	Limit int
 }

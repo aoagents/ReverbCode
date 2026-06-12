@@ -18,26 +18,24 @@ const (
 	MaxListLimit = 100
 )
 
-// Manager validates lifecycle intents, enriches them into stored rows, persists
-// unread notifications, and dispatches newly created rows.
+// Manager validates lifecycle intents, enriches them into stored rows, and persists
+// unread notifications.
 type Manager struct {
-	store      Store
-	dispatcher Dispatcher
-	clock      func() time.Time
-	newID      func() string
+	store Store
+	clock func() time.Time
+	newID func() string
 }
 
 // Deps configures a Manager.
 type Deps struct {
-	Store      Store
-	Dispatcher Dispatcher
-	Clock      func() time.Time
-	NewID      func() string
+	Store Store
+	Clock func() time.Time
+	NewID func() string
 }
 
 // New constructs a Manager with production defaults for optional collaborators.
 func New(d Deps) *Manager {
-	m := &Manager{store: d.Store, dispatcher: d.Dispatcher, clock: d.Clock, newID: d.NewID}
+	m := &Manager{store: d.Store, clock: d.Clock, newID: d.NewID}
 	if m.clock == nil {
 		m.clock = time.Now
 	}
@@ -47,8 +45,7 @@ func New(d Deps) *Manager {
 	return m
 }
 
-// Notify stores and dispatches one notification intent. Duplicate unread rows
-// are treated as a clean no-op.
+// Notify stores one notification intent. Duplicate unread rows are treated as a clean no-op.
 func (m *Manager) Notify(ctx context.Context, intent Intent) error {
 	if m == nil || m.store == nil {
 		return errors.New("notification: store is required")
@@ -61,32 +58,23 @@ func (m *Manager) Notify(ctx context.Context, intent Intent) error {
 		return fmt.Errorf("notification enrich: %w", err)
 	}
 	rec.ID = m.newID()
-	created, inserted, err := m.store.CreateNotification(ctx, rec)
+	_, inserted, err := m.store.CreateNotification(ctx, rec)
 	if err != nil {
 		return fmt.Errorf("notification store: %w", err)
 	}
 	if !inserted {
 		return nil
 	}
-	if m.dispatcher == nil {
-		return nil
-	}
-	return m.dispatcher.Dispatch(ctx, notificationFromRecord(created))
+	return nil
 }
 
-// ListUnread returns unread notifications newest-first, optionally limited to a project.
+// ListUnread returns unread notifications newest-first.
 func (m *Manager) ListUnread(ctx context.Context, filter ListFilter) ([]Notification, error) {
 	if m == nil || m.store == nil {
 		return nil, errors.New("notification: store is required")
 	}
 	limit := normalizeLimit(filter.Limit)
-	var rows []domain.NotificationRecord
-	var err error
-	if filter.ProjectID != "" {
-		rows, err = m.store.ListUnreadNotificationsByProject(ctx, filter.ProjectID, limit)
-	} else {
-		rows, err = m.store.ListUnreadNotifications(ctx, limit)
-	}
+	rows, err := m.store.ListUnreadNotifications(ctx, limit)
 	if err != nil {
 		return nil, err
 	}

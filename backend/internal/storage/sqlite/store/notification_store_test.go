@@ -49,7 +49,7 @@ func TestNotificationStore_InsertListAndDedupe(t *testing.T) {
 	}
 }
 
-func TestNotificationStore_ProjectFilterAndNewestFirst(t *testing.T) {
+func TestNotificationStore_ListUnreadNewestFirstAcrossProjects(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	seedProject(t, s, "mer")
@@ -66,12 +66,12 @@ func TestNotificationStore_ProjectFilterAndNewestFirst(t *testing.T) {
 			t.Fatalf("insert %s inserted=%v err=%v", rec.ID, inserted, err)
 		}
 	}
-	rows, err := s.ListUnreadNotificationsByProject(ctx, "mer", 10)
+	rows, err := s.ListUnreadNotifications(ctx, 2)
 	if err != nil {
-		t.Fatalf("ListUnreadNotificationsByProject: %v", err)
+		t.Fatalf("ListUnreadNotifications: %v", err)
 	}
-	if len(rows) != 2 || rows[0].ID != "new" || rows[1].ID != "old" {
-		t.Fatalf("project rows = %+v", rows)
+	if len(rows) != 2 || rows[0].ID != "other" || rows[1].ID != "new" {
+		t.Fatalf("rows = %+v", rows)
 	}
 }
 

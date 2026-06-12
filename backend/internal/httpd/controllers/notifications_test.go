@@ -43,11 +43,11 @@ func TestNotificationsAPI_ListUnread(t *testing.T) {
 	}}}
 	srv := newNotificationTestServer(t, svc)
 
-	body, status, _ := doRequest(t, srv, "GET", "/api/v1/notifications?projectId=mer&limit=10", "")
+	body, status, _ := doRequest(t, srv, "GET", "/api/v1/notifications?limit=10", "")
 	if status != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", status, body)
 	}
-	if svc.gotFilter.ProjectID != "mer" || svc.gotFilter.Limit != 10 {
+	if svc.gotFilter.Limit != 10 {
 		t.Fatalf("filter = %+v", svc.gotFilter)
 	}
 	var resp struct {

@@ -30,31 +30,10 @@ func (f *fakeStore) ListUnreadNotifications(_ context.Context, _ int) ([]domain.
 	return f.rows, nil
 }
 
-func (f *fakeStore) ListUnreadNotificationsByProject(_ context.Context, projectID domain.ProjectID, _ int) ([]domain.NotificationRecord, error) {
-	out := make([]domain.NotificationRecord, 0, len(f.rows))
-	for _, row := range f.rows {
-		if row.ProjectID == projectID {
-			out = append(out, row)
-		}
-	}
-	return out, nil
-}
-
-type captureDispatcher struct {
-	notifications []Notification
-	err           error
-}
-
-func (d *captureDispatcher) Dispatch(_ context.Context, n Notification) error {
-	d.notifications = append(d.notifications, n)
-	return d.err
-}
-
-func TestManagerNotifyPersistsThenDispatches(t *testing.T) {
+func TestManagerNotifyPersistsNotification(t *testing.T) {
 	st := &fakeStore{}
-	dispatch := &captureDispatcher{}
 	now := time.Date(2026, 6, 11, 10, 0, 0, 0, time.UTC)
-	mgr := New(Deps{Store: st, Dispatcher: dispatch, Clock: func() time.Time { return now }, NewID: func() string { return "ntf_1" }})
+	mgr := New(Deps{Store: st, Clock: func() time.Time { return now }, NewID: func() string { return "ntf_1" }})
 
 	if err := mgr.Notify(context.Background(), Intent{
 		Type:               domain.NotificationNeedsInput,
@@ -70,36 +49,18 @@ func TestManagerNotifyPersistsThenDispatches(t *testing.T) {
 	if got := st.rows[0]; got.ID != "ntf_1" || got.CreatedAt != now || got.Status != domain.NotificationUnread || got.Title != "checkout-flow needs input" {
 		t.Fatalf("stored notification = %+v", got)
 	}
-	if len(dispatch.notifications) != 1 || dispatch.notifications[0].ID != "ntf_1" {
-		t.Fatalf("dispatch = %+v", dispatch.notifications)
-	}
 }
 
-func TestManagerNotifyDuplicateDoesNotDispatch(t *testing.T) {
+func TestManagerNotifyDuplicateIsIgnored(t *testing.T) {
 	st := &fakeStore{duplicate: true}
-	dispatch := &captureDispatcher{}
-	mgr := New(Deps{Store: st, Dispatcher: dispatch, Clock: func() time.Time { return time.Now() }, NewID: func() string { return "ntf_1" }})
+	mgr := New(Deps{Store: st, Clock: func() time.Time { return time.Now() }, NewID: func() string { return "ntf_1" }})
 
 	err := mgr.Notify(context.Background(), Intent{Type: domain.NotificationNeedsInput, SessionID: "mer-1", ProjectID: "mer", CreatedAt: time.Now()})
 	if err != nil {
 		t.Fatalf("Notify duplicate: %v", err)
 	}
-	if len(dispatch.notifications) != 0 {
-		t.Fatalf("duplicate should not dispatch, got %+v", dispatch.notifications)
-	}
-}
-
-func TestManagerNotifyDispatchFailureLeavesStoredRow(t *testing.T) {
-	st := &fakeStore{}
-	dispatch := &captureDispatcher{err: errors.New("sse down")}
-	mgr := New(Deps{Store: st, Dispatcher: dispatch, Clock: func() time.Time { return time.Now() }, NewID: func() string { return "ntf_1" }})
-
-	err := mgr.Notify(context.Background(), Intent{Type: domain.NotificationNeedsInput, SessionID: "mer-1", ProjectID: "mer", CreatedAt: time.Now()})
-	if err == nil {
-		t.Fatal("want dispatch error")
-	}
-	if len(st.rows) != 1 {
-		t.Fatalf("row should remain stored after dispatch failure; rows=%d", len(st.rows))
+	if len(st.rows) != 0 {
+		t.Fatalf("duplicate should not persist, got %+v", st.rows)
 	}
 }
 
