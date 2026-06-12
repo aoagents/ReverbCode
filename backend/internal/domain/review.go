@@ -25,8 +25,11 @@ type ReviewRun struct {
 	Status    ReviewRunStatus `json:"status"`
 	Verdict   ReviewVerdict   `json:"verdict"`
 	Iteration int             `json:"iteration"`
-	CreatedAt time.Time       `json:"createdAt"`
-	UpdatedAt time.Time       `json:"updatedAt"`
+	// Body is the review text the reviewer submitted. It is recorded for AO's
+	// own tracking; the reviewer also posts the review to the PR itself.
+	Body      string    `json:"body"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
 }
 
 // ReviewRunStatus is the lifecycle state of a single review pass.

@@ -54,7 +54,7 @@ func TestReviewUpsertReusesRowAndRunRoundTrip(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("insert run: %v", err)
 	}
-	if err := s.UpdateReviewRunResult(ctx, "run-1", domain.ReviewRunComplete, domain.VerdictChangesRequested, now.Add(2*time.Second)); err != nil {
+	if err := s.UpdateReviewRunResult(ctx, "run-1", domain.ReviewRunComplete, domain.VerdictChangesRequested, "please fix", now.Add(2*time.Second)); err != nil {
 		t.Fatalf("update run: %v", err)
 	}
 
@@ -62,7 +62,7 @@ func TestReviewUpsertReusesRowAndRunRoundTrip(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("latest run: ok=%v err=%v", ok, err)
 	}
-	if latest.Status != domain.ReviewRunComplete || latest.Verdict != domain.VerdictChangesRequested {
+	if latest.Status != domain.ReviewRunComplete || latest.Verdict != domain.VerdictChangesRequested || latest.Body != "please fix" {
 		t.Fatalf("run result not persisted: %+v", latest)
 	}
 

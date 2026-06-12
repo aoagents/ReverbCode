@@ -40,7 +40,7 @@ func (f *fakeStore) InsertReviewRun(_ context.Context, r domain.ReviewRun) error
 	f.runs = append(f.runs, r)
 	return nil
 }
-func (f *fakeStore) UpdateReviewRunResult(_ context.Context, id string, status domain.ReviewRunStatus, verdict domain.ReviewVerdict, updatedAt time.Time) error {
+func (f *fakeStore) UpdateReviewRunResult(_ context.Context, id string, status domain.ReviewRunStatus, verdict domain.ReviewVerdict, body string, updatedAt time.Time) error {
 	if f.updateErr != nil {
 		return f.updateErr
 	}
@@ -48,6 +48,7 @@ func (f *fakeStore) UpdateReviewRunResult(_ context.Context, id string, status d
 		if f.runs[i].ID == id {
 			f.runs[i].Status = status
 			f.runs[i].Verdict = verdict
+			f.runs[i].Body = body
 			f.runs[i].UpdatedAt = updatedAt
 		}
 	}
@@ -216,6 +217,41 @@ func TestTriggerLaunchFailureMarksRunFailed(t *testing.T) {
 	}
 	if len(store.runs) != 1 || store.runs[0].Status != domain.ReviewRunFailed {
 		t.Fatalf("run not marked failed: %+v", store.runs)
+	}
+}
+
+func TestSubmitRecordsVerdictAndBody(t *testing.T) {
+	store := &fakeStore{runs: []domain.ReviewRun{{ID: "run-1", PRURL: "u", Status: domain.ReviewRunPending}}}
+	svc := newServiceForTest(store, fakeSessions{rec: liveWorker(), ok: true}, fakePRs{}, fakeProjects{}, &fakeRunner{})
+
+	run, err := svc.Submit(context.Background(), "mer-1", domain.VerdictChangesRequested, "please fix")
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	if run.Status != domain.ReviewRunComplete || run.Verdict != domain.VerdictChangesRequested || run.Body != "please fix" {
+		t.Fatalf("run = %+v", run)
+	}
+	if store.runs[0].Status != domain.ReviewRunComplete || store.runs[0].Body != "please fix" {
+		t.Fatalf("persisted run = %+v", store.runs[0])
+	}
+}
+
+func TestSubmitValidation(t *testing.T) {
+	store := &fakeStore{runs: []domain.ReviewRun{{ID: "run-1", Status: domain.ReviewRunPending}}}
+	svc := newServiceForTest(store, fakeSessions{rec: liveWorker(), ok: true}, fakePRs{}, fakeProjects{}, &fakeRunner{})
+
+	if _, err := svc.Submit(context.Background(), "mer-1", "garbage", "b"); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("bad verdict err = %v", err)
+	}
+	if _, err := svc.Submit(context.Background(), "mer-1", domain.VerdictChangesRequested, ""); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("empty body err = %v", err)
+	}
+}
+
+func TestSubmitNoRun(t *testing.T) {
+	svc := newServiceForTest(&fakeStore{}, fakeSessions{rec: liveWorker(), ok: true}, fakePRs{}, fakeProjects{}, &fakeRunner{})
+	if _, err := svc.Submit(context.Background(), "mer-1", domain.VerdictApproved, ""); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
 }
 

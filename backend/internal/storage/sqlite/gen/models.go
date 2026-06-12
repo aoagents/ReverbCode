@@ -130,6 +130,7 @@ type ReviewRun struct {
 	Status    domain.ReviewRunStatus
 	Verdict   domain.ReviewVerdict
 	Iteration int64
+	Body      string
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }

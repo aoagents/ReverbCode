@@ -30,7 +30,7 @@ type Store interface {
 	UpsertReview(ctx context.Context, r domain.Review) error
 	GetReviewBySession(ctx context.Context, id domain.SessionID) (domain.Review, bool, error)
 	InsertReviewRun(ctx context.Context, r domain.ReviewRun) error
-	UpdateReviewRunResult(ctx context.Context, id string, status domain.ReviewRunStatus, verdict domain.ReviewVerdict, updatedAt time.Time) error
+	UpdateReviewRunResult(ctx context.Context, id string, status domain.ReviewRunStatus, verdict domain.ReviewVerdict, body string, updatedAt time.Time) error
 	GetLatestReviewRunBySession(ctx context.Context, id domain.SessionID) (domain.ReviewRun, bool, error)
 	ListReviewRunsBySession(ctx context.Context, id domain.SessionID) ([]domain.ReviewRun, error)
 }
@@ -66,6 +66,7 @@ type RunSpec struct {
 // Manager is the reviews surface the HTTP controller depends on.
 type Manager interface {
 	Trigger(ctx context.Context, workerID domain.SessionID) (domain.ReviewRun, error)
+	Submit(ctx context.Context, workerID domain.SessionID, verdict domain.ReviewVerdict, body string) (domain.ReviewRun, error)
 	List(ctx context.Context, workerID domain.SessionID) ([]domain.ReviewRun, error)
 }
 
@@ -177,9 +178,42 @@ func (s *Service) Trigger(ctx context.Context, workerID domain.SessionID) (domai
 	}); err != nil {
 		// The pass never launched; record it as failed so a stale pending row
 		// does not look like an in-flight review forever.
-		_ = s.store.UpdateReviewRunResult(ctx, run.ID, domain.ReviewRunFailed, domain.VerdictNone, s.clock())
+		_ = s.store.UpdateReviewRunResult(ctx, run.ID, domain.ReviewRunFailed, domain.VerdictNone, "", s.clock())
 		return domain.ReviewRun{}, fmt.Errorf("launch reviewer: %w", err)
 	}
+	return run, nil
+}
+
+// Submit records the reviewer's result for a worker's latest review pass: it
+// marks the run complete and stores the verdict and body. AO does not post the
+// review — the reviewer agent posts it to the PR itself.
+func (s *Service) Submit(ctx context.Context, workerID domain.SessionID, verdict domain.ReviewVerdict, body string) (domain.ReviewRun, error) {
+	if workerID == "" {
+		return domain.ReviewRun{}, fmt.Errorf("%w: worker session id is required", ErrInvalid)
+	}
+	if !verdict.Valid() {
+		return domain.ReviewRun{}, fmt.Errorf("%w: verdict must be %q or %q", ErrInvalid, domain.VerdictApproved, domain.VerdictChangesRequested)
+	}
+	if verdict == domain.VerdictChangesRequested && body == "" {
+		return domain.ReviewRun{}, fmt.Errorf("%w: a changes_requested review requires a body", ErrInvalid)
+	}
+
+	run, ok, err := s.store.GetLatestReviewRunBySession(ctx, workerID)
+	if err != nil {
+		return domain.ReviewRun{}, err
+	}
+	if !ok {
+		return domain.ReviewRun{}, fmt.Errorf("%w: no review run for worker %q", ErrNotFound, workerID)
+	}
+
+	now := s.clock()
+	if err := s.store.UpdateReviewRunResult(ctx, run.ID, domain.ReviewRunComplete, verdict, body, now); err != nil {
+		return domain.ReviewRun{}, err
+	}
+	run.Status = domain.ReviewRunComplete
+	run.Verdict = verdict
+	run.Body = body
+	run.UpdatedAt = now
 	return run, nil
 }
 

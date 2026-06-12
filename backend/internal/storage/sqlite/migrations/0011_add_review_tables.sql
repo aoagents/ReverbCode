@@ -28,6 +28,7 @@ CREATE TABLE review_run (
     verdict     TEXT NOT NULL DEFAULT ''
         CHECK (verdict IN ('', 'approved', 'changes_requested')),
     iteration   INTEGER NOT NULL DEFAULT 1,
+    body        TEXT NOT NULL DEFAULT '',
     created_at  TIMESTAMP NOT NULL,
     updated_at  TIMESTAMP NOT NULL
 );

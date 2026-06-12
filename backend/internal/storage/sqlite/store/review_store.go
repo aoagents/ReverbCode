@@ -52,18 +52,20 @@ func (s *Store) InsertReviewRun(ctx context.Context, r domain.ReviewRun) error {
 		Status:    r.Status,
 		Verdict:   r.Verdict,
 		Iteration: int64(r.Iteration),
+		Body:      r.Body,
 		CreatedAt: r.CreatedAt,
 		UpdatedAt: r.UpdatedAt,
 	})
 }
 
-// UpdateReviewRunResult sets the status/verdict of a review pass.
-func (s *Store) UpdateReviewRunResult(ctx context.Context, id string, status domain.ReviewRunStatus, verdict domain.ReviewVerdict, updatedAt time.Time) error {
+// UpdateReviewRunResult sets the status/verdict/body of a review pass.
+func (s *Store) UpdateReviewRunResult(ctx context.Context, id string, status domain.ReviewRunStatus, verdict domain.ReviewVerdict, body string, updatedAt time.Time) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	return s.qw.UpdateReviewRunResult(ctx, gen.UpdateReviewRunResultParams{
 		Status:    status,
 		Verdict:   verdict,
+		Body:      body,
 		UpdatedAt: updatedAt,
 		ID:        id,
 	})
@@ -117,6 +119,7 @@ func reviewRunFromRow(r gen.ReviewRun) domain.ReviewRun {
 		Status:    r.Status,
 		Verdict:   r.Verdict,
 		Iteration: int(r.Iteration),
+		Body:      r.Body,
 		CreatedAt: r.CreatedAt,
 		UpdatedAt: r.UpdatedAt,
 	}
