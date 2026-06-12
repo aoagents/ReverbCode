@@ -38,26 +38,30 @@ struct** with a `Validate()` method, so:
 Adapter-specific keys, if ever needed, become typed fields owned by `domain`
 rather than an escape-hatch map.
 
-## Field catalog (legacy `projects.<id>`) and target home
+## Field catalog (legacy `projects.<id>`) and home
 
-| YAML field                        | Type                   | Storage today                       | Target                                               |
-| --------------------------------- | ---------------------- | ----------------------------------- | ---------------------------------------------------- |
-| `name`                            | string                 | `projects.display_name`             | done                                                 |
-| `repo`                            | string                 | `projects.repo_origin_url`          | done                                                 |
-| `path`                            | string                 | `projects.path`                     | done                                                 |
-| `defaultBranch`                   | string                 | hardcoded `"main"`                  | `projects.default_branch`                            |
-| `sessionPrefix`                   | string                 | derived                             | `projects.session_prefix`                            |
-| `agentConfig`                     | `{model, permissions}` | **`projects.agent_config` (typed)** | **done (this PR)**                                   |
-| `orchestrator`/`worker` overrides | `{agent, agentConfig}` | —                                   | typed role-override columns/blob                     |
-| `env`                             | `map[string]string`    | —                                   | `project_env` table (key/value rows)                 |
-| `symlinks`                        | `[]string`             | —                                   | `projects.symlinks` (JSON)                           |
-| `postCreate`                      | `[]string`             | —                                   | `projects.post_create` (JSON)                        |
-| `agentRules` / `agentRulesFile`   | string                 | partial (`SpawnConfig.AgentRules`)  | `projects.agent_rules*`                              |
-| `orchestratorRules`               | string                 | —                                   | `projects.orchestrator_rules`                        |
-| `tracker`                         | `{plugin, …}`          | DTO stub only                       | `projects.tracker` (typed blob) + adapter validation |
-| `scm`                             | `{plugin, webhook{…}}` | DTO stub only                       | `projects.scm` (typed blob) + adapter validation     |
-| `opencodeIssueSessionStrategy`    | enum                   | —                                   | `projects.opencode_session_strategy`                 |
-| `reactions`                       | per-project overrides  | —                                   | `project_reactions` (own slice)                      |
+`name`, `repo`, and `path` are first-class columns on `projects`. Every other
+shipped setting lives as a key inside the single `projects.config` JSON blob;
+settings without a live consumer are not modeled yet (see "Sequencing").
+
+| YAML field                        | Type                   | Home                                       | Status                                         |
+| --------------------------------- | ---------------------- | ------------------------------------------ | ---------------------------------------------- |
+| `name`                            | string                 | `projects.display_name` (column)           | done                                           |
+| `repo`                            | string                 | `projects.repo_origin_url` (column)        | done                                           |
+| `path`                            | string                 | `projects.path` (column)                   | done                                           |
+| `defaultBranch`                   | string                 | `config.defaultBranch`                     | done                                           |
+| `sessionPrefix`                   | string                 | `config.sessionPrefix`                     | done                                           |
+| `agentConfig`                     | `{model, permissions}` | `config.agentConfig`                       | done                                           |
+| `orchestrator`/`worker` overrides | `{agent, agentConfig}` | `config.orchestrator` / `config.worker`    | done                                           |
+| `env`                             | `map[string]string`    | `config.env`                               | done                                           |
+| `symlinks`                        | `[]string`             | `config.symlinks`                          | done                                           |
+| `postCreate`                      | `[]string`             | `config.postCreate`                        | done                                           |
+| `agentRules` / `agentRulesFile`   | string                 | future `config.agentRules*`                | not modeled (partial `SpawnConfig.AgentRules`) |
+| `orchestratorRules`               | string                 | future `config.orchestratorRules`          | not modeled                                    |
+| `tracker`                         | `{plugin, …}`          | future `config.tracker` (adapter-validated) | not modeled                                   |
+| `scm`                             | `{plugin, webhook{…}}` | future `config.scm` (adapter-validated)    | not modeled                                    |
+| `opencodeIssueSessionStrategy`    | enum                   | future `config.*`                          | not modeled                                    |
+| `reactions`                       | per-project overrides  | future (own slice)                         | not modeled                                    |
 
 ## Typed model
 
@@ -92,38 +96,71 @@ agent adapter.
 
 ## Storage strategy
 
-- **Scalar fields** (`default_branch`, `session_prefix`, `agent_rules`, enums) →
-  their own typed columns on `projects`.
-- **Small structured blobs** (`agent_config`, `tracker`, `scm`, `symlinks`,
-  `post_create`) → nullable JSON columns, marshaled/unmarshaled in the store
-  (the pattern this PR established for `agent_config`).
-- **Unbounded key/value sets** (`env`) → a child table keyed by `project_id`.
-- **Its own domain** (`reactions`) → a separate slice; reactions already have a
-  reaction engine to integrate with.
+The whole `ProjectConfig` is persisted as **one nullable JSON blob** — the
+`projects.config` `TEXT` column (migration `0008_add_project_config.sql`). The
+store marshals `ProjectConfig` to JSON on write and unmarshals on read; an empty
+config (`IsZero`) persists SQL `NULL`. There are no per-field columns and no
+child tables for any config setting:
 
-## Surface (per field)
+- A single column keeps the schema stable as new typed fields are added — a new
+  setting is a struct field plus a JSON key, never a migration.
+- Validation lives in the domain type (`ProjectConfig.Validate` and each leaf's
+  `Validate`), not in column constraints, so bad values are refused at set time.
+- `env` is a plain `map[string]string` key in the blob, not a `project_env`
+  child table.
 
-- **API** — extend the projects controller. Field groups get focused routes
-  (e.g. `PUT /projects/{id}/agent-config`, `PUT /projects/{id}/env`) rather than
-  one mega-PUT, so partial updates are clean and the OpenAPI stays legible.
-- **CLI** — typed flags on `ao project` subcommands (e.g.
-  `ao project set-config --model --permission`, `ao project env set KEY=VAL`).
-- **UI** — a generated typed form per group, driven by the OpenAPI schema.
+> The originally proposed split — scalars in typed columns, small blobs in
+> per-field JSON columns, `env` in a `project_env` child table — was
+> **superseded**. The migration comment records the decision: a single JSON
+> column persists the "shape of the YAML config" rather than splitting config
+> into many columns. If an individual field ever needs its own column (e.g. to
+> index or query on it), that becomes a future, field-specific migration.
+
+## Surface
+
+A project's config is set as a whole object through a single route, not via
+per-group endpoints:
+
+- **API** — `PUT /api/v1/projects/{id}/config` with body `{ "config": { … } }`
+  replaces the project's config. The config may also be supplied at registration
+  via `POST /api/v1/projects`. The daemon validates the typed config and rejects
+  unknown fields.
+- **CLI** — `ao project set-config <id>` with typed flags:
+  - `--default-branch`, `--session-prefix`
+  - `--model`, `--permission` (the `agentConfig` fields)
+  - `--worker-agent`, `--orchestrator-agent` (role harness overrides)
+  - `--env KEY=VALUE` (repeatable), `--symlink` (repeatable),
+    `--post-create` (repeatable)
+  - `--config-json '{…}'` to pass the whole object, `--clear` to remove all
+    config, `--json` to print the updated project
+  
+  `set-config` replaces the config; there are no per-field subcommands such as
+  `ao project env set`. `ao project get <id>` prints the resolved config.
+- **UI** — a generated typed form, driven by the OpenAPI schema for the config
+  object.
 
 ## Sequencing (one slice per PR)
 
-1. **agentConfig (typed)** — _this PR_. Establishes the typed+validated+surfaced
-   pattern end to end.
-2. **Project identity scalars** — `default_branch`, `session_prefix` (stop
-   hardcoding/deriving them).
-3. **Workspace provisioning** — `env`, `symlinks`, `postCreate` (these change
-   spawn/workspace wiring, so grouped).
-4. **Rules** — `agentRules`, `agentRulesFile`, `orchestratorRules` (consolidate
-   the partial `SpawnConfig.AgentRules` path).
-5. **Role overrides** — `worker` / `orchestrator` `{agent, agentConfig}`.
-6. **Tracker / SCM per-project** — typed blobs with adapter-owned validation.
-7. **Per-project reactions** — integrate with the reaction engine.
+Shipped slices (all landed inside the single `projects.config` blob, so identity
+scalars and workspace provisioning were not separate column/table migrations):
 
-Each slice is independently shippable and follows the same shape: domain type +
-`Validate()` → storage (column or blob or table) → service set/get → API route →
-CLI flags → UI form → tests.
+1. **agentConfig (typed)** — established the typed+validated+surfaced pattern end
+   to end.
+2. **Project identity scalars** — `defaultBranch`, `sessionPrefix` (stop
+   hardcoding/deriving them).
+3. **Workspace provisioning** — `env`, `symlinks`, `postCreate`.
+4. **Role overrides** — `worker` / `orchestrator` `{agent, agentConfig}`.
+
+Remaining (future) slices, each adding a typed field to `ProjectConfig` (plus
+validation, CLI flags, and UI) as its consumer lands — no schema migration
+required:
+
+5. **Rules** — `agentRules`, `agentRulesFile`, `orchestratorRules` (consolidate
+   the partial `SpawnConfig.AgentRules` path).
+6. **Tracker / SCM per-project** — typed config with adapter-owned validation.
+7. **Per-project reactions** — integrate with the reaction engine; may warrant
+   its own slice/storage rather than the config blob.
+
+Each slice follows the same shape: domain field + `Validate()` → JSON key in the
+config blob → service set/get → the single config route → CLI flags → UI form →
+tests.
