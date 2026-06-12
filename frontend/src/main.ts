@@ -88,7 +88,11 @@ function createWindow(): void {
 		title: "Agent Orchestrator",
 		backgroundColor: "#0f1014",
 		titleBarStyle: "hiddenInset",
-		trafficLightPosition: { x: 14, y: 14 },
+		// Lights visually centered at y=28 — the 56px topbar/.titlebar-nav center
+		// line — so lights + nav cluster + header content share one row. macOS
+		// draws the 12pt disc 2pt below the given y (measured: center = y + 8),
+		// hence 20, not 22.
+		trafficLightPosition: { x: 14, y: 20 },
 		webPreferences: {
 			preload: preloadPath(),
 			contextIsolation: true,

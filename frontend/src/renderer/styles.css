@@ -280,14 +280,21 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	transition: none;
 }
 
-/* ── Dashboard / session topbar (agent-orchestrator .dashboard-app-header) ─ */
+/* ── Shell topbar (agent-orchestrator .dashboard-app-header) ──────────────
+ * One header for every screen (rendered by the shell layout), so one padding:
+ * AO's session-topbar values. Upstream splits this into a 14px dashboard
+ * header and a 16/14px session override; with the bar hoisted there is a
+ * single frame and the crumb never shifts between views. The bar spans the
+ * full window width with the sidebar pinned below it (approved divergence
+ * 2026-06-12), so its bottom border runs edge-to-edge and the sidebar border
+ * stops at the header instead of crossing the traffic-light strip. */
 .dashboard-app-header {
 	display: flex;
 	height: 56px;
 	flex-shrink: 0;
 	align-items: center;
 	gap: 13px;
-	padding: 0 20px;
+	padding: 0 16px 0 14px;
 	border-bottom: 1px solid var(--border);
 	background: var(--bg);
 	z-index: 10;
@@ -307,35 +314,6 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	min-width: 0;
 	align-items: center;
 	gap: 6px;
-}
-
-.dashboard-app-header__tabs {
-	display: inline-flex;
-	align-items: center;
-	gap: 2px;
-}
-
-.dashboard-app-header__tab {
-	display: inline-flex;
-	height: 28px;
-	align-items: center;
-	border-radius: 6px;
-	padding: 0 11px;
-	font-size: 12.5px;
-	line-height: 1;
-	color: var(--fg-passive);
-	transition:
-		background 0.12s ease,
-		color 0.12s ease;
-}
-
-.dashboard-app-header__tab:hover {
-	color: var(--fg);
-}
-
-.dashboard-app-header__tab.is-active {
-	background: var(--interactive-active);
-	color: var(--fg);
 }
 
 .dashboard-app-header__spacer {
@@ -410,12 +388,6 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	background: color-mix(in srgb, var(--accent-weak) 80%, transparent);
 }
 
-.session-topbar.dashboard-app-header {
-	height: 56px;
-	gap: 13px;
-	padding: 0 16px 0 14px;
-}
-
 .session-topbar__lead {
 	display: flex;
 	min-width: 0;
@@ -425,16 +397,19 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 
 /* ── macOS titlebar cluster (TitlebarNav) ─────────────────────────────────
  * Fixed beside the traffic lights so the toggle/history buttons occupy the
- * exact same spot in both sidebar states. Lights span x=14–66 (y center 20);
- * 28px buttons in a 40px strip share that center, and the 6.5px icon inset
- * puts the first glyph at ~76px — the standard 10px gap after the lights. */
+ * exact same spot in both sidebar states. The 56px strip matches the
+ * .dashboard-app-header height so the buttons share the topbar's center line
+ * (y 28) with the project crumb / bell; the lights match via
+ * trafficLightPosition y:20 in main.ts. Lights span x=14–66; the cluster
+ * starts a 13px group gap after them (the .dashboard-app-header gap), so
+ * the toggle reads as its own group rather than a fourth light. */
 .titlebar-nav {
 	position: fixed;
 	top: 0;
-	left: 70px;
+	left: 79px;
 	z-index: 20;
 	display: flex;
-	height: 40px;
+	height: 56px;
 	align-items: center;
 	gap: 2px;
 }
@@ -444,16 +419,11 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	height: 28px;
 }
 
-/* Collapsed-rail topbars start their content past the fixed cluster:
- * cluster right edge 70 + 3×28 + 2×2 = 158px, + the header's 13px gap,
- * − the 48px icon rail = 123px. Transition mirrors the sidebar's width
- * animation (200ms linear) so content tracks the moving sidebar edge. */
-.dashboard-app-header {
-	transition: padding-left 0.2s linear;
-}
-
+/* macOS: the full-width header starts its content past the lights + fixed
+ * cluster: cluster right edge 79 + 3×28 + 2×2 = 167px, + the header's 13px
+ * group gap = 180px. */
 .dashboard-app-header.is-under-titlebar-nav {
-	padding-left: 123px;
+	padding-left: 180px;
 }
 
 .topbar-project-pills-group {
@@ -596,7 +566,7 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	left: 50%;
 	width: 1px;
 	transform: translateX(-50%);
-	background: transparent;
+	background: var(--border-1);
 	transition: background 0.12s ease;
 }
 

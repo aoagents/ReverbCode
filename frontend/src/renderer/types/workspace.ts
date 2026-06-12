@@ -123,12 +123,20 @@ export function isOrchestratorSession(session: WorkspaceSession): boolean {
 	return session.kind === "orchestrator" || session.id.endsWith("-orchestrator");
 }
 
+/**
+ * The project's LIVE orchestrator, if any. Terminated orchestrator rows stay in
+ * the session list (the daemon returns all sessions, ordered by spawn number),
+ * so an earlier dead orchestrator must not shadow a live one — its zellij
+ * session is deleted and attaching to it dead-ends in an instant
+ * "[process exited]". No live orchestrator → undefined, so the topbar offers
+ * Spawn instead of navigating to a dead session.
+ */
 export function findProjectOrchestrator(
 	workspaces: WorkspaceSummary[],
 	projectId: string,
 ): WorkspaceSession | undefined {
 	const workspace = workspaces.find((w) => w.id === projectId);
-	return workspace?.sessions.find(isOrchestratorSession);
+	return workspace?.sessions.find((session) => isOrchestratorSession(session) && sessionIsActive(session));
 }
 
 export function workerSessions(sessions: WorkspaceSession[]): WorkspaceSession[] {

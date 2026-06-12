@@ -1,7 +1,13 @@
 import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
 import { ChevronRight, GitPullRequest, Moon, Plus, Search, Settings, Sun, Waypoints } from "lucide-react";
 import { useState } from "react";
-import { attentionZone, type WorkspaceSession, type WorkspaceSummary, workerSessions } from "../types/workspace";
+import {
+	attentionZone,
+	sessionIsActive,
+	type WorkspaceSession,
+	type WorkspaceSummary,
+	workerSessions,
+} from "../types/workspace";
 import { aoBridge } from "../lib/bridge";
 import { useEventsConnection } from "../hooks/useEventsConnection";
 import { useResizable } from "../hooks/useResizable";
@@ -35,12 +41,11 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { cn } from "../lib/utils";
 import { useUiStore } from "../stores/ui-store";
 
-// macOS hiddenInset traffic lights (x:14, y:14) occupy the sidebar's top-left;
-// the sidebar gives them a real 40px titlebar strip (draggable; the fixed
-// TitlebarNav overlay sits beside the lights), and the collapsed icon rail
-// keeps a matching 40px inset. Windows/Linux keep the verbatim 14px padding.
+// The macOS hiddenInset traffic lights and the fixed TitlebarNav overlay live
+// in the full-width topbar's left inset (_shell renders the bar above the
+// sidebar row); the sidebar itself starts below the 56px header, so its border
+// never crosses the titlebar strip.
 const isMac = typeof navigator !== "undefined" && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent);
-const dragStyle = isMac ? ({ WebkitAppRegion: "drag" } as React.CSSProperties) : undefined;
 const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined;
 
 type SidebarProps = {
@@ -63,7 +68,6 @@ function useSelection() {
 		activeSessionId: params.sessionId,
 		goHome: () => void navigate({ to: "/" }),
 		goPrs: () => void navigate({ to: "/prs" }),
-		goReview: () => void navigate({ to: "/review" }),
 		goSettings: (projectId: string) => void navigate({ to: "/projects/$projectId/settings", params: { projectId } }),
 		goProject: (projectId: string) => void navigate({ to: "/projects/$projectId", params: { projectId } }),
 		goSession: (projectId: string, sessionId: string) =>
@@ -119,13 +123,11 @@ export function Sidebar({ daemonStatus, workspaceError, workspaces, onCreateProj
 	});
 
 	return (
-		<SidebarRoot collapsible="icon" className="border-border">
-			<SidebarHeader className={cn("gap-0 p-0 px-[7px] group-data-[collapsible=icon]:px-1.5", !isMac && "pt-3.5")}>
-				{/* Titlebar strip: a draggable 40px inset under the traffic lights and
-            the fixed TitlebarNav overlay (rendered once by the shell), kept in
-            both sidebar states. */}
-				{isMac && <div className="h-10 shrink-0" style={dragStyle} />}
-
+		// The container is fixed-positioned by the shadcn primitive; offset it
+		// below the 56px shell topbar so the bar runs edge-to-edge above it
+		// (same override as shadcn's header-above-sidebar block).
+		<SidebarRoot collapsible="icon" className="border-border top-14 h-[calc(100svh-3.5rem)]!">
+			<SidebarHeader className="gap-0 p-0 px-[7px] pt-3.5 group-data-[collapsible=icon]:px-1.5">
 				{/* Brand (project-sidebar__brand); in the icon rail it becomes the old
             36px board button wrapping the 22px accent mark. */}
 				<div className="flex shrink-0 items-center gap-2.5 px-2 pb-[18px] group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:pb-2">
@@ -241,10 +243,6 @@ export function Sidebar({ daemonStatus, workspaceError, workspaces, onCreateProj
 								<GitPullRequest aria-hidden="true" />
 								Pull requests
 							</DropdownMenuItem>
-							<DropdownMenuItem onSelect={selection.goReview}>
-								<Settings aria-hidden="true" />
-								Reviews
-							</DropdownMenuItem>
 							<DropdownMenuItem disabled>
 								<Search aria-hidden="true" />
 								Search
@@ -316,6 +314,9 @@ function ProjectItem({
 	onNewWorker: () => void;
 }) {
 	const projectActive = selection.activeProjectId === workspace.id && !selection.activeSessionId;
+	// Live workers only: merged/terminated sessions leave the sidebar and stay
+	// reachable through the board's Done / Terminated bar (SessionsBoard).
+	const sessions = workerSessions(workspace.sessions).filter(sessionIsActive);
 
 	const onProjectClick = () => {
 		if (!expanded) {
@@ -359,7 +360,7 @@ function ProjectItem({
 				<span className="hidden group-data-[collapsible=icon]:block">{workspace.name.charAt(0).toUpperCase()}</span>
 				<span className="min-w-0 flex-1 truncate group-data-[collapsible=icon]:hidden">{workspace.name}</span>
 				<span className="shrink-0 font-mono text-[11px] text-passive group-hover/menu-item:opacity-0 group-data-[collapsible=icon]:hidden">
-					{workerSessions(workspace.sessions).length}
+					{sessions.length}
 				</span>
 			</SidebarMenuButton>
 			{/* project-sidebar__proj-actions — reveal over the count slot on hover */}
@@ -369,7 +370,12 @@ function ProjectItem({
 						showOnHover
 						aria-label={`New worker in ${workspace.name}`}
 						onClick={onNewWorker}
-						className="right-1.5 h-[22px] w-[22px] rounded-[5px] text-passive transition-opacity hover:bg-interactive-active hover:text-foreground peer-data-[size=default]/menu-button:top-1"
+						// No top override: the base's peer-data-[size=default]:top-1.5
+						// (6px) centers this 22px action in the 34px row. AO's 50%/
+						// translateY(-50%) can't be cloned here — the absolute context
+						// is the whole menu li including the expanded sessions list,
+						// so a percentage top centers on the group, not the row.
+						className="right-1.5 h-[22px] w-[22px] rounded-[5px] text-passive transition-opacity hover:bg-interactive-active hover:text-foreground"
 					>
 						<Plus className="h-[13px]! w-[13px]!" aria-hidden="true" />
 					</SidebarMenuAction>
@@ -377,10 +383,12 @@ function ProjectItem({
 				<TooltipContent>New worker in {workspace.name}</TooltipContent>
 			</Tooltip>
 
-			{/* project-sidebar__sessions */}
-			{expanded && workerSessions(workspace.sessions).length > 0 && (
-				<SidebarMenuSub className="mx-0 translate-x-0 gap-0 border-0 px-0 pb-2 pl-1 pt-0.5">
-					{workerSessions(workspace.sessions).map((session) => {
+			{/* project-sidebar__sessions. Divergence from AO (user decision
+          2026-06-12): no left indent or tree guide line — every sidebar row
+          (project or worker) spans the same full width. */}
+			{expanded && sessions.length > 0 && (
+				<SidebarMenuSub className="mx-0 translate-x-0 gap-0 border-0 px-0 pb-2 pt-0.5">
+					{sessions.map((session) => {
 						const active = selection.activeSessionId === session.id;
 						return (
 							<SidebarMenuSubItem key={session.id}>

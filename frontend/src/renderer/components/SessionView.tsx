@@ -1,9 +1,7 @@
-import { useEffect, useRef, useState } from "react";
-import { useNavigate } from "@tanstack/react-router";
+import { useEffect, useRef } from "react";
 import type { PanelImperativeHandle, PanelSize } from "react-resizable-panels";
 import { CenterPane } from "./CenterPane";
 import { SessionInspector } from "./SessionInspector";
-import { Topbar } from "./Topbar";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "./ui/resizable";
 import { useUiStore } from "../stores/ui-store";
 import { useShell } from "../lib/shell-context";
@@ -23,24 +21,22 @@ function initialSplitPercent(): number {
 
 type SessionViewProps = {
 	sessionId: string;
-	/** When entered via /projects/$projectId/sessions/... — used for the back-nav target. */
-	projectId?: string;
 };
 
-// The session detail screen: the persistent terminal + git rail. Rendered by
-// both the project-scoped and cross-project session routes. The terminal lives
-// here (not in the shell) — switching sessions only changes route params, so
-// TanStack Router keeps this component mounted and the terminal re-points its
-// mux without remounting (useTerminalSession). Leaving for the board unmounts
-// it; the server's output ring replays on return.
+// The session detail screen: the persistent terminal + git rail, under the
+// shell-owned ShellTopbar. Rendered by both the project-scoped and
+// cross-project session routes. The terminal lives here (not in the shell) —
+// switching sessions only changes route params, so TanStack Router keeps this
+// component mounted and the terminal re-points its mux without remounting
+// (useTerminalSession). Leaving for the board unmounts it; a fresh server-side
+// zellij attach repaints the pane on return.
 //
 // The split is shadcn's resizable (react-resizable-panels v4) with a fully
 // collapsible inspector: the panel is `collapsible` and driven to 0% via the
-// imperative API from the ui-store (Topbar button / ⌘⇧B), animated by the
+// imperative API from the ui-store (topbar button / ⌘⇧B), animated by the
 // flex-grow transition in styles.css. Content keeps a stable min-width inside
 // the clipped panel so nothing reflows mid-animation; split width persists.
-export function SessionView({ sessionId, projectId }: SessionViewProps) {
-	const navigate = useNavigate();
+export function SessionView({ sessionId }: SessionViewProps) {
 	const workspaceQuery = useWorkspaceQuery();
 	const workspaces = workspaceQuery.data ?? [];
 	const { theme } = useUiStore();
@@ -48,24 +44,32 @@ export function SessionView({ sessionId, projectId }: SessionViewProps) {
 	const toggleInspector = useUiStore((state) => state.toggleInspector);
 	const { daemonStatus } = useShell();
 	const inspectorRef = useRef<PanelImperativeHandle | null>(null);
+	const inspectorSeparatorRef = useRef<HTMLDivElement | null>(null);
 
 	const session = workspaces.flatMap((workspace) => workspace.sessions).find((s) => s.id === sessionId);
 	const isOrchestrator = session ? isOrchestratorSession(session) : false;
-	const workspace =
-		(session && workspaces.find((w) => w.id === session.workspaceId)) ??
-		(projectId ? workspaces.find((w) => w.id === projectId) : undefined);
 
 	// Orchestrator sessions are terminal-only; only worker sessions have the rail.
 	const hasInspector = !isOrchestrator;
-	// Frozen at mount: rrp re-registers the panel (a layout effect keyed on
-	// defaultSize, among others) whenever this prop's identity changes, and the
-	// imperative collapse()/expand() below can race that re-registration within
-	// the same commit — rrp then throws "Panel constraints not found for Panel
+	// Computed when the inspector panel mounts and frozen while it stays
+	// mounted: rrp re-registers the panel (a layout effect keyed on defaultSize,
+	// among others) whenever this prop's identity changes, and the imperative
+	// collapse()/expand() below can race that re-registration within the same
+	// commit — rrp then throws "Panel constraints not found for Panel
 	// inspector", which unwinds the whole route to the router's CatchBoundary
 	// (the toggle button looks dead and the session view is torn down).
-	// defaultSize only matters at first mount; afterwards the imperative API
-	// owns the size, so it must never track live open/closed state.
-	const [inspectorDefaultSize] = useState(() => (isInspectorOpen ? `${initialSplitPercent()}%` : "0%"));
+	// Re-derived per panel mount (not once per SessionView mount — navigating
+	// orchestrator → worker keeps this component mounted while the panel
+	// remounts) so a freshly mounted panel reflects the store on its own,
+	// without an imperative fix-up in the mount commit. Afterwards the
+	// imperative API owns the size, so this must never track live open state.
+	const inspectorDefaultSizeRef = useRef<string | null>(null);
+	if (!hasInspector) {
+		inspectorDefaultSizeRef.current = null;
+	} else if (inspectorDefaultSizeRef.current === null) {
+		inspectorDefaultSizeRef.current = isInspectorOpen ? `${initialSplitPercent()}%` : "0%";
+	}
+	const inspectorDefaultSize = inspectorDefaultSizeRef.current ?? "0%";
 
 	useEffect(() => {
 		if (!hasInspector) return;
@@ -79,8 +83,14 @@ export function SessionView({ sessionId, projectId }: SessionViewProps) {
 		return () => window.removeEventListener("keydown", handleKeyDown);
 	}, [hasInspector, toggleInspector]);
 
-	// Drive the collapsible panel from the store so the Topbar button, ⌘⇧B, and
-	// drag-to-collapse all stay in sync.
+	// Drive the collapsible panel from the store so the topbar button, ⌘⇧B, and
+	// drag-to-collapse all stay in sync. hasInspector must NOT be a dep: when
+	// the inspector panel mounts into the already-live group (orchestrator →
+	// worker navigation), rrp only derives the new panel's constraints in the
+	// next commit, so an expand()/collapse() in the mount commit throws "Panel
+	// constraints not found for Panel inspector" and unwinds the route. The
+	// panel mounts in sync via inspectorDefaultSize above; only later toggles
+	// need the imperative API, by which point registration has settled.
 	useEffect(() => {
 		const panel = inspectorRef.current;
 		if (!panel) return;
@@ -92,11 +102,22 @@ export function SessionView({ sessionId, projectId }: SessionViewProps) {
 		} else {
 			panel.collapse();
 		}
-	}, [hasInspector, isInspectorOpen]);
+	}, [isInspectorOpen]);
 
 	// Persist drags and mirror collapse state (dragging past minSize collapses)
 	// back into the store. Read the store imperatively to avoid a stale closure.
+	// Gated on an actively dragged separator: rrp v4 derives sizes from the
+	// observed DOM layout, so the flex-grow transition that animates
+	// expand()/collapse() (styles.css) fires onResize with transient
+	// mid-animation sizes too. Writing those back turned the imperative
+	// collapse into a feedback loop — a mid-collapse size read as "dragged
+	// back open", re-toggled the store, and the panel bounced back (the
+	// topbar button looked dead). rrp marks the separator
+	// data-separator="active" only during a pointer drag — the same hook the
+	// transition-suppressing CSS keys on, so drag writes are never transition
+	// frames.
 	const handleInspectorResize = (size: PanelSize) => {
+		if (inspectorSeparatorRef.current?.getAttribute("data-separator") !== "active") return;
 		const open = useUiStore.getState().isInspectorOpen;
 		if (size.asPercentage > 0) {
 			window.localStorage?.setItem(inspectorSplitStorageKey, String(size.asPercentage));
@@ -116,16 +137,6 @@ export function SessionView({ sessionId, projectId }: SessionViewProps) {
 
 	return (
 		<div className="flex h-full min-h-0 flex-col bg-background text-foreground">
-			<Topbar
-				onOpenBoard={() =>
-					workspace
-						? void navigate({ to: "/projects/$projectId", params: { projectId: workspace.id } })
-						: void navigate({ to: "/" })
-				}
-				projectLabel={workspace?.name}
-				session={session}
-				view={isOrchestrator ? "orchestrator" : "session"}
-			/>
 			<ResizablePanelGroup className="session-split min-h-0 flex-1" id="session-workspace" orientation="horizontal">
 				{/* react-resizable-panels v4: bare numbers are PIXELS; percentages must
             be strings. Numeric sizes here once clamped the inspector to 45px. */}
@@ -134,7 +145,10 @@ export function SessionView({ sessionId, projectId }: SessionViewProps) {
 				</ResizablePanel>
 				{hasInspector ? (
 					<>
-						<ResizableHandle className="session-inspector__resize-handle focus-visible:ring-0 focus-visible:ring-offset-0" />
+						<ResizableHandle
+						className="session-inspector__resize-handle focus-visible:ring-0 focus-visible:ring-offset-0"
+						elementRef={inspectorSeparatorRef}
+					/>
 						<ResizablePanel
 							aria-hidden={!isInspectorOpen}
 							collapsible

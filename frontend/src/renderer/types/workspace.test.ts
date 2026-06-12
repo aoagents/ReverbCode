@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	attentionZone,
+	findProjectOrchestrator,
 	sessionIsActive,
 	sessionNeedsAttention,
 	toAgentProvider,
@@ -10,6 +11,7 @@ import {
 	type AttentionZone,
 	type SessionStatus,
 	type WorkspaceSession,
+	type WorkspaceSummary,
 } from "./workspace";
 
 function sessionWith(overrides: Partial<WorkspaceSession>): WorkspaceSession {
@@ -74,6 +76,37 @@ describe("sessionIsActive", () => {
 	it("is true for in-progress statuses", () => {
 		expect(sessionIsActive(sessionWith({ status: "working" }))).toBe(true);
 		expect(sessionIsActive(sessionWith({ status: "pr_open" }))).toBe(true);
+	});
+});
+
+describe("findProjectOrchestrator", () => {
+	function workspaceWith(sessions: WorkspaceSession[]): WorkspaceSummary {
+		return { id: "skills", name: "skills", path: "/tmp/skills", sessions };
+	}
+
+	it("skips a terminated orchestrator that precedes the live one", () => {
+		// Regression: the daemon lists sessions by spawn number, so a dead
+		// orchestrator (zellij session deleted) sorts before its live successor.
+		// Picking it sent the Orchestrator button to an instant "[process exited]".
+		const dead = sessionWith({ id: "skills-4", kind: "orchestrator", status: "terminated" });
+		const live = sessionWith({ id: "skills-5", kind: "orchestrator", status: "needs_input" });
+		const worker = sessionWith({ id: "skills-6", kind: "worker", status: "working" });
+		expect(findProjectOrchestrator([workspaceWith([dead, live, worker])], "skills")).toBe(live);
+	});
+
+	it("returns undefined when every orchestrator is terminated", () => {
+		const dead = sessionWith({ id: "skills-4", kind: "orchestrator", status: "terminated" });
+		expect(findProjectOrchestrator([workspaceWith([dead])], "skills")).toBeUndefined();
+	});
+
+	it("ignores live workers when looking for an orchestrator", () => {
+		const worker = sessionWith({ id: "skills-6", kind: "worker", status: "working" });
+		expect(findProjectOrchestrator([workspaceWith([worker])], "skills")).toBeUndefined();
+	});
+
+	it("returns undefined for an unknown project", () => {
+		const live = sessionWith({ id: "skills-5", kind: "orchestrator", status: "working" });
+		expect(findProjectOrchestrator([workspaceWith([live])], "other")).toBeUndefined();
 	});
 });
 
