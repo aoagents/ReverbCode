@@ -37,7 +37,11 @@ type Manager struct {
 
 // New builds a Lifecycle Manager over the session store it writes and the messenger it uses for agent nudges.
 func New(store sessionStore, messenger ports.AgentMessenger) *Manager {
-	return &Manager{store: store, messenger: messenger, window: defaultRecentActivityWindow, clock: time.Now, react: newReactionState()}
+	// UTC so activity-driven LastActivityAt/UpdatedAt match spawn-stamped
+	// timestamps (the session manager clock is UTC too); a local clock here left
+	// `ao session get` showing created in UTC but updated in local time.
+	clock := func() time.Time { return time.Now().UTC() }
+	return &Manager{store: store, messenger: messenger, window: defaultRecentActivityWindow, clock: clock, react: newReactionState()}
 }
 
 func (m *Manager) mutate(ctx context.Context, id domain.SessionID, fn func(domain.SessionRecord, time.Time) (domain.SessionRecord, bool)) error {
