@@ -118,6 +118,9 @@ var (
 	// ErrWorkspaceBranchNotFetched reports the requested branch exists nowhere
 	// reachable (no local head, no remote-tracking branch, no tag).
 	ErrWorkspaceBranchNotFetched = errors.New("workspace: branch is not fetched")
+	// ErrWorkspaceBranchInvalid reports the requested branch name is not a valid
+	// git ref (rejected by `git check-ref-format`).
+	ErrWorkspaceBranchInvalid = errors.New("workspace: invalid branch name")
 	// ErrWorkspaceDirty reports Destroy refused to remove a workspace because
 	// it holds uncommitted changes or untracked files. Teardown is never
 	// forced; callers treat the workspace as intentionally preserved.

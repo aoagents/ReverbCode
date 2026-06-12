@@ -369,6 +369,34 @@ func TestAddWorktreeRefusesBranchCheckedOutElsewhere(t *testing.T) {
 	}
 }
 
+// TestCreateRejectsInvalidBranchName covers the residual of #152 Bug 3: a branch
+// name rejected by `git check-ref-format` must surface
+// ports.ErrWorkspaceBranchInvalid so the HTTP layer renders a typed 400 instead
+// of leaking raw git stderr through a 500.
+func TestCreateRejectsInvalidBranchName(t *testing.T) {
+	root := t.TempDir()
+	repo := t.TempDir()
+	ws, err := New(Options{ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	ws.run = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		joined := strings.Join(args, " ")
+		if strings.Contains(joined, "check-ref-format") {
+			return nil, errors.New("fatal: 'bad branch!!' is not a valid branch name")
+		}
+		t.Fatalf("no git beyond check-ref-format should run for an invalid branch: %v", args)
+		return nil, nil
+	}
+	_, err = ws.Create(context.Background(), ports.WorkspaceConfig{ProjectID: "proj", SessionID: "sess", Branch: "bad branch!!"})
+	if !errors.Is(err, ports.ErrWorkspaceBranchInvalid) {
+		t.Fatalf("err = %v, want ports.ErrWorkspaceBranchInvalid", err)
+	}
+	if !strings.Contains(err.Error(), "bad branch!!") {
+		t.Fatalf("err = %v, want message to include the rejected branch name", err)
+	}
+}
+
 // TestAddWorktreeReportsBranchNotFetched covers Bug 3 (b): if no local head,
 // no origin remote-tracking branch, no default branch ref, and no tag of the
 // same name is reachable, Create must surface ports.ErrWorkspaceBranchNotFetched
