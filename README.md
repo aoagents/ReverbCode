@@ -56,6 +56,24 @@ go build -o /tmp/ao ./cmd/ao
 /tmp/ao session ls
 ```
 
+### Electron app (dev)
+
+The desktop supervisor lives under `frontend/` and is started separately:
+
+```bash
+cd frontend
+npm install
+npm run dev   # electron-forge start
+```
+
+Heads-up: `npm run dev` does **not** start the daemon for you. Start it first
+(`ao start`, see above) — the renderer attaches to the running daemon over
+loopback (`127.0.0.1:3001` by default, the `AO_PORT` from the table below).
+Without a daemon the app opens but shows its daemon-not-ready state.
+
+For renderer-only UI work without the Electron shell, use
+`npm run dev:web` (Vite in a regular browser).
+
 ## CLI surface
 
 The CLI is intentionally thin: every product command resolves to a daemon HTTP
