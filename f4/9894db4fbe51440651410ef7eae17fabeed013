@@ -1,0 +1,22 @@
+frontend/src/renderer/hooks/useWorkspaceQuery.ts
+  s_1c9ec74f457ab0::t_aa7c9577b2aa7d 33-35
+frontend/src/renderer/hooks/useWorkspaceQuery.test.tsx
+  s_1c9ec74f457ab0::t_8ae96fe563f841 52
+  s_1c9ec74f457ab0::t_0592fd40050a77 86-87,94-95
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "f49894db4fbe51440651410ef7eae17fabeed013",
+  "prompts": {},
+  "sessions": {
+    "s_1c9ec74f457ab0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "40514750-edbd-42cf-8eb3-9af733edbbbb",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    }
+  }
+}
