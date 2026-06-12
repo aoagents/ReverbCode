@@ -41,6 +41,12 @@ resizable`, react-resizable-panels v4 `collapsible` panel + imperative API,
   content keeps a stable min-width (yyork-style, no mid-animation reflow). Toggled
   by a `PanelRight` icon button in the session topbar and ⌘⇧B; open state + split
   width persist. The AO reference keeps the rail always visible.
+- **Approved divergence (2026-06-12):** the shell topbar spans the full window
+  width and the sidebar is pinned below it (`top-14`), so the sidebar's right
+  border stops at the header instead of cutting through the macOS traffic-light
+  strip (user-requested). The AO reference keeps a full-height sidebar with the
+  header beside it. On macOS the header always pads past the lights + TitlebarNav
+  cluster (`.is-under-titlebar-nav`, 180px).
 
 ## Product Context
 

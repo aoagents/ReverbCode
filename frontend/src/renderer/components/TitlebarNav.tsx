@@ -1,5 +1,6 @@
-import { useCanGoBack, useRouter, useRouterState } from "@tanstack/react-router";
+import { useCanGoBack, useRouter } from "@tanstack/react-router";
 import { ArrowLeft, ArrowRight, PanelLeft } from "lucide-react";
+import { useEffect, useState } from "react";
 import { useUiStore } from "../stores/ui-store";
 
 const isMac = typeof navigator !== "undefined" && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent);
@@ -9,18 +10,37 @@ const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperti
 // the traffic lights, VS Code-style. Approved divergence from the web
 // reference, which has no window chrome (DESIGN.md banner, 2026-06-10).
 // Rendered once by the shell as a fixed overlay (.titlebar-nav in styles.css)
-// so the buttons occupy the exact same spot whether the sidebar is expanded
-// or collapsed; the collapsed-rail topbars pad past it (.is-under-titlebar-nav).
+// over the full-width topbar's left inset, so the buttons occupy the exact
+// same spot whether the sidebar is expanded or collapsed; the topbar starts
+// its content past the cluster (.is-under-titlebar-nav).
+// The installed router has no useCanGoForward, and deriving one as
+// `__TSR_index < history.length - 1` (the upstream hook's approach) is wrong
+// here: window.history.length also counts entries the router never created —
+// the WebContents' initial blank entry, pre-router loads — so the tip of the
+// stack still reads as "forward available" and the arrow no-ops. Instead,
+// track the highest router index reachable on the live stack: a PUSH discards
+// the forward entries (the new index is the tip); BACK/FORWARD/GO only move
+// within it. After a mid-stack reload the tip resets to the current entry —
+// forward greys out rather than dangle on entries we can no longer see.
+function useCanGoForward(): boolean {
+	const router = useRouter();
+	const [canGoForward, setCanGoForward] = useState(false);
+	useEffect(() => {
+		let tip = router.history.location.state.__TSR_index;
+		return router.history.subscribe(({ location, action }) => {
+			const index = location.state.__TSR_index;
+			tip = action.type === "PUSH" ? index : Math.max(tip, index);
+			setCanGoForward(index < tip);
+		});
+	}, [router]);
+	return canGoForward;
+}
+
 export function TitlebarNav() {
 	const { isSidebarOpen, toggleSidebar } = useUiStore();
 	const router = useRouter();
 	const canGoBack = useCanGoBack();
-	// No useCanGoForward in the installed router; derive it from the history
-	// index the same way useCanGoBack does (any back/forward/push re-renders
-	// via the location store, so history.length is read fresh).
-	const canGoForward = useRouterState({
-		select: (state) => state.location.state.__TSR_index < router.history.length - 1,
-	});
+	const canGoForward = useCanGoForward();
 
 	if (!isMac) return null;
 

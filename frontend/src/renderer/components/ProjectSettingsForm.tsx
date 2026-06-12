@@ -3,7 +3,7 @@ import { useState } from "react";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
-import { DashboardSubhead, DashboardTopbar } from "./DashboardTopbar";
+import { DashboardSubhead } from "./DashboardSubhead";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Label } from "./ui/label";
@@ -44,7 +44,6 @@ export function ProjectSettingsForm({ projectId }: { projectId: string }) {
 
 	return (
 		<div className="flex h-full min-h-0 flex-col bg-background text-foreground">
-			<DashboardTopbar activeTab="coding" projectId={projectId} projectLabel={query.data.name} />
 			<DashboardSubhead title="Settings" subtitle={query.data.path} />
 			<div className="min-h-0 flex-1 overflow-y-auto p-[18px]">
 				<SettingsBody

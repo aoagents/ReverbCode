@@ -42,12 +42,10 @@ const { workspaces, panels } = vi.hoisted(() => {
 	return { workspaces, panels: new Map<string, PanelEntry>() };
 });
 
-// The terminal, inspector body, and topbar pull in xterm/router/SSE machinery
-// irrelevant to the split under test.
+// The terminal and inspector body pull in xterm/SSE machinery irrelevant to
+// the split under test. (The topbar is shell-owned — see ShellTopbar.)
 vi.mock("./CenterPane", () => ({ CenterPane: () => <div /> }));
 vi.mock("./SessionInspector", () => ({ SessionInspector: () => <div /> }));
-vi.mock("./Topbar", () => ({ Topbar: () => <header /> }));
-vi.mock("@tanstack/react-router", () => ({ useNavigate: () => vi.fn() }));
 vi.mock("../lib/shell-context", () => ({
 	useShell: () => ({ daemonStatus: { state: "ready" } }),
 }));
@@ -60,7 +58,17 @@ vi.mock("../hooks/useWorkspaceQuery", () => ({
 // fake imperative handle per panel instead.
 vi.mock("./ui/resizable", () => ({
 	ResizablePanelGroup: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
-	ResizableHandle: () => <div data-testid="resize-handle" />,
+	ResizableHandle: ({ elementRef }: { elementRef?: Ref<HTMLDivElement | null> }) => (
+		<div
+			data-separator="inactive"
+			data-testid="resize-handle"
+			ref={(el) => {
+				if (elementRef && typeof elementRef === "object") {
+					(elementRef as { current: HTMLDivElement | null }).current = el;
+				}
+			}}
+		/>
+	),
 	ResizablePanel: ({
 		children,
 		id,
@@ -177,6 +185,8 @@ describe("SessionView", () => {
 	it("syncs drag resizes back into the store and persists the split", () => {
 		render(<SessionView sessionId="sess-1" />);
 		const entry = panels.get("inspector")!;
+		// rrp marks the separator active for the duration of a pointer drag.
+		screen.getByTestId("resize-handle").setAttribute("data-separator", "active");
 
 		// Dragging past minSize collapses the panel → store follows.
 		act(() => entry.onResize?.({ asPercentage: 0, inPixels: 0 }));
@@ -188,10 +198,54 @@ describe("SessionView", () => {
 		expect(window.localStorage.getItem("ao.inspector.split")).toBe("31.5");
 	});
 
+	// Regression: rrp v4 reports observed DOM sizes, so the flex-grow
+	// transition animating an imperative collapse fires onResize with transient
+	// non-zero sizes. Mirroring those into the store re-opened the panel
+	// mid-animation — the topbar toggle looked dead and a mount-time 0-size
+	// event flipped a fresh profile to collapsed. Only drag events (separator
+	// active) may write back.
+	it("ignores onResize churn while the separator is not being dragged", () => {
+		render(<SessionView sessionId="sess-1" />);
+		const entry = panels.get("inspector")!;
+
+		// Mount-time/layout event at 0% must not collapse the store…
+		act(() => entry.onResize?.({ asPercentage: 0, inPixels: 0 }));
+		expect(useUiStore.getState().isInspectorOpen).toBe(true);
+
+		// …and a mid-collapse transition frame must not re-open or persist.
+		act(() => useUiStore.getState().toggleInspector());
+		act(() => entry.onResize?.({ asPercentage: 12.4, inPixels: 160 }));
+		expect(useUiStore.getState().isInspectorOpen).toBe(false);
+		expect(window.localStorage.getItem("ao.inspector.split")).toBeNull();
+	});
+
 	it("restores the persisted split width", () => {
 		window.localStorage.setItem("ao.inspector.split", "40");
 		render(<SessionView sessionId="sess-1" />);
 		expect(panelSizes("inspector")[0]).toBe("40%");
+	});
+
+	// Regression: rrp only derives a panel's constraints one commit after it
+	// registers into a live group. Driving the imperative API in the commit
+	// where the inspector mounts (orchestrator → worker navigation; SessionView
+	// itself stays mounted) threw "Panel constraints not found for Panel
+	// inspector" and unwound the route to the error boundary. The panel must
+	// mount already in sync via defaultSize instead.
+	it("mounts the inspector in sync when navigating from an orchestrator session, without the imperative API", () => {
+		useUiStore.setState({ isInspectorOpen: false });
+		const { rerender } = render(<SessionView sessionId="sess-orch" />);
+		expect(screen.queryByTestId("panel-inspector")).not.toBeInTheDocument();
+
+		// Toggled open while on the orchestrator (shell topbar button) — the
+		// panel that mounts later must pick this up from defaultSize alone.
+		act(() => useUiStore.getState().toggleInspector());
+		rerender(<SessionView sessionId="sess-1" />);
+
+		expect(panelSizes("inspector")[0]).toMatch(/^[1-9]\d*(\.\d+)?%$/);
+		const handle = panels.get("inspector")!.handle;
+		expect(handle.expand).not.toHaveBeenCalled();
+		expect(handle.collapse).not.toHaveBeenCalled();
+		expect(handle.resize).not.toHaveBeenCalled();
 	});
 
 	it("renders no inspector panel or handle for orchestrator sessions", () => {

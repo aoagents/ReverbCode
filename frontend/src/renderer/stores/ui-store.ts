@@ -1,8 +1,6 @@
 import { create } from "zustand";
 
 export type Theme = "light" | "dark";
-/** Whether a terminal pane shows the orchestrator or a worker session. */
-export type WorkbenchView = "orchestrator" | "session";
 /** Worker detail view toggles — Changes (Git rail) is the default. */
 export type WorkbenchTab = "changes" | "files" | "terminal";
 

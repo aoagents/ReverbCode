@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import {
 	type AttentionZone,
@@ -8,7 +9,7 @@ import {
 	workerSessions,
 } from "../types/workspace";
 import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
-import { DashboardSubhead, DashboardTopbar } from "./DashboardTopbar";
+import { DashboardSubhead } from "./DashboardSubhead";
 import { cn } from "../lib/utils";
 
 type SessionsBoardProps = {
@@ -76,7 +77,6 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const all = workspaceQuery.data ?? [];
 	const workspaces = projectId ? all.filter((w) => w.id === projectId) : all;
 	const sessions = workspaces.flatMap((w) => workerSessions(w.sessions));
-	const projectLabel = projectId ? (workspaces[0]?.name ?? projectId) : "agent-orchestrator";
 
 	const byZone = new Map<AttentionZone, WorkspaceSession[]>();
 	for (const session of sessions) {
@@ -84,6 +84,9 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 		(byZone.get(zone) ?? byZone.set(zone, []).get(zone)!).push(session);
 	}
 	const done = byZone.get("done") ?? [];
+	// Collapsed by default, like agent-orchestrator's done-bar: finished and
+	// killed sessions cost one quiet line under the board until expanded.
+	const [doneExpanded, setDoneExpanded] = useState(false);
 
 	const openSession = (session: WorkspaceSession) =>
 		void navigate({
@@ -93,7 +96,6 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 
 	return (
 		<div className="flex h-full min-h-0 flex-col bg-background text-foreground">
-			<DashboardTopbar activeTab="coding" projectId={projectId} projectLabel={projectLabel} />
 			<DashboardSubhead title="Board" subtitle="Live agent sessions flowing from work → review → merge." />
 
 			<div className="min-h-0 flex-1 overflow-hidden p-[18px]">
@@ -109,24 +111,47 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			</div>
 
 			{done.length > 0 && (
-				<div className="shrink-0 border-t border-border px-[18px] py-2.5">
-					<div className="mb-1.5 flex items-center gap-2">
-						<span className="h-[7px] w-[7px] rounded-full bg-passive" />
-						<span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Done</span>
-						<span className="font-mono text-[11px] text-passive">{done.length}</span>
-					</div>
-					<div className="flex flex-wrap gap-2">
-						{done.map((s) => (
-							<button
-								key={s.id}
-								className="rounded-[7px] border border-border bg-surface px-2.5 py-1.5 text-left transition-colors hover:border-border-strong"
-								onClick={() => openSession(s)}
-								type="button"
-							>
-								<span className="text-[12px] text-muted-foreground">{s.title}</span>
-							</button>
-						))}
-					</div>
+				<div className="shrink-0 border-t border-border px-[18px]">
+					{/* agent-orchestrator's done-bar (Dashboard.tsx + globals.css):
+					    a full-width chevron + label + count toggle row. min-h matches
+					    the sidebar footer (7px pad ×2 + 37px Settings button) so this
+					    border-t aligns with the sidebar's footer border. The button is
+					    37px (not the 35.5px its text-[13px] implies) because the
+					    unlayered `button { font: inherit }` in styles.css outranks
+					    Tailwind's layered text utilities, leaving it at 14px/21px. */}
+					<button
+						aria-expanded={doneExpanded}
+						className="group flex min-h-[51px] w-full items-center gap-2 py-2 text-muted-foreground transition-colors hover:text-foreground"
+						onClick={() => setDoneExpanded((v) => !v)}
+						type="button"
+					>
+						<svg
+							aria-hidden="true"
+							className={cn("h-3 w-3 shrink-0 transition-transform duration-150", doneExpanded && "rotate-90")}
+							fill="none"
+							stroke="currentColor"
+							strokeWidth="2"
+							viewBox="0 0 24 24"
+						>
+							<path d="m9 18 6-6-6-6" />
+						</svg>
+						<span className="font-mono text-[10.5px] font-medium uppercase tracking-[0.05em]">Done / Terminated</span>
+						<span className="ml-auto shrink-0 font-mono text-[10px] text-passive">{done.length}</span>
+					</button>
+					{doneExpanded && (
+						<div className="flex flex-wrap gap-2 pb-2.5 pt-1">
+							{done.map((s) => (
+								<button
+									key={s.id}
+									className="rounded-[7px] border border-border bg-surface px-2.5 py-1.5 text-left transition-colors hover:border-border-strong"
+									onClick={() => openSession(s)}
+									type="button"
+								>
+									<span className="text-[12px] text-muted-foreground">{s.title}</span>
+								</button>
+							))}
+						</div>
+					)}
 				</div>
 			)}
 		</div>

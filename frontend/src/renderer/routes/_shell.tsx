@@ -1,6 +1,7 @@
 import { createFileRoute, Outlet, useNavigate } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useState } from "react";
+import { ShellTopbar } from "../components/ShellTopbar";
 import { Sidebar } from "../components/Sidebar";
 import { SidebarProvider } from "../components/ui/sidebar";
 import { SpawnWorkerModal } from "../components/SpawnWorkerModal";
@@ -151,37 +152,48 @@ function ShellLayout() {
 
 	return (
 		<ShellProvider value={{ daemonStatus, openSpawn, createProject, createTask }}>
-			{/* Controlled by the ui-store so TitlebarNav / Topbar toggles (which call
-          the store directly) stay in sync. --sidebar-width chains to the
-          drag-resizable --ao-sidebar-w set on :root by useResizable. */}
-			<SidebarProvider
-				className="h-screen min-h-0 bg-background text-foreground"
-				onOpenChange={(open) => open !== isSidebarOpen && toggleSidebar()}
-				open={isSidebarOpen}
-				style={
-					{ "--sidebar-width": "var(--ao-sidebar-w, 240px)", "--sidebar-width-icon": "48px" } as React.CSSProperties
-				}
-			>
-				<Sidebar
-					daemonStatus={daemonStatus}
-					onCreateProject={createProject}
-					onNewWorker={openSpawn}
-					workspaceError={workspaceQuery.isError ? errorMessage(workspaceQuery.error) : undefined}
-					workspaces={workspaces}
-				/>
-				<main className="flex min-w-0 flex-1 flex-col">
-					<Outlet />
-				</main>
-				{/* Fixed macOS titlebar cluster beside the traffic lights — rendered
-            once here so the toggle/history buttons never move when the
-            sidebar collapses or expands. MUST come after the sidebar/topbars
-            in the DOM: Electron builds the window-drag region in document
-            order (drag rects add, no-drag rects subtract), so the cluster's
-            no-drag holes only survive if they're processed after the drag
-            strips they overlap. Rendered first, real clicks get swallowed by
-            window-drag even though DOM hit-testing looks correct. */}
-				<TitlebarNav />
-			</SidebarProvider>
+			{/* The topbar spans the full window width above the sidebar row (the
+          macOS traffic lights + TitlebarNav cluster sit in its left inset),
+          and the sidebar hangs below it — so the sidebar border stops at the
+          header instead of cutting through the titlebar strip. The bar lives
+          in the layout, not the screens, so the crumb and actions never shift
+          when the outlet content swaps. */}
+			<div className="flex h-screen min-h-0 flex-col bg-background text-foreground">
+				<ShellTopbar />
+				{/* Controlled by the ui-store so TitlebarNav / Topbar toggles (which
+            call the store directly) stay in sync. --sidebar-width chains to
+            the drag-resizable --ao-sidebar-w set on :root by useResizable. */}
+				<SidebarProvider
+					className="min-h-0 flex-1"
+					onOpenChange={(open) => open !== isSidebarOpen && toggleSidebar()}
+					open={isSidebarOpen}
+					style={
+						{ "--sidebar-width": "var(--ao-sidebar-w, 240px)", "--sidebar-width-icon": "48px" } as React.CSSProperties
+					}
+				>
+					<Sidebar
+						daemonStatus={daemonStatus}
+						onCreateProject={createProject}
+						onNewWorker={openSpawn}
+						workspaceError={workspaceQuery.isError ? errorMessage(workspaceQuery.error) : undefined}
+						workspaces={workspaces}
+					/>
+					<main className="flex min-w-0 flex-1 flex-col">
+						<div className="min-h-0 flex-1">
+							<Outlet />
+						</div>
+					</main>
+					{/* Fixed macOS titlebar cluster beside the traffic lights — rendered
+              once here so the toggle/history buttons never move when the
+              sidebar collapses or expands. MUST come after the topbar in the
+              DOM: Electron builds the window-drag region in document order
+              (drag rects add, no-drag rects subtract), so the cluster's
+              no-drag holes only survive if they're processed after the drag
+              strips they overlap. Rendered first, real clicks get swallowed
+              by window-drag even though DOM hit-testing looks correct. */}
+					<TitlebarNav />
+				</SidebarProvider>
+			</div>
 			<SpawnWorkerModal
 				defaultProjectId={spawnProjectId}
 				onCreateTask={createTask}

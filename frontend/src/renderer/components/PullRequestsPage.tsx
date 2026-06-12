@@ -4,7 +4,7 @@ import { useState } from "react";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import type { WorkspaceSession } from "../types/workspace";
-import { DashboardSubhead, DashboardTopbar } from "./DashboardTopbar";
+import { DashboardSubhead } from "./DashboardSubhead";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
@@ -46,7 +46,6 @@ export function PullRequestsPage() {
 
 	return (
 		<div className="flex h-full min-h-0 flex-col bg-background text-foreground">
-			<DashboardTopbar />
 			<DashboardSubhead
 				title="Pull requests"
 				subtitle="Open PRs across every agent session, ready to resolve and merge."
