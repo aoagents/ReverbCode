@@ -146,9 +146,9 @@ export function SessionView({ sessionId }: SessionViewProps) {
 				{hasInspector ? (
 					<>
 						<ResizableHandle
-						className="session-inspector__resize-handle focus-visible:ring-0 focus-visible:ring-offset-0"
-						elementRef={inspectorSeparatorRef}
-					/>
+							className="session-inspector__resize-handle focus-visible:ring-0 focus-visible:ring-offset-0"
+							elementRef={inspectorSeparatorRef}
+						/>
 						<ResizablePanel
 							aria-hidden={!isInspectorOpen}
 							collapsible
