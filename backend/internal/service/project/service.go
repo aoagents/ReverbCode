@@ -176,6 +176,16 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 	if !isGitRepo(path) {
 		return Project{}, apierr.Invalid("NOT_A_GIT_REPO", "Repository path must point to a git repository", nil)
 	}
+	// Record the repo's actual checked-out branch as the project default so
+	// session worktrees base off a branch that exists. Without this a repo on
+	// `master` (or any non-`main` default) falls back to DefaultBranchName and
+	// every spawn fails BRANCH_NOT_FETCHED. Only persist when it diverges from
+	// the default, so the common `main` repo keeps an empty (NULL) config.
+	if row.Config.DefaultBranch == "" {
+		if branch := resolveDefaultBranch(path); branch != "" && branch != domain.DefaultBranchName {
+			row.Config.DefaultBranch = branch
+		}
+	}
 	row.RepoOriginURL = resolveGitOriginURL(path)
 	if err := m.store.UpsertProject(ctx, row); err != nil {
 		return Project{}, apierr.Internal("PROJECT_ADD_FAILED", "Failed to register project")
@@ -212,6 +222,19 @@ func (m *Service) SetConfig(ctx context.Context, id domain.ProjectID, in SetConf
 // because no origin is configured (the SCM observer skips such projects).
 func resolveGitOriginURL(path string) string {
 	out, err := exec.Command("git", "-C", path, "remote", "get-url", "origin").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// resolveDefaultBranch returns the repo's currently checked-out branch via
+// `git -C path symbolic-ref --short HEAD`. A detached HEAD, missing repo, or any
+// other git error returns an empty string — `project add` must not fail just
+// because the branch can't be resolved (the caller falls back to
+// DefaultBranchName).
+func resolveDefaultBranch(path string) string {
+	out, err := exec.Command("git", "-C", path, "symbolic-ref", "--short", "HEAD").Output()
 	if err != nil {
 		return ""
 	}
