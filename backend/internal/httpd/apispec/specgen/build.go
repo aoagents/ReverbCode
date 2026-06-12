@@ -158,6 +158,7 @@ var schemaNames = map[string]string{
 	"ControllersSpawnOrchestratorResponse":  "SpawnOrchestratorResponse",
 	"ControllersOrchestratorResponse":       "OrchestratorResponse",
 	"ControllersListNotificationsQuery":     "ListNotificationsQuery",
+	"ControllersNotificationStreamQuery":    "NotificationStreamQuery",
 	"ControllersNotificationTarget":         "NotificationTarget",
 	"ControllersNotificationResponse":       "NotificationResponse",
 	"ControllersListNotificationsResponse":  "ListNotificationsResponse",
@@ -274,6 +275,17 @@ func notificationOperations() []operation {
 				{http.StatusInternalServerError, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
 			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/notifications/stream", id: "streamNotifications", tag: "notifications",
+			summary:    "Stream created notifications",
+			pathParams: []any{controllers.NotificationStreamQuery{}},
+			resps: []respUnit{
+				{http.StatusOK, ""},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+			contentTypes: map[int]string{http.StatusOK: "text/event-stream"},
 		},
 	}
 }

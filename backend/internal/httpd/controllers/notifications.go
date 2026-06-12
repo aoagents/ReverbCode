@@ -2,11 +2,14 @@ package controllers
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apispec"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
 	notificationsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/notification"
@@ -17,14 +20,25 @@ type NotificationService interface {
 	ListUnread(ctx context.Context, filter notificationsvc.ListFilter) ([]notificationsvc.Notification, error)
 }
 
-// NotificationsController owns the /notifications routes.
-type NotificationsController struct {
-	Svc NotificationService
+// NotificationStream is the live notification stream used by SSE clients.
+type NotificationStream interface {
+	Subscribe(projectID domain.ProjectID) (<-chan domain.NotificationRecord, func())
 }
 
-// Register mounts notification routes on the supplied router.
+// NotificationsController owns the /notifications routes.
+type NotificationsController struct {
+	Svc    NotificationService
+	Stream NotificationStream
+}
+
+// Register mounts bounded notification REST routes on the supplied router.
 func (c *NotificationsController) Register(r chi.Router) {
 	r.Get("/notifications", c.list)
+}
+
+// RegisterStream mounts long-lived notification stream routes on the supplied router.
+func (c *NotificationsController) RegisterStream(r chi.Router) {
+	r.Get("/notifications/stream", c.stream)
 }
 
 func (c *NotificationsController) list(w http.ResponseWriter, r *http.Request) {
@@ -43,6 +57,54 @@ func (c *NotificationsController) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	envelope.WriteJSON(w, http.StatusOK, ListNotificationsResponse{Notifications: notificationResponses(notifications)})
+}
+
+func (c *NotificationsController) stream(w http.ResponseWriter, r *http.Request) {
+	if c.Stream == nil {
+		apispec.NotImplemented(w, r, "GET", "/api/v1/notifications/stream")
+		return
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		envelope.WriteAPIError(w, r, http.StatusInternalServerError, "internal", "SSE_UNSUPPORTED", "Streaming is not supported by this server", nil)
+		return
+	}
+	ch, unsubscribe := c.Stream.Subscribe(domain.ProjectID(r.URL.Query().Get("projectId")))
+	defer unsubscribe()
+
+	h := w.Header()
+	h.Set("Content-Type", "text/event-stream; charset=utf-8")
+	h.Set("Cache-Control", "no-cache")
+	h.Set("Connection", "keep-alive")
+	h.Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+	flusher.Flush()
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case rec, ok := <-ch:
+			if !ok {
+				return
+			}
+			if err := writeNotificationSSE(w, flusher, rec); err != nil {
+				return
+			}
+		}
+	}
+}
+
+func writeNotificationSSE(w http.ResponseWriter, flusher http.Flusher, rec domain.NotificationRecord) error {
+	data, err := json.Marshal(notificationResponseFromRecord(rec))
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "event: notification_created\ndata: %s\n\n", data); err != nil {
+		return err
+	}
+	flusher.Flush()
+	return nil
 }
 
 func parseNotificationListFilter(r *http.Request) (notificationsvc.ListFilter, error) {
@@ -98,4 +160,26 @@ func notificationResponses(in []notificationsvc.Notification) []NotificationResp
 		})
 	}
 	return out
+}
+
+func notificationResponseFromRecord(rec domain.NotificationRecord) NotificationResponse {
+	return NotificationResponse{
+		ID:        rec.ID,
+		SessionID: string(rec.SessionID),
+		ProjectID: string(rec.ProjectID),
+		PRURL:     rec.PRURL,
+		Type:      string(rec.Type),
+		Title:     rec.Title,
+		Body:      rec.Body,
+		Status:    string(rec.Status),
+		CreatedAt: rec.CreatedAt,
+		Target:    notificationTargetFromRecord(rec),
+	}
+}
+
+func notificationTargetFromRecord(rec domain.NotificationRecord) NotificationTarget {
+	if rec.PRURL != "" {
+		return NotificationTarget{Kind: "pr", SessionID: string(rec.SessionID), PRURL: rec.PRURL}
+	}
+	return NotificationTarget{Kind: "session", SessionID: string(rec.SessionID)}
 }

@@ -100,6 +100,38 @@ paths:
       summary: List unread notifications
       tags:
       - notifications
+  /api/v1/notifications/stream:
+    get:
+      operationId: streamNotifications
+      parameters:
+      - description: Optional project id filter for live notifications.
+        in: query
+        name: projectId
+        schema:
+          description: Optional project id filter for live notifications.
+          type: string
+      responses:
+        "200":
+          content:
+            text/event-stream:
+              schema:
+                type: string
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Stream created notifications
+      tags:
+      - notifications
   /api/v1/orchestrators:
     get:
       operationId: listOrchestrators

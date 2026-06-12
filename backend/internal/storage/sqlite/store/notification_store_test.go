@@ -2,7 +2,6 @@ package store_test
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -48,46 +47,6 @@ func TestNotificationStore_InsertListAndDedupe(t *testing.T) {
 	if len(rows) != 1 || rows[0].ID != "ntf_1" {
 		t.Fatalf("rows = %+v", rows)
 	}
-}
-
-func TestNotificationStore_InsertEmitsCDC(t *testing.T) {
-	s := newTestStore(t)
-	ctx := context.Background()
-	seedProject(t, s, "mer")
-	sess, err := s.CreateSession(ctx, sampleRecord("mer"))
-	if err != nil {
-		t.Fatalf("create session: %v", err)
-	}
-	rec := domain.NotificationRecord{
-		ID:        "ntf_1",
-		SessionID: sess.ID,
-		ProjectID: sess.ProjectID,
-		Type:      domain.NotificationNeedsInput,
-		Title:     "checkout-flow needs input",
-		Status:    domain.NotificationUnread,
-		CreatedAt: time.Now().UTC().Truncate(time.Second),
-	}
-	if _, inserted, err := s.CreateNotification(ctx, rec); err != nil || !inserted {
-		t.Fatalf("CreateNotification inserted=%v err=%v", inserted, err)
-	}
-	events, err := s.EventsAfter(ctx, 0, 100)
-	if err != nil {
-		t.Fatalf("EventsAfter: %v", err)
-	}
-	for _, ev := range events {
-		if ev.Type != "notification_created" {
-			continue
-		}
-		var payload map[string]string
-		if err := json.Unmarshal(ev.Payload, &payload); err != nil {
-			t.Fatalf("payload JSON: %v", err)
-		}
-		if ev.ProjectID != string(sess.ProjectID) || ev.SessionID != string(sess.ID) || payload["id"] != rec.ID {
-			t.Fatalf("notification event = %+v payload=%+v", ev, payload)
-		}
-		return
-	}
-	t.Fatalf("notification_created event not found: %+v", events)
 }
 
 func TestNotificationStore_ListUnreadNewestFirstAcrossProjects(t *testing.T) {

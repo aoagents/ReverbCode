@@ -7,6 +7,7 @@ package lifecycle
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -23,11 +24,25 @@ type sessionStore interface {
 	UpdatePRLastNudgeSignature(ctx context.Context, prURL, payload string) error
 }
 
+// notificationSink is the optional lifecycle-to-notification-producer boundary.
+type notificationSink interface {
+	Notify(ctx context.Context, intent ports.NotificationIntent) error
+}
+
+// Option customizes a Manager.
+type Option func(*Manager)
+
+// WithNotificationSink wires lifecycle notification intents to a write-side producer.
+func WithNotificationSink(sink notificationSink) Option {
+	return func(m *Manager) { m.notifications = sink }
+}
+
 // Manager reduces runtime, activity, spawn, and termination observations into durable session facts.
 // It also owns agent nudges caused by PR observations, including merge-conflict, CI-failure, and review-feedback prompts.
 type Manager struct {
-	store     sessionStore
-	messenger ports.AgentMessenger
+	store         sessionStore
+	messenger     ports.AgentMessenger
+	notifications notificationSink
 
 	mu     sync.Mutex
 	window time.Duration
@@ -36,8 +51,12 @@ type Manager struct {
 }
 
 // New builds a Lifecycle Manager over the session store it writes and the messenger it uses for agent nudges.
-func New(store sessionStore, messenger ports.AgentMessenger) *Manager {
-	return &Manager{store: store, messenger: messenger, window: defaultRecentActivityWindow, clock: time.Now, react: newReactionState()}
+func New(store sessionStore, messenger ports.AgentMessenger, opts ...Option) *Manager {
+	m := &Manager{store: store, messenger: messenger, window: defaultRecentActivityWindow, clock: time.Now, react: newReactionState()}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
 }
 
 func (m *Manager) mutate(ctx context.Context, id domain.SessionID, fn func(domain.SessionRecord, time.Time) (domain.SessionRecord, bool)) error {
@@ -79,6 +98,7 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	if !s.Valid {
 		return nil
 	}
+	var intent *ports.NotificationIntent
 	m.mu.Lock()
 	rec, ok, err := m.store.GetSession(ctx, id)
 	if err != nil {
@@ -117,8 +137,27 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 		m.mu.Unlock()
 		return err
 	}
+	if rec.Activity.State != domain.ActivityWaitingInput && next.Activity.State == domain.ActivityWaitingInput && !next.IsTerminated {
+		intent = &ports.NotificationIntent{
+			Type:               domain.NotificationNeedsInput,
+			SessionID:          next.ID,
+			ProjectID:          next.ProjectID,
+			CreatedAt:          next.Activity.LastActivityAt,
+			SessionDisplayName: next.DisplayName,
+		}
+	}
 	m.mu.Unlock()
+	m.emitNotification(ctx, intent)
 	return nil
+}
+
+func (m *Manager) emitNotification(ctx context.Context, intent *ports.NotificationIntent) {
+	if intent == nil || m.notifications == nil {
+		return
+	}
+	if err := m.notifications.Notify(ctx, *intent); err != nil {
+		slog.Default().Warn("lifecycle: notification failed", "session", intent.SessionID, "type", intent.Type, "err", err)
+	}
 }
 
 // MarkSpawned marks a newly spawned or restored session live and stores runtime/workspace handles.

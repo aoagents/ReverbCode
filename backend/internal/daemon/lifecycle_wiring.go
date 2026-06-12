@@ -20,6 +20,10 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 )
 
+type notificationSink interface {
+	Notify(context.Context, ports.NotificationIntent) error
+}
+
 // lifecycleStack owns the runtime reaper goroutine started with the lifecycle
 // reducer. The reducer itself is only used for wiring observations into storage.
 type lifecycleStack struct {
@@ -35,8 +39,8 @@ type lifecycleStack struct {
 // reaper. The goroutine stops when ctx is cancelled; Stop waits for it to drain.
 // The messenger is the per-daemon agent messenger the LCM uses to nudge agents
 // in response to SCM observations (CI failure, review feedback, merge conflict).
-func startLifecycle(ctx context.Context, store *sqlite.Store, runtime ports.Runtime, messenger ports.AgentMessenger, logger *slog.Logger) *lifecycleStack {
-	lcm := lifecycle.New(store, messenger)
+func startLifecycle(ctx context.Context, store *sqlite.Store, runtime ports.Runtime, messenger ports.AgentMessenger, notifier notificationSink, logger *slog.Logger) *lifecycleStack {
+	lcm := lifecycle.New(store, messenger, lifecycle.WithNotificationSink(notifier))
 	rp := reaper.New(lcm, store, runtime, reaper.Config{Logger: logger})
 	return &lifecycleStack{LCM: lcm, reaperDone: rp.Start(ctx)}
 }

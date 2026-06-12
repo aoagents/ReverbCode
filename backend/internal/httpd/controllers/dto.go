@@ -268,6 +268,11 @@ type ListNotificationsQuery struct {
 	Limit  int    `query:"limit,omitempty" minimum:"1" maximum:"100" description:"Maximum notifications to return. Defaults to 50; capped at 100."`
 }
 
+// NotificationStreamQuery is the query string accepted by GET /api/v1/notifications/stream.
+type NotificationStreamQuery struct {
+	ProjectID string `query:"projectId,omitempty" description:"Optional project id filter for live notifications."`
+}
+
 // NotificationTarget is the dashboard navigation target for a notification.
 type NotificationTarget struct {
 	Kind      string `json:"kind" enum:"session,pr"`

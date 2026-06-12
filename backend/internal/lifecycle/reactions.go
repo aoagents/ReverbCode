@@ -92,7 +92,92 @@ func (m *Manager) ApplySCMObservation(ctx context.Context, id domain.SessionID, 
 	if !o.Fetched {
 		return nil
 	}
-	return m.ApplyPRObservation(ctx, id, scmToPRObservation(o))
+	if err := m.ApplyPRObservation(ctx, id, scmToPRObservation(o)); err != nil {
+		return err
+	}
+	intent, err := m.notificationIntentForCurrentSCM(ctx, id, o)
+	if err != nil {
+		return err
+	}
+	m.emitNotification(ctx, intent)
+	return nil
+}
+
+func (m *Manager) notificationIntentForCurrentSCM(ctx context.Context, id domain.SessionID, o ports.SCMObservation) (*ports.NotificationIntent, error) {
+	// Serialize the session snapshot with activity transitions so ready-to-merge
+	// notifications do not race against a simultaneous waiting_input update.
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rec, ok, err := m.store.GetSession(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, nil
+	}
+	return m.notificationIntentForSCM(rec, o), nil
+}
+
+func (m *Manager) notificationIntentForSCM(rec domain.SessionRecord, o ports.SCMObservation) *ports.NotificationIntent {
+	prURL := firstSCMNonEmpty(o.PR.URL, o.PR.HTMLURL)
+	base := ports.NotificationIntent{
+		SessionID:          rec.ID,
+		ProjectID:          rec.ProjectID,
+		PRURL:              prURL,
+		CreatedAt:          timeOr(o.ObservedAt, m.clock()),
+		SessionDisplayName: rec.DisplayName,
+		PRNumber:           o.PR.Number,
+		PRTitle:            o.PR.Title,
+		PRSourceBranch:     o.PR.SourceBranch,
+		PRTargetBranch:     o.PR.TargetBranch,
+		Provider:           o.Provider,
+		Repo:               o.Repo,
+	}
+	if o.PR.Merged {
+		base.Type = domain.NotificationPRMerged
+		return &base
+	}
+	if o.PR.Closed {
+		base.Type = domain.NotificationPRClosedUnmerged
+		return &base
+	}
+	if rec.IsTerminated || rec.Activity.State == domain.ActivityWaitingInput || !scmObservationIsReadyToMerge(o) {
+		return nil
+	}
+	base.Type = domain.NotificationReadyToMerge
+	return &base
+}
+
+func scmObservationIsReadyToMerge(o ports.SCMObservation) bool {
+	if o.PR.Merged || o.PR.Closed || o.PR.Draft {
+		return false
+	}
+	ci := domain.CIState(o.CI.Summary)
+	if ci == "" {
+		ci = domain.CIUnknown
+	}
+	switch ci {
+	case domain.CIFailing, domain.CIPending, domain.CIUnknown:
+		return false
+	}
+	if domain.ReviewDecision(o.Review.Decision) == domain.ReviewChangesRequest || hasUnresolvedSCMComments(o.Review.Threads) {
+		return false
+	}
+	return domain.Mergeability(o.Mergeability.State) == domain.MergeMergeable
+}
+
+func hasUnresolvedSCMComments(threads []ports.SCMReviewThreadObservation) bool {
+	for _, th := range threads {
+		if th.Resolved || th.IsBot {
+			continue
+		}
+		for _, c := range th.Comments {
+			if !c.IsBot {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func scmToPRObservation(o ports.SCMObservation) ports.PRObservation {

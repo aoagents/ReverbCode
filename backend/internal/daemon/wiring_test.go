@@ -315,7 +315,7 @@ func TestWiring_StartLifecycleThreadsMessengerIntoLCM(t *testing.T) {
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	messenger := &captureMessenger{}
-	stack := startLifecycle(ctx, store, zellij.New(zellij.Options{}), messenger, log)
+	stack := startLifecycle(ctx, store, zellij.New(zellij.Options{}), messenger, nil, log)
 	t.Cleanup(stack.Stop)
 	t.Cleanup(cancel)
 
