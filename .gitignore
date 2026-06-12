@@ -56,3 +56,8 @@ dist-electron/
 
 # playwright artifacts
 frontend/test-results/
+
+# local agent session dirs (fork-only; never upstream)
+.entire
+.claude
+.gstack/
