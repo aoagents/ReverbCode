@@ -55,7 +55,14 @@ func (l *lifecycleStack) Stop() {
 // store + LCM, the per-session agent resolver (AO_AGENT default), and the
 // agent messenger. The returned service is mounted at httpd APIDeps.Sessions.
 func startSession(cfg config.Config, runtime ports.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, messenger ports.AgentMessenger, log *slog.Logger) (*sessionsvc.Service, error) {
-	agents, err := buildAgentResolver(cfg.Agent, log)
+	// Resolve the default agent once and share it with both the resolver (which
+	// launches it for an unspecified harness) and the session manager (which
+	// persists it onto the seed row), so the stored harness matches what runs.
+	defaultAgent := cfg.Agent
+	if defaultAgent == "" {
+		defaultAgent = config.DefaultAgent
+	}
+	agents, err := buildAgentResolver(defaultAgent, log)
 	if err != nil {
 		return nil, err
 	}
@@ -72,14 +79,15 @@ func startSession(cfg config.Config, runtime ports.Runtime, store *sqlite.Store,
 		return nil, fmt.Errorf("session workspace: %w", err)
 	}
 	mgr := sessionmanager.New(sessionmanager.Deps{
-		Runtime:   runtime,
-		Agents:    agents,
-		Workspace: ws,
-		Store:     store,
-		Messenger: messenger,
-		Lifecycle: lcm,
-		DataDir:   cfg.DataDir,
-		Logger:    log,
+		Runtime:        runtime,
+		Agents:         agents,
+		Workspace:      ws,
+		Store:          store,
+		Messenger:      messenger,
+		Lifecycle:      lcm,
+		DataDir:        cfg.DataDir,
+		DefaultHarness: domain.AgentHarness(defaultAgent),
+		Logger:         log,
 	})
 	scmProvider, err := newGitHubSCMProvider(log)
 	if err != nil {
