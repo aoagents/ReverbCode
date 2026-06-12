@@ -21,7 +21,7 @@ func TestReviewUpsertReusesRowAndRunRoundTrip(t *testing.T) {
 	// First upsert creates the review row.
 	if err := s.UpsertReview(ctx, domain.Review{
 		ID: "rev-1", SessionID: rec.ID, ProjectID: rec.ProjectID,
-		Harness: domain.HarnessCodex, PRURL: "https://example/pr/1",
+		Harness: domain.ReviewerClaudeCode, PRURL: "https://example/pr/1",
 		CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatalf("upsert review: %v", err)
@@ -30,7 +30,7 @@ func TestReviewUpsertReusesRowAndRunRoundTrip(t *testing.T) {
 	// refreshing harness/pr_url but keeping the original id.
 	if err := s.UpsertReview(ctx, domain.Review{
 		ID: "rev-2", SessionID: rec.ID, ProjectID: rec.ProjectID,
-		Harness: domain.HarnessAider, PRURL: "https://example/pr/2",
+		Harness: domain.ReviewerHarness("greptile"), PRURL: "https://example/pr/2",
 		CreatedAt: now, UpdatedAt: now.Add(time.Second),
 	}); err != nil {
 		t.Fatalf("upsert review (reuse): %v", err)
@@ -42,13 +42,13 @@ func TestReviewUpsertReusesRowAndRunRoundTrip(t *testing.T) {
 	if got.ID != "rev-1" {
 		t.Fatalf("upsert created a new row, want reuse: id=%q", got.ID)
 	}
-	if got.Harness != domain.HarnessAider || got.PRURL != "https://example/pr/2" {
+	if got.Harness != domain.ReviewerHarness("greptile") || got.PRURL != "https://example/pr/2" {
 		t.Fatalf("upsert did not refresh fields: %+v", got)
 	}
 
 	// A run inserts pending and updates to complete/changes_requested.
 	if err := s.InsertReviewRun(ctx, domain.ReviewRun{
-		ID: "run-1", ReviewID: got.ID, SessionID: rec.ID, Harness: domain.HarnessAider,
+		ID: "run-1", ReviewID: got.ID, SessionID: rec.ID, Harness: domain.ReviewerHarness("greptile"),
 		PRURL: got.PRURL, Status: domain.ReviewRunRunning, Verdict: domain.VerdictNone,
 		Iteration: 1, CreatedAt: now,
 	}); err != nil {

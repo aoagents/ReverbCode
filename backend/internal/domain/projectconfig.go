@@ -43,24 +43,26 @@ type ProjectConfig struct {
 	Reviewers []ReviewerConfig `json:"reviewers,omitempty"`
 }
 
-// ReviewerConfig names one reviewer agent by harness.
+// ReviewerConfig names one reviewer agent by harness. The harness is drawn from
+// the reviewer vocabulary (ReviewerHarness), which is distinct from the worker
+// AgentHarness set.
 type ReviewerConfig struct {
-	Harness AgentHarness `json:"harness"`
+	Harness ReviewerHarness `json:"harness"`
 }
 
 // FallbackReviewerHarness is the reviewer used when a project configures none
-// and the worker's harness cannot be reused.
-const FallbackReviewerHarness = HarnessClaudeCode
+// and the worker's harness is not itself a supported reviewer.
+const FallbackReviewerHarness = ReviewerClaudeCode
 
 // ResolveReviewerHarness picks the reviewer harness for a worker. A configured
-// reviewer wins; otherwise it reuses the worker's own harness when that is
-// supported, falling back to claude-code.
-func (c ProjectConfig) ResolveReviewerHarness(workerHarness AgentHarness) AgentHarness {
+// reviewer wins; otherwise it reuses the worker's own harness when that harness
+// is also a supported reviewer, falling back to claude-code.
+func (c ProjectConfig) ResolveReviewerHarness(workerHarness AgentHarness) ReviewerHarness {
 	if len(c.Reviewers) > 0 {
 		return c.Reviewers[0].Harness
 	}
-	if workerHarness.IsKnown() {
-		return workerHarness
+	if h := ReviewerHarness(workerHarness); h.IsKnown() {
+		return h
 	}
 	return FallbackReviewerHarness
 }

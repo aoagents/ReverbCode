@@ -58,7 +58,7 @@ type Runner interface {
 // RunSpec describes one reviewer launch.
 type RunSpec struct {
 	WorkerID      domain.SessionID
-	Harness       domain.AgentHarness
+	Harness       domain.ReviewerHarness
 	WorkspacePath string
 	PRURL         string
 }
@@ -242,7 +242,7 @@ func (s *Service) workerPRURL(ctx context.Context, workerID domain.SessionID) (s
 // reviewerHarness resolves which harness reviews the worker's PR: a configured
 // reviewer wins, otherwise the worker's own harness is reused (falling back to
 // claude-code), per domain.ResolveReviewerHarness.
-func (s *Service) reviewerHarness(ctx context.Context, worker domain.SessionRecord) (domain.AgentHarness, error) {
+func (s *Service) reviewerHarness(ctx context.Context, worker domain.SessionRecord) (domain.ReviewerHarness, error) {
 	var cfg domain.ProjectConfig
 	if s.projects != nil {
 		if proj, ok, err := s.projects.GetProject(ctx, string(worker.ProjectID)); err != nil {
@@ -254,7 +254,7 @@ func (s *Service) reviewerHarness(ctx context.Context, worker domain.SessionReco
 	return cfg.ResolveReviewerHarness(worker.Harness), nil
 }
 
-func (s *Service) upsertReview(ctx context.Context, worker domain.SessionRecord, harness domain.AgentHarness, prURL string, now time.Time) (domain.Review, error) {
+func (s *Service) upsertReview(ctx context.Context, worker domain.SessionRecord, harness domain.ReviewerHarness, prURL string, now time.Time) (domain.Review, error) {
 	existing, ok, err := s.store.GetReviewBySession(ctx, worker.ID)
 	if err != nil {
 		return domain.Review{}, err

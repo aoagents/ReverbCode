@@ -120,7 +120,8 @@ func TestTriggerCreatesPendingRunAndLaunchesReviewer(t *testing.T) {
 	store := &fakeStore{}
 	sessions := fakeSessions{rec: liveWorker(), ok: true}
 	prs := fakePRs{prs: []domain.PullRequest{{URL: "https://github.com/o/r/pull/1"}}}
-	projects := fakeProjects{cfg: domain.ProjectConfig{Reviewers: []domain.ReviewerConfig{{Harness: domain.HarnessAider}}}}
+	// A reviewer-only harness (greptile) is configured; it wins over the worker harness.
+	projects := fakeProjects{cfg: domain.ProjectConfig{Reviewers: []domain.ReviewerConfig{{Harness: domain.ReviewerHarness("greptile")}}}}
 	runner := &fakeRunner{}
 	svc := newServiceForTest(store, sessions, prs, projects, runner)
 
@@ -128,11 +129,10 @@ func TestTriggerCreatesPendingRunAndLaunchesReviewer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Trigger: %v", err)
 	}
-	// A configured reviewer wins over the worker harness.
-	if run.Status != domain.ReviewRunRunning || run.Iteration != 1 || run.Harness != domain.HarnessAider {
+	if run.Status != domain.ReviewRunRunning || run.Iteration != 1 || run.Harness != domain.ReviewerHarness("greptile") {
 		t.Fatalf("run = %+v", run)
 	}
-	if !runner.ran || runner.spec.WorkspacePath != "/ws/mer-1" || runner.spec.Harness != domain.HarnessAider {
+	if !runner.ran || runner.spec.WorkspacePath != "/ws/mer-1" || runner.spec.Harness != domain.ReviewerHarness("greptile") {
 		t.Fatalf("runner spec = %+v ran=%v", runner.spec, runner.ran)
 	}
 	if store.review == nil || store.review.PRURL != "https://github.com/o/r/pull/1" {
@@ -140,25 +140,27 @@ func TestTriggerCreatesPendingRunAndLaunchesReviewer(t *testing.T) {
 	}
 }
 
-func TestTriggerDefaultsToWorkerHarness(t *testing.T) {
+func TestTriggerReusesWorkerHarnessWhenItIsAReviewer(t *testing.T) {
 	store := &fakeStore{}
-	// No reviewer configured: reuse the worker's harness (codex).
-	svc := newServiceForTest(store, fakeSessions{rec: liveWorker(), ok: true},
+	// No reviewer configured; the worker's harness (claude-code) is also a
+	// supported reviewer, so it is reused.
+	rec := liveWorker()
+	rec.Harness = domain.HarnessClaudeCode
+	svc := newServiceForTest(store, fakeSessions{rec: rec, ok: true},
 		fakePRs{prs: []domain.PullRequest{{URL: "u"}}}, fakeProjects{}, &fakeRunner{})
 	run, err := svc.Trigger(context.Background(), "mer-1")
 	if err != nil {
 		t.Fatalf("Trigger: %v", err)
 	}
-	if run.Harness != domain.HarnessCodex {
-		t.Fatalf("harness = %q, want worker harness codex", run.Harness)
+	if run.Harness != domain.ReviewerClaudeCode {
+		t.Fatalf("harness = %q, want reviewer claude-code", run.Harness)
 	}
 }
 
-func TestTriggerFallsBackWhenWorkerHarnessUnknown(t *testing.T) {
+func TestTriggerFallsBackWhenWorkerHarnessNotAReviewer(t *testing.T) {
 	store := &fakeStore{}
-	rec := liveWorker()
-	rec.Harness = ""
-	svc := newServiceForTest(store, fakeSessions{rec: rec, ok: true},
+	// liveWorker's harness is codex, which is not a supported reviewer.
+	svc := newServiceForTest(store, fakeSessions{rec: liveWorker(), ok: true},
 		fakePRs{prs: []domain.PullRequest{{URL: "u"}}}, fakeProjects{}, &fakeRunner{})
 	run, err := svc.Trigger(context.Background(), "mer-1")
 	if err != nil {

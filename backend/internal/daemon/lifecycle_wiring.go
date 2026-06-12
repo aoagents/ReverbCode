@@ -9,6 +9,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/activitydispatch"
 	agentregistry "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/registry"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/workspace/gitworktree"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -96,15 +97,20 @@ func startSession(cfg config.Config, runtime ports.Runtime, store *sqlite.Store,
 		// activity hooks; the deriver registry is the source of truth for that.
 		SignalCapable: activitydispatch.SupportsHarness,
 	})
-	// Triggering a review spawns the reviewer agent over the worker's worktree
-	// (reusing the agent resolver + runtime); the reviewer posts its review to
-	// the PR itself, so the review service needs no SCM writer.
+	// Triggering a review spawns a reviewer over the worker's worktree, resolved
+	// from the reviewer registry (distinct from the worker agent set). The
+	// reviewer posts its review to the PR itself, so the service needs no SCM
+	// writer.
+	reviewers, err := reviewer.NewResolver()
+	if err != nil {
+		return nil, nil, fmt.Errorf("reviewer resolver: %w", err)
+	}
 	reviewSvc := reviewsvc.New(reviewsvc.Deps{
 		Store:    store,
 		Sessions: store,
 		PRs:      store,
 		Projects: store,
-		Runner:   reviewrunner.New(agents, runtime),
+		Runner:   reviewrunner.New(reviewers, runtime),
 	})
 	return sessionSvc, reviewSvc, nil
 }

@@ -103,7 +103,7 @@ sql:
           - column: "review.harness"
             go_type:
               import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
-              type: "AgentHarness"
+              type: "ReviewerHarness"
           - column: "review_run.session_id"
             go_type:
               import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -111,7 +111,7 @@ sql:
           - column: "review_run.harness"
             go_type:
               import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
-              type: "AgentHarness"
+              type: "ReviewerHarness"
           - column: "review_run.status"
             go_type:
               import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"

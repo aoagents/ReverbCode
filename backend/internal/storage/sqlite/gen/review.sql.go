@@ -64,7 +64,7 @@ type InsertReviewRunParams struct {
 	ID        string
 	ReviewID  string
 	SessionID domain.SessionID
-	Harness   domain.AgentHarness
+	Harness   domain.ReviewerHarness
 	PRURL     string
 	Status    domain.ReviewRunStatus
 	Verdict   domain.ReviewVerdict
@@ -162,7 +162,7 @@ type UpsertReviewParams struct {
 	ID        string
 	SessionID domain.SessionID
 	ProjectID domain.ProjectID
-	Harness   domain.AgentHarness
+	Harness   domain.ReviewerHarness
 	PRURL     string
 	CreatedAt time.Time
 	UpdatedAt time.Time

@@ -6,13 +6,13 @@ import "time"
 // (SessionID is unique). A repeat trigger reuses this row; the per-pass facts
 // live on ReviewRun.
 type Review struct {
-	ID        string       `json:"id"`
-	SessionID SessionID    `json:"sessionId"`
-	ProjectID ProjectID    `json:"projectId"`
-	Harness   AgentHarness `json:"harness"`
-	PRURL     string       `json:"prUrl"`
-	CreatedAt time.Time    `json:"createdAt"`
-	UpdatedAt time.Time    `json:"updatedAt"`
+	ID        string          `json:"id"`
+	SessionID SessionID       `json:"sessionId"`
+	ProjectID ProjectID       `json:"projectId"`
+	Harness   ReviewerHarness `json:"harness"`
+	PRURL     string          `json:"prUrl"`
+	CreatedAt time.Time       `json:"createdAt"`
+	UpdatedAt time.Time       `json:"updatedAt"`
 }
 
 // ReviewRun is one review pass against a worker's PR.
@@ -20,7 +20,7 @@ type ReviewRun struct {
 	ID        string          `json:"id"`
 	ReviewID  string          `json:"reviewId"`
 	SessionID SessionID       `json:"sessionId"`
-	Harness   AgentHarness    `json:"harness"`
+	Harness   ReviewerHarness `json:"harness"`
 	PRURL     string          `json:"prUrl"`
 	Status    ReviewRunStatus `json:"status"`
 	Verdict   ReviewVerdict   `json:"verdict"`
