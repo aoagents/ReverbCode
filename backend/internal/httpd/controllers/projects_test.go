@@ -509,7 +509,7 @@ func gitRepo(t *testing.T, name string) string {
 
 	}
 
-	if out, err := exec.Command("git", "init", dir).CombinedOutput(); err != nil {
+	if out, err := exec.Command("git", "init", "-b", "main", dir).CombinedOutput(); err != nil {
 
 		t.Fatalf("git init fixture: %v\n%s", err, out)
 
