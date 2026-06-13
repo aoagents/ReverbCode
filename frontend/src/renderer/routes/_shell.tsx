@@ -1,17 +1,16 @@
-import { createFileRoute, Outlet, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Outlet, useNavigate, useParams } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect } from "react";
 import { ShellTopbar } from "../components/ShellTopbar";
 import { Sidebar } from "../components/Sidebar";
 import { SidebarProvider } from "../components/ui/sidebar";
-import { SpawnWorkerModal } from "../components/SpawnWorkerModal";
 import { TitlebarNav } from "../components/TitlebarNav";
 import { useDaemonStatus } from "../hooks/useDaemonStatus";
 import { useWorkspaceQuery, workspaceQueryKey, workspaceQueryOptions } from "../hooks/useWorkspaceQuery";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { ShellProvider } from "../lib/shell-context";
 import { readStoredTheme, type Theme, useUiStore } from "../stores/ui-store";
-import { toAgentProvider, toSessionStatus, type AgentProvider, type WorkspaceSummary } from "../types/workspace";
+import type { WorkspaceSummary } from "../types/workspace";
 
 export const Route = createFileRoute("/_shell")({
 	// Prefetch the workspace list for the whole shell (parent loaders run before
@@ -35,18 +34,12 @@ function errorMessage(error: unknown) {
 // instead of Zustand. The daemon-status effect runs here exactly once.
 function ShellLayout() {
 	const navigate = useNavigate();
+	const params = useParams({ strict: false }) as { projectId?: string };
 	const queryClient = useQueryClient();
 	const workspaceQuery = useWorkspaceQuery();
 	const workspaces = workspaceQuery.data ?? [];
 	const daemonStatus = useDaemonStatus(queryClient);
 	const { theme, setTheme, isSidebarOpen, toggleSidebar } = useUiStore();
-	const [spawnOpen, setSpawnOpen] = useState(false);
-	const [spawnProjectId, setSpawnProjectId] = useState<string | undefined>(undefined);
-
-	const openSpawn = useCallback((projectId?: string) => {
-		setSpawnProjectId(projectId);
-		setSpawnOpen(true);
-	}, []);
 
 	const updateWorkspaces = useCallback(
 		(updater: (workspaces: WorkspaceSummary[]) => WorkspaceSummary[]) => {
@@ -74,49 +67,18 @@ function ShellLayout() {
 		[navigate, updateWorkspaces],
 	);
 
-	const createTask = useCallback(
-		async (input: { projectId: string; prompt: string; branch?: string; harness?: AgentProvider }) => {
-			const { data, error } = await apiClient.POST("/api/v1/sessions", {
-				body: {
-					projectId: input.projectId,
-					kind: "worker",
-					harness: input.harness,
-					prompt: input.prompt,
-					branch: input.branch || undefined,
-				},
-			});
-			if (error || !data?.session) throw new Error(error ? apiErrorMessage(error) : "No session returned");
+	const removeProject = useCallback(
+		async (projectId: string) => {
+			const { error } = await apiClient.DELETE("/api/v1/projects/{id}", { params: { path: { id: projectId } } });
+			if (error) throw new Error(apiErrorMessage(error));
 
-			const session = data.session;
-			updateWorkspaces((current) =>
-				current.map((item) =>
-					item.id === input.projectId
-						? {
-								...item,
-								sessions: [
-									{
-										id: session.id,
-										terminalHandleId: session.terminalHandleId,
-										workspaceId: item.id,
-										workspaceName: item.name,
-										title: input.prompt,
-										provider: toAgentProvider(session.harness),
-										branch: input.branch ?? "",
-										status: toSessionStatus(session.status, session.isTerminated),
-										updatedAt: "now",
-									},
-									...item.sessions.filter((existing) => existing.id !== session.id),
-								],
-							}
-						: item,
-				),
-			);
-			void navigate({
-				to: "/projects/$projectId/sessions/$sessionId",
-				params: { projectId: input.projectId, sessionId: session.id },
-			});
+			updateWorkspaces((current) => current.filter((item) => item.id !== projectId));
+			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+			if (params.projectId === projectId) {
+				void navigate({ to: "/" });
+			}
 		},
-		[navigate, updateWorkspaces],
+		[navigate, params.projectId, queryClient, updateWorkspaces],
 	);
 
 	useEffect(() => {
@@ -151,7 +113,7 @@ function ShellLayout() {
 	}, [navigate, workspaces]);
 
 	return (
-		<ShellProvider value={{ daemonStatus, openSpawn, createProject, createTask }}>
+		<ShellProvider value={{ daemonStatus, createProject }}>
 			{/* The topbar spans the full window width above the sidebar row (the
           macOS traffic lights + TitlebarNav cluster sit in its left inset),
           and the sidebar hangs below it — so the sidebar border stops at the
@@ -174,7 +136,7 @@ function ShellLayout() {
 					<Sidebar
 						daemonStatus={daemonStatus}
 						onCreateProject={createProject}
-						onNewWorker={openSpawn}
+						onRemoveProject={removeProject}
 						workspaceError={workspaceQuery.isError ? errorMessage(workspaceQuery.error) : undefined}
 						workspaces={workspaces}
 					/>
@@ -194,13 +156,6 @@ function ShellLayout() {
 					<TitlebarNav />
 				</SidebarProvider>
 			</div>
-			<SpawnWorkerModal
-				defaultProjectId={spawnProjectId}
-				onCreateTask={createTask}
-				onOpenChange={setSpawnOpen}
-				open={spawnOpen}
-				workspaces={workspaces}
-			/>
 		</ShellProvider>
 	);
 }

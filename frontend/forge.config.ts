@@ -8,6 +8,7 @@ const config: ForgeConfig = {
 		name: "Agent Orchestrator",
 		executableName: "agent-orchestrator",
 		appCategoryType: "public.app-category.developer-tools",
+		extraResource: "daemon",
 		// macOS signing + notarization — set CSC_LINK/CSC_KEY_PASSWORD and
 		// APPLE_ID/APPLE_APP_SPECIFIC_PASSWORD/APPLE_TEAM_ID in CI.
 		// See frontend/docs/desktop-release.md.

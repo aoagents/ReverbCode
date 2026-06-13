@@ -12,8 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 type Project = components["schemas"]["Project"];
 type ProjectConfig = components["schemas"]["ProjectConfig"];
 
-// Agents the daemon registers (see SpawnWorkerModal). Empty = "use the daemon
-// default". Kept short — the spawn modal owns the full list.
+// Agents the daemon registers. Empty = "use the daemon default".
 const AGENT_OPTIONS = ["claude-code", "codex", "opencode", "amp", "goose", "kiro"] as const;
 
 const PERMISSION_MODE_OPTIONS = [
@@ -51,7 +50,7 @@ export function ProjectSettingsForm({ projectId }: { projectId: string }) {
 
 	return (
 		<div className="flex h-full min-h-0 flex-col bg-background text-foreground">
-			<DashboardSubhead title="Settings" subtitle={query.data.path} />
+			<DashboardSubhead title="Settings" breadcrumbs={[query.data.name, "Settings"]} />
 			<div className="min-h-0 flex-1 overflow-y-auto p-[18px]">
 				<SettingsBody
 					key={projectId}
@@ -139,13 +138,13 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 							placeholder="main"
 						/>
 					</Field>
-					<Field label="Session branch prefix" htmlFor="sessionPrefix">
+					<Field label="Session prefix" htmlFor="sessionPrefix">
 						<input
 							id="sessionPrefix"
 							className="h-8 w-full rounded-md border border-input bg-transparent px-2.5 text-[13px] text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
 							value={form.sessionPrefix}
 							onChange={(e) => setForm((f) => ({ ...f, sessionPrefix: e.target.value }))}
-							placeholder="ao/"
+							placeholder="ao"
 						/>
 					</Field>
 				</CardContent>
@@ -156,11 +155,16 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 					<CardTitle className="text-[13px]">Agents</CardTitle>
 				</CardHeader>
 				<CardContent className="flex flex-col gap-4">
-					<Field label="Default worker agent">
-						<AgentSelect value={form.workerAgent} onChange={(v) => setForm((f) => ({ ...f, workerAgent: v }))} />
-					</Field>
-					<Field label="Default orchestrator agent">
+					<Field label="Default worker agent" htmlFor="workerAgent">
 						<AgentSelect
+							id="workerAgent"
+							value={form.workerAgent}
+							onChange={(v) => setForm((f) => ({ ...f, workerAgent: v }))}
+						/>
+					</Field>
+					<Field label="Default orchestrator agent" htmlFor="orchestratorAgent">
+						<AgentSelect
+							id="orchestratorAgent"
 							value={form.orchestratorAgent}
 							onChange={(v) => setForm((f) => ({ ...f, orchestratorAgent: v }))}
 						/>
@@ -174,8 +178,9 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 							placeholder="(agent default)"
 						/>
 					</Field>
-					<Field label="Permission mode">
+					<Field label="Permission mode" htmlFor="permissionMode">
 						<PermissionModeSelect
+							id="permissionMode"
 							value={form.permissions}
 							onChange={(v) => setForm((f) => ({ ...f, permissions: v }))}
 						/>
@@ -200,10 +205,10 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 	);
 }
 
-function PermissionModeSelect({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+function PermissionModeSelect({ id, value, onChange }: { id: string; value: string; onChange: (value: string) => void }) {
 	return (
 		<Select value={value || "__default__"} onValueChange={(v) => onChange(v === "__default__" ? "" : v)}>
-			<SelectTrigger className="h-8 w-full text-[13px]">
+			<SelectTrigger id={id} className="h-8 w-full text-[13px]">
 				<SelectValue />
 			</SelectTrigger>
 			<SelectContent>
@@ -218,11 +223,11 @@ function PermissionModeSelect({ value, onChange }: { value: string; onChange: (v
 	);
 }
 
-function AgentSelect({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+function AgentSelect({ id, value, onChange }: { id: string; value: string; onChange: (value: string) => void }) {
 	// "" sentinel → daemon default; Select can't hold an empty value, so map it.
 	return (
 		<Select value={value || "__default__"} onValueChange={(v) => onChange(v === "__default__" ? "" : v)}>
-			<SelectTrigger className="h-8 w-full text-[13px]">
+			<SelectTrigger id={id} className="h-8 w-full text-[13px]">
 				<SelectValue />
 			</SelectTrigger>
 			<SelectContent>

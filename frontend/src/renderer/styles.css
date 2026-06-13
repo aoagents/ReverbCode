@@ -265,7 +265,7 @@ select {
 
 .resize-handle:hover::after,
 body.is-resizing-x .resize-handle::after {
-	background: var(--color-accent);
+	background: var(--border);
 }
 
 body.is-resizing-x {
@@ -400,13 +400,12 @@ body.is-resizing-x [data-slot="sidebar-container"] {
  * exact same spot in both sidebar states. The 56px strip matches the
  * .dashboard-app-header height so the buttons share the topbar's center line
  * (y 28) with the project crumb / bell; the lights match via
- * trafficLightPosition y:20 in main.ts. Lights span x=14–66; the cluster
- * starts a 13px group gap after them (the .dashboard-app-header gap), so
- * the toggle reads as its own group rather than a fourth light. */
+ * trafficLightPosition in main.ts. Leave a visible group gap after the native
+ * lights so the sidebar toggle does not read as a fourth traffic-light button. */
 .titlebar-nav {
 	position: fixed;
 	top: 0;
-	left: 79px;
+	left: 91px;
 	z-index: 20;
 	display: flex;
 	height: 56px;
@@ -420,10 +419,10 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 }
 
 /* macOS: the full-width header starts its content past the lights + fixed
- * cluster: cluster right edge 79 + 3×28 + 2×2 = 167px, + the header's 13px
- * group gap = 180px. */
+ * cluster: cluster right edge 91 + 3×28 + 2×2 = 179px, + the header's 13px
+ * group gap = 192px. */
 .dashboard-app-header.is-under-titlebar-nav {
-	padding-left: 180px;
+	padding-left: 192px;
 }
 
 .topbar-project-pills-group {
@@ -484,7 +483,6 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	flex-direction: column;
 	overflow: hidden;
 	background: var(--bg);
-	border-left: 1px solid var(--border);
 }
 
 .session-inspector__tabs {
@@ -566,14 +564,14 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	left: 50%;
 	width: 1px;
 	transform: translateX(-50%);
-	background: var(--border-1);
+	background: var(--border);
 	transition: background 0.12s ease;
 }
 
 .session-inspector__resize-handle:hover::after,
 .session-inspector__resize-handle:focus-visible::after,
 .session-inspector__resize-handle[data-separator="active"]::after {
-	background: var(--accent);
+	background: var(--border);
 }
 
 /* Collapse/expand animation for the inspector panel: rrp v4 drives panel

@@ -1,5 +1,5 @@
 import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
-import { ChevronRight, GitPullRequest, Moon, Plus, Search, Settings, Sun, Waypoints } from "lucide-react";
+import { ChevronRight, GitPullRequest, Moon, MoreHorizontal, Plus, Search, Settings, Sun, Trash2, Waypoints } from "lucide-react";
 import { useState } from "react";
 import {
 	attentionZone,
@@ -53,7 +53,7 @@ type SidebarProps = {
 	workspaceError?: string;
 	workspaces: WorkspaceSummary[];
 	onCreateProject: (input: { path: string }) => Promise<void>;
-	onNewWorker: (projectId: string) => void;
+	onRemoveProject: (projectId: string) => Promise<void>;
 };
 
 // Selection state comes from the URL: which project/session is active is the
@@ -95,10 +95,11 @@ function SessionDot({ session }: { session: WorkspaceSession }) {
 // _shell owns open state (synced to the ui-store) and `collapsible="icon"`
 // replaces the old hand-rolled CollapsedRail — the same tree restyles itself
 // via group-data-[collapsible=icon] into the 48px letter rail.
-export function Sidebar({ daemonStatus, workspaceError, workspaces, onCreateProject, onNewWorker }: SidebarProps) {
+export function Sidebar({ daemonStatus, workspaceError, workspaces, onCreateProject, onRemoveProject }: SidebarProps) {
 	const selection = useSelection();
 	const eventsConnection = useEventsConnection();
 	const { state } = useSidebar();
+	const isCollapsed = state === "collapsed";
 	const theme = useUiStore((s) => s.theme);
 	const toggleTheme = useUiStore((s) => s.toggleTheme);
 	// Disclosure state: projects are expanded by default; a project id present in
@@ -202,9 +203,10 @@ export function Sidebar({ daemonStatus, workspaceError, workspaces, onCreateProj
 										expanded={!collapsedIds.has(workspace.id)}
 										selection={selection}
 										onToggle={() => toggleCollapsed(workspace.id)}
-										onNewWorker={() => onNewWorker(workspace.id)}
+										onRemoveProject={() => onRemoveProject(workspace.id)}
 									/>
 								))}
+								{isCollapsed && <CreateProjectListItem onCreateProject={onCreateProject} />}
 							</SidebarMenu>
 						)}
 					</SidebarGroupContent>
@@ -214,8 +216,8 @@ export function Sidebar({ daemonStatus, workspaceError, workspaces, onCreateProj
 			{/* Footer (project-sidebar__footer) — single Settings menu. Divergence
           (user-requested 2026-06-10): the trigger stretches the full row width
           (flex-1) with a uniform 7px footer inset on all sides (reference uses
-          12px top, 0 bottom, content-hugging button). The icon rail swaps it
-          for the old rail footer: New project (+ expand toggle off macOS). */}
+          12px top, 0 bottom, content-hugging button). The icon rail keeps the
+          icon-only settings action plus expand toggle (off macOS). */}
 			<SidebarFooter className="mt-auto gap-0 border-t border-border p-[7px] group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:pb-0 group-data-[collapsible=icon]:pt-2">
 				<div className="relative flex w-full items-center group-data-[collapsible=icon]:hidden">
 					<DropdownMenu>
@@ -229,9 +231,9 @@ export function Sidebar({ daemonStatus, workspaceError, workspaces, onCreateProj
 								<span className="tracking-[-0.01em]">Settings</span>
 							</button>
 						</DropdownMenuTrigger>
-						<DropdownMenuContent
-							align="start"
-							className="w-[var(--radix-dropdown-menu-trigger-width)] min-w-0"
+							<DropdownMenuContent
+								align="start"
+								className="w-[var(--radix-dropdown-menu-trigger-width)] min-w-0"
 							side="top"
 						>
 							<DropdownMenuItem onSelect={toggleTheme}>
@@ -257,8 +259,8 @@ export function Sidebar({ daemonStatus, workspaceError, workspaces, onCreateProj
 									</DropdownMenuItem>
 								</>
 							)}
-						</DropdownMenuContent>
-					</DropdownMenu>
+							</DropdownMenuContent>
+						</DropdownMenu>
 					<Tooltip>
 						<TooltipTrigger asChild>
 							<span
@@ -276,7 +278,47 @@ export function Sidebar({ daemonStatus, workspaceError, workspaces, onCreateProj
 					</Tooltip>
 				</div>
 				<div className="hidden flex-col items-center gap-1 pb-3.5 group-data-[collapsible=icon]:flex">
-					<CreateProjectButton onCreateProject={onCreateProject} />
+					<DropdownMenu>
+						<Tooltip>
+							<TooltipTrigger asChild>
+								<DropdownMenuTrigger asChild>
+									<button
+										aria-label="Settings"
+										className="grid size-9 place-items-center rounded-lg text-passive transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-4"
+										type="button"
+									>
+										<Settings aria-hidden="true" />
+									</button>
+								</DropdownMenuTrigger>
+							</TooltipTrigger>
+							<TooltipContent side="right">Settings</TooltipContent>
+						</Tooltip>
+						<DropdownMenuContent align="start" className="min-w-0" side="top">
+							<DropdownMenuItem onSelect={toggleTheme}>
+								{theme === "dark" ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}
+								{theme === "dark" ? "Light mode" : "Dark mode"}
+							</DropdownMenuItem>
+							<DropdownMenuSeparator />
+							<DropdownMenuItem onSelect={selection.goPrs}>
+								<GitPullRequest aria-hidden="true" />
+								Pull requests
+							</DropdownMenuItem>
+							<DropdownMenuItem disabled>
+								<Search aria-hidden="true" />
+								Search
+								<DropdownMenuShortcut>⌘K</DropdownMenuShortcut>
+							</DropdownMenuItem>
+							{selection.activeProjectId && (
+								<>
+									<DropdownMenuSeparator />
+									<DropdownMenuItem onSelect={() => selection.goSettings(selection.activeProjectId!)}>
+										<Settings aria-hidden="true" />
+										Project settings
+									</DropdownMenuItem>
+								</>
+							)}
+						</DropdownMenuContent>
+					</DropdownMenu>
 					{!isMac && (
 						<Tooltip>
 							<TooltipTrigger asChild>
@@ -305,15 +347,17 @@ function ProjectItem({
 	expanded,
 	selection,
 	onToggle,
-	onNewWorker,
+	onRemoveProject,
 }: {
 	workspace: WorkspaceSummary;
 	expanded: boolean;
 	selection: Selection;
 	onToggle: () => void;
-	onNewWorker: () => void;
+	onRemoveProject: () => Promise<void>;
 }) {
 	const projectActive = selection.activeProjectId === workspace.id && !selection.activeSessionId;
+	const [isRemoving, setIsRemoving] = useState(false);
+	const [removeError, setRemoveError] = useState<string | null>(null);
 	// Live workers only: merged/terminated sessions leave the sidebar and stay
 	// reachable through the board's Done / Terminated bar (SessionsBoard).
 	const sessions = workerSessions(workspace.sessions).filter(sessionIsActive);
@@ -326,6 +370,25 @@ function ProjectItem({
 			onToggle();
 		} else {
 			selection.goProject(workspace.id);
+		}
+	};
+
+	const removeProject = async () => {
+		setRemoveError(null);
+		const confirmed = window.confirm(
+			`Remove project ${workspace.name}? This stops its live sessions and removes it from the sidebar, but keeps the repository folder and stored history on disk.`,
+		);
+		if (!confirmed) return;
+
+		setIsRemoving(true);
+		try {
+			await onRemoveProject();
+		} catch (err) {
+			const message = err instanceof Error ? err.message : "Could not remove project";
+			setRemoveError(message);
+			window.alert(message);
+		} finally {
+			setIsRemoving(false);
 		}
 	};
 
@@ -343,8 +406,8 @@ function ProjectItem({
 					"hover:bg-interactive-hover hover:text-muted-foreground active:bg-interactive-hover active:text-muted-foreground",
 					"data-[active=true]:bg-interactive-active data-[active=true]:font-semibold data-[active=true]:text-foreground",
 					// The count badge sits in-flow (verbatim layout), so undo the
-					// variant's blanket action padding; hover makes room for the + only.
-					"group-has-data-[sidebar=menu-action]/menu-item:pr-1.5 group-hover/menu-item:pr-[34px]",
+					// variant's blanket action padding; hover makes room for the menu.
+					"group-has-data-[sidebar=menu-action]/menu-item:pr-1.5 group-hover/menu-item:pr-[34px] group-focus-within/menu-item:pr-[34px] group-has-data-[state=open]/menu-item:pr-[34px]",
 					// Icon rail: the old 36px letter tile.
 					"group-data-[collapsible=icon]:size-9! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:p-0! group-data-[collapsible=icon]:font-semibold",
 				)}
@@ -359,29 +422,42 @@ function ProjectItem({
 				/>
 				<span className="hidden group-data-[collapsible=icon]:block">{workspace.name.charAt(0).toUpperCase()}</span>
 				<span className="min-w-0 flex-1 truncate group-data-[collapsible=icon]:hidden">{workspace.name}</span>
-				<span className="shrink-0 font-mono text-[11px] text-passive group-hover/menu-item:opacity-0 group-data-[collapsible=icon]:hidden">
+				<span className="shrink-0 font-mono text-[11px] text-passive group-hover/menu-item:opacity-0 group-focus-within/menu-item:opacity-0 group-has-data-[state=open]/menu-item:opacity-0 group-data-[collapsible=icon]:hidden">
 					{sessions.length}
 				</span>
 			</SidebarMenuButton>
-			{/* project-sidebar__proj-actions — reveal over the count slot on hover */}
-			<Tooltip>
-				<TooltipTrigger asChild>
-					<SidebarMenuAction
-						showOnHover
-						aria-label={`New worker in ${workspace.name}`}
-						onClick={onNewWorker}
-						// No top override: the base's peer-data-[size=default]:top-1.5
-						// (6px) centers this 22px action in the 34px row. AO's 50%/
-						// translateY(-50%) can't be cloned here — the absolute context
-						// is the whole menu li including the expanded sessions list,
-						// so a percentage top centers on the group, not the row.
-						className="right-1.5 h-[22px] w-[22px] rounded-[5px] text-passive transition-opacity hover:bg-interactive-active hover:text-foreground"
-					>
-						<Plus className="h-[13px]! w-[13px]!" aria-hidden="true" />
-					</SidebarMenuAction>
-				</TooltipTrigger>
-				<TooltipContent>New worker in {workspace.name}</TooltipContent>
-			</Tooltip>
+			<DropdownMenu>
+				<Tooltip>
+					<TooltipTrigger asChild>
+						<DropdownMenuTrigger asChild>
+							<SidebarMenuAction
+								showOnHover
+								aria-label={`Project actions for ${workspace.name}`}
+								className="right-1.5 h-[22px] w-[22px] rounded-[5px] text-passive transition-opacity hover:bg-interactive-active hover:text-foreground data-[state=open]:bg-interactive-active data-[state=open]:text-foreground"
+							>
+								<MoreHorizontal className="h-[13px]! w-[13px]!" aria-hidden="true" />
+							</SidebarMenuAction>
+						</DropdownMenuTrigger>
+					</TooltipTrigger>
+					<TooltipContent>Project actions</TooltipContent>
+				</Tooltip>
+				<DropdownMenuContent align="end" side="right" sideOffset={6}>
+					<DropdownMenuItem onSelect={() => selection.goSettings(workspace.id)}>
+						<Settings aria-hidden="true" />
+						Project settings
+					</DropdownMenuItem>
+					<DropdownMenuSeparator />
+					<DropdownMenuItem className="text-destructive focus:text-destructive" disabled={isRemoving} onSelect={() => void removeProject()}>
+						<Trash2 aria-hidden="true" />
+						{isRemoving ? "Removing..." : "Remove project"}
+					</DropdownMenuItem>
+				</DropdownMenuContent>
+			</DropdownMenu>
+			{removeError && (
+				<span className="sr-only" role="status">
+					{removeError}
+				</span>
+			)}
 
 			{/* project-sidebar__sessions. Divergence from AO (user decision
           2026-06-12): no left indent or tree guide line — every sidebar row
@@ -465,5 +541,47 @@ function CreateProjectButton({ onCreateProject }: Pick<SidebarProps, "onCreatePr
 				</span>
 			)}
 		</>
+	);
+}
+
+function CreateProjectListItem({ onCreateProject }: Pick<SidebarProps, "onCreateProject">) {
+	const [error, setError] = useState<string | null>(null);
+	const [isChoosingPath, setIsChoosingPath] = useState(false);
+
+	const choosePath = async () => {
+		setError(null);
+		setIsChoosingPath(true);
+		try {
+			const selectedPath = await aoBridge.app.chooseDirectory();
+			if (selectedPath) await onCreateProject({ path: selectedPath });
+		} catch (err) {
+			setError(err instanceof Error ? err.message : "Could not add project");
+		} finally {
+			setIsChoosingPath(false);
+		}
+	};
+
+	return (
+		<SidebarMenuItem className="mb-px group-data-[collapsible=icon]:mb-0">
+			<Tooltip>
+				<TooltipTrigger asChild>
+					<button
+						aria-label="New project"
+						className="grid h-9 w-full place-items-center rounded-[5px] text-passive transition-colors hover:bg-interactive-hover hover:text-muted-foreground"
+						disabled={isChoosingPath}
+						onClick={choosePath}
+						type="button"
+					>
+						<Plus className="h-[13px] w-[13px]" aria-hidden="true" />
+					</button>
+				</TooltipTrigger>
+				<TooltipContent>{isChoosingPath ? "Opening…" : "New project"}</TooltipContent>
+			</Tooltip>
+			{error && (
+				<span className="sr-only" role="status">
+					{error}
+				</span>
+			)}
+		</SidebarMenuItem>
 	);
 }

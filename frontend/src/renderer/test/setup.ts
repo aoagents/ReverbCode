@@ -45,6 +45,11 @@ Object.defineProperty(window, "localStorage", {
 
 HTMLCanvasElement.prototype.getContext = (() => ({})) as unknown as typeof HTMLCanvasElement.prototype.getContext;
 
+Element.prototype.hasPointerCapture = (() => false) as typeof Element.prototype.hasPointerCapture;
+Element.prototype.setPointerCapture = (() => undefined) as typeof Element.prototype.setPointerCapture;
+Element.prototype.releasePointerCapture = (() => undefined) as typeof Element.prototype.releasePointerCapture;
+Element.prototype.scrollIntoView = (() => undefined) as typeof Element.prototype.scrollIntoView;
+
 window.ao = {
 	app: {
 		getVersion: async () => "0.0.0-test",

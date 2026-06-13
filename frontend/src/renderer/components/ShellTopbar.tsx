@@ -115,7 +115,7 @@ export function ShellTopbar() {
 						</div>
 						{session ? <SessionStatusPill session={session} /> : null}
 					</div>
-				) : (
+				) : projectId ? null : (
 					<div className="topbar-project-line">
 						<span className="dashboard-app-header__project">{projectLabel}</span>
 					</div>

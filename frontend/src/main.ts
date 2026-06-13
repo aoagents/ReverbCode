@@ -1,10 +1,12 @@
 import { app, BrowserWindow, dialog, ipcMain, net, protocol, shell, type OpenDialogOptions } from "electron";
 import { updateElectronApp } from "update-electron-app";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { resolveDaemonLaunch } from "./shared/daemon-launch";
 import { createListenPortScanner, defaultRunFilePath, parseRunFile } from "./shared/daemon-discovery";
 import type { DaemonStatus } from "./shared/daemon-status";
 
@@ -88,11 +90,10 @@ function createWindow(): void {
 		title: "Agent Orchestrator",
 		backgroundColor: "#0f1014",
 		titleBarStyle: "hiddenInset",
-		// Lights visually centered at y=28 — the 56px topbar/.titlebar-nav center
-		// line — so lights + nav cluster + header content share one row. macOS
-		// draws the 12pt disc 2pt below the given y (measured: center = y + 8),
-		// hence 20, not 22.
-		trafficLightPosition: { x: 14, y: 20 },
+		// Align the native traffic lights with the 28px TitlebarNav buttons in
+		// the 56px topbar. This offset is tuned against the rendered hiddenInset
+		// chrome, whose coordinate system does not match CSS centerline math.
+		trafficLightPosition: { x: 14, y: 17 },
 		webPreferences: {
 			preload: preloadPath(),
 			contextIsolation: true,
@@ -149,11 +150,19 @@ function startDaemon(): DaemonStatus {
 		return daemonStatus;
 	}
 
-	const command = process.env.AO_DAEMON_COMMAND;
-	if (!command) {
+	const launch = resolveDaemonLaunch(process.env, app.isPackaged, process.resourcesPath, app.getAppPath(), process.platform);
+	if (!launch) {
 		setDaemonStatus({
 			state: "stopped",
 			message: "AO_DAEMON_COMMAND is not configured; renderer uses loopback REST when available.",
+		});
+		return daemonStatus;
+	}
+
+	if (launch.source === "bundled" && !existsSync(launch.command)) {
+		setDaemonStatus({
+			state: "error",
+			message: `Bundled AO daemon binary was not found at ${launch.command}. Rebuild the desktop package.`,
 		});
 		return daemonStatus;
 	}
@@ -168,10 +177,10 @@ function startDaemon(): DaemonStatus {
 	// runs the command through /bin/sh, a plain kill() would only signal the shell
 	// wrapper and orphan the real daemon (which keeps holding the port). Killing
 	// the whole group via killDaemon() reaches the daemon and any PTY children.
-	const child = spawn(command, [], {
-		cwd: app.getAppPath(),
+	const child = spawn(launch.command, launch.args, {
+		cwd: launch.cwd,
 		env: process.env,
-		shell: true,
+		shell: launch.shell,
 		detached: true,
 	});
 	daemonProcess = child;
@@ -315,6 +324,7 @@ function initAutoUpdates(): void {
 app.whenReady().then(() => {
 	registerRendererProtocol();
 	createWindow();
+	startDaemon();
 	initAutoUpdates();
 
 	app.on("activate", () => {
