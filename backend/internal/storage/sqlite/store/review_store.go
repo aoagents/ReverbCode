@@ -16,13 +16,14 @@ func (s *Store) UpsertReview(ctx context.Context, r domain.Review) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	return s.qw.UpsertReview(ctx, gen.UpsertReviewParams{
-		ID:        r.ID,
-		SessionID: r.SessionID,
-		ProjectID: r.ProjectID,
-		Harness:   r.Harness,
-		PRURL:     r.PRURL,
-		CreatedAt: r.CreatedAt,
-		UpdatedAt: r.UpdatedAt,
+		ID:               r.ID,
+		SessionID:        r.SessionID,
+		ProjectID:        r.ProjectID,
+		Harness:          r.Harness,
+		PRURL:            r.PRURL,
+		ReviewerHandleID: r.ReviewerHandleID,
+		CreatedAt:        r.CreatedAt,
+		UpdatedAt:        r.UpdatedAt,
 	})
 }
 
@@ -48,9 +49,9 @@ func (s *Store) InsertReviewRun(ctx context.Context, r domain.ReviewRun) error {
 		SessionID: r.SessionID,
 		Harness:   r.Harness,
 		PRURL:     r.PRURL,
+		TargetSha: r.TargetSHA,
 		Status:    r.Status,
 		Verdict:   r.Verdict,
-		Iteration: int64(r.Iteration),
 		Body:      r.Body,
 		CreatedAt: r.CreatedAt,
 	})
@@ -84,15 +85,16 @@ func (s *Store) GetReviewRun(ctx context.Context, id string) (domain.ReviewRun, 
 	return reviewRunFromRow(row), true, nil
 }
 
-// GetLatestReviewRunBySession returns the most recent review pass for a worker
-// session, ok=false if none.
-func (s *Store) GetLatestReviewRunBySession(ctx context.Context, id domain.SessionID) (domain.ReviewRun, bool, error) {
-	row, err := s.qr.GetLatestReviewRunBySession(ctx, id)
+// GetReviewRunBySessionAndSHA returns the most recent review pass for a worker
+// session at a specific commit, ok=false if none. It lets a repeat trigger for
+// the same PR head short-circuit to the existing run.
+func (s *Store) GetReviewRunBySessionAndSHA(ctx context.Context, id domain.SessionID, targetSHA string) (domain.ReviewRun, bool, error) {
+	row, err := s.qr.GetReviewRunBySessionAndSHA(ctx, gen.GetReviewRunBySessionAndSHAParams{SessionID: id, TargetSha: targetSHA})
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.ReviewRun{}, false, nil
 	}
 	if err != nil {
-		return domain.ReviewRun{}, false, fmt.Errorf("get latest review run for session %s: %w", id, err)
+		return domain.ReviewRun{}, false, fmt.Errorf("get review run for session %s sha %s: %w", id, targetSHA, err)
 	}
 	return reviewRunFromRow(row), true, nil
 }
@@ -112,13 +114,14 @@ func (s *Store) ListReviewRunsBySession(ctx context.Context, id domain.SessionID
 
 func reviewFromRow(r gen.Review) domain.Review {
 	return domain.Review{
-		ID:        r.ID,
-		SessionID: r.SessionID,
-		ProjectID: r.ProjectID,
-		Harness:   r.Harness,
-		PRURL:     r.PRURL,
-		CreatedAt: r.CreatedAt,
-		UpdatedAt: r.UpdatedAt,
+		ID:               r.ID,
+		SessionID:        r.SessionID,
+		ProjectID:        r.ProjectID,
+		Harness:          r.Harness,
+		PRURL:            r.PRURL,
+		ReviewerHandleID: r.ReviewerHandleID,
+		CreatedAt:        r.CreatedAt,
+		UpdatedAt:        r.UpdatedAt,
 	}
 }
 
@@ -129,9 +132,9 @@ func reviewRunFromRow(r gen.ReviewRun) domain.ReviewRun {
 		SessionID: r.SessionID,
 		Harness:   r.Harness,
 		PRURL:     r.PRURL,
+		TargetSHA: r.TargetSha,
 		Status:    r.Status,
 		Verdict:   r.Verdict,
-		Iteration: int(r.Iteration),
 		Body:      r.Body,
 		CreatedAt: r.CreatedAt,
 	}

@@ -12,31 +12,8 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
-const getLatestReviewRunBySession = `-- name: GetLatestReviewRunBySession :one
-SELECT id, review_id, session_id, harness, pr_url, status, verdict, iteration, body, created_at
-FROM review_run WHERE session_id = ? ORDER BY iteration DESC, created_at DESC LIMIT 1
-`
-
-func (q *Queries) GetLatestReviewRunBySession(ctx context.Context, sessionID domain.SessionID) (ReviewRun, error) {
-	row := q.db.QueryRowContext(ctx, getLatestReviewRunBySession, sessionID)
-	var i ReviewRun
-	err := row.Scan(
-		&i.ID,
-		&i.ReviewID,
-		&i.SessionID,
-		&i.Harness,
-		&i.PRURL,
-		&i.Status,
-		&i.Verdict,
-		&i.Iteration,
-		&i.Body,
-		&i.CreatedAt,
-	)
-	return i, err
-}
-
 const getReviewBySession = `-- name: GetReviewBySession :one
-SELECT id, session_id, project_id, harness, pr_url, created_at, updated_at
+SELECT id, session_id, project_id, harness, pr_url, reviewer_handle_id, created_at, updated_at
 FROM review WHERE session_id = ?
 `
 
@@ -49,6 +26,7 @@ func (q *Queries) GetReviewBySession(ctx context.Context, sessionID domain.Sessi
 		&i.ProjectID,
 		&i.Harness,
 		&i.PRURL,
+		&i.ReviewerHandleID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -56,7 +34,7 @@ func (q *Queries) GetReviewBySession(ctx context.Context, sessionID domain.Sessi
 }
 
 const getReviewRun = `-- name: GetReviewRun :one
-SELECT id, review_id, session_id, harness, pr_url, status, verdict, iteration, body, created_at
+SELECT id, review_id, session_id, harness, pr_url, target_sha, status, verdict, body, created_at
 FROM review_run WHERE id = ?
 `
 
@@ -69,9 +47,37 @@ func (q *Queries) GetReviewRun(ctx context.Context, id string) (ReviewRun, error
 		&i.SessionID,
 		&i.Harness,
 		&i.PRURL,
+		&i.TargetSha,
 		&i.Status,
 		&i.Verdict,
-		&i.Iteration,
+		&i.Body,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getReviewRunBySessionAndSHA = `-- name: GetReviewRunBySessionAndSHA :one
+SELECT id, review_id, session_id, harness, pr_url, target_sha, status, verdict, body, created_at
+FROM review_run WHERE session_id = ? AND target_sha = ? ORDER BY created_at DESC LIMIT 1
+`
+
+type GetReviewRunBySessionAndSHAParams struct {
+	SessionID domain.SessionID
+	TargetSha string
+}
+
+func (q *Queries) GetReviewRunBySessionAndSHA(ctx context.Context, arg GetReviewRunBySessionAndSHAParams) (ReviewRun, error) {
+	row := q.db.QueryRowContext(ctx, getReviewRunBySessionAndSHA, arg.SessionID, arg.TargetSha)
+	var i ReviewRun
+	err := row.Scan(
+		&i.ID,
+		&i.ReviewID,
+		&i.SessionID,
+		&i.Harness,
+		&i.PRURL,
+		&i.TargetSha,
+		&i.Status,
+		&i.Verdict,
 		&i.Body,
 		&i.CreatedAt,
 	)
@@ -79,7 +85,7 @@ func (q *Queries) GetReviewRun(ctx context.Context, id string) (ReviewRun, error
 }
 
 const insertReviewRun = `-- name: InsertReviewRun :exec
-INSERT INTO review_run (id, review_id, session_id, harness, pr_url, status, verdict, iteration, body, created_at)
+INSERT INTO review_run (id, review_id, session_id, harness, pr_url, target_sha, status, verdict, body, created_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
@@ -89,9 +95,9 @@ type InsertReviewRunParams struct {
 	SessionID domain.SessionID
 	Harness   domain.ReviewerHarness
 	PRURL     string
+	TargetSha string
 	Status    domain.ReviewRunStatus
 	Verdict   domain.ReviewVerdict
-	Iteration int64
 	Body      string
 	CreatedAt time.Time
 }
@@ -103,9 +109,9 @@ func (q *Queries) InsertReviewRun(ctx context.Context, arg InsertReviewRunParams
 		arg.SessionID,
 		arg.Harness,
 		arg.PRURL,
+		arg.TargetSha,
 		arg.Status,
 		arg.Verdict,
-		arg.Iteration,
 		arg.Body,
 		arg.CreatedAt,
 	)
@@ -113,8 +119,8 @@ func (q *Queries) InsertReviewRun(ctx context.Context, arg InsertReviewRunParams
 }
 
 const listReviewRunsBySession = `-- name: ListReviewRunsBySession :many
-SELECT id, review_id, session_id, harness, pr_url, status, verdict, iteration, body, created_at
-FROM review_run WHERE session_id = ? ORDER BY iteration DESC, created_at DESC
+SELECT id, review_id, session_id, harness, pr_url, target_sha, status, verdict, body, created_at
+FROM review_run WHERE session_id = ? ORDER BY created_at DESC
 `
 
 func (q *Queries) ListReviewRunsBySession(ctx context.Context, sessionID domain.SessionID) ([]ReviewRun, error) {
@@ -132,9 +138,9 @@ func (q *Queries) ListReviewRunsBySession(ctx context.Context, sessionID domain.
 			&i.SessionID,
 			&i.Harness,
 			&i.PRURL,
+			&i.TargetSha,
 			&i.Status,
 			&i.Verdict,
-			&i.Iteration,
 			&i.Body,
 			&i.CreatedAt,
 		); err != nil {
@@ -176,22 +182,24 @@ func (q *Queries) UpdateReviewRunResult(ctx context.Context, arg UpdateReviewRun
 }
 
 const upsertReview = `-- name: UpsertReview :exec
-INSERT INTO review (id, session_id, project_id, harness, pr_url, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?)
+INSERT INTO review (id, session_id, project_id, harness, pr_url, reviewer_handle_id, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (session_id) DO UPDATE SET
     harness = excluded.harness,
     pr_url = excluded.pr_url,
+    reviewer_handle_id = excluded.reviewer_handle_id,
     updated_at = excluded.updated_at
 `
 
 type UpsertReviewParams struct {
-	ID        string
-	SessionID domain.SessionID
-	ProjectID domain.ProjectID
-	Harness   domain.ReviewerHarness
-	PRURL     string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID               string
+	SessionID        domain.SessionID
+	ProjectID        domain.ProjectID
+	Harness          domain.ReviewerHarness
+	PRURL            string
+	ReviewerHandleID string
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
 }
 
 func (q *Queries) UpsertReview(ctx context.Context, arg UpsertReviewParams) error {
@@ -201,6 +209,7 @@ func (q *Queries) UpsertReview(ctx context.Context, arg UpsertReviewParams) erro
 		arg.ProjectID,
 		arg.Harness,
 		arg.PRURL,
+		arg.ReviewerHandleID,
 		arg.CreatedAt,
 		arg.UpdatedAt,
 	)

@@ -22,16 +22,18 @@ func TestReviewUpsertReusesRowAndRunRoundTrip(t *testing.T) {
 	if err := s.UpsertReview(ctx, domain.Review{
 		ID: "rev-1", SessionID: rec.ID, ProjectID: rec.ProjectID,
 		Harness: domain.ReviewerClaudeCode, PRURL: "https://example/pr/1",
-		CreatedAt: now, UpdatedAt: now,
+		ReviewerHandleID: "review-mer-1",
+		CreatedAt:        now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatalf("upsert review: %v", err)
 	}
 	// Second upsert with the same session reuses the row (session_id UNIQUE),
-	// refreshing harness/pr_url but keeping the original id.
+	// refreshing harness/pr_url/reviewer_handle_id but keeping the original id.
 	if err := s.UpsertReview(ctx, domain.Review{
 		ID: "rev-2", SessionID: rec.ID, ProjectID: rec.ProjectID,
 		Harness: domain.ReviewerHarness("greptile"), PRURL: "https://example/pr/2",
-		CreatedAt: now, UpdatedAt: now.Add(time.Second),
+		ReviewerHandleID: "review-mer-1b",
+		CreatedAt:        now, UpdatedAt: now.Add(time.Second),
 	}); err != nil {
 		t.Fatalf("upsert review (reuse): %v", err)
 	}
@@ -42,15 +44,15 @@ func TestReviewUpsertReusesRowAndRunRoundTrip(t *testing.T) {
 	if got.ID != "rev-1" {
 		t.Fatalf("upsert created a new row, want reuse: id=%q", got.ID)
 	}
-	if got.Harness != domain.ReviewerHarness("greptile") || got.PRURL != "https://example/pr/2" {
+	if got.Harness != domain.ReviewerHarness("greptile") || got.PRURL != "https://example/pr/2" || got.ReviewerHandleID != "review-mer-1b" {
 		t.Fatalf("upsert did not refresh fields: %+v", got)
 	}
 
 	// A run inserts running and updates to complete/changes_requested.
 	if err := s.InsertReviewRun(ctx, domain.ReviewRun{
 		ID: "run-1", ReviewID: got.ID, SessionID: rec.ID, Harness: domain.ReviewerHarness("greptile"),
-		PRURL: got.PRURL, Status: domain.ReviewRunRunning, Verdict: domain.VerdictNone,
-		Iteration: 1, CreatedAt: now,
+		PRURL: got.PRURL, TargetSHA: "sha1", Status: domain.ReviewRunRunning, Verdict: domain.VerdictNone,
+		CreatedAt: now,
 	}); err != nil {
 		t.Fatalf("insert run: %v", err)
 	}
@@ -64,16 +66,19 @@ func TestReviewUpsertReusesRowAndRunRoundTrip(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("get run: ok=%v err=%v", ok, err)
 	}
-	if gotRun.ID != "run-1" || gotRun.SessionID != rec.ID {
+	if gotRun.ID != "run-1" || gotRun.SessionID != rec.ID || gotRun.TargetSHA != "sha1" {
 		t.Fatalf("get run = %+v", gotRun)
 	}
 
-	latest, ok, err := s.GetLatestReviewRunBySession(ctx, rec.ID)
+	bySHA, ok, err := s.GetReviewRunBySessionAndSHA(ctx, rec.ID, "sha1")
 	if err != nil || !ok {
-		t.Fatalf("latest run: ok=%v err=%v", ok, err)
+		t.Fatalf("by sha: ok=%v err=%v", ok, err)
 	}
-	if latest.Status != domain.ReviewRunComplete || latest.Verdict != domain.VerdictChangesRequested || latest.Body != "please fix" {
-		t.Fatalf("run result not persisted: %+v", latest)
+	if bySHA.Status != domain.ReviewRunComplete || bySHA.Verdict != domain.VerdictChangesRequested || bySHA.Body != "please fix" {
+		t.Fatalf("run result not persisted: %+v", bySHA)
+	}
+	if _, ok, _ := s.GetReviewRunBySessionAndSHA(ctx, rec.ID, "other"); ok {
+		t.Fatal("unexpected run for a different sha")
 	}
 
 	runs, err := s.ListReviewRunsBySession(ctx, rec.ID)
@@ -97,7 +102,7 @@ func TestReviewGettersMissing(t *testing.T) {
 	if _, ok, err := s.GetReviewBySession(ctx, "mer-1"); err != nil || ok {
 		t.Fatalf("missing review: ok=%v err=%v", ok, err)
 	}
-	if _, ok, err := s.GetLatestReviewRunBySession(ctx, "mer-1"); err != nil || ok {
+	if _, ok, err := s.GetReviewRunBySessionAndSHA(ctx, "mer-1", "sha1"); err != nil || ok {
 		t.Fatalf("missing run: ok=%v err=%v", ok, err)
 	}
 	if _, ok, err := s.GetReviewRun(ctx, "run-missing"); err != nil || ok {

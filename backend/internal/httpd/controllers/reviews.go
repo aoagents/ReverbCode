@@ -14,13 +14,18 @@ import (
 )
 
 // ListReviewsResponse is the body of GET /api/v1/sessions/{sessionId}/reviews.
+// reviewerHandleId is the live reviewer pane's runtime handle, for the UI to
+// attach its terminal over /mux (empty when no reviewer has run).
 type ListReviewsResponse struct {
-	Reviews []domain.ReviewRun `json:"reviews"`
+	ReviewerHandleID string             `json:"reviewerHandleId"`
+	Reviews          []domain.ReviewRun `json:"reviews"`
 }
 
-// ReviewRunResponse is the { review } body of trigger (201) and submit (200).
+// ReviewRunResponse is the body of trigger (200/201) and submit (200). It
+// carries the run plus the reviewer pane handle so the UI can attach a terminal.
 type ReviewRunResponse struct {
-	Review domain.ReviewRun `json:"review"`
+	Review           domain.ReviewRun `json:"review"`
+	ReviewerHandleID string           `json:"reviewerHandleId"`
 }
 
 // SubmitReviewInput is the body of POST /api/v1/sessions/{sessionId}/reviews/submit.
@@ -47,15 +52,16 @@ func (c *ReviewsController) list(w http.ResponseWriter, r *http.Request) {
 		apispec.NotImplemented(w, r, "GET", "/api/v1/sessions/{sessionId}/reviews")
 		return
 	}
-	runs, err := c.Svc.List(r.Context(), sessionID(r))
+	res, err := c.Svc.List(r.Context(), sessionID(r))
 	if err != nil {
 		writeReviewError(w, r, err)
 		return
 	}
+	runs := res.Runs
 	if runs == nil {
 		runs = []domain.ReviewRun{}
 	}
-	envelope.WriteJSON(w, http.StatusOK, ListReviewsResponse{Reviews: runs})
+	envelope.WriteJSON(w, http.StatusOK, ListReviewsResponse{ReviewerHandleID: res.ReviewerHandleID, Reviews: runs})
 }
 
 func (c *ReviewsController) trigger(w http.ResponseWriter, r *http.Request) {
@@ -63,12 +69,18 @@ func (c *ReviewsController) trigger(w http.ResponseWriter, r *http.Request) {
 		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/{sessionId}/reviews/trigger")
 		return
 	}
-	run, err := c.Svc.Trigger(r.Context(), sessionID(r))
+	res, err := c.Svc.Trigger(r.Context(), sessionID(r))
 	if err != nil {
 		writeReviewError(w, r, err)
 		return
 	}
-	envelope.WriteJSON(w, http.StatusCreated, ReviewRunResponse{Review: run})
+	// 201 when a new pass was started; 200 when an existing run for the same
+	// commit was reused.
+	status := http.StatusOK
+	if res.Created {
+		status = http.StatusCreated
+	}
+	envelope.WriteJSON(w, status, ReviewRunResponse{Review: res.Run, ReviewerHandleID: res.ReviewerHandleID})
 }
 
 func (c *ReviewsController) submit(w http.ResponseWriter, r *http.Request) {

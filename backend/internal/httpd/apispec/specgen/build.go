@@ -274,6 +274,7 @@ func reviewOperations() []operation {
 			summary:    "Trigger a code review of a worker's PR",
 			pathParams: []any{controllers.SessionIDParam{}},
 			resps: []respUnit{
+				{http.StatusOK, controllers.ReviewRunResponse{}},
 				{http.StatusCreated, controllers.ReviewRunResponse{}},
 				{http.StatusUnprocessableEntity, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},

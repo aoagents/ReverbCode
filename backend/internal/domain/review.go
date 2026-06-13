@@ -11,8 +11,11 @@ type Review struct {
 	ProjectID ProjectID       `json:"projectId"`
 	Harness   ReviewerHarness `json:"harness"`
 	PRURL     string          `json:"prUrl"`
-	CreatedAt time.Time       `json:"createdAt"`
-	UpdatedAt time.Time       `json:"updatedAt"`
+	// ReviewerHandleID is the runtime handle of the live reviewer pane, reused
+	// across passes and exposed so the UI can attach its terminal.
+	ReviewerHandleID string    `json:"reviewerHandleId"`
+	CreatedAt        time.Time `json:"createdAt"`
+	UpdatedAt        time.Time `json:"updatedAt"`
 }
 
 // ReviewRun is one review pass against a worker's PR.
@@ -22,9 +25,10 @@ type ReviewRun struct {
 	SessionID SessionID       `json:"sessionId"`
 	Harness   ReviewerHarness `json:"harness"`
 	PRURL     string          `json:"prUrl"`
+	// TargetSHA is the PR head commit this pass reviewed.
+	TargetSHA string          `json:"targetSha"`
 	Status    ReviewRunStatus `json:"status"`
 	Verdict   ReviewVerdict   `json:"verdict"`
-	Iteration int             `json:"iteration"`
 	// Body is the review text the reviewer submitted. It is recorded for AO's
 	// own tracking; the reviewer also posts the review to the PR itself.
 	Body      string    `json:"body"`

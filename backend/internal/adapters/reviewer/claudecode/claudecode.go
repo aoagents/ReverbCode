@@ -31,8 +31,8 @@ func (r *Reviewer) Harness() domain.ReviewerHarness {
 
 var _ ports.Reviewer = (*Reviewer)(nil)
 
-// ReviewCommand builds a one-shot claude-code invocation that reviews the
-// worker's checkout for the PR, with the review prompt baked in.
+// ReviewCommand builds a claude-code invocation that reviews the worker's
+// checkout for the PR, with the review prompt baked in.
 func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation) (ports.ReviewCommandSpec, error) {
 	argv, err := r.agent.GetLaunchCommand(ctx, ports.LaunchConfig{
 		SessionID:     inv.ReviewerID,
@@ -45,16 +45,24 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 	return ports.ReviewCommandSpec{Argv: argv}, nil
 }
 
+// ReviewMessage is the text injected into an already-running reviewer pane to
+// review a new commit. It carries the same explicit instructions as the spawn
+// prompt.
+func (r *Reviewer) ReviewMessage(_ context.Context, inv ports.ReviewInvocation) (string, error) {
+	return reviewPrompt(inv), nil
+}
+
 func reviewPrompt(inv ports.ReviewInvocation) string {
-	return fmt.Sprintf(`You are an AO code reviewer. The current working directory is a checkout containing the changes for pull request %s. Review only this PR's changes — do not start unrelated work.
+	return fmt.Sprintf(`You are an AO code reviewer. The current working directory is a checkout containing the changes for pull request %s (head commit %s). Review only this PR's changes — do not start unrelated work.
 
 Steps:
 1. Inspect what the PR changed by diffing the checkout against the PR's base branch.
 2. Review for correctness bugs, missing error handling, security issues, test coverage, and clear deviations from the surrounding code's conventions. Prefer a few high-confidence findings over nitpicks.
 3. Post your review on the pull request using the available review tooling (request changes if it needs work, approve if it is ready), with inline comments for specific findings.
-4. Record the outcome with AO so the worker is nudged: write your full review to review.md, then run
+4. Record the outcome with AO so the worker is nudged: write your full review to review.md, then run exactly:
 
-     ao review submit --verdict <approved|changes_requested> --body review.md
+     ao review submit --session %s --run %s --verdict <approved|changes_requested> --body review.md
 
-Constraints: do not push commits, edit files, or modify the branch — review only. If you cannot post the review, still run `+"`ao review submit`"+` with your verdict and findings so the result is recorded.`, inv.PRURL)
+Constraints: do not push commits, edit files, or modify the branch — review only. If you cannot post the review, still run the `+"`ao review submit`"+` command above so the result is recorded.`,
+		inv.PRURL, inv.TargetSHA, inv.WorkerSessionID, inv.RunID)
 }

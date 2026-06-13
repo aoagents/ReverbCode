@@ -12,18 +12,11 @@ import (
 // --- fakes ---
 
 type fakeStore struct {
-	review    *domain.Review
-	runs      []domain.ReviewRun
-	inserted  bool
-	upsertErr error
-	insertErr error
-	updateErr error
+	review *domain.Review
+	runs   []domain.ReviewRun
 }
 
 func (f *fakeStore) UpsertReview(_ context.Context, r domain.Review) error {
-	if f.upsertErr != nil {
-		return f.upsertErr
-	}
 	cp := r
 	f.review = &cp
 	return nil
@@ -35,19 +28,15 @@ func (f *fakeStore) GetReviewBySession(_ context.Context, _ domain.SessionID) (d
 	return *f.review, true, nil
 }
 func (f *fakeStore) InsertReviewRun(_ context.Context, r domain.ReviewRun) error {
-	if f.insertErr != nil {
-		return f.insertErr
-	}
-	f.inserted = true
 	f.runs = append(f.runs, r)
 	return nil
 }
 func (f *fakeStore) UpdateReviewRunResult(_ context.Context, id string, status domain.ReviewRunStatus, verdict domain.ReviewVerdict, body string) (bool, error) {
-	if f.updateErr != nil {
-		return false, f.updateErr
-	}
 	for i := range f.runs {
 		if f.runs[i].ID == id {
+			if f.runs[i].Status != domain.ReviewRunRunning {
+				return false, nil
+			}
 			f.runs[i].Status = status
 			f.runs[i].Verdict = verdict
 			f.runs[i].Body = body
@@ -57,18 +46,20 @@ func (f *fakeStore) UpdateReviewRunResult(_ context.Context, id string, status d
 	return false, nil
 }
 func (f *fakeStore) GetReviewRun(_ context.Context, id string) (domain.ReviewRun, bool, error) {
-	for _, run := range f.runs {
-		if run.ID == id {
-			return run, true, nil
+	for _, r := range f.runs {
+		if r.ID == id {
+			return r, true, nil
 		}
 	}
 	return domain.ReviewRun{}, false, nil
 }
-func (f *fakeStore) GetLatestReviewRunBySession(_ context.Context, _ domain.SessionID) (domain.ReviewRun, bool, error) {
-	if len(f.runs) == 0 {
-		return domain.ReviewRun{}, false, nil
+func (f *fakeStore) GetReviewRunBySessionAndSHA(_ context.Context, _ domain.SessionID, sha string) (domain.ReviewRun, bool, error) {
+	for i := len(f.runs) - 1; i >= 0; i-- {
+		if f.runs[i].TargetSHA == sha {
+			return f.runs[i], true, nil
+		}
 	}
-	return f.runs[len(f.runs)-1], true, nil
+	return domain.ReviewRun{}, false, nil
 }
 func (f *fakeStore) ListReviewRunsBySession(_ context.Context, _ domain.SessionID) ([]domain.ReviewRun, error) {
 	return f.runs, nil
@@ -95,228 +86,230 @@ func (f fakeProjects) GetProject(_ context.Context, id string) (domain.ProjectRe
 	return domain.ProjectRecord{ID: id, Config: f.cfg}, true, nil
 }
 
-type fakeRunner struct {
-	store      *fakeStore
-	requireRun bool
-	spec       RunSpec
-	err        error
-	ran        bool
+type fakeLauncher struct {
+	handle    string
+	alive     bool
+	spawnErr  error
+	notifyErr error
+	spawned   bool
+	notified  bool
+	gotSpec   LaunchSpec
+	gotHandle string
 }
 
-func (f *fakeRunner) Run(_ context.Context, spec RunSpec) error {
-	if f.requireRun && (f.store == nil || !f.store.inserted) {
-		return errors.New("review run was not inserted before launch")
+func (f *fakeLauncher) Spawn(_ context.Context, spec LaunchSpec) (string, error) {
+	f.spawned = true
+	f.gotSpec = spec
+	if f.spawnErr != nil {
+		return "", f.spawnErr
 	}
-	f.ran = true
-	f.spec = spec
-	return f.err
+	return f.handle, nil
 }
+func (f *fakeLauncher) Notify(_ context.Context, handleID string, spec LaunchSpec) error {
+	f.notified = true
+	f.gotHandle = handleID
+	f.gotSpec = spec
+	return f.notifyErr
+}
+func (f *fakeLauncher) Alive(_ context.Context, _ string) (bool, error) { return f.alive, nil }
 
 func liveWorker() domain.SessionRecord {
 	return domain.SessionRecord{
 		ID:        "mer-1",
 		ProjectID: "mer",
-		Harness:   domain.HarnessCodex,
+		Harness:   domain.HarnessClaudeCode,
 		Metadata:  domain.SessionMetadata{WorkspacePath: "/ws/mer-1"},
 	}
 }
 
-func newServiceForTest(store Store, sessions Sessions, prs PRs, projects Projects, runner Runner) *Engine {
+func newEngineForTest(store Store, sessions Sessions, prs PRs, projects Projects, launcher Launcher) *Engine {
 	ids := 0
 	return New(Deps{
-		Store: store, Sessions: sessions, PRs: prs, Projects: projects, Runner: runner,
+		Store: store, Sessions: sessions, PRs: prs, Projects: projects, Launcher: launcher,
 		Clock: func() time.Time { return time.Unix(0, 0).UTC() },
 		NewID: func() string { ids++; return "id-" + string(rune('0'+ids)) },
 	})
 }
 
+func prAt(sha string) fakePRs {
+	return fakePRs{prs: []domain.PullRequest{{URL: "https://github.com/o/r/pull/1", HeadSHA: sha}}}
+}
+
 // --- tests ---
 
-func TestTriggerCreatesPendingRunAndLaunchesReviewer(t *testing.T) {
+func TestTriggerSpawnsNewReviewerAndRecordsRunAfterLaunch(t *testing.T) {
 	store := &fakeStore{}
-	sessions := fakeSessions{rec: liveWorker(), ok: true}
-	prs := fakePRs{prs: []domain.PullRequest{{URL: "https://github.com/o/r/pull/1"}}}
-	// A reviewer-only harness (greptile) is configured; it wins over the worker harness.
+	launcher := &fakeLauncher{handle: "review-mer-1"}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
+
+	res, err := eng.Trigger(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatalf("Trigger: %v", err)
+	}
+	if !res.Created || res.ReviewerHandleID != "review-mer-1" {
+		t.Fatalf("result = %+v", res)
+	}
+	if !launcher.spawned || launcher.notified {
+		t.Fatalf("expected spawn (no live reviewer): %+v", launcher)
+	}
+	if res.Run.TargetSHA != "sha1" || res.Run.Status != domain.ReviewRunRunning || res.Run.Harness != domain.ReviewerClaudeCode {
+		t.Fatalf("run = %+v", res.Run)
+	}
+	if launcher.gotSpec.RunID != res.Run.ID {
+		t.Fatalf("launch spec run id %q != run id %q", launcher.gotSpec.RunID, res.Run.ID)
+	}
+	if len(store.runs) != 1 || store.review == nil || store.review.ReviewerHandleID != "review-mer-1" {
+		t.Fatalf("persisted review=%+v runs=%+v", store.review, store.runs)
+	}
+}
+
+func TestTriggerIsIdempotentForSameCommit(t *testing.T) {
+	store := &fakeStore{
+		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", ReviewerHandleID: "review-mer-1"},
+		runs:   []domain.ReviewRun{{ID: "run-1", SessionID: "mer-1", TargetSHA: "sha1", Status: domain.ReviewRunRunning}},
+	}
+	launcher := &fakeLauncher{}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
+
+	res, err := eng.Trigger(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatalf("Trigger: %v", err)
+	}
+	if res.Created || res.Run.ID != "run-1" || res.ReviewerHandleID != "review-mer-1" {
+		t.Fatalf("expected reuse of existing run: %+v", res)
+	}
+	if launcher.spawned || launcher.notified {
+		t.Fatalf("should not launch for an already-reviewed commit: %+v", launcher)
+	}
+	if len(store.runs) != 1 {
+		t.Fatalf("should not insert another run: %+v", store.runs)
+	}
+}
+
+func TestTriggerNotifiesLiveReviewerOnNewCommit(t *testing.T) {
+	store := &fakeStore{
+		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", ReviewerHandleID: "review-mer-1"},
+		runs:   []domain.ReviewRun{{ID: "run-0", SessionID: "mer-1", TargetSHA: "sha0", Status: domain.ReviewRunComplete}},
+	}
+	launcher := &fakeLauncher{alive: true}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
+
+	res, err := eng.Trigger(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatalf("Trigger: %v", err)
+	}
+	if !launcher.notified || launcher.spawned {
+		t.Fatalf("expected notify on live reviewer: %+v", launcher)
+	}
+	if launcher.gotHandle != "review-mer-1" {
+		t.Fatalf("notify handle = %q", launcher.gotHandle)
+	}
+	if !res.Created || res.Run.TargetSHA != "sha1" || len(store.runs) != 2 {
+		t.Fatalf("expected a new run for sha1: res=%+v runs=%+v", res, store.runs)
+	}
+}
+
+func TestTriggerSpawnsWhenReviewerDead(t *testing.T) {
+	store := &fakeStore{
+		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", ReviewerHandleID: "review-mer-1"},
+		runs:   []domain.ReviewRun{{ID: "run-0", SessionID: "mer-1", TargetSHA: "sha0", Status: domain.ReviewRunComplete}},
+	}
+	launcher := &fakeLauncher{alive: false, handle: "review-mer-1"}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
+
+	if _, err := eng.Trigger(context.Background(), "mer-1"); err != nil {
+		t.Fatalf("Trigger: %v", err)
+	}
+	if !launcher.spawned || launcher.notified {
+		t.Fatalf("expected spawn when reviewer dead: %+v", launcher)
+	}
+}
+
+func TestTriggerLaunchFailureRecordsNothing(t *testing.T) {
+	store := &fakeStore{}
+	launcher := &fakeLauncher{spawnErr: errors.New("boom")}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
+
+	if _, err := eng.Trigger(context.Background(), "mer-1"); err == nil {
+		t.Fatal("want launch error")
+	}
+	if len(store.runs) != 0 || store.review != nil {
+		t.Fatalf("nothing should be persisted on launch failure: review=%+v runs=%+v", store.review, store.runs)
+	}
+}
+
+func TestTriggerUsesConfiguredReviewerHarness(t *testing.T) {
+	store := &fakeStore{}
 	projects := fakeProjects{cfg: domain.ProjectConfig{Reviewers: []domain.ReviewerConfig{{Harness: domain.ReviewerHarness("greptile")}}}}
-	runner := &fakeRunner{store: store, requireRun: true}
-	svc := newServiceForTest(store, sessions, prs, projects, runner)
+	launcher := &fakeLauncher{handle: "review-mer-1"}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), projects, launcher)
 
-	run, err := svc.Trigger(context.Background(), "mer-1")
+	res, err := eng.Trigger(context.Background(), "mer-1")
 	if err != nil {
 		t.Fatalf("Trigger: %v", err)
 	}
-	if run.Status != domain.ReviewRunRunning || run.Iteration != 1 || run.Harness != domain.ReviewerHarness("greptile") {
-		t.Fatalf("run = %+v", run)
-	}
-	if !runner.ran || runner.spec.RunID != run.ID || runner.spec.WorkspacePath != "/ws/mer-1" || runner.spec.Harness != domain.ReviewerHarness("greptile") {
-		t.Fatalf("runner spec = %+v ran=%v", runner.spec, runner.ran)
-	}
-	if store.review == nil || store.review.PRURL != "https://github.com/o/r/pull/1" {
-		t.Fatalf("review row = %+v", store.review)
+	if res.Run.Harness != domain.ReviewerHarness("greptile") || launcher.gotSpec.Harness != domain.ReviewerHarness("greptile") {
+		t.Fatalf("harness not used: run=%+v spec=%+v", res.Run, launcher.gotSpec)
 	}
 }
 
-func TestTriggerReusesWorkerHarnessWhenItIsAReviewer(t *testing.T) {
-	store := &fakeStore{}
-	// No reviewer configured; the worker's harness (claude-code) is also a
-	// supported reviewer, so it is reused.
-	rec := liveWorker()
-	rec.Harness = domain.HarnessClaudeCode
-	svc := newServiceForTest(store, fakeSessions{rec: rec, ok: true},
-		fakePRs{prs: []domain.PullRequest{{URL: "u"}}}, fakeProjects{}, &fakeRunner{})
-	run, err := svc.Trigger(context.Background(), "mer-1")
-	if err != nil {
-		t.Fatalf("Trigger: %v", err)
-	}
-	if run.Harness != domain.ReviewerClaudeCode {
-		t.Fatalf("harness = %q, want reviewer claude-code", run.Harness)
-	}
-}
-
-func TestTriggerFallsBackWhenWorkerHarnessNotAReviewer(t *testing.T) {
-	store := &fakeStore{}
-	// liveWorker's harness is codex, which is not a supported reviewer.
-	svc := newServiceForTest(store, fakeSessions{rec: liveWorker(), ok: true},
-		fakePRs{prs: []domain.PullRequest{{URL: "u"}}}, fakeProjects{}, &fakeRunner{})
-	run, err := svc.Trigger(context.Background(), "mer-1")
-	if err != nil {
-		t.Fatalf("Trigger: %v", err)
-	}
-	if run.Harness != domain.FallbackReviewerHarness {
-		t.Fatalf("harness = %q, want fallback %q", run.Harness, domain.FallbackReviewerHarness)
-	}
-}
-
-func TestTriggerSecondPassIncrementsIteration(t *testing.T) {
-	store := &fakeStore{runs: []domain.ReviewRun{{ID: "old", Iteration: 1}}}
-	svc := newServiceForTest(store, fakeSessions{rec: liveWorker(), ok: true},
-		fakePRs{prs: []domain.PullRequest{{URL: "u"}}}, fakeProjects{}, &fakeRunner{})
-	run, err := svc.Trigger(context.Background(), "mer-1")
-	if err != nil {
-		t.Fatalf("Trigger: %v", err)
-	}
-	if run.Iteration != 2 {
-		t.Fatalf("iteration = %d, want 2", run.Iteration)
-	}
-}
-
-func TestTriggerRejectsMissingWorkerPRAndState(t *testing.T) {
-	base := func() *fakeStore { return &fakeStore{} }
+func TestTriggerRejectsBadWorkerState(t *testing.T) {
 	t.Run("unknown worker", func(t *testing.T) {
-		svc := newServiceForTest(base(), fakeSessions{ok: false}, fakePRs{}, fakeProjects{}, &fakeRunner{})
-		if _, err := svc.Trigger(context.Background(), "mer-1"); !errors.Is(err, ErrNotFound) {
+		eng := newEngineForTest(&fakeStore{}, fakeSessions{ok: false}, prAt("sha1"), fakeProjects{}, &fakeLauncher{})
+		if _, err := eng.Trigger(context.Background(), "mer-1"); !errors.Is(err, ErrNotFound) {
 			t.Fatalf("err = %v, want ErrNotFound", err)
 		}
 	})
-	t.Run("terminated worker", func(t *testing.T) {
-		rec := liveWorker()
-		rec.IsTerminated = true
-		svc := newServiceForTest(base(), fakeSessions{rec: rec, ok: true}, fakePRs{}, fakeProjects{}, &fakeRunner{})
-		if _, err := svc.Trigger(context.Background(), "mer-1"); !errors.Is(err, ErrInvalid) {
-			t.Fatalf("err = %v, want ErrInvalid", err)
-		}
-	})
 	t.Run("no pr", func(t *testing.T) {
-		svc := newServiceForTest(base(), fakeSessions{rec: liveWorker(), ok: true}, fakePRs{}, fakeProjects{}, &fakeRunner{})
-		if _, err := svc.Trigger(context.Background(), "mer-1"); !errors.Is(err, ErrInvalid) {
+		eng := newEngineForTest(&fakeStore{}, fakeSessions{rec: liveWorker(), ok: true}, fakePRs{}, fakeProjects{}, &fakeLauncher{})
+		if _, err := eng.Trigger(context.Background(), "mer-1"); !errors.Is(err, ErrInvalid) {
 			t.Fatalf("err = %v, want ErrInvalid", err)
 		}
 	})
-}
-
-func TestTriggerLaunchFailureMarksRunFailed(t *testing.T) {
-	store := &fakeStore{}
-	runner := &fakeRunner{store: store, requireRun: true, err: errors.New("boom")}
-	svc := newServiceForTest(store, fakeSessions{rec: liveWorker(), ok: true},
-		fakePRs{prs: []domain.PullRequest{{URL: "u"}}}, fakeProjects{}, runner)
-	if _, err := svc.Trigger(context.Background(), "mer-1"); err == nil {
-		t.Fatal("want launch error")
-	}
-	if len(store.runs) != 1 || store.runs[0].Status != domain.ReviewRunFailed {
-		t.Fatalf("run not marked failed: %+v", store.runs)
-	}
 }
 
 func TestSubmitRecordsVerdictAndBody(t *testing.T) {
-	store := &fakeStore{runs: []domain.ReviewRun{{ID: "run-1", SessionID: "mer-1", PRURL: "u", Status: domain.ReviewRunRunning}}}
-	svc := newServiceForTest(store, fakeSessions{rec: liveWorker(), ok: true}, fakePRs{}, fakeProjects{}, &fakeRunner{})
+	store := &fakeStore{runs: []domain.ReviewRun{{ID: "run-1", SessionID: "mer-1", Status: domain.ReviewRunRunning}}}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, &fakeLauncher{})
 
-	run, err := svc.Submit(context.Background(), "mer-1", "run-1", domain.VerdictChangesRequested, "please fix")
+	run, err := eng.Submit(context.Background(), "mer-1", "run-1", domain.VerdictChangesRequested, "please fix")
 	if err != nil {
 		t.Fatalf("Submit: %v", err)
 	}
 	if run.Status != domain.ReviewRunComplete || run.Verdict != domain.VerdictChangesRequested || run.Body != "please fix" {
 		t.Fatalf("run = %+v", run)
 	}
-	if store.runs[0].Status != domain.ReviewRunComplete || store.runs[0].Body != "please fix" {
-		t.Fatalf("persisted run = %+v", store.runs[0])
-	}
 }
 
-func TestSubmitValidation(t *testing.T) {
-	store := &fakeStore{runs: []domain.ReviewRun{{ID: "run-1", Status: domain.ReviewRunRunning}}}
-	svc := newServiceForTest(store, fakeSessions{rec: liveWorker(), ok: true}, fakePRs{}, fakeProjects{}, &fakeRunner{})
+func TestSubmitValidationAndOwnership(t *testing.T) {
+	store := &fakeStore{runs: []domain.ReviewRun{{ID: "run-1", SessionID: "other", Status: domain.ReviewRunRunning}}}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, &fakeLauncher{})
 
-	if _, err := svc.Submit(context.Background(), "mer-1", "run-1", "garbage", "b"); !errors.Is(err, ErrInvalid) {
+	if _, err := eng.Submit(context.Background(), "mer-1", "", domain.VerdictApproved, ""); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("missing run id err = %v", err)
+	}
+	if _, err := eng.Submit(context.Background(), "mer-1", "run-1", "garbage", "b"); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("bad verdict err = %v", err)
 	}
-	if _, err := svc.Submit(context.Background(), "mer-1", "run-1", domain.VerdictChangesRequested, ""); !errors.Is(err, ErrInvalid) {
-		t.Fatalf("empty body err = %v", err)
+	if _, err := eng.Submit(context.Background(), "mer-1", "missing", domain.VerdictApproved, ""); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown run err = %v", err)
+	}
+	if _, err := eng.Submit(context.Background(), "mer-1", "run-1", domain.VerdictApproved, ""); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("ownership err = %v", err)
 	}
 }
 
-func TestSubmitNoRun(t *testing.T) {
-	svc := newServiceForTest(&fakeStore{}, fakeSessions{rec: liveWorker(), ok: true}, fakePRs{}, fakeProjects{}, &fakeRunner{})
-	if _, err := svc.Submit(context.Background(), "mer-1", "run-1", domain.VerdictApproved, ""); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("err = %v, want ErrNotFound", err)
+func TestListReturnsHandleAndRuns(t *testing.T) {
+	store := &fakeStore{
+		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", ReviewerHandleID: "review-mer-1"},
+		runs:   []domain.ReviewRun{{ID: "run-1", SessionID: "mer-1", TargetSHA: "sha1"}},
 	}
-}
-
-func TestSubmitTargetsSpecifiedRun(t *testing.T) {
-	store := &fakeStore{runs: []domain.ReviewRun{
-		{ID: "run-1", SessionID: "mer-1", Status: domain.ReviewRunRunning, Iteration: 1},
-		{ID: "run-2", SessionID: "mer-1", Status: domain.ReviewRunRunning, Iteration: 2},
-	}}
-	svc := newServiceForTest(store, fakeSessions{rec: liveWorker(), ok: true}, fakePRs{}, fakeProjects{}, &fakeRunner{})
-
-	run, err := svc.Submit(context.Background(), "mer-1", "run-1", domain.VerdictApproved, "")
-	if err != nil {
-		t.Fatalf("Submit: %v", err)
-	}
-	if run.ID != "run-1" || store.runs[0].Status != domain.ReviewRunComplete {
-		t.Fatalf("run-1 not completed: returned=%+v stored=%+v", run, store.runs[0])
-	}
-	if store.runs[1].Status != domain.ReviewRunRunning {
-		t.Fatalf("run-2 should remain running: %+v", store.runs[1])
-	}
-}
-
-func TestSubmitRejectsNonRunningRun(t *testing.T) {
-	store := &fakeStore{runs: []domain.ReviewRun{{ID: "run-1", SessionID: "mer-1", Status: domain.ReviewRunComplete}}}
-	svc := newServiceForTest(store, fakeSessions{rec: liveWorker(), ok: true}, fakePRs{}, fakeProjects{}, &fakeRunner{})
-
-	if _, err := svc.Submit(context.Background(), "mer-1", "run-1", domain.VerdictApproved, ""); !errors.Is(err, ErrInvalid) {
-		t.Fatalf("err = %v, want ErrInvalid", err)
-	}
-}
-
-func TestSubmitRejectsRunForDifferentWorker(t *testing.T) {
-	store := &fakeStore{runs: []domain.ReviewRun{{ID: "run-1", SessionID: "other-1", Status: domain.ReviewRunRunning}}}
-	svc := newServiceForTest(store, fakeSessions{rec: liveWorker(), ok: true}, fakePRs{}, fakeProjects{}, &fakeRunner{})
-
-	if _, err := svc.Submit(context.Background(), "mer-1", "run-1", domain.VerdictApproved, ""); !errors.Is(err, ErrInvalid) {
-		t.Fatalf("err = %v, want ErrInvalid", err)
-	}
-}
-
-func TestListReturnsRuns(t *testing.T) {
-	store := &fakeStore{runs: []domain.ReviewRun{{ID: "run-1", Iteration: 1}}}
-	svc := newServiceForTest(store, fakeSessions{rec: liveWorker(), ok: true}, fakePRs{}, fakeProjects{}, &fakeRunner{})
-	runs, err := svc.List(context.Background(), "mer-1")
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, &fakeLauncher{})
+	got, err := eng.List(context.Background(), "mer-1")
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
-	if len(runs) != 1 || runs[0].ID != "run-1" {
-		t.Fatalf("runs = %+v", runs)
+	if got.ReviewerHandleID != "review-mer-1" || len(got.Runs) != 1 {
+		t.Fatalf("list = %+v", got)
 	}
 }

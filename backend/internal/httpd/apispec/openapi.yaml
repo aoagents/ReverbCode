@@ -916,6 +916,12 @@ paths:
           description: Session identifier, e.g. project-1.
           type: string
       responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewRunResponse'
+          description: OK
         "201":
           content:
             application/json:
@@ -1230,11 +1236,14 @@ components:
       type: object
     ListReviewsResponse:
       properties:
+        reviewerHandleId:
+          type: string
         reviews:
           items:
             $ref: '#/components/schemas/ReviewRun'
           type: array
       required:
+      - reviewerHandleId
       - reviews
       type: object
     ListSessionPRsResponse:
@@ -1453,8 +1462,6 @@ components:
           type: string
         id:
           type: string
-        iteration:
-          type: integer
         prUrl:
           type: string
         reviewId:
@@ -1462,6 +1469,8 @@ components:
         sessionId:
           type: string
         status:
+          type: string
+        targetSha:
           type: string
         verdict:
           type: string
@@ -1471,9 +1480,9 @@ components:
       - sessionId
       - harness
       - prUrl
+      - targetSha
       - status
       - verdict
-      - iteration
       - body
       - createdAt
       type: object
@@ -1481,8 +1490,11 @@ components:
       properties:
         review:
           $ref: '#/components/schemas/ReviewRun'
+        reviewerHandleId:
+          type: string
       required:
       - review
+      - reviewerHandleId
       type: object
     RoleOverride:
       properties:

@@ -10,6 +10,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/activitydispatch"
 	agentregistry "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/registry"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/zellij"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/workspace/gitworktree"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -17,7 +18,6 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/observe/reaper"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	reviewcore "github.com/aoagents/agent-orchestrator/backend/internal/review"
-	reviewrunner "github.com/aoagents/agent-orchestrator/backend/internal/review_runner"
 	reviewsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/review"
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
 	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
@@ -58,7 +58,7 @@ func (l *lifecycleStack) Stop() {
 // over the real zellij runtime, a per-session gitworktree workspace, the shared
 // store + LCM, the per-session agent resolver (AO_AGENT default), and the
 // agent messenger. The returned service is mounted at httpd APIDeps.Sessions.
-func startSession(cfg config.Config, runtime ports.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, messenger ports.AgentMessenger, log *slog.Logger) (*sessionsvc.Service, reviewsvc.Manager, error) {
+func startSession(cfg config.Config, runtime *zellij.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, messenger ports.AgentMessenger, log *slog.Logger) (*sessionsvc.Service, reviewsvc.Manager, error) {
 	agents, err := buildAgentResolver(cfg.Agent, log)
 	if err != nil {
 		return nil, nil, err
@@ -111,7 +111,7 @@ func startSession(cfg config.Config, runtime ports.Runtime, store *sqlite.Store,
 		Sessions: store,
 		PRs:      store,
 		Projects: store,
-		Runner:   reviewrunner.New(reviewers, runtime),
+		Launcher: reviewcore.NewLauncher(reviewers, runtime),
 	})
 	reviewSvc := reviewsvc.New(reviewEngine)
 	return sessionSvc, reviewSvc, nil

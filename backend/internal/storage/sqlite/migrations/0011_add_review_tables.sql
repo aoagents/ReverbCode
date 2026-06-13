@@ -6,13 +6,16 @@
 -- +goose Up
 -- +goose StatementBegin
 CREATE TABLE review (
-    id          TEXT PRIMARY KEY,
-    session_id  TEXT NOT NULL UNIQUE REFERENCES sessions (id) ON DELETE CASCADE,
-    project_id  TEXT NOT NULL REFERENCES projects (id),
-    harness     TEXT NOT NULL,
-    pr_url      TEXT NOT NULL DEFAULT '',
-    created_at  TIMESTAMP NOT NULL,
-    updated_at  TIMESTAMP NOT NULL
+    id                 TEXT PRIMARY KEY,
+    session_id         TEXT NOT NULL UNIQUE REFERENCES sessions (id) ON DELETE CASCADE,
+    project_id         TEXT NOT NULL REFERENCES projects (id),
+    harness            TEXT NOT NULL,
+    pr_url             TEXT NOT NULL DEFAULT '',
+    -- runtime handle id of the live reviewer pane, reused across passes and
+    -- exposed so the UI can attach its terminal over /mux.
+    reviewer_handle_id TEXT NOT NULL DEFAULT '',
+    created_at         TIMESTAMP NOT NULL,
+    updated_at         TIMESTAMP NOT NULL
 );
 -- +goose StatementEnd
 
@@ -23,9 +26,11 @@ CREATE TABLE review_run (
     session_id  TEXT NOT NULL REFERENCES sessions (id) ON DELETE CASCADE,
     harness     TEXT NOT NULL,
     pr_url      TEXT NOT NULL DEFAULT '',
+    -- the commit the pass reviewed; lets a repeat trigger for the same head
+    -- short-circuit to the existing run.
+    target_sha  TEXT NOT NULL DEFAULT '',
     status      TEXT NOT NULL DEFAULT 'running',
     verdict     TEXT NOT NULL DEFAULT '',
-    iteration   INTEGER NOT NULL DEFAULT 1,
     body        TEXT NOT NULL DEFAULT '',
     created_at  TIMESTAMP NOT NULL
 );

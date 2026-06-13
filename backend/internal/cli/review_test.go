@@ -37,7 +37,6 @@ func aliveDeps() Deps { return Deps{ProcessAlive: func(int) bool { return true }
 
 func TestReviewSubmitReadsBodyFile(t *testing.T) {
 	cfg := setConfigEnv(t)
-	t.Setenv("AO_REVIEW_RUN_ID", "run-1")
 	srv, capture := reviewServer(t, http.StatusOK, `{"review":{"verdict":"changes_requested"}}`)
 	writeRunFileFor(t, cfg, srv)
 
@@ -47,7 +46,7 @@ func TestReviewSubmitReadsBodyFile(t *testing.T) {
 	}
 
 	_, errOut, err := executeCLI(t, aliveDeps(),
-		"review", "submit", "mer-1", "--verdict", "changes_requested", "--body", bodyFile)
+		"review", "submit", "mer-1", "--run", "run-1", "--verdict", "changes_requested", "--body", bodyFile)
 	if err != nil {
 		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
 	}
@@ -63,14 +62,12 @@ func TestReviewSubmitReadsBodyFile(t *testing.T) {
 	}
 }
 
-func TestReviewSubmitUsesEnvWorker(t *testing.T) {
+func TestReviewSubmitUsesSessionFlag(t *testing.T) {
 	cfg := setConfigEnv(t)
-	t.Setenv("AO_REVIEW_WORKER", "mer-7")
-	t.Setenv("AO_REVIEW_RUN_ID", "run-7")
 	srv, capture := reviewServer(t, http.StatusOK, `{"review":{"verdict":"approved"}}`)
 	writeRunFileFor(t, cfg, srv)
 
-	if _, errOut, err := executeCLI(t, aliveDeps(), "review", "submit", "--verdict", "approved"); err != nil {
+	if _, errOut, err := executeCLI(t, aliveDeps(), "review", "submit", "--session", "mer-7", "--run", "run-7", "--verdict", "approved"); err != nil {
 		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
 	}
 	if capture.path != "/api/v1/sessions/mer-7/reviews/submit" {
@@ -80,8 +77,7 @@ func TestReviewSubmitUsesEnvWorker(t *testing.T) {
 
 func TestReviewSubmitMissingVerdictIsUsageError(t *testing.T) {
 	setConfigEnv(t)
-	t.Setenv("AO_REVIEW_RUN_ID", "run-1")
-	_, _, err := executeCLI(t, aliveDeps(), "review", "submit", "mer-1")
+	_, _, err := executeCLI(t, aliveDeps(), "review", "submit", "mer-1", "--run", "run-1")
 	if got := ExitCode(err); got != 2 {
 		t.Fatalf("exit code = %d, want 2 (usage); err=%v", got, err)
 	}
@@ -89,9 +85,7 @@ func TestReviewSubmitMissingVerdictIsUsageError(t *testing.T) {
 
 func TestReviewSubmitMissingWorkerIsUsageError(t *testing.T) {
 	setConfigEnv(t)
-	t.Setenv("AO_REVIEW_WORKER", "")
-	t.Setenv("AO_REVIEW_RUN_ID", "run-1")
-	_, _, err := executeCLI(t, aliveDeps(), "review", "submit", "--verdict", "approved")
+	_, _, err := executeCLI(t, aliveDeps(), "review", "submit", "--run", "run-1", "--verdict", "approved")
 	if got := ExitCode(err); got != 2 {
 		t.Fatalf("exit code = %d, want 2 (usage); err=%v", got, err)
 	}
@@ -99,9 +93,7 @@ func TestReviewSubmitMissingWorkerIsUsageError(t *testing.T) {
 
 func TestReviewSubmitMissingRunIsUsageError(t *testing.T) {
 	setConfigEnv(t)
-	t.Setenv("AO_REVIEW_WORKER", "mer-1")
-	t.Setenv("AO_REVIEW_RUN_ID", "")
-	_, _, err := executeCLI(t, aliveDeps(), "review", "submit", "--verdict", "approved")
+	_, _, err := executeCLI(t, aliveDeps(), "review", "submit", "mer-1", "--verdict", "approved")
 	if got := ExitCode(err); got != 2 {
 		t.Fatalf("exit code = %d, want 2 (usage); err=%v", got, err)
 	}

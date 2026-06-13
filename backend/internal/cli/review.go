@@ -17,16 +17,17 @@ type reviewRun struct {
 	SessionID string    `json:"sessionId"`
 	Harness   string    `json:"harness"`
 	PRURL     string    `json:"prUrl"`
+	TargetSHA string    `json:"targetSha"`
 	Status    string    `json:"status"`
 	Verdict   string    `json:"verdict"`
-	Iteration int       `json:"iteration"`
 	Body      string    `json:"body"`
 	CreatedAt time.Time `json:"createdAt"`
 }
 
 // reviewRunResponse mirrors controllers.ReviewRunResponse.
 type reviewRunResponse struct {
-	Review reviewRun `json:"review"`
+	Review           reviewRun `json:"review"`
+	ReviewerHandleID string    `json:"reviewerHandleId"`
 }
 
 // submitReviewRequest mirrors controllers.SubmitReviewInput.
@@ -62,8 +63,8 @@ func newReviewSubmitCommand(ctx *commandContext) *cobra.Command {
 			return ctx.submitReview(cmd, args, opts)
 		},
 	}
-	cmd.Flags().StringVar(&opts.session, "session", "", "Worker session id (defaults to $AO_REVIEW_WORKER)")
-	cmd.Flags().StringVar(&opts.runID, "run", "", "Review run id (defaults to $AO_REVIEW_RUN_ID)")
+	cmd.Flags().StringVar(&opts.session, "session", "", "Worker session id (or pass it as the positional argument)")
+	cmd.Flags().StringVar(&opts.runID, "run", "", "Review run id (required)")
 	cmd.Flags().StringVar(&opts.verdict, "verdict", "", "Review verdict: approved or changes_requested (required)")
 	cmd.Flags().StringVar(&opts.body, "body", "", "Path to a Markdown file with the review body")
 	return cmd
@@ -75,17 +76,11 @@ func (c *commandContext) submitReview(cmd *cobra.Command, args []string, opts re
 		session = strings.TrimSpace(args[0])
 	}
 	if session == "" {
-		session = strings.TrimSpace(os.Getenv("AO_REVIEW_WORKER"))
-	}
-	if session == "" {
-		return usageError{errors.New("usage: worker session id is required (positional, --session, or $AO_REVIEW_WORKER)")}
+		return usageError{errors.New("usage: worker session id is required (positional or --session)")}
 	}
 	runID := strings.TrimSpace(opts.runID)
 	if runID == "" {
-		runID = strings.TrimSpace(os.Getenv("AO_REVIEW_RUN_ID"))
-	}
-	if runID == "" {
-		return usageError{errors.New("usage: review run id is required (--run or $AO_REVIEW_RUN_ID)")}
+		return usageError{errors.New("usage: --run is required")}
 	}
 	verdict := strings.TrimSpace(opts.verdict)
 	if verdict == "" {

@@ -434,6 +434,7 @@ export interface components {
             projects: components["schemas"]["ProjectSummary"][];
         };
         ListReviewsResponse: {
+            reviewerHandleId: string;
             reviews: components["schemas"]["ReviewRun"][];
         };
         ListSessionPRsResponse: {
@@ -521,15 +522,16 @@ export interface components {
             createdAt: string;
             harness: string;
             id: string;
-            iteration: number;
             prUrl: string;
             reviewId: string;
             sessionId: string;
             status: string;
+            targetSha: string;
             verdict: string;
         };
         ReviewRunResponse: {
             review: components["schemas"]["ReviewRun"];
+            reviewerHandleId: string;
         };
         RoleOverride: {
             agent?: string;
@@ -1778,6 +1780,15 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewRunResponse"];
+                };
+            };
             /** @description Created */
             201: {
                 headers: {

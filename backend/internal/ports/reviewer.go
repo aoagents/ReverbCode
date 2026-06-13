@@ -13,19 +13,30 @@ import (
 // returns its own argv with no prompt at all.
 type Reviewer interface {
 	// ReviewCommand builds the command (and any extra env) AO should run to
-	// review the worker's checkout for a PR.
+	// spawn a fresh reviewer over the worker's checkout for a PR.
 	ReviewCommand(ctx context.Context, inv ReviewInvocation) (ReviewCommandSpec, error)
+	// ReviewMessage builds the text AO injects into an already-running reviewer
+	// pane to ask it to review a new commit. It must be self-contained (carry
+	// the ids the reviewer needs to submit) since AO passes no environment.
+	ReviewMessage(ctx context.Context, inv ReviewInvocation) (string, error)
 }
 
-// ReviewInvocation describes one review pass for a reviewer to act on.
+// ReviewInvocation describes one review pass for a reviewer to act on. All ids
+// the reviewer needs are passed explicitly here (and embedded in the prompt /
+// message), never through environment variables.
 type ReviewInvocation struct {
 	// ReviewerID is a stable id for the reviewer's runtime instance (pane,
 	// native session id), derived from the worker session.
 	ReviewerID string
+	// RunID is the review_run this pass completes; the reviewer passes it to
+	// `ao review submit`.
+	RunID string
 	// WorkerSessionID is the worker whose PR is under review.
 	WorkerSessionID domain.SessionID
 	// PRURL is the pull request to review.
 	PRURL string
+	// TargetSHA is the PR head commit under review.
+	TargetSHA string
 	// WorkspacePath is the worker's checkout the reviewer reads.
 	WorkspacePath string
 }
