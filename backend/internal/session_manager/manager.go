@@ -594,24 +594,17 @@ func buildPrompt(cfg ports.SpawnConfig) string {
 	return cfg.Prompt
 }
 
-// orchestratorKickoffPrompt is the default first turn for an orchestrator
-// spawned without an explicit prompt. The role definition rides the system
-// prompt, and an interactive agent launched with only a system prompt sits at
-// an empty input box; this gives it a turn to act on.
-const orchestratorKickoffPrompt = "Get oriented: review the current repo state and any active worker sessions, then report your status and wait for direction."
-
 // buildSpawnTexts returns the user-facing prompt and the system prompt to
 // deliver separately to the agent. Orchestrator role instructions and worker
 // coordination hints are placed in the system prompt so they are treated as
-// standing instructions rather than part of the human's task request.
+// standing instructions rather than part of the human's task request. A
+// promptless spawn delivers no user prompt at all: the agent simply lands at an
+// empty input box rather than receiving an auto-generated kickoff turn.
 func (m *Manager) buildSpawnTexts(ctx context.Context, cfg ports.SpawnConfig) (prompt, systemPrompt string, err error) {
 	prompt = buildPrompt(cfg)
 	systemPrompt, err = m.buildSystemPrompt(ctx, cfg.Kind, cfg.ProjectID)
 	if err != nil {
 		return "", "", err
-	}
-	if cfg.Kind == domain.KindOrchestrator && prompt == "" {
-		prompt = orchestratorKickoffPrompt
 	}
 	return prompt, systemPrompt, nil
 }
