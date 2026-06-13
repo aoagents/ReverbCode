@@ -28,6 +28,10 @@ var (
 	// ErrProjectNotResolvable means the spawn's project has no usable repo
 	// (unregistered, archived, or missing a path). The API maps it to a 400.
 	ErrProjectNotResolvable = errors.New("session: project repo not resolvable")
+	// ErrUnknownHarness means the requested agent harness has no registered
+	// adapter. The API maps it to a 400 so a typo'd `--harness` is a validation
+	// error, not an opaque 500.
+	ErrUnknownHarness = errors.New("session: unknown agent harness")
 )
 
 // Env vars a spawned process reads to learn who it is.
@@ -162,6 +166,13 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	// A per-project role override picks the harness when the spawn names none,
 	// so a project can default workers to one agent and orchestrators to another.
 	cfg.Harness = effectiveHarness(cfg.Harness, cfg.Kind, project.Config)
+
+	// Reject an unknown harness before any durable state is created. Doing this
+	// after CreateSession would leave a terminated orphan row and waste a
+	// worktree on a spawn that can never launch.
+	if _, ok := m.agents.Agent(cfg.Harness); !ok {
+		return domain.SessionRecord{}, fmt.Errorf("spawn: %w: %q", ErrUnknownHarness, cfg.Harness)
+	}
 
 	prompt, systemPrompt, err := m.buildSpawnTexts(ctx, cfg)
 	if err != nil {

@@ -175,6 +175,11 @@ type singleAgent struct{ agent ports.Agent }
 
 func (s singleAgent) Agent(domain.AgentHarness) (ports.Agent, bool) { return s.agent, true }
 
+// missingAgents resolves no harness, simulating a typo'd or unregistered agent.
+type missingAgents struct{}
+
+func (missingAgents) Agent(domain.AgentHarness) (ports.Agent, bool) { return nil, false }
+
 type fakeWorkspace struct {
 	createErr  error
 	destroyErr error
@@ -799,6 +804,29 @@ func TestSpawn_RejectsMissingAgentBinary(t *testing.T) {
 	}
 	if !st.sessions["mer-1"].IsTerminated {
 		t.Fatal("the orphan row should be marked terminated after the failed spawn")
+	}
+}
+
+func TestSpawn_RejectsUnknownHarness(t *testing.T) {
+	st := newFakeStore()
+	rt := &fakeRuntime{}
+	ws := &fakeWorkspace{}
+	m := New(Deps{Runtime: rt, Agents: missingAgents{}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: func(string) (string, error) { return "/bin/true", nil }})
+
+	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Harness: "bogus"})
+	if !errors.Is(err, ErrUnknownHarness) {
+		t.Fatalf("err = %v, want ErrUnknownHarness", err)
+	}
+	// The harness is rejected before any durable state is created — no seed row,
+	// no worktree — so an unknown harness never leaves an orphan behind.
+	if len(st.sessions) != 0 {
+		t.Fatalf("no session row should be created, got %d", len(st.sessions))
+	}
+	if ws.lastCfg.SessionID != "" || ws.destroyed != 0 {
+		t.Fatal("workspace must not be created for an unknown harness")
+	}
+	if rt.created != 0 {
+		t.Fatal("runtime must not be created for an unknown harness")
 	}
 }
 
