@@ -149,12 +149,15 @@ func TestWiring_StartSessionBuildsSessionService(t *testing.T) {
 
 	runtime := zellij.New(zellij.Options{})
 	messenger := newSessionMessenger(store, runtime, log)
-	svc, err := startSession(cfg, runtime, store, lcm, messenger, log)
+	svc, reviewSvc, err := startSession(cfg, runtime, store, lcm, messenger, log)
 	if err != nil {
 		t.Fatalf("startSession: %v", err)
 	}
 	if svc == nil {
 		t.Fatal("startSession returned nil session service")
+	}
+	if reviewSvc == nil {
+		t.Fatal("startSession returned nil review service")
 	}
 }
 

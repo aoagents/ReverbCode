@@ -9,12 +9,16 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/activitydispatch"
 	agentregistry "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/registry"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/zellij"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/workspace/gitworktree"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/lifecycle"
 	"github.com/aoagents/agent-orchestrator/backend/internal/observe/reaper"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	reviewcore "github.com/aoagents/agent-orchestrator/backend/internal/review"
+	reviewsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/review"
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
 	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
@@ -54,10 +58,10 @@ func (l *lifecycleStack) Stop() {
 // over the real zellij runtime, a per-session gitworktree workspace, the shared
 // store + LCM, the per-session agent resolver (AO_AGENT default), and the
 // agent messenger. The returned service is mounted at httpd APIDeps.Sessions.
-func startSession(cfg config.Config, runtime ports.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, messenger ports.AgentMessenger, log *slog.Logger) (*sessionsvc.Service, error) {
+func startSession(cfg config.Config, runtime *zellij.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, messenger ports.AgentMessenger, log *slog.Logger) (*sessionsvc.Service, reviewsvc.Manager, error) {
 	agents, err := buildAgentResolver(cfg.Agent, log)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	ws, err := gitworktree.New(gitworktree.Options{
 		// Per-session worktrees live under the data dir, so a single AO_DATA_DIR
@@ -69,7 +73,7 @@ func startSession(cfg config.Config, runtime ports.Runtime, store *sqlite.Store,
 		RepoResolver: projectRepoResolver{store: store},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("session workspace: %w", err)
+		return nil, nil, fmt.Errorf("session workspace: %w", err)
 	}
 	mgr := sessionmanager.New(sessionmanager.Deps{
 		Runtime:   runtime,
@@ -85,7 +89,7 @@ func startSession(cfg config.Config, runtime ports.Runtime, store *sqlite.Store,
 	if err != nil {
 		logSCMProviderDisabled(log, err)
 	}
-	return sessionsvc.NewWithDeps(sessionsvc.Deps{
+	sessionSvc := sessionsvc.NewWithDeps(sessionsvc.Deps{
 		Manager:   mgr,
 		Store:     store,
 		PRClaimer: store,
@@ -93,7 +97,24 @@ func startSession(cfg config.Config, runtime ports.Runtime, store *sqlite.Store,
 		// no_signal only makes sense for harnesses whose adapters install
 		// activity hooks; the deriver registry is the source of truth for that.
 		SignalCapable: activitydispatch.SupportsHarness,
-	}), nil
+	})
+	// Triggering a review spawns a reviewer over the worker's worktree, resolved
+	// from the reviewer registry (distinct from the worker agent set). The
+	// reviewer posts its review to the PR itself, so the service needs no SCM
+	// writer.
+	reviewers, err := reviewer.NewResolver()
+	if err != nil {
+		return nil, nil, fmt.Errorf("reviewer resolver: %w", err)
+	}
+	reviewEngine := reviewcore.New(reviewcore.Deps{
+		Store:    store,
+		Sessions: store,
+		PRs:      store,
+		Projects: store,
+		Launcher: reviewcore.NewLauncher(reviewers, runtime),
+	})
+	reviewSvc := reviewsvc.New(reviewEngine)
+	return sessionSvc, reviewSvc, nil
 }
 
 // runtimeMessageSender is the narrow part of the concrete runtime needed by

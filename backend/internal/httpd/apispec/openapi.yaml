@@ -412,95 +412,6 @@ paths:
       summary: Resolve review threads on a pull request
       tags:
       - prs
-  /api/v1/reviews:
-    get:
-      operationId: listReviews
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ListReviewsResponse'
-          description: OK
-        "501":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Not Implemented
-      summary: List code-review runs
-      tags:
-      - reviews
-  /api/v1/reviews/{id}/send:
-    post:
-      operationId: sendReview
-      parameters:
-      - description: Review run id.
-        in: path
-        name: id
-        required: true
-        schema:
-          description: Review run id.
-          type: string
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ReviewResponse'
-          description: OK
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Not Found
-        "501":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Not Implemented
-      summary: Send a review run's findings to its PR
-      tags:
-      - reviews
-  /api/v1/reviews/execute:
-    post:
-      operationId: executeReview
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ExecuteReviewInput'
-        required: true
-      responses:
-        "201":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ReviewResponse'
-          description: Created
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Bad Request
-        "422":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Unprocessable Entity
-        "501":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Not Implemented
-      summary: Start a code-review run for a session's PR
-      tags:
-      - reviews
   /api/v1/sessions:
     get:
       operationId: listSessions
@@ -909,6 +820,135 @@ paths:
       summary: Restore a terminated session
       tags:
       - sessions
+  /api/v1/sessions/{sessionId}/reviews:
+    get:
+      operationId: listReviews
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListReviewsResponse'
+          description: OK
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Unprocessable Entity
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: List a worker's code-review runs
+      tags:
+      - reviews
+  /api/v1/sessions/{sessionId}/reviews/submit:
+    post:
+      operationId: submitReview
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubmitReviewInput'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewRunResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Unprocessable Entity
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Record a reviewer's result for a worker's PR
+      tags:
+      - reviews
+  /api/v1/sessions/{sessionId}/reviews/trigger:
+    post:
+      operationId: triggerReview
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewRunResponse'
+          description: OK
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewRunResponse'
+          description: Created
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Unprocessable Entity
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Trigger a code review of a worker's PR
+      tags:
+      - reviews
   /api/v1/sessions/{sessionId}/rollback:
     post:
       operationId: rollbackSession
@@ -1166,13 +1206,12 @@ components:
       - state
       - lastActivityAt
       type: object
-    ExecuteReviewInput:
+    DomainReviewerConfig:
       properties:
-        sessionId:
-          description: Session whose PR to review.
+        harness:
           type: string
       required:
-      - sessionId
+      - harness
       type: object
     KillSessionResponse:
       properties:
@@ -1197,11 +1236,14 @@ components:
       type: object
     ListReviewsResponse:
       properties:
+        reviewerHandleId:
+          type: string
         reviews:
           items:
             $ref: '#/components/schemas/ReviewRun'
           type: array
       required:
+      - reviewerHandleId
       - reviews
       type: object
     ListSessionPRsResponse:
@@ -1295,6 +1337,10 @@ components:
         postCreate:
           items:
             type: string
+          type: array
+        reviewers:
+          items:
+            $ref: '#/components/schemas/DomainReviewerConfig'
           type: array
         sessionPrefix:
           type: string
@@ -1405,53 +1451,50 @@ components:
       - sessionId
       - session
       type: object
-    ReviewFinding:
+    ReviewRun:
       properties:
         body:
           type: string
-        id:
-          type: string
-        line:
-          type: integer
-        path:
-          type: string
-        severity:
-          type: string
-      required:
-      - id
-      - path
-      - line
-      - severity
-      - body
-      type: object
-    ReviewResponse:
-      properties:
-        review:
-          $ref: '#/components/schemas/ReviewRun'
-      required:
-      - review
-      type: object
-    ReviewRun:
-      properties:
         createdAt:
           format: date-time
           type: string
-        findings:
-          items:
-            $ref: '#/components/schemas/ReviewFinding'
-          type: array
+        harness:
+          type: string
         id:
+          type: string
+        prUrl:
+          type: string
+        reviewId:
           type: string
         sessionId:
           type: string
         status:
           type: string
+        targetSha:
+          type: string
+        verdict:
+          type: string
       required:
       - id
+      - reviewId
       - sessionId
+      - harness
+      - prUrl
+      - targetSha
       - status
+      - verdict
+      - body
       - createdAt
-      - findings
+      type: object
+    ReviewRunResponse:
+      properties:
+        review:
+          $ref: '#/components/schemas/ReviewRun'
+        reviewerHandleId:
+          type: string
+      required:
+      - review
+      - reviewerHandleId
       type: object
     RoleOverride:
       properties:
@@ -1668,6 +1711,22 @@ components:
           type: string
       required:
       - projectId
+      type: object
+    SubmitReviewInput:
+      properties:
+        body:
+          description: Review body recorded by AO. Required for changes_requested.
+          type: string
+        runId:
+          description: Review run id being completed.
+          type: string
+        verdict:
+          description: 'Review verdict: approved or changes_requested.'
+          type: string
+      required:
+      - runId
+      - verdict
+      - body
       type: object
     WorkspaceRepo:
       properties:

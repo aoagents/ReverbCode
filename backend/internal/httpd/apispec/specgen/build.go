@@ -161,11 +161,10 @@ var schemaNames = map[string]string{
 	"ControllersResolveCommentsResponse": "ResolveCommentsResponse",
 	// httpd/controllers — review wire envelopes
 	"ControllersListReviewsResponse": "ListReviewsResponse",
-	"ControllersExecuteReviewInput":  "ExecuteReviewInput",
-	"ControllersReviewResponse":      "ReviewResponse",
-	// service/review entities
-	"ReviewRun":     "ReviewRun",
-	"ReviewFinding": "ReviewFinding",
+	"ControllersReviewRunResponse":   "ReviewRunResponse",
+	"ControllersSubmitReviewInput":   "SubmitReviewInput",
+	// domain review entities
+	"DomainReviewRun": "ReviewRun",
 	// service/project entities + DTOs
 	"ProjectProject":        "Project",
 	"ProjectSummary":        "ProjectSummary",
@@ -255,35 +254,42 @@ func operations() []operation {
 	return ops
 }
 
-// reviewOperations declares the /reviews operations. Must stay 1:1 with the
-// routes ReviewsController.Register mounts (enforced by the parity test).
+// reviewOperations declares the session-scoped /reviews operations. Must stay
+// 1:1 with the routes ReviewsController.Register mounts (enforced by the parity
+// test).
 func reviewOperations() []operation {
 	return []operation{
 		{
-			method: http.MethodGet, path: "/api/v1/reviews", id: "listReviews", tag: "reviews",
-			summary: "List code-review runs",
+			method: http.MethodGet, path: "/api/v1/sessions/{sessionId}/reviews", id: "listReviews", tag: "reviews",
+			summary:    "List a worker's code-review runs",
+			pathParams: []any{controllers.SessionIDParam{}},
 			resps: []respUnit{
 				{http.StatusOK, controllers.ListReviewsResponse{}},
-				{http.StatusNotImplemented, envelope.APIError{}},
-			},
-		},
-		{
-			method: http.MethodPost, path: "/api/v1/reviews/execute", id: "executeReview", tag: "reviews",
-			summary: "Start a code-review run for a session's PR",
-			reqBody: controllers.ExecuteReviewInput{},
-			resps: []respUnit{
-				{http.StatusCreated, controllers.ReviewResponse{}},
-				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusUnprocessableEntity, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
 			},
 		},
 		{
-			method: http.MethodPost, path: "/api/v1/reviews/{id}/send", id: "sendReview", tag: "reviews",
-			summary:    "Send a review run's findings to its PR",
-			pathParams: []any{controllers.ReviewIDParam{}},
+			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/reviews/trigger", id: "triggerReview", tag: "reviews",
+			summary:    "Trigger a code review of a worker's PR",
+			pathParams: []any{controllers.SessionIDParam{}},
 			resps: []respUnit{
-				{http.StatusOK, controllers.ReviewResponse{}},
+				{http.StatusOK, controllers.ReviewRunResponse{}},
+				{http.StatusCreated, controllers.ReviewRunResponse{}},
+				{http.StatusUnprocessableEntity, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/reviews/submit", id: "submitReview", tag: "reviews",
+			summary:    "Record a reviewer's result for a worker's PR",
+			pathParams: []any{controllers.SessionIDParam{}},
+			reqBody:    controllers.SubmitReviewInput{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ReviewRunResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusUnprocessableEntity, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
 			},
