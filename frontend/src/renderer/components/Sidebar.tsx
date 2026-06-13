@@ -1,16 +1,5 @@
 import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
-import {
-	ChevronRight,
-	GitPullRequest,
-	Moon,
-	MoreHorizontal,
-	Plus,
-	Search,
-	Settings,
-	Sun,
-	Trash2,
-	Waypoints,
-} from "lucide-react";
+import { ChevronRight, GitPullRequest, Moon, Plus, Search, Settings, Sun, Waypoints } from "lucide-react";
 import { useState } from "react";
 import {
 	attentionZone,
@@ -374,25 +363,6 @@ function ProjectItem({
 			onToggle();
 		} else {
 			selection.goProject(workspace.id);
-		}
-	};
-
-	const removeProject = async () => {
-		setRemoveError(null);
-		const confirmed = window.confirm(
-			`Remove project ${workspace.name}? This stops its live sessions and removes it from the sidebar, but keeps the repository folder and stored history on disk.`,
-		);
-		if (!confirmed) return;
-
-		setIsRemoving(true);
-		try {
-			await onRemoveProject();
-		} catch (err) {
-			const message = err instanceof Error ? err.message : "Could not remove project";
-			setRemoveError(message);
-			window.alert(message);
-		} finally {
-			setIsRemoving(false);
 		}
 	};
 
