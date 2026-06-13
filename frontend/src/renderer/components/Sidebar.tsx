@@ -1,5 +1,16 @@
 import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
-import { ChevronRight, GitPullRequest, Moon, Plus, Search, Settings, Sun, Waypoints } from "lucide-react";
+import {
+	ChevronRight,
+	GitPullRequest,
+	Moon,
+	MoreHorizontal,
+	Plus,
+	Search,
+	Settings,
+	Sun,
+	Trash2,
+	Waypoints,
+} from "lucide-react";
 import { useState } from "react";
 import {
 	attentionZone,
@@ -28,6 +39,7 @@ import {
 	SidebarGroupLabel,
 	SidebarHeader,
 	SidebarMenu,
+	SidebarMenuAction,
 	SidebarMenuButton,
 	SidebarMenuItem,
 	SidebarMenuSub,
@@ -52,6 +64,7 @@ type SidebarProps = {
 	workspaceError?: string;
 	workspaces: WorkspaceSummary[];
 	onCreateProject: (input: { path: string }) => Promise<void>;
+	onRemoveProject: (projectId: string) => Promise<void>;
 };
 
 // Selection state comes from the URL: which project/session is active is the
@@ -93,7 +106,7 @@ function SessionDot({ session }: { session: WorkspaceSession }) {
 // _shell owns open state (synced to the ui-store) and `collapsible="icon"`
 // replaces the old hand-rolled CollapsedRail — the same tree restyles itself
 // via group-data-[collapsible=icon] into the 48px letter rail.
-export function Sidebar({ daemonStatus, workspaceError, workspaces, onCreateProject }: SidebarProps) {
+export function Sidebar({ daemonStatus, workspaceError, workspaces, onCreateProject, onRemoveProject }: SidebarProps) {
 	const selection = useSelection();
 	const eventsConnection = useEventsConnection();
 	const { state } = useSidebar();
@@ -201,6 +214,7 @@ export function Sidebar({ daemonStatus, workspaceError, workspaces, onCreateProj
 										expanded={!collapsedIds.has(workspace.id)}
 										selection={selection}
 										onToggle={() => toggleCollapsed(workspace.id)}
+										onRemoveProject={onRemoveProject}
 									/>
 								))}
 								{isCollapsed && <CreateProjectListItem onCreateProject={onCreateProject} />}
@@ -344,13 +358,17 @@ function ProjectItem({
 	expanded,
 	selection,
 	onToggle,
+	onRemoveProject,
 }: {
 	workspace: WorkspaceSummary;
 	expanded: boolean;
 	selection: Selection;
 	onToggle: () => void;
+	onRemoveProject: (projectId: string) => Promise<void>;
 }) {
 	const projectActive = selection.activeProjectId === workspace.id && !selection.activeSessionId;
+	const [removeError, setRemoveError] = useState<string | null>(null);
+	const [isRemoving, setIsRemoving] = useState(false);
 	// Live workers only: merged/terminated sessions leave the sidebar and stay
 	// reachable through the board's Done / Terminated bar (SessionsBoard).
 	const sessions = workerSessions(workspace.sessions).filter(sessionIsActive);
@@ -363,6 +381,27 @@ function ProjectItem({
 			onToggle();
 		} else {
 			selection.goProject(workspace.id);
+		}
+	};
+
+	const removeProject = async () => {
+		setRemoveError(null);
+		const confirmed = window.confirm(
+			`Remove project ${workspace.name}? This stops its live sessions and removes it from the sidebar, but keeps the repository folder and stored history on disk.`,
+		);
+		if (!confirmed) return;
+
+		setIsRemoving(true);
+		try {
+			await onRemoveProject(workspace.id);
+			// The route for a removed project no longer resolves; fall back home.
+			if (selection.activeProjectId === workspace.id) selection.goHome();
+		} catch (err) {
+			const message = err instanceof Error ? err.message : "Could not remove project";
+			setRemoveError(message);
+			window.alert(message);
+		} finally {
+			setIsRemoving(false);
 		}
 	};
 
@@ -379,6 +418,9 @@ function ProjectItem({
 					"h-auto gap-[9px] rounded-[5px] px-1.5 py-[7px] text-[13px] font-medium text-muted-foreground transition-[padding]",
 					"hover:bg-interactive-hover hover:text-muted-foreground active:bg-interactive-hover active:text-muted-foreground",
 					"data-[active=true]:bg-interactive-active data-[active=true]:font-semibold data-[active=true]:text-foreground",
+					// Make room for the kebab action when the row is hovered, focused, or
+					// its menu is open (the absolutely-positioned action replaces the count).
+					"group-hover/menu-item:pr-[34px] group-focus-within/menu-item:pr-[34px] group-has-data-[state=open]/menu-item:pr-[34px]",
 					// Icon rail: the old 36px letter tile.
 					"group-data-[collapsible=icon]:size-9! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:p-0! group-data-[collapsible=icon]:font-semibold",
 				)}
@@ -393,10 +435,39 @@ function ProjectItem({
 				/>
 				<span className="hidden group-data-[collapsible=icon]:block">{workspace.name.charAt(0).toUpperCase()}</span>
 				<span className="min-w-0 flex-1 truncate group-data-[collapsible=icon]:hidden">{workspace.name}</span>
-				<span className="shrink-0 font-mono text-[11px] text-passive group-hover/menu-item:opacity-0 group-data-[collapsible=icon]:hidden">
+				<span className="shrink-0 font-mono text-[11px] text-passive group-hover/menu-item:opacity-0 group-focus-within/menu-item:opacity-0 group-has-data-[state=open]/menu-item:opacity-0 group-data-[collapsible=icon]:hidden">
 					{sessions.length}
 				</span>
 			</SidebarMenuButton>
+			{/* Per-project actions: a kebab that reveals on row hover (replacing the
+          session count) — surfaces the daemon/CLI removal capability in the UI. */}
+			<DropdownMenu>
+				<DropdownMenuTrigger asChild>
+					<SidebarMenuAction showOnHover aria-label={`Project actions for ${workspace.name}`}>
+						<MoreHorizontal aria-hidden="true" />
+					</SidebarMenuAction>
+				</DropdownMenuTrigger>
+				<DropdownMenuContent side="right" align="start" className="min-w-44">
+					<DropdownMenuItem onSelect={() => selection.goSettings(workspace.id)}>
+						<Settings aria-hidden="true" />
+						Project settings
+					</DropdownMenuItem>
+					<DropdownMenuSeparator />
+					<DropdownMenuItem
+						className="text-destructive focus:text-destructive [&_svg]:text-destructive"
+						disabled={isRemoving}
+						onSelect={() => void removeProject()}
+					>
+						<Trash2 aria-hidden="true" />
+						Remove project
+					</DropdownMenuItem>
+				</DropdownMenuContent>
+			</DropdownMenu>
+			{removeError && (
+				<span className="sr-only" role="status">
+					{removeError}
+				</span>
+			)}
 			{/* project-sidebar__sessions. Divergence from AO (user decision
           2026-06-12): no left indent or tree guide line — every sidebar row
           (project or worker) spans the same full width. */}
