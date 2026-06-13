@@ -151,7 +151,13 @@ function startDaemon(): DaemonStatus {
 		return daemonStatus;
 	}
 
-	const launch = resolveDaemonLaunch(process.env, app.isPackaged, process.resourcesPath, app.getAppPath(), process.platform);
+	const launch = resolveDaemonLaunch(
+		process.env,
+		app.isPackaged,
+		process.resourcesPath,
+		app.getAppPath(),
+		process.platform,
+	);
 	if (!launch) {
 		setDaemonStatus({
 			state: "stopped",

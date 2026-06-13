@@ -1,5 +1,16 @@
 import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
-import { ChevronRight, GitPullRequest, Moon, MoreHorizontal, Plus, Search, Settings, Sun, Trash2, Waypoints } from "lucide-react";
+import {
+	ChevronRight,
+	GitPullRequest,
+	Moon,
+	MoreHorizontal,
+	Plus,
+	Search,
+	Settings,
+	Sun,
+	Trash2,
+	Waypoints,
+} from "lucide-react";
 import { useState } from "react";
 import {
 	attentionZone,
@@ -228,9 +239,9 @@ export function Sidebar({ daemonStatus, workspaceError, workspaces, onCreateProj
 								<span className="tracking-[-0.01em]">Settings</span>
 							</button>
 						</DropdownMenuTrigger>
-							<DropdownMenuContent
-								align="start"
-								className="w-[var(--radix-dropdown-menu-trigger-width)] min-w-0"
+						<DropdownMenuContent
+							align="start"
+							className="w-[var(--radix-dropdown-menu-trigger-width)] min-w-0"
 							side="top"
 						>
 							<DropdownMenuItem onSelect={toggleTheme}>
@@ -256,8 +267,8 @@ export function Sidebar({ daemonStatus, workspaceError, workspaces, onCreateProj
 									</DropdownMenuItem>
 								</>
 							)}
-							</DropdownMenuContent>
-						</DropdownMenu>
+						</DropdownMenuContent>
+					</DropdownMenu>
 					<Tooltip>
 						<TooltipTrigger asChild>
 							<span

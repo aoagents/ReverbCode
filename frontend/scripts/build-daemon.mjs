@@ -26,4 +26,3 @@ if (result.error) {
 if (result.status !== 0) {
 	process.exit(result.status ?? 1);
 }
-

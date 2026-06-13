@@ -205,7 +205,15 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 	);
 }
 
-function PermissionModeSelect({ id, value, onChange }: { id: string; value: string; onChange: (value: string) => void }) {
+function PermissionModeSelect({
+	id,
+	value,
+	onChange,
+}: {
+	id: string;
+	value: string;
+	onChange: (value: string) => void;
+}) {
 	return (
 		<Select value={value || "__default__"} onValueChange={(v) => onChange(v === "__default__" ? "" : v)}>
 			<SelectTrigger id={id} className="h-8 w-full text-[13px]">

@@ -18,41 +18,39 @@ import { Route as ShellProjectsProjectIdSettingsRouteImport } from "./routes/_sh
 import { Route as ShellProjectsProjectIdSessionsSessionIdRouteImport } from "./routes/_shell.projects.$projectId_.sessions.$sessionId";
 
 const ShellRoute = ShellRouteImport.update({
-  id: '/_shell',
-  getParentRoute: () => rootRouteImport,
-} as any)
+	id: "/_shell",
+	getParentRoute: () => rootRouteImport,
+} as any);
 const ShellIndexRoute = ShellIndexRouteImport.update({
 	id: "/",
 	path: "/",
 	getParentRoute: () => ShellRoute,
 } as any);
 const ShellPrsRoute = ShellPrsRouteImport.update({
-  id: '/prs',
-  path: '/prs',
-  getParentRoute: () => ShellRoute,
-} as any)
+	id: "/prs",
+	path: "/prs",
+	getParentRoute: () => ShellRoute,
+} as any);
 const ShellSessionsSessionIdRoute = ShellSessionsSessionIdRouteImport.update({
-  id: '/sessions/$sessionId',
-  path: '/sessions/$sessionId',
-  getParentRoute: () => ShellRoute,
-} as any)
+	id: "/sessions/$sessionId",
+	path: "/sessions/$sessionId",
+	getParentRoute: () => ShellRoute,
+} as any);
 const ShellProjectsProjectIdRoute = ShellProjectsProjectIdRouteImport.update({
-  id: '/projects/$projectId',
-  path: '/projects/$projectId',
-  getParentRoute: () => ShellRoute,
-} as any)
-const ShellProjectsProjectIdSettingsRoute =
-  ShellProjectsProjectIdSettingsRouteImport.update({
-    id: '/projects/$projectId_/settings',
-    path: '/projects/$projectId/settings',
-    getParentRoute: () => ShellRoute,
-  } as any)
-const ShellProjectsProjectIdSessionsSessionIdRoute =
-  ShellProjectsProjectIdSessionsSessionIdRouteImport.update({
-    id: '/projects/$projectId_/sessions/$sessionId',
-    path: '/projects/$projectId/sessions/$sessionId',
-    getParentRoute: () => ShellRoute,
-  } as any)
+	id: "/projects/$projectId",
+	path: "/projects/$projectId",
+	getParentRoute: () => ShellRoute,
+} as any);
+const ShellProjectsProjectIdSettingsRoute = ShellProjectsProjectIdSettingsRouteImport.update({
+	id: "/projects/$projectId_/settings",
+	path: "/projects/$projectId/settings",
+	getParentRoute: () => ShellRoute,
+} as any);
+const ShellProjectsProjectIdSessionsSessionIdRoute = ShellProjectsProjectIdSessionsSessionIdRouteImport.update({
+	id: "/projects/$projectId_/sessions/$sessionId",
+	path: "/projects/$projectId/sessions/$sessionId",
+	getParentRoute: () => ShellRoute,
+} as any);
 
 export interface FileRoutesByFullPath {
 	"/": typeof ShellIndexRoute;
@@ -109,7 +107,7 @@ export interface FileRouteTypes {
 	fileRoutesById: FileRoutesById;
 }
 export interface RootRouteChildren {
-  ShellRoute: typeof ShellRouteWithChildren
+	ShellRoute: typeof ShellRouteWithChildren;
 }
 
 declare module "@tanstack/react-router" {
@@ -184,11 +182,9 @@ const ShellRouteChildren: ShellRouteChildren = {
 	ShellProjectsProjectIdSessionsSessionIdRoute: ShellProjectsProjectIdSessionsSessionIdRoute,
 };
 
-const ShellRouteWithChildren = ShellRoute._addFileChildren(ShellRouteChildren)
+const ShellRouteWithChildren = ShellRoute._addFileChildren(ShellRouteChildren);
 
 const rootRouteChildren: RootRouteChildren = {
-  ShellRoute: ShellRouteWithChildren,
-}
-export const routeTree = rootRouteImport
-  ._addFileChildren(rootRouteChildren)
-  ._addFileTypes<FileRouteTypes>()
+	ShellRoute: ShellRouteWithChildren,
+};
+export const routeTree = rootRouteImport._addFileChildren(rootRouteChildren)._addFileTypes<FileRouteTypes>();

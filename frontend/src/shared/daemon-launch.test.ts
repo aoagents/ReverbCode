@@ -3,13 +3,15 @@ import { resolveDaemonLaunch } from "./daemon-launch";
 
 describe("resolveDaemonLaunch", () => {
 	it("uses AO_DAEMON_COMMAND when configured", () => {
-		expect(resolveDaemonLaunch({ AO_DAEMON_COMMAND: "/tmp/ao daemon" }, false, "/resources", "/app", "darwin")).toEqual({
-			command: "/tmp/ao daemon",
-			args: [],
-			cwd: "/app",
-			shell: true,
-			source: "configured",
-		});
+		expect(resolveDaemonLaunch({ AO_DAEMON_COMMAND: "/tmp/ao daemon" }, false, "/resources", "/app", "darwin")).toEqual(
+			{
+				command: "/tmp/ao daemon",
+				args: [],
+				cwd: "/app",
+				shell: true,
+				source: "configured",
+			},
+		);
 	});
 
 	it("runs the backend daemon from source in dev without an explicit command", () => {
@@ -23,7 +25,9 @@ describe("resolveDaemonLaunch", () => {
 	});
 
 	it("uses the bundled daemon binary for packaged macOS/Linux builds", () => {
-		expect(resolveDaemonLaunch({}, true, "/Applications/Agent Orchestrator.app/Contents/Resources", "/app", "darwin")).toEqual({
+		expect(
+			resolveDaemonLaunch({}, true, "/Applications/Agent Orchestrator.app/Contents/Resources", "/app", "darwin"),
+		).toEqual({
 			command: "/Applications/Agent Orchestrator.app/Contents/Resources/daemon/ao",
 			args: ["daemon"],
 			cwd: "/Applications/Agent Orchestrator.app/Contents/Resources",
@@ -33,7 +37,15 @@ describe("resolveDaemonLaunch", () => {
 	});
 
 	it("uses the bundled daemon exe for packaged Windows builds", () => {
-		expect(resolveDaemonLaunch({}, true, "C:\\Program Files\\AO\\resources", "C:\\Program Files\\AO\\resources\\app.asar", "win32")).toEqual({
+		expect(
+			resolveDaemonLaunch(
+				{},
+				true,
+				"C:\\Program Files\\AO\\resources",
+				"C:\\Program Files\\AO\\resources\\app.asar",
+				"win32",
+			),
+		).toEqual({
 			command: "C:\\Program Files\\AO\\resources/daemon/ao.exe",
 			args: ["daemon"],
 			cwd: "C:\\Program Files\\AO\\resources",
