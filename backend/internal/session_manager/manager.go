@@ -176,10 +176,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 
 	branch := cfg.Branch
 	if branch == "" {
-		// A fresh, unique branch per session: gitworktree can't add a worktree on
-		// a branch already checked out elsewhere (e.g. main), so default to one
-		// derived from the assigned session id.
-		branch = "ao/" + string(id)
+		branch = defaultSessionBranch(id, cfg.Kind, sessionPrefix(project))
 	}
 	ws, err := m.workspace.Create(ctx, ports.WorkspaceConfig{
 		ProjectID:     cfg.ProjectID,
@@ -454,9 +451,15 @@ func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.Sess
 	if err := m.prepareWorkspace(ctx, agent, id, ws.Path); err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", id, err)
 	}
+	// The system prompt is derived, not persisted: recompute it so a restored
+	// session keeps its standing instructions across the relaunch.
+	systemPrompt, err := m.buildSystemPrompt(ctx, rec.Kind, rec.ProjectID)
+	if err != nil {
+		return domain.SessionRecord{}, fmt.Errorf("restore %s: system prompt: %w", id, err)
+	}
 	// Restore re-applies the project's resolved agent config so a configured
 	// model/permissions carry across a restore, matching fresh spawn.
-	argv, err := restoreArgv(ctx, agent, id, ws.Path, meta, effectiveAgentConfig(rec.Kind, project.Config))
+	argv, err := restoreArgv(ctx, agent, id, ws.Path, meta, systemPrompt, effectiveAgentConfig(rec.Kind, project.Config))
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", id, err)
 	}
@@ -575,9 +578,25 @@ func seedRecord(cfg ports.SpawnConfig, now time.Time) domain.SessionRecord {
 	}
 }
 
+func defaultSessionBranch(id domain.SessionID, kind domain.SessionKind, prefix string) string {
+	if kind == domain.KindOrchestrator {
+		return "ao/" + prefix + "-orchestrator"
+	}
+	// A fresh, unique branch per worker session: gitworktree can't add a worktree
+	// on a branch already checked out elsewhere (e.g. main), so default to one
+	// derived from the assigned session id.
+	return "ao/" + string(id)
+}
+
 func buildPrompt(cfg ports.SpawnConfig) string {
 	return cfg.Prompt
 }
+
+// orchestratorKickoffPrompt is the default first turn for an orchestrator
+// spawned without an explicit prompt. The role definition rides the system
+// prompt, and an interactive agent launched with only a system prompt sits at
+// an empty input box; this gives it a turn to act on.
+const orchestratorKickoffPrompt = "Get oriented: review the current repo state and any active worker sessions, then report your status and wait for direction."
 
 // buildSpawnTexts returns the user-facing prompt and the system prompt to
 // deliver separately to the agent. Orchestrator role instructions and worker
@@ -585,20 +604,34 @@ func buildPrompt(cfg ports.SpawnConfig) string {
 // standing instructions rather than part of the human's task request.
 func (m *Manager) buildSpawnTexts(ctx context.Context, cfg ports.SpawnConfig) (prompt, systemPrompt string, err error) {
 	prompt = buildPrompt(cfg)
-
-	switch cfg.Kind {
-	case domain.KindOrchestrator:
-		systemPrompt = orchestratorPrompt(cfg.ProjectID)
-	case domain.KindWorker:
-		orchestratorID, ok, lookupErr := m.activeOrchestratorSessionID(ctx, cfg.ProjectID)
-		if lookupErr != nil {
-			return "", "", lookupErr
-		}
-		if ok {
-			systemPrompt = workerOrchestratorPrompt(orchestratorID)
-		}
+	systemPrompt, err = m.buildSystemPrompt(ctx, cfg.Kind, cfg.ProjectID)
+	if err != nil {
+		return "", "", err
+	}
+	if cfg.Kind == domain.KindOrchestrator && prompt == "" {
+		prompt = orchestratorKickoffPrompt
 	}
 	return prompt, systemPrompt, nil
+}
+
+// buildSystemPrompt derives the standing instructions for a session of the
+// given kind from current store state. Restore recomputes them through here
+// rather than persisting them, so a restored worker points at the orchestrator
+// that is active now, not the one from its original spawn.
+func (m *Manager) buildSystemPrompt(ctx context.Context, kind domain.SessionKind, projectID domain.ProjectID) (string, error) {
+	switch kind {
+	case domain.KindOrchestrator:
+		return orchestratorPrompt(projectID), nil
+	case domain.KindWorker:
+		orchestratorID, ok, err := m.activeOrchestratorSessionID(ctx, projectID)
+		if err != nil {
+			return "", err
+		}
+		if ok {
+			return workerOrchestratorPrompt(orchestratorID), nil
+		}
+	}
+	return "", nil
 }
 
 func (m *Manager) activeOrchestratorSessionID(ctx context.Context, project domain.ProjectID) (domain.SessionID, bool, error) {
@@ -817,13 +850,13 @@ func (m *Manager) prepareWorkspace(ctx context.Context, agent ports.Agent, id do
 // restoreArgv builds the argv to relaunch a torn-down session: the agent's
 // native resume command when it can continue the session, else a fresh launch.
 // The agent signals via ok=false (e.g. no native session id captured yet).
-func restoreArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, workspacePath string, meta domain.SessionMetadata, agentConfig ports.AgentConfig) ([]string, error) {
+func restoreArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, workspacePath string, meta domain.SessionMetadata, systemPrompt string, agentConfig ports.AgentConfig) ([]string, error) {
 	ref := ports.SessionRef{
 		ID:            string(id),
 		WorkspacePath: workspacePath,
 		Metadata:      map[string]string{ports.MetadataKeyAgentSessionID: meta.AgentSessionID},
 	}
-	cmd, ok, err := agent.GetRestoreCommand(ctx, ports.RestoreConfig{Session: ref, Config: agentConfig})
+	cmd, ok, err := agent.GetRestoreCommand(ctx, ports.RestoreConfig{Session: ref, Config: agentConfig, SystemPrompt: systemPrompt})
 	if err != nil {
 		return nil, fmt.Errorf("restore command: %w", err)
 	}
@@ -834,6 +867,7 @@ func restoreArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, wo
 		SessionID:     string(id),
 		WorkspacePath: workspacePath,
 		Prompt:        meta.Prompt,
+		SystemPrompt:  systemPrompt,
 		Config:        agentConfig,
 	})
 	if err != nil {

@@ -123,6 +123,11 @@ type RestoreConfig struct {
 	Config      AgentConfig
 	Permissions PermissionMode
 	Session     SessionRef
+	// SystemPrompt carries the session's standing instructions (e.g. the
+	// orchestrator role). Agent CLIs rebuild their system prompt from flags on
+	// resume — it is not part of the transcript — so adapters whose CLI has a
+	// system-prompt flag should re-apply this in their resume command.
+	SystemPrompt string
 }
 
 // SessionRef identifies an AO session whose agent-owned metadata may be read.

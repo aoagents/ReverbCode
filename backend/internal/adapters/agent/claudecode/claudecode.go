@@ -234,9 +234,15 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	if err != nil {
 		return nil, false, err
 	}
-	cmd = make([]string, 0, 5)
+	cmd = make([]string, 0, 7)
 	cmd = append(cmd, binary)
 	appendPermissionFlags(&cmd, cfg.Permissions)
+	if cfg.SystemPrompt != "" {
+		// --resume rebuilds the system prompt from the current flags (it is
+		// not stored in the transcript), so standing instructions must be
+		// re-appended or a restored orchestrator loses its role.
+		cmd = append(cmd, "--append-system-prompt", cfg.SystemPrompt)
+	}
 	cmd = append(cmd, "--resume", sessionID)
 	return cmd, true, nil
 }

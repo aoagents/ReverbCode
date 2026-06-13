@@ -36,9 +36,16 @@ type Manager interface {
 	Remove(ctx context.Context, id domain.ProjectID) (RemoveResult, error)
 }
 
+// SessionTeardowner is the narrow session-service surface project removal
+// needs: stop live project sessions and reclaim managed terminal workspaces.
+type SessionTeardowner interface {
+	TeardownProject(ctx context.Context, project domain.ProjectID) error
+}
+
 // Service implements project registration and lookup use-cases for controllers.
 type Service struct {
-	store Store
+	store    Store
+	sessions SessionTeardowner
 	// addMu serialises the whole body of Add. Workspace registration performs
 	// filesystem mutations (git init, .gitignore writes, commits) that are not
 	// covered by the store's own writeMu, so path/id conflict checks plus the
@@ -48,9 +55,20 @@ type Service struct {
 
 var _ Manager = (*Service)(nil)
 
+// Deps captures optional collaborators for project use-cases.
+type Deps struct {
+	Store    Store
+	Sessions SessionTeardowner
+}
+
 // New returns a project service backed by the given durable store.
 func New(store Store) *Service {
-	return &Service{store: store}
+	return NewWithDeps(Deps{Store: store})
+}
+
+// NewWithDeps returns a project service with optional teardown dependencies.
+func NewWithDeps(d Deps) *Service {
+	return &Service{store: d.Store, sessions: d.Sessions}
 }
 
 // List returns every active registered project.
@@ -218,12 +236,26 @@ func resolveGitOriginURL(path string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// Remove archives a project registration.
+// Remove stops live project sessions, reclaims safe managed workspaces, then
+// archives the project registration. The original repository path and durable
+// session/history rows are preserved.
 func (m *Service) Remove(ctx context.Context, id domain.ProjectID) (RemoveResult, error) {
 	if err := validateProjectID(id); err != nil {
 		return RemoveResult{}, err
 	}
-	ok, err := m.store.ArchiveProject(ctx, string(id), time.Now())
+	row, ok, err := m.store.GetProject(ctx, string(id))
+	if err != nil {
+		return RemoveResult{}, apierr.Internal("PROJECT_REMOVE_FAILED", "Failed to remove project")
+	}
+	if !ok || !row.ArchivedAt.IsZero() {
+		return RemoveResult{}, apierr.NotFound("PROJECT_NOT_FOUND", "Unknown project")
+	}
+	if m.sessions != nil {
+		if err := m.sessions.TeardownProject(ctx, id); err != nil {
+			return RemoveResult{}, err
+		}
+	}
+	ok, err = m.store.ArchiveProject(ctx, string(id), time.Now())
 	if err != nil {
 		return RemoveResult{}, apierr.Internal("PROJECT_REMOVE_FAILED", "Failed to remove project")
 	}

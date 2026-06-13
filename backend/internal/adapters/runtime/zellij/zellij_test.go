@@ -26,6 +26,66 @@ func TestNewDefaultsToPortableShell(t *testing.T) {
 	}
 }
 
+func TestZellijCommandEnvNormalizesBrowserTerminalColors(t *testing.T) {
+	got := zellijCommandEnv(
+		[]string{"NO_COLOR=1", "TERM=dumb", "COLORTERM=", "KEEP=yes"},
+		[]string{"ZELLIJ_SOCKET_DIR=/tmp/zj"},
+	)
+
+	if runtime.GOOS == "windows" {
+		if !contains(got, "NO_COLOR=1") {
+			t.Fatalf("windows env = %#v, want NO_COLOR preserved", got)
+		}
+		return
+	}
+
+	if containsKey(got, "NO_COLOR") {
+		t.Fatalf("NO_COLOR survived env normalization: %#v", got)
+	}
+	for _, want := range []string{"KEEP=yes", "TERM=xterm-256color", "COLORTERM=truecolor", "ZELLIJ_SOCKET_DIR=/tmp/zj"} {
+		if !contains(got, want) {
+			t.Fatalf("env missing %q in %#v", want, got)
+		}
+	}
+}
+
+func expectedZellijEnv(socketDir string) []string {
+	env := []string{}
+	if runtime.GOOS != "windows" {
+		env = append(env, "TERM=xterm-256color", "COLORTERM=truecolor")
+	}
+	if socketDir != "" {
+		env = append(env, "ZELLIJ_SOCKET_DIR="+socketDir)
+	}
+	return env
+}
+
+func expectedAttachEnvPrefix() []string {
+	if runtime.GOOS == "windows" {
+		return []string{}
+	}
+	return []string{"env", "-u", "NO_COLOR", "TERM=xterm-256color", "COLORTERM=truecolor"}
+}
+
+func contains(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func containsKey(values []string, key string) bool {
+	prefix := key + "="
+	for _, value := range values {
+		if strings.HasPrefix(value, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 func TestCommandBuilders(t *testing.T) {
 	if got, want := versionArgs(), []string{"--version"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("versionArgs = %#v, want %#v", got, want)
@@ -47,6 +107,9 @@ func TestCommandBuilders(t *testing.T) {
 	// session — and re-runs its agent — after the daemon destroyed it.
 	if got, want := deleteSessionArgs("sess-1"), []string{"delete-session", "--force", "sess-1"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("deleteSessionArgs = %#v, want %#v", got, want)
+	}
+	if got, want := attachArgs("sess-1"), []string{"attach", "sess-1", "options", "--pane-frames", "false"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("attachArgs = %#v, want %#v", got, want)
 	}
 }
 
@@ -141,7 +204,7 @@ func TestBuildLayoutExportsEnvAndKeepsPaneAlive(t *testing.T) {
 
 	for _, want := range []string{
 		`cwd "/tmp/ws"`,
-		`pane command="/bin/zsh" name="agent"`,
+		`pane command="/bin/zsh" name="agent" borderless=true`,
 		"export AO_SESSION_ID='sess-1';",
 		"export ODD='can'\\\\''t';",
 		"export PATH='/custom/bin:/usr/bin';",
@@ -168,7 +231,7 @@ func TestBuildLayoutUsesPowerShellLaunchOnWindowsShells(t *testing.T) {
 	}}, `C:\Program Files\PowerShell\7\pwsh.exe`)
 
 	for _, want := range []string{
-		`pane command="C:\\Program Files\\PowerShell\\7\\pwsh.exe" name="agent"`,
+		`pane command="C:\\Program Files\\PowerShell\\7\\pwsh.exe" name="agent" borderless=true`,
 		`args "-NoLogo" "-NoProfile" "-NoExit" "-Command"`,
 		"$env:AO_SESSION_ID = 'sess-1';",
 		"$env:PATH = ",
@@ -192,7 +255,7 @@ func TestBuildLayoutUsesCmdLaunchOnCmdShells(t *testing.T) {
 	}}, `C:\Windows\System32\cmd.exe`)
 
 	for _, want := range []string{
-		`pane command="C:\\Windows\\System32\\cmd.exe" name="agent"`,
+		`pane command="C:\\Windows\\System32\\cmd.exe" name="agent" borderless=true`,
 		`args "/D" "/S" "/K"`,
 		`AO_SESSION_ID=sess-1`,
 		`\"echo\" \"ready\"`,
@@ -218,7 +281,7 @@ func TestCreateRejectsInvalidEnvKeys(t *testing.T) {
 }
 
 func TestCreateStartsSessionAndDiscoversPane(t *testing.T) {
-	fr := &fakeRunner{outputs: [][]byte{[]byte("zellij 0.44.3"), nil, []byte(`[{"id":0,"is_plugin":true,"title":"zellij:tab-bar"},{"id":3,"is_plugin":false,"title":"agent"}]`)}}
+	fr := &fakeRunner{outputs: [][]byte{[]byte("zellij 0.44.3"), nil, nil, []byte(`[{"id":0,"is_plugin":true,"title":"zellij:tab-bar"},{"id":3,"is_plugin":false,"title":"agent"}]`)}}
 	r := New(Options{Binary: "zellij-test", Timeout: time.Second, Shell: "/bin/zsh", SocketDir: "/tmp/zj", ConfigDir: "/tmp/cfg"})
 	r.runner = fr
 
@@ -234,20 +297,73 @@ func TestCreateStartsSessionAndDiscoversPane(t *testing.T) {
 	if handle != (ports.RuntimeHandle{ID: "sess-1/terminal_3"}) {
 		t.Fatalf("handle = %+v, want zellij handle", handle)
 	}
-	if len(fr.calls) != 3 {
-		t.Fatalf("calls = %d, want 3", len(fr.calls))
+	if len(fr.calls) != 4 {
+		t.Fatalf("calls = %d, want 4", len(fr.calls))
 	}
 	if got, want := fr.calls[0].args, []string{"--config-dir", "/tmp/cfg", "--version"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("version args = %#v, want %#v", got, want)
 	}
-	if got := fr.calls[1].args[:5]; !reflect.DeepEqual(got, []string{"--config-dir", "/tmp/cfg", "attach", "--create-background", "sess-1"}) {
+	if got, want := fr.calls[1].args, []string{"--config-dir", "/tmp/cfg", "delete-session", "--force", "sess-1"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("delete args = %#v, want %#v", got, want)
+	}
+	if got := fr.calls[2].args[:5]; !reflect.DeepEqual(got, []string{"--config-dir", "/tmp/cfg", "attach", "--create-background", "sess-1"}) {
 		t.Fatalf("create args prefix = %#v", got)
 	}
-	if got := fr.calls[2].args; !reflect.DeepEqual(got, append([]string{"--config-dir", "/tmp/cfg"}, listPanesArgs("sess-1")...)) {
+	if got := fr.calls[3].args; !reflect.DeepEqual(got, append([]string{"--config-dir", "/tmp/cfg"}, listPanesArgs("sess-1")...)) {
 		t.Fatalf("list panes args = %#v", got)
 	}
-	if got, want := fr.calls[0].env, []string{"ZELLIJ_SOCKET_DIR=/tmp/zj"}; !reflect.DeepEqual(got, want) {
+	if got, want := fr.calls[0].env, expectedZellijEnv("/tmp/zj"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("env = %#v, want %#v", got, want)
+	}
+}
+
+func TestCreateClearsStaleSessionBeforeCreating(t *testing.T) {
+	fr := &fakeRunner{outputs: [][]byte{
+		[]byte("zellij 0.44.3"),
+		nil,
+		nil,
+		[]byte(`[{"id":1,"is_plugin":false,"title":"agent"}]`),
+	}}
+	r := New(Options{Binary: "zellij-test", Timeout: time.Second, Shell: "/bin/zsh"})
+	r.runner = fr
+
+	if _, err := r.Create(context.Background(), ports.RuntimeConfig{
+		SessionID:     "sess-1",
+		WorkspacePath: "/tmp/ws",
+		Argv:          []string{"echo", "ready"},
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	if len(fr.calls) != 4 {
+		t.Fatalf("calls = %d, want 4", len(fr.calls))
+	}
+	if got, want := fr.calls[1].args, []string{"delete-session", "--force", "sess-1"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("delete args = %#v, want %#v", got, want)
+	}
+	if got := fr.calls[2].args[:3]; !reflect.DeepEqual(got, []string{"attach", "--create-background", "sess-1"}) {
+		t.Fatalf("create args prefix = %#v", got)
+	}
+}
+
+func TestAttachCommandDisablesPaneFrames(t *testing.T) {
+	r := New(Options{})
+	args, err := r.AttachCommand(ports.RuntimeHandle{ID: "sess-1/terminal_0"})
+	if err != nil {
+		t.Fatalf("AttachCommand: %v", err)
+	}
+	if runtime.GOOS == "windows" {
+		joined := strings.Join(args, " ")
+		for _, want := range []string{"--pane-frames", "false"} {
+			if !strings.Contains(joined, want) {
+				t.Fatalf("windows attach command missing %q: %#v", want, args)
+			}
+		}
+		return
+	}
+	want := append(expectedAttachEnvPrefix(), "zellij", "attach", "sess-1", "options", "--pane-frames", "false")
+	if !reflect.DeepEqual(args, want) {
+		t.Fatalf("AttachCommand = %#v, want %#v", args, want)
 	}
 }
 
@@ -266,8 +382,11 @@ func TestAttachCommandUsesSocketDir(t *testing.T) {
 		}
 		return
 	}
-	if got, want := args[:3], []string{"env", "ZELLIJ_SOCKET_DIR=/tmp/zj", r.binary}; !reflect.DeepEqual(got, want) {
+	if got, want := args[:6], []string{"env", "-u", "NO_COLOR", "TERM=xterm-256color", "COLORTERM=truecolor", "ZELLIJ_SOCKET_DIR=/tmp/zj"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("attach prefix = %#v, want %#v", got, want)
+	}
+	if got, want := args[6], r.binary; got != want {
+		t.Fatalf("attach binary = %q, want %q", got, want)
 	}
 }
 

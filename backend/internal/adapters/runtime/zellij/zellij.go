@@ -22,10 +22,12 @@ import (
 )
 
 const (
-	defaultTimeout = 5 * time.Second
-	minMajor       = 0
-	minMinor       = 44
-	minPatch       = 3
+	defaultTimeout     = 5 * time.Second
+	defaultZellijTerm  = "xterm-256color"
+	defaultZellijColor = "truecolor"
+	minMajor           = 0
+	minMinor           = 44
+	minPatch           = 3
 )
 
 var sessionIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
@@ -79,9 +81,7 @@ type execRunner struct{}
 
 func (execRunner) Run(ctx context.Context, env []string, name string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
-	if len(env) > 0 {
-		cmd.Env = append(os.Environ(), env...)
-	}
+	cmd.Env = zellijCommandEnv(os.Environ(), env)
 	return cmd.CombinedOutput()
 }
 
@@ -132,6 +132,13 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 		return ports.RuntimeHandle{}, err
 	}
 	if err := r.ensureSupportedVersion(ctx); err != nil {
+		return ports.RuntimeHandle{}, err
+	}
+	// Zellij keeps exited sessions in a resurrection cache. A previous partial
+	// spawn can therefore make `attach --create-background` fail with "Session
+	// already exists" even though AO has no usable runtime handle. Clear any
+	// same-name runtime state before creating the new AO-owned session.
+	if err := r.Destroy(ctx, ports.RuntimeHandle{ID: id}); err != nil {
 		return ports.RuntimeHandle{}, err
 	}
 
@@ -243,9 +250,6 @@ func (r *Runtime) AttachCommand(handle ports.RuntimeHandle) ([]string, error) {
 	}
 	args := append([]string{}, r.baseArgs()...)
 	args = append(args, attachArgs(id)...)
-	if r.socketDir == "" {
-		return append([]string{r.binary}, args...), nil
-	}
 	return attachCommandWithEnv(r.binary, r.socketDir, args...), nil
 }
 
@@ -326,21 +330,33 @@ func (r *Runtime) baseArgs() []string {
 }
 
 func (r *Runtime) env() []string {
+	env := zellijColorEnv(nil)
 	if r.socketDir == "" {
-		return nil
+		return env
 	}
-	return []string{"ZELLIJ_SOCKET_DIR=" + r.socketDir}
+	return append(env, "ZELLIJ_SOCKET_DIR="+r.socketDir)
 }
 
 func attachCommandWithEnv(binary, socketDir string, args ...string) []string {
-	if socketDir == "" {
-		return append([]string{binary}, args...)
+	env := zellijColorEnv(nil)
+	if socketDir != "" {
+		env = append(env, "ZELLIJ_SOCKET_DIR="+socketDir)
 	}
 	if runtime.GOOS == "windows" {
 		command := strings.Builder{}
-		command.WriteString("$env:ZELLIJ_SOCKET_DIR = ")
-		command.WriteString(psQuote(socketDir))
-		command.WriteString("; & ")
+		command.WriteString("Remove-Item Env:NO_COLOR -ErrorAction SilentlyContinue; ")
+		for _, pair := range env {
+			key, value, ok := strings.Cut(pair, "=")
+			if !ok {
+				continue
+			}
+			command.WriteString("$env:")
+			command.WriteString(key)
+			command.WriteString(" = ")
+			command.WriteString(psQuote(value))
+			command.WriteString("; ")
+		}
+		command.WriteString("& ")
 		command.WriteString(psQuote(binary))
 		for _, arg := range args {
 			command.WriteByte(' ')
@@ -348,7 +364,55 @@ func attachCommandWithEnv(binary, socketDir string, args ...string) []string {
 		}
 		return []string{"powershell.exe", "-NoLogo", "-NoProfile", "-Command", command.String()}
 	}
-	return append([]string{"env", "ZELLIJ_SOCKET_DIR=" + socketDir, binary}, args...)
+	argv := []string{"env", "-u", "NO_COLOR"}
+	argv = append(argv, env...)
+	argv = append(argv, binary)
+	return append(argv, args...)
+}
+
+func zellijCommandEnv(base, overrides []string) []string {
+	env := zellijColorEnv(append([]string(nil), base...))
+	for _, pair := range overrides {
+		env = upsertEnv(env, pair)
+	}
+	return env
+}
+
+func zellijColorEnv(env []string) []string {
+	if runtime.GOOS == "windows" {
+		return env
+	}
+	env = removeEnv(env, "NO_COLOR")
+	env = upsertEnv(env, "TERM="+defaultZellijTerm)
+	env = upsertEnv(env, "COLORTERM="+defaultZellijColor)
+	return env
+}
+
+func upsertEnv(env []string, pair string) []string {
+	key, _, ok := strings.Cut(pair, "=")
+	if !ok {
+		return env
+	}
+	prefix := key + "="
+	for i, current := range env {
+		if strings.HasPrefix(current, prefix) {
+			env[i] = pair
+			return env
+		}
+	}
+	return append(env, pair)
+}
+
+func removeEnv(env []string, key string) []string {
+	prefix := key + "="
+	out := env[:0]
+	for _, current := range env {
+		if strings.HasPrefix(current, prefix) {
+			continue
+		}
+		out = append(out, current)
+	}
+	return out
 }
 
 func zellijSessionName(id domain.SessionID) (string, error) {

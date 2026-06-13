@@ -174,6 +174,43 @@ func TestOrchestratorManagedPath(t *testing.T) {
 	})
 }
 
+func TestCreateReusesRegisteredWorktreeAtExpectedPath(t *testing.T) {
+	root := t.TempDir()
+	repo := t.TempDir()
+	ws, err := New(Options{ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	path := filepath.Join(ws.managedRoot, "proj", "orchestrator", "proj-orchestrator")
+	cfg := ports.WorkspaceConfig{
+		ProjectID:     "proj",
+		SessionID:     "proj-1",
+		Kind:          domain.KindOrchestrator,
+		SessionPrefix: "proj",
+		Branch:        "ao/proj-orchestrator",
+	}
+	ws.run = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.Contains(joined, "check-ref-format"):
+			return nil, nil
+		case strings.Contains(joined, "worktree list --porcelain"):
+			return []byte("worktree " + path + "\nbranch refs/heads/ao/proj-orchestrator\n"), nil
+		default:
+			t.Fatalf("unexpected git invocation: %v", args)
+			return nil, nil
+		}
+	}
+
+	info, err := ws.Create(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if info.Path != path || info.Branch != "ao/proj-orchestrator" {
+		t.Fatalf("info = %#v, want path %q branch ao/proj-orchestrator", info, path)
+	}
+}
+
 // TestValidateConfigRejectsPathEscapingIDs covers review item RB: filepath.Join
 // in managedPath cleans `..` segments before validateManagedPath sees them, so a
 // session id of "../other" would stay inside managedRoot while jumping projects.

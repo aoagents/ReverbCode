@@ -104,7 +104,7 @@ func Run() error {
 	}
 
 	srv, err := httpd.NewWithDeps(cfg, log, termMgr, httpd.APIDeps{
-		Projects: projectsvc.New(store),
+		Projects: projectsvc.NewWithDeps(projectsvc.Deps{Store: store, Sessions: sessionSvc}),
 		Sessions: sessionSvc,
 		Reviews:  reviewsvc.NewInMemory(),
 		CDC:      store,

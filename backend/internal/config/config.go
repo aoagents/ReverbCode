@@ -183,28 +183,37 @@ func parsePositiveDuration(name, raw string) (time.Duration, error) {
 }
 
 // resolveRunFilePath picks where running.json lives. An explicit AO_RUN_FILE
-// wins; otherwise it sits under the per-user config directory so multiple repos
-// share one supervisor handshake location.
+// wins; otherwise it sits under the per-user config directory so the CLI and
+// Electron supervisor share one handshake location.
 func resolveRunFilePath() (string, error) {
 	if p, ok := os.LookupEnv("AO_RUN_FILE"); ok && p != "" {
 		return p, nil
 	}
-	home, err := os.UserHomeDir()
+	stateDir, err := defaultStateDir()
 	if err != nil {
-		return "", fmt.Errorf("resolve state dir: %w", err)
+		return "", err
 	}
-	return filepath.Join(home, ".ao", "running.json"), nil
+	return filepath.Join(stateDir, "running.json"), nil
 }
 
 // resolveDataDir picks where durable state (the SQLite DB) lives. An explicit
-// AO_DATA_DIR wins; otherwise it defaults to ~/.ao/data/.
+// AO_DATA_DIR wins; otherwise it defaults under the same per-user config
+// directory as the run-file.
 func resolveDataDir() (string, error) {
 	if p, ok := os.LookupEnv("AO_DATA_DIR"); ok && p != "" {
 		return p, nil
 	}
-	home, err := os.UserHomeDir()
+	stateDir, err := defaultStateDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(stateDir, "data"), nil
+}
+
+func defaultStateDir() (string, error) {
+	configDir, err := os.UserConfigDir()
 	if err != nil {
 		return "", fmt.Errorf("resolve state dir: %w", err)
 	}
-	return filepath.Join(home, ".ao", "data"), nil
+	return filepath.Join(configDir, "agent-orchestrator"), nil
 }

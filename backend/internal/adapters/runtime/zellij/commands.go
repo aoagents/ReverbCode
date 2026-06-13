@@ -61,7 +61,11 @@ func deleteSessionArgs(id string) []string {
 }
 
 func attachArgs(id string) []string {
-	return []string{"attach", id}
+	return []string{
+		"attach", id,
+		"options",
+		"--pane-frames", "false",
+	}
 }
 
 func handleIDValue(sessionID, paneID string) string {
@@ -96,7 +100,7 @@ func shellLaunchSpecFor(shellPath string) shellLaunchSpec {
 func layoutString(workspacePath, shellPath string, shellArgs []string, shellCommand string) string {
 	return "layout {\n" +
 		"  cwd " + kdlQuote(workspacePath) + "\n" +
-		"  pane command=" + kdlQuote(shellPath) + " name=" + kdlQuote(agentPaneName) + " {\n" +
+		"  pane command=" + kdlQuote(shellPath) + " name=" + kdlQuote(agentPaneName) + " borderless=true {\n" +
 		"    args " + kdlJoin(shellArgs) + " " + kdlQuote(shellCommand) + "\n" +
 		"  }\n" +
 		"}\n"

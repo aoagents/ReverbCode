@@ -127,9 +127,12 @@ func TestSessionRenameMissingSessionReturnsNotFound(t *testing.T) {
 // fakeCommander records Kill/Spawn calls so a test can assert the
 // clean-orchestrator ordering without wiring a real session engine.
 type fakeCommander struct {
-	killed       []domain.SessionID
-	spawned      bool
-	killsAtSpawn int
+	killed          []domain.SessionID
+	cleanupProjects []domain.ProjectID
+	killErr         error
+	cleanupErr      error
+	spawned         bool
+	killsAtSpawn    int
 }
 
 func (f *fakeCommander) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.SessionRecord, error) {
@@ -141,11 +144,18 @@ func (f *fakeCommander) Restore(context.Context, domain.SessionID) (domain.Sessi
 	return domain.SessionRecord{}, nil
 }
 func (f *fakeCommander) Kill(_ context.Context, id domain.SessionID) (bool, error) {
+	if f.killErr != nil {
+		return false, f.killErr
+	}
 	f.killed = append(f.killed, id)
 	return true, nil
 }
 func (f *fakeCommander) Send(context.Context, domain.SessionID, string) error { return nil }
-func (f *fakeCommander) Cleanup(context.Context, domain.ProjectID) (sessionmanager.CleanupResult, error) {
+func (f *fakeCommander) Cleanup(_ context.Context, project domain.ProjectID) (sessionmanager.CleanupResult, error) {
+	f.cleanupProjects = append(f.cleanupProjects, project)
+	if f.cleanupErr != nil {
+		return sessionmanager.CleanupResult{}, f.cleanupErr
+	}
 	return sessionmanager.CleanupResult{
 		Cleaned: []domain.SessionID{"mer-1"},
 		Skipped: []sessionmanager.CleanupSkip{{SessionID: "mer-2", Reason: "workspace has uncommitted changes"}},
@@ -168,6 +178,41 @@ func TestCleanupMapsManagerResult(t *testing.T) {
 	}
 	if len(out.Skipped) != 1 || out.Skipped[0].SessionID != "mer-2" || out.Skipped[0].Reason != "workspace has uncommitted changes" {
 		t.Fatalf("skipped = %#v", out.Skipped)
+	}
+}
+
+func TestTeardownProjectKillsActiveSessionsThenCleansProject(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer"}
+	st.sessions["mer-2"] = domain.SessionRecord{ID: "mer-2", ProjectID: "mer", IsTerminated: true}
+	st.sessions["other-1"] = domain.SessionRecord{ID: "other-1", ProjectID: "other"}
+	fc := &fakeCommander{}
+	svc := &Service{manager: fc, store: st}
+
+	if err := svc.TeardownProject(context.Background(), "mer"); err != nil {
+		t.Fatalf("TeardownProject: %v", err)
+	}
+	if len(fc.killed) != 1 || fc.killed[0] != "mer-1" {
+		t.Fatalf("killed = %#v, want only mer-1", fc.killed)
+	}
+	if len(fc.cleanupProjects) != 1 || fc.cleanupProjects[0] != "mer" {
+		t.Fatalf("cleanup projects = %#v, want [mer]", fc.cleanupProjects)
+	}
+}
+
+func TestTeardownProjectStopsOnKillError(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer"}
+	boom := errors.New("boom")
+	fc := &fakeCommander{killErr: boom}
+	svc := &Service{manager: fc, store: st}
+
+	err := svc.TeardownProject(context.Background(), "mer")
+	if !errors.Is(err, boom) {
+		t.Fatalf("TeardownProject err = %v, want boom", err)
+	}
+	if len(fc.cleanupProjects) != 0 {
+		t.Fatalf("cleanup projects = %#v, want none after kill failure", fc.cleanupProjects)
 	}
 }
 

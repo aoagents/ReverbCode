@@ -124,6 +124,11 @@ func (w *Workspace) Create(ctx context.Context, cfg ports.WorkspaceConfig) (port
 	if err != nil {
 		return ports.WorkspaceInfo{}, err
 	}
+	if info, ok, err := w.existingWorktree(ctx, repo, path, cfg); err != nil {
+		return ports.WorkspaceInfo{}, err
+	} else if ok {
+		return info, nil
+	}
 	if err := w.addWorktree(ctx, repo, path, cfg.Branch, cfg.BaseBranch); err != nil {
 		return ports.WorkspaceInfo{}, err
 	}
@@ -216,6 +221,21 @@ func (w *Workspace) Restore(ctx context.Context, cfg ports.WorkspaceConfig) (por
 		return ports.WorkspaceInfo{}, err
 	}
 	return ports.WorkspaceInfo{Path: path, Branch: cfg.Branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID}, nil
+}
+
+func (w *Workspace) existingWorktree(ctx context.Context, repo, path string, cfg ports.WorkspaceConfig) (ports.WorkspaceInfo, bool, error) {
+	records, err := w.listRecords(ctx, repo)
+	if err != nil {
+		return ports.WorkspaceInfo{}, false, err
+	}
+	if rec, ok := findWorktree(records, path); ok {
+		branch := rec.Branch
+		if branch == "" {
+			branch = cfg.Branch
+		}
+		return ports.WorkspaceInfo{Path: path, Branch: branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID}, true, nil
+	}
+	return ports.WorkspaceInfo{}, false, nil
 }
 
 func (w *Workspace) addWorktree(ctx context.Context, repo, path, branch, baseBranch string) error {

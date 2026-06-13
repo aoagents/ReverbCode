@@ -1,8 +1,8 @@
 package config
 
 import (
+	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 )
@@ -10,7 +10,7 @@ import (
 func TestLoadDefaults(t *testing.T) {
 	// Clear every recognised var so we observe pure defaults regardless of the
 	// surrounding environment.
-	for _, k := range []string{"AO_PORT", "AO_REQUEST_TIMEOUT", "AO_SHUTDOWN_TIMEOUT", "AO_RUN_FILE", "AO_DATA_DIR"} {
+	for _, k := range []string{"AO_PORT", "AO_REQUEST_TIMEOUT", "AO_SHUTDOWN_TIMEOUT", "AO_RUN_FILE", "AO_DATA_DIR", "AO_AGENT", "AO_ALLOWED_ORIGINS"} {
 		t.Setenv(k, "")
 	}
 
@@ -33,14 +33,20 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.RunFilePath == "" {
 		t.Error("RunFilePath is empty, want a resolved default path")
 	}
-	if !strings.HasSuffix(cfg.RunFilePath, filepath.Join(".ao", "running.json")) {
-		t.Errorf("RunFilePath = %q, want .ao/running.json suffix", cfg.RunFilePath)
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatalf("UserConfigDir: %v", err)
+	}
+	wantRunFilePath := filepath.Join(configDir, "agent-orchestrator", "running.json")
+	if cfg.RunFilePath != wantRunFilePath {
+		t.Errorf("RunFilePath = %q, want %q", cfg.RunFilePath, wantRunFilePath)
 	}
 	if cfg.DataDir == "" {
 		t.Error("DataDir is empty, want a resolved default path")
 	}
-	if !strings.HasSuffix(cfg.DataDir, filepath.Join(".ao", "data")) {
-		t.Errorf("DataDir = %q, want .ao/data suffix", cfg.DataDir)
+	wantDataDir := filepath.Join(configDir, "agent-orchestrator", "data")
+	if cfg.DataDir != wantDataDir {
+		t.Errorf("DataDir = %q, want %q", cfg.DataDir, wantDataDir)
 	}
 }
 

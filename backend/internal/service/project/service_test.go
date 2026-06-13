@@ -52,6 +52,16 @@ func wantCode(t *testing.T, err error, code string) {
 	}
 }
 
+type fakeProjectTeardowner struct {
+	projects []domain.ProjectID
+	err      error
+}
+
+func (f *fakeProjectTeardowner) TeardownProject(_ context.Context, project domain.ProjectID) error {
+	f.projects = append(f.projects, project)
+	return f.err
+}
+
 func TestManager_AddListGetRemove(t *testing.T) {
 	ctx := context.Background()
 	m := newManager(t)
@@ -97,6 +107,50 @@ func TestManager_AddListGetRemove(t *testing.T) {
 
 	_, err = m.Remove(ctx, "ao")
 	wantCode(t, err, "PROJECT_NOT_FOUND")
+}
+
+func TestManager_RemoveTeardownsBeforeArchive(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	teardown := &fakeProjectTeardowner{}
+	m := project.NewWithDeps(project.Deps{Store: store, Sessions: teardown})
+
+	if _, err := m.Add(ctx, project.AddInput{Path: gitRepo(t), ProjectID: ptr("ao")}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if _, err := m.Remove(ctx, "ao"); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	if len(teardown.projects) != 1 || teardown.projects[0] != "ao" {
+		t.Fatalf("teardown projects = %#v, want [ao]", teardown.projects)
+	}
+	_, err = m.Get(ctx, "ao")
+	wantCode(t, err, "PROJECT_NOT_FOUND")
+}
+
+func TestManager_RemoveDoesNotArchiveWhenTeardownFails(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	boom := errors.New("teardown failed")
+	m := project.NewWithDeps(project.Deps{Store: store, Sessions: &fakeProjectTeardowner{err: boom}})
+
+	if _, err := m.Add(ctx, project.AddInput{Path: gitRepo(t), ProjectID: ptr("ao")}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if _, err := m.Remove(ctx, "ao"); !errors.Is(err, boom) {
+		t.Fatalf("Remove err = %v, want teardown failure", err)
+	}
+	if got, err := m.Get(ctx, "ao"); err != nil || got.Project == nil || got.Project.ID != "ao" {
+		t.Fatalf("project after failed remove = %#v, %v; want still active", got, err)
+	}
 }
 
 func TestManager_DefaultsWhenUnconfigured(t *testing.T) {
