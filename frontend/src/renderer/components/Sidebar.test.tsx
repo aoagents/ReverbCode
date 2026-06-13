@@ -1,6 +1,5 @@
 import { SidebarProvider } from "@/components/ui/sidebar";
-import { render, screen, waitFor } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import { render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Sidebar } from "./Sidebar";
 import type { WorkspaceSummary } from "../types/workspace";
@@ -25,24 +24,20 @@ const workspace: WorkspaceSummary = {
 	sessions: [],
 };
 
-function renderSidebar(onRemoveProject = vi.fn().mockResolvedValue(undefined)) {
+function renderSidebar() {
 	render(
 		<SidebarProvider>
 			<Sidebar
 				daemonStatus={{ state: "running" }}
 				onCreateProject={vi.fn()}
-				onRemoveProject={onRemoveProject}
 				workspaces={[workspace]}
 			/>
 		</SidebarProvider>,
 	);
-	return onRemoveProject;
 }
 
 beforeEach(() => {
 	navigateMock.mockReset();
-	vi.spyOn(window, "confirm").mockReturnValue(true);
-	vi.spyOn(window, "alert").mockImplementation(() => undefined);
 });
 
 afterEach(() => {
@@ -50,30 +45,6 @@ afterEach(() => {
 });
 
 describe("Sidebar", () => {
-	it("confirms project removal before calling the remove handler", async () => {
-		const user = userEvent.setup();
-		const onRemoveProject = renderSidebar();
-
-		await user.click(screen.getByLabelText("Project actions for Project One"));
-		await user.click(await screen.findByRole("menuitem", { name: "Remove project" }));
-
-		expect(window.confirm).toHaveBeenCalledWith(
-			"Remove project Project One? This stops its live sessions and removes it from the sidebar, but keeps the repository folder and stored history on disk.",
-		);
-		await waitFor(() => expect(onRemoveProject).toHaveBeenCalledTimes(1));
-	});
-
-	it("does not remove the project when confirmation is cancelled", async () => {
-		vi.mocked(window.confirm).mockReturnValue(false);
-		const user = userEvent.setup();
-		const onRemoveProject = renderSidebar();
-
-		await user.click(screen.getByLabelText("Project actions for Project One"));
-		await user.click(await screen.findByRole("menuitem", { name: "Remove project" }));
-
-		expect(onRemoveProject).not.toHaveBeenCalled();
-	});
-
 	it("hides the worker count in every state that reveals project actions", () => {
 		renderSidebar();
 

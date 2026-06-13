@@ -1,6 +1,6 @@
-import { createFileRoute, Outlet, useNavigate, useParams } from "@tanstack/react-router";
+import { createFileRoute, Outlet, useNavigate } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useState } from "react";
+import { type CSSProperties, useCallback, useEffect } from "react";
 import { ShellTopbar } from "../components/ShellTopbar";
 import { Sidebar } from "../components/Sidebar";
 import { SidebarProvider } from "../components/ui/sidebar";
@@ -34,7 +34,6 @@ function errorMessage(error: unknown) {
 // instead of Zustand. The daemon-status effect runs here exactly once.
 function ShellLayout() {
 	const navigate = useNavigate();
-	const params = useParams({ strict: false }) as { projectId?: string };
 	const queryClient = useQueryClient();
 	const workspaceQuery = useWorkspaceQuery();
 	const workspaces = workspaceQuery.data ?? [];
@@ -65,20 +64,6 @@ function ShellLayout() {
 			void navigate({ to: "/projects/$projectId", params: { projectId: workspace.id } });
 		},
 		[navigate, updateWorkspaces],
-	);
-
-	const removeProject = useCallback(
-		async (projectId: string) => {
-			const { error } = await apiClient.DELETE("/api/v1/projects/{id}", { params: { path: { id: projectId } } });
-			if (error) throw new Error(apiErrorMessage(error));
-
-			updateWorkspaces((current) => current.filter((item) => item.id !== projectId));
-			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
-			if (params.projectId === projectId) {
-				void navigate({ to: "/" });
-			}
-		},
-		[navigate, params.projectId, queryClient, updateWorkspaces],
 	);
 
 	useEffect(() => {
@@ -113,7 +98,7 @@ function ShellLayout() {
 	}, [navigate, workspaces]);
 
 	return (
-		<ShellProvider value={{ daemonStatus, openSpawn, createProject, createTask }}>
+		<ShellProvider value={{ daemonStatus, createProject }}>
 			{/* The topbar spans the full window width above the sidebar row (the
           macOS traffic lights + TitlebarNav cluster sit in its left inset),
           and the sidebar hangs below it — so the sidebar border stops at the
@@ -130,7 +115,7 @@ function ShellLayout() {
 					onOpenChange={(open) => open !== isSidebarOpen && toggleSidebar()}
 					open={isSidebarOpen}
 					style={
-						{ "--sidebar-width": "var(--ao-sidebar-w, 240px)", "--sidebar-width-icon": "48px" } as React.CSSProperties
+						{ "--sidebar-width": "var(--ao-sidebar-w, 240px)", "--sidebar-width-icon": "48px" } as CSSProperties
 					}
 				>
 					<Sidebar
@@ -155,13 +140,6 @@ function ShellLayout() {
 					<TitlebarNav />
 				</SidebarProvider>
 			</div>
-			<SpawnWorkerModal
-				defaultProjectId={spawnProjectId}
-				onCreateTask={createTask}
-				onOpenChange={setSpawnOpen}
-				open={spawnOpen}
-				workspaces={workspaces}
-			/>
 		</ShellProvider>
 	);
 }
