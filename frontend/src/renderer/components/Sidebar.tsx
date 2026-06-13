@@ -28,7 +28,6 @@ import {
 	SidebarGroupLabel,
 	SidebarHeader,
 	SidebarMenu,
-	SidebarMenuAction,
 	SidebarMenuButton,
 	SidebarMenuItem,
 	SidebarMenuSub,
@@ -53,7 +52,6 @@ type SidebarProps = {
 	workspaceError?: string;
 	workspaces: WorkspaceSummary[];
 	onCreateProject: (input: { path: string }) => Promise<void>;
-	onRemoveProject: (projectId: string) => Promise<void>;
 };
 
 // Selection state comes from the URL: which project/session is active is the
@@ -95,7 +93,7 @@ function SessionDot({ session }: { session: WorkspaceSession }) {
 // _shell owns open state (synced to the ui-store) and `collapsible="icon"`
 // replaces the old hand-rolled CollapsedRail — the same tree restyles itself
 // via group-data-[collapsible=icon] into the 48px letter rail.
-export function Sidebar({ daemonStatus, workspaceError, workspaces, onCreateProject, onRemoveProject }: SidebarProps) {
+export function Sidebar({ daemonStatus, workspaceError, workspaces, onCreateProject }: SidebarProps) {
 	const selection = useSelection();
 	const eventsConnection = useEventsConnection();
 	const { state } = useSidebar();
@@ -203,7 +201,6 @@ export function Sidebar({ daemonStatus, workspaceError, workspaces, onCreateProj
 										expanded={!collapsedIds.has(workspace.id)}
 										selection={selection}
 										onToggle={() => toggleCollapsed(workspace.id)}
-										onRemoveProject={() => onRemoveProject(workspace.id)}
 									/>
 								))}
 								{isCollapsed && <CreateProjectListItem onCreateProject={onCreateProject} />}
@@ -347,17 +344,13 @@ function ProjectItem({
 	expanded,
 	selection,
 	onToggle,
-	onRemoveProject,
 }: {
 	workspace: WorkspaceSummary;
 	expanded: boolean;
 	selection: Selection;
 	onToggle: () => void;
-	onRemoveProject: () => Promise<void>;
 }) {
 	const projectActive = selection.activeProjectId === workspace.id && !selection.activeSessionId;
-	const [isRemoving, setIsRemoving] = useState(false);
-	const [removeError, setRemoveError] = useState<string | null>(null);
 	// Live workers only: merged/terminated sessions leave the sidebar and stay
 	// reachable through the board's Done / Terminated bar (SessionsBoard).
 	const sessions = workerSessions(workspace.sessions).filter(sessionIsActive);
@@ -405,9 +398,6 @@ function ProjectItem({
 					"h-auto gap-[9px] rounded-[5px] px-1.5 py-[7px] text-[13px] font-medium text-muted-foreground transition-[padding]",
 					"hover:bg-interactive-hover hover:text-muted-foreground active:bg-interactive-hover active:text-muted-foreground",
 					"data-[active=true]:bg-interactive-active data-[active=true]:font-semibold data-[active=true]:text-foreground",
-					// The count badge sits in-flow (verbatim layout), so undo the
-					// variant's blanket action padding; hover makes room for the menu.
-					"group-has-data-[sidebar=menu-action]/menu-item:pr-1.5 group-hover/menu-item:pr-[34px] group-focus-within/menu-item:pr-[34px] group-has-data-[state=open]/menu-item:pr-[34px]",
 					// Icon rail: the old 36px letter tile.
 					"group-data-[collapsible=icon]:size-9! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:p-0! group-data-[collapsible=icon]:font-semibold",
 				)}
@@ -422,43 +412,10 @@ function ProjectItem({
 				/>
 				<span className="hidden group-data-[collapsible=icon]:block">{workspace.name.charAt(0).toUpperCase()}</span>
 				<span className="min-w-0 flex-1 truncate group-data-[collapsible=icon]:hidden">{workspace.name}</span>
-				<span className="shrink-0 font-mono text-[11px] text-passive group-hover/menu-item:opacity-0 group-focus-within/menu-item:opacity-0 group-has-data-[state=open]/menu-item:opacity-0 group-data-[collapsible=icon]:hidden">
+				<span className="shrink-0 font-mono text-[11px] text-passive group-hover/menu-item:opacity-0 group-data-[collapsible=icon]:hidden">
 					{sessions.length}
 				</span>
 			</SidebarMenuButton>
-			<DropdownMenu>
-				<Tooltip>
-					<TooltipTrigger asChild>
-						<DropdownMenuTrigger asChild>
-							<SidebarMenuAction
-								showOnHover
-								aria-label={`Project actions for ${workspace.name}`}
-								className="right-1.5 h-[22px] w-[22px] rounded-[5px] text-passive transition-opacity hover:bg-interactive-active hover:text-foreground data-[state=open]:bg-interactive-active data-[state=open]:text-foreground"
-							>
-								<MoreHorizontal className="h-[13px]! w-[13px]!" aria-hidden="true" />
-							</SidebarMenuAction>
-						</DropdownMenuTrigger>
-					</TooltipTrigger>
-					<TooltipContent>Project actions</TooltipContent>
-				</Tooltip>
-				<DropdownMenuContent align="end" side="right" sideOffset={6}>
-					<DropdownMenuItem onSelect={() => selection.goSettings(workspace.id)}>
-						<Settings aria-hidden="true" />
-						Project settings
-					</DropdownMenuItem>
-					<DropdownMenuSeparator />
-					<DropdownMenuItem className="text-destructive focus:text-destructive" disabled={isRemoving} onSelect={() => void removeProject()}>
-						<Trash2 aria-hidden="true" />
-						{isRemoving ? "Removing..." : "Remove project"}
-					</DropdownMenuItem>
-				</DropdownMenuContent>
-			</DropdownMenu>
-			{removeError && (
-				<span className="sr-only" role="status">
-					{removeError}
-				</span>
-			)}
-
 			{/* project-sidebar__sessions. Divergence from AO (user decision
           2026-06-12): no left indent or tree guide line — every sidebar row
           (project or worker) spans the same full width. */}

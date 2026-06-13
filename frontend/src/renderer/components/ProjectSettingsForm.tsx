@@ -50,7 +50,7 @@ export function ProjectSettingsForm({ projectId }: { projectId: string }) {
 
 	return (
 		<div className="flex h-full min-h-0 flex-col bg-background text-foreground">
-			<DashboardSubhead title="Settings" breadcrumbs={[query.data.name, "Settings"]} />
+			<DashboardSubhead title="Settings" subtitle={query.data.path} />
 			<div className="min-h-0 flex-1 overflow-y-auto p-[18px]">
 				<SettingsBody
 					key={projectId}

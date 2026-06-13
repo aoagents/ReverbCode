@@ -168,11 +168,6 @@ func (a *recordingAgent) GetLaunchCommand(_ context.Context, cfg ports.LaunchCon
 func (a *recordingAgent) GetRestoreCommand(_ context.Context, cfg ports.RestoreConfig) ([]string, bool, error) {
 	a.lastConfig = cfg.Config
 	a.lastRestore = cfg
-	// Mirror fakeAgent: no native session id means no native resume, so the
-	// manager falls back to a fresh launch.
-	if cfg.Session.Metadata[ports.MetadataKeyAgentSessionID] == "" {
-		return nil, false, nil
-	}
 	return []string{"resume"}, true, nil
 }
 
@@ -504,19 +499,54 @@ func TestSpawn_DefaultsBranchFromSessionID(t *testing.T) {
 	}
 }
 
-func TestSpawnOrchestrator_DefaultsBranchFromProjectPrefix(t *testing.T) {
-	m, st, _, ws := newManager()
-	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{SessionPrefix: "team"}}
+func TestSpawn_ForwardsResolvedAgentConfigPermissions(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
+		AgentConfig: domain.AgentConfig{Permissions: domain.PermissionModeAuto},
+		Worker:      domain.RoleOverride{AgentConfig: domain.AgentConfig{Permissions: domain.PermissionModeBypassPermissions}},
+	}}
+	agent := &recordingAgent{}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
 
-	s, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindOrchestrator})
+	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := st.sessions[s.ID].Metadata.Branch; got != "ao/team-orchestrator" {
-		t.Fatalf("default orchestrator branch = %q, want ao/team-orchestrator", got)
+
+	if agent.lastLaunch.Config.Permissions != domain.PermissionModeBypassPermissions {
+		t.Fatalf("launch config permissions = %q, want bypass", agent.lastLaunch.Config.Permissions)
 	}
-	if got := ws.lastCfg.Branch; got != "ao/team-orchestrator" {
-		t.Fatalf("workspace branch = %q, want ao/team-orchestrator", got)
+	if agent.lastLaunch.Permissions != domain.PermissionModeBypassPermissions {
+		t.Fatalf("launch permissions = %q, want bypass", agent.lastLaunch.Permissions)
+	}
+}
+
+func TestRestore_ForwardsResolvedAgentConfigPermissions(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
+		AgentConfig: domain.AgentConfig{Permissions: domain.PermissionModeBypassPermissions},
+	}}
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:           "mer-1",
+		ProjectID:    "mer",
+		Kind:         domain.KindWorker,
+		IsTerminated: true,
+		Metadata:     domain.SessionMetadata{Branch: "ao/mer-1", WorkspacePath: "/tmp/ws", AgentSessionID: "native-1"},
+	}
+	agent := &recordingAgent{}
+	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: func(string) (string, error) { return "/bin/true", nil }})
+
+	_, err := m.Restore(ctx, "mer-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if agent.lastRestore.Config.Permissions != domain.PermissionModeBypassPermissions {
+		t.Fatalf("restore config permissions = %q, want bypass", agent.lastRestore.Config.Permissions)
+	}
+	if agent.lastRestore.Permissions != domain.PermissionModeBypassPermissions {
+		t.Fatalf("restore permissions = %q, want bypass", agent.lastRestore.Permissions)
 	}
 }
 

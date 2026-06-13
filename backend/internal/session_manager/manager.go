@@ -213,13 +213,15 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		m.markSpawnFailedTerminated(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: %w", id, err)
 	}
+	agentConfig := effectiveAgentConfig(cfg.Kind, project.Config)
 	argv, err := agent.GetLaunchCommand(ctx, ports.LaunchConfig{
 		SessionID:     string(id),
 		WorkspacePath: ws.Path,
 		Prompt:        prompt,
 		SystemPrompt:  systemPrompt,
 		IssueID:       string(cfg.IssueID),
-		Config:        effectiveAgentConfig(cfg.Kind, project.Config),
+		Config:        agentConfig,
+		Permissions:   agentConfig.Permissions,
 	})
 	if err != nil {
 		_ = m.workspace.Destroy(ctx, ws)
@@ -856,7 +858,7 @@ func restoreArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, wo
 		WorkspacePath: workspacePath,
 		Metadata:      map[string]string{ports.MetadataKeyAgentSessionID: meta.AgentSessionID},
 	}
-	cmd, ok, err := agent.GetRestoreCommand(ctx, ports.RestoreConfig{Session: ref, Config: agentConfig, SystemPrompt: systemPrompt})
+	cmd, ok, err := agent.GetRestoreCommand(ctx, ports.RestoreConfig{Session: ref, Config: agentConfig, Permissions: agentConfig.Permissions})
 	if err != nil {
 		return nil, fmt.Errorf("restore command: %w", err)
 	}
@@ -869,6 +871,7 @@ func restoreArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, wo
 		Prompt:        meta.Prompt,
 		SystemPrompt:  systemPrompt,
 		Config:        agentConfig,
+		Permissions:   agentConfig.Permissions,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("launch command: %w", err)

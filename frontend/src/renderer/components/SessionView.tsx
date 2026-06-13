@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import type { PanelImperativeHandle, PanelSize } from "react-resizable-panels";
 import { CenterPane } from "./CenterPane";
 import { SessionInspector } from "./SessionInspector";
@@ -116,16 +116,23 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	// data-separator="active" only during a pointer drag — the same hook the
 	// transition-suppressing CSS keys on, so drag writes are never transition
 	// frames.
-	const handleInspectorResize = (size: PanelSize) => {
-		if (inspectorSeparatorRef.current?.getAttribute("data-separator") !== "active") return;
-		const open = useUiStore.getState().isInspectorOpen;
-		if (size.asPercentage > 0) {
-			window.localStorage?.setItem(inspectorSplitStorageKey, String(size.asPercentage));
-			if (!open) toggleInspector();
-		} else if (open) {
-			toggleInspector();
-		}
-	};
+	// Also wrapped in useCallback: rrp v4's panel registration useLayoutEffect
+	// includes onResize in its dep array, so an unstable reference would
+	// de-register/re-register the inspector panel on every render and race
+	// with the expand()/collapse() effect above.
+	const handleInspectorResize = useCallback(
+		(size: PanelSize) => {
+			if (inspectorSeparatorRef.current?.getAttribute("data-separator") !== "active") return;
+			const open = useUiStore.getState().isInspectorOpen;
+			if (size.asPercentage > 0) {
+				window.localStorage?.setItem(inspectorSplitStorageKey, String(size.asPercentage));
+				if (!open) toggleInspector();
+			} else if (open) {
+				toggleInspector();
+			}
+		},
+		[toggleInspector],
+	);
 
 	if (!session && !workspaceQuery.isLoading) {
 		return (

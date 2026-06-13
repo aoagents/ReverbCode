@@ -1,6 +1,6 @@
 import { createFileRoute, Outlet, useNavigate, useParams } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { ShellTopbar } from "../components/ShellTopbar";
 import { Sidebar } from "../components/Sidebar";
 import { SidebarProvider } from "../components/ui/sidebar";
@@ -113,7 +113,7 @@ function ShellLayout() {
 	}, [navigate, workspaces]);
 
 	return (
-		<ShellProvider value={{ daemonStatus, createProject }}>
+		<ShellProvider value={{ daemonStatus, openSpawn, createProject, createTask }}>
 			{/* The topbar spans the full window width above the sidebar row (the
           macOS traffic lights + TitlebarNav cluster sit in its left inset),
           and the sidebar hangs below it — so the sidebar border stops at the
@@ -136,7 +136,6 @@ function ShellLayout() {
 					<Sidebar
 						daemonStatus={daemonStatus}
 						onCreateProject={createProject}
-						onRemoveProject={removeProject}
 						workspaceError={workspaceQuery.isError ? errorMessage(workspaceQuery.error) : undefined}
 						workspaces={workspaces}
 					/>
@@ -156,6 +155,13 @@ function ShellLayout() {
 					<TitlebarNav />
 				</SidebarProvider>
 			</div>
+			<SpawnWorkerModal
+				defaultProjectId={spawnProjectId}
+				onCreateTask={createTask}
+				onOpenChange={setSpawnOpen}
+				open={spawnOpen}
+				workspaces={workspaces}
+			/>
 		</ShellProvider>
 	);
 }
