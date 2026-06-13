@@ -27,11 +27,7 @@ const workspace: WorkspaceSummary = {
 function renderSidebar() {
 	render(
 		<SidebarProvider>
-			<Sidebar
-				daemonStatus={{ state: "running" }}
-				onCreateProject={vi.fn()}
-				workspaces={[workspace]}
-			/>
+			<Sidebar daemonStatus={{ state: "running" }} onCreateProject={vi.fn()} workspaces={[workspace]} />
 		</SidebarProvider>,
 	);
 }
