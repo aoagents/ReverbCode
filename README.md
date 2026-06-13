@@ -66,10 +66,14 @@ npm install
 npm run dev   # electron-forge start
 ```
 
-Heads-up: `npm run dev` does **not** start the daemon for you. Start it first
-(`ao start`, see above) — the renderer attaches to the running daemon over
-loopback (`127.0.0.1:3001` by default, the `AO_PORT` from the table below).
-Without a daemon the app opens but shows its daemon-not-ready state.
+`npm run dev` starts the backend daemon from source (`go run ./cmd/ao daemon`)
+and the renderer attaches over loopback (`127.0.0.1:3001` by default, the
+`AO_PORT` from the table below). Set `AO_DAEMON_COMMAND` to override the daemon
+command used by the Electron supervisor.
+
+Packaged desktop builds bundle the Go `ao` binary and start `ao daemon`
+automatically on app launch, so installed builds do not require a separate
+`ao start`.
 
 For renderer-only UI work without the Electron shell, use
 `npm run dev:web` (Vite in a regular browser).

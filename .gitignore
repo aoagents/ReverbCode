@@ -53,6 +53,7 @@ Thumbs.db
 # electron-forge / vite build output
 .vite/
 dist-electron/
+frontend/daemon/
 
 # playwright artifacts
 frontend/test-results/
