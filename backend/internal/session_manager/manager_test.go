@@ -168,6 +168,11 @@ func (a *recordingAgent) GetLaunchCommand(_ context.Context, cfg ports.LaunchCon
 func (a *recordingAgent) GetRestoreCommand(_ context.Context, cfg ports.RestoreConfig) ([]string, bool, error) {
 	a.lastConfig = cfg.Config
 	a.lastRestore = cfg
+	// Mirror real adapters: with no native agent-session id to resume, signal
+	// "cannot restore" so the manager falls back to a fresh launch.
+	if cfg.Session.Metadata[ports.MetadataKeyAgentSessionID] == "" {
+		return nil, false, nil
+	}
 	return []string{"resume"}, true, nil
 }
 
