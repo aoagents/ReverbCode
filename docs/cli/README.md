@@ -16,7 +16,7 @@ Every product command resolves to a daemon HTTP route. Run `ao <command>
 | ----------------------------- | ------------------------------------------------------------------------------------------- |
 | `ao start`                    | Start the daemon in the background and wait for `/readyz`.                                  |
 | `ao stop`                     | Gracefully stop the daemon via loopback `POST /shutdown` after verifying daemon identity.   |
-| `ao status` / `--json`        | Report daemon state from `running.json`, process liveness, `/healthz`, and `/readyz`.        |
+| `ao status` / `--json`        | Report daemon state from `running.json`, process liveness, `/healthz`, and `/readyz`.       |
 | `ao doctor` / `--json`        | Check config, data directory, DB-file presence, daemon state, `git`, and optional `zellij`. |
 | `ao completion <shell>`       | Generate completions for `bash`, `zsh`, `fish`, or `powershell`.                            |
 | `ao version` / `ao --version` | Print build metadata.                                                                       |
@@ -24,24 +24,24 @@ Every product command resolves to a daemon HTTP route. Run `ao <command>
 
 ### Product commands
 
-| Command                                | Daemon route                                  |
-| -------------------------------------- | --------------------------------------------- |
-| `ao project add`                       | `POST /api/v1/projects`                        |
-| `ao project ls`                        | `GET /api/v1/projects`                         |
-| `ao project get <id>`                  | `GET /api/v1/projects/{id}`                    |
-| `ao project set-config <id>`           | `PUT /api/v1/projects/{id}/config`             |
-| `ao project rm <id>`                   | `DELETE /api/v1/projects/{id}`                 |
-| `ao spawn`                             | `POST /api/v1/sessions`                        |
-| `ao session ls`                        | `GET /api/v1/sessions`                         |
-| `ao session get <id>`                  | `GET /api/v1/sessions/{id}`                    |
-| `ao session kill <id>`                 | `POST /api/v1/sessions/{id}/kill`              |
-| `ao session restore <id>`              | `POST /api/v1/sessions/{id}/restore`           |
-| `ao session rename <id> <name>`        | `PATCH /api/v1/sessions/{id}`                  |
-| `ao session cleanup`                   | `POST /api/v1/sessions/cleanup`                |
-| `ao session claim-pr <id> <pr-ref>`    | `POST /api/v1/sessions/{id}/pr/claim`          |
-| `ao orchestrator ls`                   | `GET /api/v1/orchestrators`                    |
-| `ao send`                              | `POST /api/v1/sessions/{id}/send`              |
-| `ao hooks <agent> <event>`             | `POST /api/v1/sessions/{id}/activity` (hidden) |
+| Command                             | Daemon route                                   |
+| ----------------------------------- | ---------------------------------------------- |
+| `ao project add`                    | `POST /api/v1/projects`                        |
+| `ao project ls`                     | `GET /api/v1/projects`                         |
+| `ao project get <id>`               | `GET /api/v1/projects/{id}`                    |
+| `ao project set-config <id>`        | `PUT /api/v1/projects/{id}/config`             |
+| `ao project rm <id>`                | `DELETE /api/v1/projects/{id}`                 |
+| `ao spawn`                          | `POST /api/v1/sessions`                        |
+| `ao session ls`                     | `GET /api/v1/sessions`                         |
+| `ao session get <id>`               | `GET /api/v1/sessions/{id}`                    |
+| `ao session kill <id>`              | `POST /api/v1/sessions/{id}/kill`              |
+| `ao session restore <id>`           | `POST /api/v1/sessions/{id}/restore`           |
+| `ao session rename <id> <name>`     | `PATCH /api/v1/sessions/{id}`                  |
+| `ao session cleanup`                | `POST /api/v1/sessions/cleanup`                |
+| `ao session claim-pr <id> <pr-ref>` | `POST /api/v1/sessions/{id}/pr/claim`          |
+| `ao orchestrator ls`                | `GET /api/v1/orchestrators`                    |
+| `ao send`                           | `POST /api/v1/sessions/{id}/send`              |
+| `ao hooks <agent> <event>`          | `POST /api/v1/sessions/{id}/activity` (hidden) |
 
 `go run .` in `backend/` remains a compatibility wrapper around the daemon.
 
