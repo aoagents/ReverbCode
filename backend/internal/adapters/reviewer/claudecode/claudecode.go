@@ -1,13 +1,13 @@
 // Package claudecode is the claude-code reviewer adapter. claude-code is a
-// prompt-driven agent, so this reviewer builds a review prompt and reuses the
-// worker claude-code adapter's launch-command construction (binary resolution,
-// flags). The reviewer contract itself stays prompt-agnostic, so a one-shot CLI
-// reviewer (e.g. greptile) can implement it without a prompt.
+// prompt-driven agent, so this reviewer feeds AO's review prompt (authored
+// centrally and passed in ReviewInvocation.Prompt) to the worker claude-code
+// adapter's launch-command construction (binary resolution, flags). The reviewer
+// contract stays prompt-agnostic, so a one-shot CLI reviewer (e.g. greptile) can
+// ignore the prompt entirely.
 package claudecode
 
 import (
 	"context"
-	"fmt"
 
 	workeragent "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/claudecode"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -37,7 +37,7 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 	argv, err := r.agent.GetLaunchCommand(ctx, ports.LaunchConfig{
 		SessionID:     inv.ReviewerID,
 		WorkspacePath: inv.WorkspacePath,
-		Prompt:        reviewPrompt(inv),
+		Prompt:        inv.Prompt,
 	})
 	if err != nil {
 		return ports.ReviewCommandSpec{}, err
@@ -46,23 +46,7 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 }
 
 // ReviewMessage is the text injected into an already-running reviewer pane to
-// review a new commit. It carries the same explicit instructions as the spawn
-// prompt.
+// review a new commit — AO's central review prompt.
 func (r *Reviewer) ReviewMessage(_ context.Context, inv ports.ReviewInvocation) (string, error) {
-	return reviewPrompt(inv), nil
-}
-
-func reviewPrompt(inv ports.ReviewInvocation) string {
-	return fmt.Sprintf(`You are an AO code reviewer. The current working directory is a checkout containing the changes for pull request %s (head commit %s). Review only this PR's changes — do not start unrelated work.
-
-Steps:
-1. Inspect what the PR changed by diffing the checkout against the PR's base branch.
-2. Review for correctness bugs, missing error handling, security issues, test coverage, and clear deviations from the surrounding code's conventions. Prefer a few high-confidence findings over nitpicks.
-3. Post your review on the pull request using the available review tooling (request changes if it needs work, approve if it is ready), with inline comments for specific findings.
-4. Record the outcome with AO so the worker is nudged: write your full review to review.md, then run exactly:
-
-     ao review submit --session %s --run %s --verdict <approved|changes_requested> --body review.md
-
-Constraints: do not push commits, edit files, or modify the branch — review only. If you cannot post the review, still run the `+"`ao review submit`"+` command above so the result is recorded.`,
-		inv.PRURL, inv.TargetSHA, inv.WorkerSessionID, inv.RunID)
+	return inv.Prompt, nil
 }

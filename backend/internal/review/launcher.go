@@ -67,6 +67,7 @@ func (l *agentLauncher) invocation(spec LaunchSpec) ports.ReviewInvocation {
 		PRURL:           spec.PRURL,
 		TargetSHA:       spec.TargetSHA,
 		WorkspacePath:   spec.WorkspacePath,
+		Prompt:          reviewPrompt(spec),
 	}
 }
 
