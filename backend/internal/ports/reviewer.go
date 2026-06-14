@@ -39,10 +39,13 @@ type ReviewInvocation struct {
 	TargetSHA string
 	// WorkspacePath is the worker's checkout the reviewer reads.
 	WorkspacePath string
-	// Prompt is the review instruction AO authored centrally (the reviewer
-	// analogue of the worker's LaunchConfig.Prompt). A prompt-driven adapter
-	// (claude-code) feeds it to the agent; a one-shot CLI reviewer may ignore it.
-	Prompt string
+	// Prompt and SystemPrompt are the review instructions AO authored centrally,
+	// mirroring the worker's LaunchConfig.Prompt / SystemPrompt split: SystemPrompt
+	// carries the standing reviewer role, Prompt the per-pass task. A prompt-driven
+	// adapter (claude-code) feeds them to the agent; a one-shot CLI reviewer may
+	// ignore them.
+	Prompt       string
+	SystemPrompt string
 }
 
 // ReviewCommandSpec is how to launch a reviewer: the argv and any extra env the

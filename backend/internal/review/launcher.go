@@ -60,6 +60,7 @@ func reviewerHandleID(workerID domain.SessionID) string {
 }
 
 func (l *agentLauncher) invocation(spec LaunchSpec) ports.ReviewInvocation {
+	prompt, systemPrompt := reviewTexts(spec)
 	return ports.ReviewInvocation{
 		ReviewerID:      reviewerHandleID(spec.WorkerID),
 		RunID:           spec.RunID,
@@ -67,7 +68,8 @@ func (l *agentLauncher) invocation(spec LaunchSpec) ports.ReviewInvocation {
 		PRURL:           spec.PRURL,
 		TargetSHA:       spec.TargetSHA,
 		WorkspacePath:   spec.WorkspacePath,
-		Prompt:          reviewPrompt(spec),
+		Prompt:          prompt,
+		SystemPrompt:    systemPrompt,
 	}
 }
 

@@ -38,6 +38,7 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 		SessionID:     inv.ReviewerID,
 		WorkspacePath: inv.WorkspacePath,
 		Prompt:        inv.Prompt,
+		SystemPrompt:  inv.SystemPrompt,
 	})
 	if err != nil {
 		return ports.ReviewCommandSpec{}, err
