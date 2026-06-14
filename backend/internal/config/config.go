@@ -87,8 +87,8 @@ func (c Config) Addr() string {
 //	AO_PORT              bind port           (default 3001)
 //	AO_REQUEST_TIMEOUT   per-request timeout (Go duration > 0, default 60s)
 //	AO_SHUTDOWN_TIMEOUT  shutdown deadline   (Go duration > 0, default 10s)
-//	AO_RUN_FILE          running.json path   (default <state-dir>/running.json)
-//	AO_DATA_DIR          durable state dir   (default <state-dir>/data)
+//	AO_RUN_FILE          running.json path   (default ~/.ao/running.json)
+//	AO_DATA_DIR          durable state dir   (default ~/.ao/data)
 //	AO_AGENT             agent adapter id    (default claude-code)
 //	AO_ALLOWED_ORIGINS   CORS origins, comma-separated (default DefaultAllowedOrigins)
 //
@@ -183,7 +183,7 @@ func parsePositiveDuration(name, raw string) (time.Duration, error) {
 }
 
 // resolveRunFilePath picks where running.json lives. An explicit AO_RUN_FILE
-// wins; otherwise it sits under the per-user config directory so the CLI and
+// wins; otherwise it sits under the canonical AO home directory so the CLI and
 // Electron supervisor share one handshake location.
 func resolveRunFilePath() (string, error) {
 	if p, ok := os.LookupEnv("AO_RUN_FILE"); ok && p != "" {
@@ -197,7 +197,7 @@ func resolveRunFilePath() (string, error) {
 }
 
 // resolveDataDir picks where durable state (the SQLite DB) lives. An explicit
-// AO_DATA_DIR wins; otherwise it defaults under the same per-user config
+// AO_DATA_DIR wins; otherwise it defaults under the same canonical AO home
 // directory as the run-file.
 func resolveDataDir() (string, error) {
 	if p, ok := os.LookupEnv("AO_DATA_DIR"); ok && p != "" {
@@ -211,9 +211,9 @@ func resolveDataDir() (string, error) {
 }
 
 func defaultStateDir() (string, error) {
-	configDir, err := os.UserConfigDir()
+	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("resolve state dir: %w", err)
 	}
-	return filepath.Join(configDir, "agent-orchestrator"), nil
+	return filepath.Join(homeDir, ".ao"), nil
 }

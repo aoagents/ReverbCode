@@ -88,25 +88,17 @@ export function parseRunFile(contents: string): RunFileInfo | null {
 }
 
 /**
- * Where the daemon writes running.json when AO_RUN_FILE is unset. Mirrors Go's
- * os.UserConfigDir() + "agent-orchestrator/running.json" resolution in
- * backend/internal/config so the supervisor reads the same file the daemon
- * writes. Returns null when the platform's config root cannot be resolved.
+ * Where the daemon writes running.json when AO_RUN_FILE is unset. Matches
+ * backend/internal/config's canonical AO home default so the supervisor reads
+ * the same file the daemon writes. Returns null when the user home directory
+ * cannot be resolved.
  */
 export function defaultRunFilePath(
 	platform: NodeJS.Platform,
-	env: Record<string, string | undefined>,
+	_env: Record<string, string | undefined>,
 	homeDir: string,
 ): string | null {
-	if (platform === "darwin") {
-		if (!homeDir) return null;
-		return joinPath(homeDir, "Library", "Application Support", "agent-orchestrator", "running.json");
-	}
-	if (platform === "win32") {
-		if (!env.APPDATA) return null;
-		return joinPath(env.APPDATA, "agent-orchestrator", "running.json");
-	}
-	const configRoot = env.XDG_CONFIG_HOME || (homeDir ? joinPath(homeDir, ".config") : "");
-	if (!configRoot) return null;
-	return joinPath(configRoot, "agent-orchestrator", "running.json");
+	void platform;
+	if (!homeDir) return null;
+	return joinPath(homeDir, ".ao", "running.json");
 }
