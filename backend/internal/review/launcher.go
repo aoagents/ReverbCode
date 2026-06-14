@@ -48,6 +48,10 @@ type agentLauncher struct {
 	runtime   reviewerRuntime
 }
 
+type preLaunchReviewer interface {
+	PreLaunch(ctx context.Context, inv ports.ReviewInvocation) error
+}
+
 // NewLauncher builds the production reviewer launcher.
 func NewLauncher(reviewers ports.ReviewerResolver, runtime reviewerRuntime) Launcher {
 	return &agentLauncher{reviewers: reviewers, runtime: runtime}
@@ -79,7 +83,13 @@ func (l *agentLauncher) Spawn(ctx context.Context, spec LaunchSpec) (string, err
 		return "", fmt.Errorf("no reviewer adapter for harness %q", spec.Harness)
 	}
 	handleID := reviewerHandleID(spec.WorkerID)
-	cmd, err := reviewer.ReviewCommand(ctx, l.invocation(spec))
+	inv := l.invocation(spec)
+	if pl, ok := reviewer.(preLaunchReviewer); ok {
+		if err := pl.PreLaunch(ctx, inv); err != nil {
+			return "", fmt.Errorf("reviewer pre-launch: %w", err)
+		}
+	}
+	cmd, err := reviewer.ReviewCommand(ctx, inv)
 	if err != nil {
 		return "", fmt.Errorf("reviewer command: %w", err)
 	}

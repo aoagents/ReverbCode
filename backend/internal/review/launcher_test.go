@@ -22,6 +22,18 @@ func (f *fakeReviewer) ReviewMessage(_ context.Context, inv ports.ReviewInvocati
 	return "review run " + inv.RunID, nil
 }
 
+type fakePreLaunchReviewer struct {
+	fakeReviewer
+	prelaunched bool
+	gotPre      ports.ReviewInvocation
+}
+
+func (f *fakePreLaunchReviewer) PreLaunch(_ context.Context, inv ports.ReviewInvocation) error {
+	f.prelaunched = true
+	f.gotPre = inv
+	return nil
+}
+
 type fakeReviewerResolver struct {
 	reviewer ports.Reviewer
 	ok       bool
@@ -79,6 +91,25 @@ func TestLauncherSpawnReturnsStableHandle(t *testing.T) {
 	}
 	if reviewer.gotInv.RunID != "run-1" || reviewer.gotInv.TargetSHA != "sha1" || reviewer.gotInv.ReviewerID != "review-mer-1" {
 		t.Fatalf("invocation = %+v", reviewer.gotInv)
+	}
+}
+
+func TestLauncherSpawnRunsReviewerPreLaunch(t *testing.T) {
+	reviewer := &fakePreLaunchReviewer{}
+	rt := &fakeRuntime{}
+	l := NewLauncher(fakeReviewerResolver{reviewer: reviewer, ok: true}, rt)
+
+	if _, err := l.Spawn(context.Background(), launchSpec()); err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if !reviewer.prelaunched {
+		t.Fatal("expected reviewer pre-launch to run")
+	}
+	if reviewer.gotPre.ReviewerID != "review-mer-1" || reviewer.gotPre.WorkspacePath != "/ws/mer-1" {
+		t.Fatalf("prelaunch invocation = %+v", reviewer.gotPre)
+	}
+	if rt.createCfg.WorkspacePath == "" {
+		t.Fatal("runtime should still be created after pre-launch")
 	}
 }
 

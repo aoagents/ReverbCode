@@ -46,6 +46,21 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 	return ports.ReviewCommandSpec{Argv: argv}, nil
 }
 
+// PreLaunch runs any reviewer-specific preflight. For Claude Code this records
+// the worker checkout as trusted before the headless reviewer pane starts.
+func (r *Reviewer) PreLaunch(ctx context.Context, inv ports.ReviewInvocation) error {
+	pl, ok := r.agent.(interface {
+		PreLaunch(context.Context, ports.LaunchConfig) error
+	})
+	if !ok {
+		return nil
+	}
+	return pl.PreLaunch(ctx, ports.LaunchConfig{
+		SessionID:     inv.ReviewerID,
+		WorkspacePath: inv.WorkspacePath,
+	})
+}
+
 // ReviewMessage is the text injected into an already-running reviewer pane to
 // review a new commit — AO's central review prompt.
 func (r *Reviewer) ReviewMessage(_ context.Context, inv ports.ReviewInvocation) (string, error) {

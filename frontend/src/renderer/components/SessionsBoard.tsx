@@ -76,9 +76,6 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const workspaceQuery = useWorkspaceQuery();
 	const all = workspaceQuery.data ?? [];
 	const workspaces = projectId ? all.filter((w) => w.id === projectId) : all;
-	// Project board leads with the project's name; the cross-project board
-	// (home) keeps the generic title.
-	const boardTitle = (projectId && workspaces[0]?.name) || "Board";
 	const sessions = workspaces.flatMap((w) => workerSessions(w.sessions));
 
 	const byZone = new Map<AttentionZone, WorkspaceSession[]>();

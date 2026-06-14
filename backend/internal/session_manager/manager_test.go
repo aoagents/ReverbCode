@@ -279,6 +279,34 @@ func TestSpawn_ResolvesProjectConfig(t *testing.T) {
 	}
 }
 
+// TestSpawn_PersistsResolvedDefaultHarness locks the fix for the mislabelled
+// agent: a spawn that names no harness must persist the daemon's default agent
+// (so the API/UI report what actually runs), while an explicit harness wins.
+func TestSpawn_PersistsResolvedDefaultHarness(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	m := New(Deps{
+		Runtime: &fakeRuntime{}, Agents: fakeAgents{}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath:       func(string) (string, error) { return "/bin/true", nil },
+		DefaultHarness: domain.HarnessClaudeCode,
+	})
+
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions["mer-1"].Harness; got != domain.HarnessClaudeCode {
+		t.Fatalf("unspecified harness = %q, want resolved default %q", got, domain.HarnessClaudeCode)
+	}
+
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessCodex}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions["mer-2"].Harness; got != domain.HarnessCodex {
+		t.Fatalf("explicit harness = %q, want %q", got, domain.HarnessCodex)
+	}
+}
+
 func TestSpawn_AssignsIDAndGoesIdle(t *testing.T) {
 	m, st, rt, _ := newManager()
 	s, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Prompt: "do it"})
