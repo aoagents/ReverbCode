@@ -23,17 +23,21 @@ record plus PR facts while assembling controller-facing read models.
 ## Package layout
 
 ```
-backend/internal/domain       shared vocabulary and API status value types
-backend/internal/ports        inbound/outbound interfaces
-backend/internal/service       controller-facing services and read-model assembly
-backend/internal/session_manager internal session command manager
-backend/internal/lifecycle    runtime/activity/spawn/termination session fact reducer
-backend/internal/pr           PR observation ingestion
-backend/internal/storage      SQLite persistence and DB-triggered CDC
-backend/internal/cdc          change-log poller and broadcaster
-backend/internal/httpd        daemon HTTP surface
-backend/internal/terminal     WebSocket terminal multiplexer
-backend/internal/adapters     Zellij/git-worktree/GitHub adapters
+backend/internal/domain           shared vocabulary and API status value types
+backend/internal/ports            inbound/outbound interfaces
+backend/internal/service/{project,session,pr,review}
+                                  controller-facing services and read-model assembly
+backend/internal/session_manager  internal session command manager
+backend/internal/lifecycle        runtime/activity/spawn/termination session fact reducer
+backend/internal/observe/scm      SCM (GitHub) observer loop feeding PR facts
+backend/internal/observe/reaper   runtime liveness observation loop
+backend/internal/storage          SQLite persistence and DB-triggered CDC
+backend/internal/cdc              change-log poller and broadcaster
+backend/internal/httpd            daemon HTTP surface (REST + SSE + terminal mux)
+backend/internal/terminal         WebSocket terminal multiplexer
+backend/internal/adapters         agent/Zellij/git-worktree/GitHub SCM + tracker adapters
+backend/internal/daemon           production wiring and shutdown
+backend/internal/config           daemon env/default config
 ```
 
 ## Status derivation
@@ -46,7 +50,10 @@ applies this rough precedence:
 3. Open PR facts drive PR pipeline statuses: `ci_failed`, `draft`,
    `changes_requested`, `mergeable`, `approved`, `review_pending`, `pr_open`.
 4. `activity_state=active` → `working`.
-5. Everything else → `idle`.
+5. A signal-capable harness that has never sent a hook callback past the
+   ~90s spawn grace → `no_signal` (a broken hook pipeline is visible rather
+   than reported as a confident `idle`). Hook-less harnesses stay `idle`.
+6. Everything else → `idle`.
 
 ## Lifecycle manager
 

@@ -1,31 +1,80 @@
 # agent-orchestrator status
 
-Current main contains the Go backend daemon, Cobra CLI foundation, SQLite store,
-CDC poller/broadcaster, lifecycle/session services, terminal mux, project API
-controller/manager work, runtime/workspace/tracker adapters, and CDC-backed event rows.
+Current `main` ships a working single-user local loop: the Go daemon and the
+Electron/React frontend both drive a live daemon over HTTP/SSE/WebSocket. The
+core GitHub flow works end-to-end: add project → spawn session/orchestrator →
+attach terminal → observe PR → merge.
 
 ## Build & test
 
+The local gate is the backend Go build and race-enabled test suite:
+
 ```bash
-npm run lint
+cd backend && go build ./... && go test -race ./...
 ```
 
-## Current shape
+`npm run lint` (from the repo root) runs `go test ./...` plus golangci-lint.
+Frontend checks live under `frontend/` (`npm run typecheck`, `npm run build`).
+See [`AGENTS.md`](../AGENTS.md) for the regen workflow when touching the API
+surface (`npm run sqlc`, `npm run api`).
 
-- CLI: `ao start`, `status`, `stop`, `doctor`, `completion`, `version`, and the
-  hidden daemon entrypoint.
-- Session facts: `activity_state` and `is_terminated`; display status is derived
-  from those plus PR facts.
-- SQLite: migrations create projects, sessions, PR/check/comment, and `change_log` tables.
-- CDC: DB triggers append to `change_log`; the poller broadcasts live events.
-- Session Manager: internal spawn/kill/restore/send/cleanup over runtime,
-  workspace, agent, store, messenger, and lifecycle ports.
-- Service package: controller-facing session boundary that delegates commands to
-  the manager and assembles list/get/spawn/restore read models with display status.
-  Daemon HTTP routes for session commands are not wired yet.
+## Shipped
 
-## Next integration work
+### Backend (Go daemon)
 
-- Wire production agent adapters.
-- Finish project/session HTTP routes and CLI product commands.
-- Add SSE/event read endpoints over the CDC log.
+- Loopback-only HTTP daemon (chi router, CORS, per-request timeout,
+  `/healthz` / `/readyz` / `/shutdown`).
+- SQLite store with goose migrations and sqlc-generated queries; DB
+  trigger-based change-data-capture into `change_log`.
+- CDC poller + broadcaster feeding in-process subscribers and the SSE stream
+  at `GET /api/v1/events` (with `Last-Event-ID` replay).
+- Full session lifecycle over HTTP: list, get, spawn, kill, restore, rename,
+  rollback, cleanup, send, activity, PR claim/list. Orchestrator routes
+  (list/spawn/get) are wired too.
+- Project CRUD plus per-project config (`PUT /projects/{id}/config`).
+- PR action engine wired into the API: `POST /prs/{id}/merge` and
+  `/prs/{id}/resolve-comments`.
+- Review routes registered: `GET /reviews`, `POST /reviews/execute`,
+  `POST /reviews/{id}/send`.
+- SCM observer (`internal/observe/scm`) wired into the daemon: GitHub provider,
+  lazy/non-blocking auth, per-PR polling with ETag guards and semantic diffing,
+  feeding PR facts into lifecycle, which sends agent nudges for CI failures,
+  review feedback, and merge conflicts.
+- Terminal mux over WebSocket (`/mux`): per-client `zellij attach` PTY.
+- Lifecycle reducer plus reaper (`internal/observe/reaper`).
+- Agent adapter platform under `internal/adapters/agent/` (20+ adapters) with a
+  registry and `ao hooks` activity dispatch.
+- OpenAPI spec generated from Go DTOs; frontend TS types generated from it and
+  drift-checked in CI.
+
+### Frontend (Electron + React)
+
+- Electron + React 19 + TanStack Router/Query + Tailwind + shadcn primitives.
+- Real daemon wiring via the generated `openapi-fetch` typed client
+  (`src/api/schema.ts`); mock data only in `VITE_NO_ELECTRON` web-preview mode.
+- Electron main handles daemon discovery, launch, and status reporting.
+- Shell: sidebar (projects + sessions, add/remove project), sessions board,
+  session view + inspector, project settings, pull-requests page,
+  spawn-orchestrator flow.
+- Terminal pane (xterm) over the mux WebSocket, with a live SSE events
+  connection and port-rebind on daemon restart.
+
+## In flight / not yet a runtime feature
+
+- **Tracker lane**: GitHub tracker adapter exists, but there is no daemon
+  observer loop or agent-lifecycle→issue mirroring yet, so the tracker does
+  nothing at runtime ([#112](https://github.com/aoagents/agent-orchestrator/issues/112)).
+- **Notifications**: design/in-flight only; no shipped backend notifier or UI
+  center.
+- **Live PR/tracker fact surfacing**: the observer writes facts, but exposing
+  the full `pr_*` / `tracker_*` CDC events to live consumers
+  ([#110](https://github.com/aoagents/agent-orchestrator/issues/110)) and in
+  `ao session get` ([#111](https://github.com/aoagents/agent-orchestrator/issues/111))
+  is still open.
+- **CLI parity for PR/review actions**: merge, resolve-comments, and review are
+  HTTP-only (frontend-driven); there are no `ao pr` / `ao review` commands.
+
+Tracking milestone:
+[`rewrite`](https://github.com/aoagents/agent-orchestrator/milestone/1).
+</content>
+</invoke>

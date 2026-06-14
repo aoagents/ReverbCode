@@ -5,7 +5,7 @@ Operational guidance for coding agents working in this repository. Keep changes 
 ## Repo layout
 
 - `backend/` — Go rewrite of Agent Orchestrator: Cobra `ao` CLI, loopback HTTP daemon, services, SQLite storage, lifecycle/reaper, runtime/workspace/agent/tracker adapters, terminal mux, and tests.
-- `frontend/` — placeholder Electron + TypeScript shell. Treat it as a thin supervisor/UI surface; do not move daemon logic into it.
+- `frontend/` — Electron + React supervisor wired to the daemon via the generated typed client. Treat it as a thin supervisor/UI surface; do not move daemon logic into it.
 - `docs/` — current architecture/status notes. Start here before changing lifecycle, CLI, agents, storage, or daemon behavior.
 - `test/` — external smoke/e2e assets, including the CLI fresh-install container check.
 - `.github/workflows/` — CI definitions. Mirror these commands locally when possible.
@@ -46,7 +46,7 @@ npm run build
 - `README.md` — current run/config/test quickstart.
 - `docs/README.md` — docs index.
 - `docs/architecture.md` — backend mental model, package layout, lifecycle/session/service boundaries, and load-bearing rules.
-- `docs/status.md` — current implementation state and next integration work.
+- `docs/status.md` — what is shipped on `main` today and what is still in flight.
 - `docs/cli/README.md` — intended CLI shape: thin Cobra client over daemon HTTP, never direct storage/runtime access.
 - `docs/agent/README.md` — agent adapter contract and hook behavior.
 - `CLAUDE.md` — compatibility pointer for Claude Code; it directs agents back to `AGENTS.md`.

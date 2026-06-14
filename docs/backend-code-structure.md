@@ -59,6 +59,7 @@ Current examples:
 internal/service/project
 internal/service/session
 internal/service/pr
+internal/service/review
 ```
 
 Belongs here:
@@ -333,9 +334,11 @@ backend/
     project/                    # project API/use-case boundary
     session/                    # session API/use-case boundary
     pr/                         # PR observation/action service
+    review/                     # code-review API/use-case boundary
   internal/session_manager/     # internal session command engine
   internal/lifecycle/           # durable lifecycle fact reducer
-  internal/observe/reaper/      # runtime observation loop
+  internal/observe/scm/         # SCM (GitHub) observer loop
+  internal/observe/reaper/      # runtime liveness observation loop
   internal/storage/sqlite/      # DB, migrations, queries, generated sqlc, stores
   internal/cdc/                 # change_log poller and broadcaster
   internal/terminal/            # terminal session protocol and PTY handling
