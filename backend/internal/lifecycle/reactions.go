@@ -43,10 +43,19 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 	if !o.Fetched {
 		return nil
 	}
-	if o.Merged {
-		return m.MarkTerminated(ctx, id)
-	}
-	if o.Closed {
+	// A PR reaching a terminal state (merged or closed) no longer ends the
+	// session on its own: a session may own several PRs. Terminate only when no
+	// open PR remains and at least one of them merged. The observer persists the
+	// PR row before calling lifecycle, so the store already reflects this
+	// transition when sessionComplete reads it.
+	if o.Merged || o.Closed {
+		done, err := m.sessionComplete(ctx, id)
+		if err != nil {
+			return err
+		}
+		if done {
+			return m.MarkTerminated(ctx, id)
+		}
 		return nil
 	}
 	rec, ok, err := m.store.GetSession(ctx, id)
@@ -79,9 +88,65 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 		return m.sendOnce(ctx, id, o.URL, "review:"+o.URL, sig, msg, reviewMaxNudge)
 	}
 	if o.Mergeability == domain.MergeConflicting {
+		// Only the bottom of a stack is eligible for the rebase nudge. A PR
+		// stacked on an open parent is expected to report conflicts against its
+		// parent branch until the parent merges and it retargets, so nudging the
+		// agent to rebase it now would be noise. Mergeability UNKNOWN (the brief
+		// post-retarget recompute window) never reaches here.
+		blocked, err := m.prBlockedByOpenParent(ctx, id, o.URL)
+		if err != nil {
+			return err
+		}
+		if blocked {
+			return nil
+		}
 		return m.sendOnce(ctx, id, o.URL, "merge-conflict:"+o.URL, string(o.Mergeability), "Your PR has merge conflicts. Rebase onto the base branch and resolve them.", 0)
 	}
 	return nil
+}
+
+// sessionComplete reports whether the session has reached the multi-PR
+// completion bar: at least one PR merged and no PR still open. A session with no
+// PRs, or with any open PR, is not complete.
+func (m *Manager) sessionComplete(ctx context.Context, id domain.SessionID) (bool, error) {
+	prs, err := m.store.ListPRsBySession(ctx, id)
+	if err != nil {
+		return false, err
+	}
+	merged := false
+	for _, pr := range prs {
+		if !pr.Merged && !pr.Closed {
+			return false, nil
+		}
+		if pr.Merged {
+			merged = true
+		}
+	}
+	return merged, nil
+}
+
+// prBlockedByOpenParent reports whether the PR at prURL is stacked on top of
+// another still-open PR in the same session — i.e. its target branch is the
+// source branch of a sibling open PR. Such a PR is not the bottom of its stack
+// and is exempt from merge-conflict nudges. Branch facts are read from the
+// store, which the observer has already updated for this observation.
+func (m *Manager) prBlockedByOpenParent(ctx context.Context, id domain.SessionID, prURL string) (bool, error) {
+	prs, err := m.store.ListPRsBySession(ctx, id)
+	if err != nil {
+		return false, err
+	}
+	openSources := make(map[string]bool, len(prs))
+	for _, pr := range prs {
+		if !pr.Merged && !pr.Closed && pr.SourceBranch != "" {
+			openSources[pr.SourceBranch] = true
+		}
+	}
+	for _, pr := range prs {
+		if pr.URL == prURL {
+			return pr.TargetBranch != "" && openSources[pr.TargetBranch], nil
+		}
+	}
+	return false, nil
 }
 
 // ApplySCMObservation is the provider-neutral lifecycle entrypoint used by the

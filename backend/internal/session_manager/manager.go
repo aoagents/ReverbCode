@@ -623,8 +623,9 @@ func (m *Manager) buildSystemPrompt(ctx context.Context, kind domain.SessionKind
 			return "", err
 		}
 		if ok {
-			return workerOrchestratorPrompt(orchestratorID), nil
+			return workerOrchestratorPrompt(orchestratorID) + "\n\n" + workerMultiPRPrompt(), nil
 		}
+		return workerMultiPRPrompt(), nil
 	}
 	return "", nil
 }
@@ -663,6 +664,23 @@ An active orchestrator session exists for this project. If you hit a true blocke
 `+"`ao send --session %s --message \"<your message>\"`"+`
 
 Only ping the orchestrator for true blockers, cross-session coordination, or decisions that cannot be resolved within your own task.`, orchestratorID)
+}
+
+// workerMultiPRPrompt explains the branch convention AO uses to attribute pull
+// requests to this session. A worker may open several PRs in one session: AO
+// tracks every open PR whose source branch is the session's own branch or a
+// descendant of it. Stacking a PR on top of another therefore only requires
+// branching off with a `<session-branch>/<topic>` name; PRs on unrelated
+// branches are attributed to whichever session owns their branch prefix.
+func workerMultiPRPrompt() string {
+	return `## Pull requests for this session
+
+You can open more than one pull request from this session. AO attributes a PR to you when its source branch is your session's working branch or a branch descended from it (a "/"-separated child like ` + "`your-branch/topic`" + `).
+
+- For independent PRs, branch off your base branch as usual and open each PR; all of them stay tracked under this session.
+- To stack a PR on top of another (so it merges after its parent), create the child branch from the parent branch and name it ` + "`<parent-branch>/<topic>`" + `, then target the parent branch in the PR. AO recognizes the stack from the branch relationship and will only nudge you to resolve conflicts on the bottom-most PR.
+
+Keep branch names within your session's branch namespace so AO can track every PR you open.`
 }
 
 // spawnEnv builds the runtime environment: the per-project env vars first, then

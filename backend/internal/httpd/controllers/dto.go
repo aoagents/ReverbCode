@@ -111,9 +111,18 @@ type CleanupSessionsQuery struct {
 	Project string `query:"project,omitempty" description:"Project id filter. When omitted, clean terminated sessions across all projects."`
 }
 
+// SessionView is the session wire shape: the domain read model plus the
+// session's attributed pull requests in the curated SessionPRFacts shape. One
+// session can own many PRs (e.g. a stack), so prs is a list. The embedded
+// domain.Session.PRs field is json:"-"; this curated prs is what serializes.
+type SessionView struct {
+	domain.Session
+	PRs []SessionPRFacts `json:"prs"`
+}
+
 // ListSessionsResponse is the body of GET /api/v1/sessions.
 type ListSessionsResponse struct {
-	Sessions []domain.Session `json:"sessions"`
+	Sessions []SessionView `json:"sessions"`
 }
 
 // SpawnSessionRequest is the body of POST /api/v1/sessions.
@@ -128,7 +137,7 @@ type SpawnSessionRequest struct {
 
 // SessionResponse is the { session } body shared by session create/get.
 type SessionResponse struct {
-	Session domain.Session `json:"session"`
+	Session SessionView `json:"session"`
 }
 
 // RenameSessionRequest is the body of PATCH /api/v1/sessions/{sessionId}.
@@ -147,7 +156,7 @@ type RenameSessionResponse struct {
 type RestoreSessionResponse struct {
 	OK        bool             `json:"ok"`
 	SessionID domain.SessionID `json:"sessionId"`
-	Session   domain.Session   `json:"session"`
+	Session   SessionView      `json:"session"`
 }
 
 // KillSessionResponse is the body of POST /api/v1/sessions/{sessionId}/kill.

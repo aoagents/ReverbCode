@@ -78,6 +78,14 @@ func (f *fakeStore) ListPRsBySession(_ context.Context, id domain.SessionID) ([]
 	return []domain.PullRequest{{URL: pr.URL, SessionID: id, Number: pr.Number, Draft: pr.Draft, Merged: pr.Merged, Closed: pr.Closed, CI: pr.CI, Review: pr.Review, Mergeability: pr.Mergeability, UpdatedAt: pr.UpdatedAt}}, nil
 }
 
+func (f *fakeStore) ListPRFactsForSession(_ context.Context, id domain.SessionID) ([]domain.PRFacts, error) {
+	pr, ok := f.pr[id]
+	if !ok {
+		return nil, nil
+	}
+	return []domain.PRFacts{pr}, nil
+}
+
 func (f *fakeStore) ListPRComments(context.Context, string) ([]domain.PullRequestComment, error) {
 	return nil, nil
 }

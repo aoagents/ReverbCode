@@ -27,13 +27,13 @@ func silentRec(age time.Duration) domain.SessionRecord {
 	}
 }
 
-func statusPR(facts domain.PRFacts) *domain.PRFacts { return &facts }
+func statusPR(facts domain.PRFacts) []domain.PRFacts { return []domain.PRFacts{facts} }
 
 func TestServiceDerivesStatusFromSessionFactsAndPR(t *testing.T) {
 	tests := []struct {
 		name string
 		rec  domain.SessionRecord
-		pr   *domain.PRFacts
+		pr   []domain.PRFacts
 		// hookless marks a harness with no activity pipeline (signalCapable
 		// false): silence is its permanent normal state, never no_signal.
 		hookless bool

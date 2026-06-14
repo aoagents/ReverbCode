@@ -101,6 +101,31 @@ ORDER BY
     pr.updated_at DESC
 LIMIT 1;
 
+-- name: ListPRFactsBySession :many
+-- All PR snapshots for a session (every state), with source/target branch for
+-- stack derivation and the unresolved-comment flag. The status aggregator
+-- filters open vs merged/closed in Go and derives stacks from the branches.
+SELECT
+    pr.url,
+    pr.number,
+    pr.pr_state,
+    pr.review_decision,
+    pr.ci_state,
+    pr.mergeability,
+    pr.source_branch,
+    pr.target_branch,
+    pr.updated_at,
+    EXISTS (
+        SELECT 1
+        FROM pr_comment
+        WHERE pr_comment.pr_url = pr.url
+          AND pr_comment.resolved = 0
+          AND pr_comment.is_bot = 0
+    ) AS review_comments
+FROM pr
+WHERE pr.session_id = ?
+ORDER BY pr.updated_at DESC;
+
 -- name: ClaimPRForSession :exec
 INSERT INTO pr (url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
