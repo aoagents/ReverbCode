@@ -1,7 +1,20 @@
-import type { WorkspaceSummary } from "../types/workspace";
+import type { PRState, PullRequestFacts, WorkspaceSummary } from "../types/workspace";
 
 const now = new Date().toISOString();
 const hoursAgo = (hours: number) => new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
+
+// Single-PR preview helper. Sessions that own a stack (stacked-auth) inline
+// their facts instead; the daemon aggregates per-PR CI/review server-side.
+const pr = (number: number, state: PRState, ci = "passing"): PullRequestFacts => ({
+	url: `https://github.com/me/pull/${number}`,
+	number,
+	state,
+	ci,
+	review: state === "merged" ? "approved" : "none",
+	mergeability: "mergeable",
+	reviewComments: false,
+	updatedAt: now,
+});
 
 export const mockWorkspaces: WorkspaceSummary[] = [
 	{
@@ -28,6 +41,52 @@ export const mockWorkspaces: WorkspaceSummary[] = [
 					},
 				],
 				commitMessage: "refactor terminal mux",
+				prs: [],
+			},
+			{
+				id: "stacked-auth",
+				terminalHandleId: "stacked-auth/terminal_0",
+				workspaceId: "api-gateway",
+				workspaceName: "api-gateway",
+				title: "auth stack",
+				provider: "claude-code",
+				branch: "feat/ns",
+				status: "review_pending",
+				updatedAt: now,
+				createdAt: hoursAgo(2),
+				// One session owning a stack: open root, draft child, merged base.
+				prs: [
+					{
+						url: "https://github.com/me/api-gateway/pull/41",
+						number: 41,
+						state: "open",
+						ci: "passing",
+						review: "approved",
+						mergeability: "mergeable",
+						reviewComments: false,
+						updatedAt: now,
+					},
+					{
+						url: "https://github.com/me/api-gateway/pull/42",
+						number: 42,
+						state: "draft",
+						ci: "pending",
+						review: "none",
+						mergeability: "unknown",
+						reviewComments: false,
+						updatedAt: now,
+					},
+					{
+						url: "https://github.com/me/api-gateway/pull/40",
+						number: 40,
+						state: "merged",
+						ci: "passing",
+						review: "approved",
+						mergeability: "mergeable",
+						reviewComments: false,
+						updatedAt: hoursAgo(1),
+					},
+				],
 			},
 			{
 				id: "fix-auth-timeouts",
@@ -39,7 +98,7 @@ export const mockWorkspaces: WorkspaceSummary[] = [
 				status: "ci_failed",
 				updatedAt: hoursAgo(1),
 				createdAt: hoursAgo(6),
-				pullRequest: { number: 184, state: "open" },
+				prs: [pr(184, "open", "failing")],
 			},
 			{
 				id: "rate-limit-headers",
@@ -51,7 +110,7 @@ export const mockWorkspaces: WorkspaceSummary[] = [
 				status: "review_pending",
 				updatedAt: hoursAgo(2),
 				createdAt: hoursAgo(9),
-				pullRequest: { number: 185, state: "open" },
+				prs: [pr(185, "open")],
 			},
 		],
 	},
@@ -70,6 +129,7 @@ export const mockWorkspaces: WorkspaceSummary[] = [
 				status: "needs_input",
 				updatedAt: now,
 				createdAt: hoursAgo(4),
+				prs: [],
 			},
 			{
 				id: "shader-cache",
@@ -85,6 +145,7 @@ export const mockWorkspaces: WorkspaceSummary[] = [
 					{ path: "src/render/shader-cache.ts", additions: 86, deletions: 12 },
 					{ path: "src/render/webgl-context.ts", additions: 24, deletions: 5 },
 				],
+				prs: [],
 			},
 			{
 				id: "texture-leak",
@@ -96,7 +157,7 @@ export const mockWorkspaces: WorkspaceSummary[] = [
 				status: "ci_failed",
 				updatedAt: hoursAgo(1.5),
 				createdAt: hoursAgo(7),
-				pullRequest: { number: 51, state: "open" },
+				prs: [pr(51, "open", "failing")],
 			},
 			{
 				id: "review-camera-pan",
@@ -108,7 +169,7 @@ export const mockWorkspaces: WorkspaceSummary[] = [
 				status: "review_pending",
 				updatedAt: hoursAgo(3),
 				createdAt: hoursAgo(10),
-				pullRequest: { number: 52, state: "open" },
+				prs: [pr(52, "open")],
 			},
 			{
 				id: "draft-webgpu-probe",
@@ -120,7 +181,7 @@ export const mockWorkspaces: WorkspaceSummary[] = [
 				status: "draft",
 				updatedAt: hoursAgo(5),
 				createdAt: hoursAgo(12),
-				pullRequest: { number: 53, state: "draft" },
+				prs: [pr(53, "draft")],
 			},
 			{
 				id: "merge-frame-stats",
@@ -132,7 +193,7 @@ export const mockWorkspaces: WorkspaceSummary[] = [
 				status: "mergeable",
 				updatedAt: hoursAgo(0.25),
 				createdAt: hoursAgo(14),
-				pullRequest: { number: 54, state: "open" },
+				prs: [pr(54, "open")],
 			},
 			{
 				id: "approved-pixel-ratio",
@@ -144,7 +205,7 @@ export const mockWorkspaces: WorkspaceSummary[] = [
 				status: "approved",
 				updatedAt: hoursAgo(2.5),
 				createdAt: hoursAgo(16),
-				pullRequest: { number: 55, state: "open" },
+				prs: [pr(55, "open")],
 			},
 			{
 				id: "input-pointer-lock",
@@ -156,7 +217,7 @@ export const mockWorkspaces: WorkspaceSummary[] = [
 				status: "changes_requested",
 				updatedAt: hoursAgo(4),
 				createdAt: hoursAgo(18),
-				pullRequest: { number: 56, state: "open" },
+				prs: [pr(56, "open")],
 			},
 		],
 	},
@@ -175,6 +236,7 @@ export const mockWorkspaces: WorkspaceSummary[] = [
 				status: "working",
 				updatedAt: hoursAgo(0.75),
 				createdAt: hoursAgo(3),
+				prs: [],
 			},
 			{
 				id: "profile-sheet",
@@ -186,7 +248,7 @@ export const mockWorkspaces: WorkspaceSummary[] = [
 				status: "mergeable",
 				updatedAt: hoursAgo(1.25),
 				createdAt: hoursAgo(8),
-				pullRequest: { number: 92, state: "open" },
+				prs: [pr(92, "open")],
 			},
 		],
 	},
@@ -205,7 +267,7 @@ export const mockWorkspaces: WorkspaceSummary[] = [
 				status: "review_pending",
 				updatedAt: hoursAgo(2.25),
 				createdAt: hoursAgo(11),
-				pullRequest: { number: 117, state: "open" },
+				prs: [pr(117, "open")],
 			},
 			{
 				id: "tax-id-validation",
@@ -217,6 +279,7 @@ export const mockWorkspaces: WorkspaceSummary[] = [
 				status: "needs_input",
 				updatedAt: hoursAgo(1.75),
 				createdAt: hoursAgo(5),
+				prs: [],
 			},
 		],
 	},

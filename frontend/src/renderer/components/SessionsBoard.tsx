@@ -2,7 +2,13 @@ import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { Plus } from "lucide-react";
-import { type AttentionZone, type WorkspaceSession, attentionZone, workerSessions } from "../types/workspace";
+import {
+	type AttentionZone,
+	type WorkspaceSession,
+	attentionZone,
+	openPRs,
+	workerSessions,
+} from "../types/workspace";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { DashboardSubhead } from "./DashboardSubhead";
 import { OrchestratorIcon } from "./icons";
@@ -255,6 +261,19 @@ function ZoneColumn({
 	);
 }
 
+// One-line PR summary for the card footer. A session can own several PRs, so
+// collapse to a count once past one; detail lives in the inspector stack.
+function prSummary(session: WorkspaceSession): string {
+	const total = session.prs.length;
+	if (total === 0) return "no PR yet";
+	if (total === 1) {
+		const pr = session.prs[0];
+		return `PR #${pr.number} · ${pr.state}`;
+	}
+	const open = openPRs(session).length;
+	return open > 0 ? `${total} PRs · ${open} open` : `${total} PRs`;
+}
+
 function SessionCard({ session, onOpen }: { session: WorkspaceSession; onOpen: () => void }) {
 	const badge = sessionBadge(session);
 	const branch = session.branch || "";
@@ -285,7 +304,7 @@ function SessionCard({ session, onOpen }: { session: WorkspaceSession; onOpen: (
 			</div>
 			{showBranch && <div className="px-[13px] pb-2.5 font-mono text-[10.5px] text-passive">{branch}</div>}
 			<div className="border-t border-border px-[13px] py-2 font-mono text-[10.5px] text-passive">
-				{session.pullRequest ? `PR #${session.pullRequest.number} · ${session.pullRequest.state}` : "no PR yet"}
+				{prSummary(session)}
 			</div>
 		</button>
 	);

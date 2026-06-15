@@ -1,36 +1,13 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
-import {
-	AlertCircle,
-	CheckCircle2,
-	CircleMinus,
-	GitBranch,
-	GitCommitHorizontal,
-	GitPullRequest,
-	Play,
-	Plus,
-	Shield,
-	Square,
-	Terminal,
-	Trash2,
-} from "lucide-react";
-import type { components } from "../../api/schema";
-import { apiClient, apiErrorMessage } from "../lib/api-client";
-import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { GitBranch, GitCommitHorizontal, GitPullRequest, Plus, Square, Trash2 } from "lucide-react";
 import { formatTimeCompact } from "../lib/format-time";
-import type { SessionStatus, WorkspaceSession } from "../types/workspace";
-import { workerDisplayStatus } from "../types/workspace";
+import type { PRState, PullRequestFacts, SessionStatus, WorkspaceSession } from "../types/workspace";
+import { sortedPRs, workerDisplayStatus } from "../types/workspace";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { cn } from "../lib/utils";
 
-type PRFacts = components["schemas"]["SessionPRFacts"];
-type ProjectConfig = components["schemas"]["ProjectConfig"];
-type ReviewRun = components["schemas"]["ReviewRun"];
-type ReviewsResponse = components["schemas"]["ListReviewsResponse"];
 type InspectorView = "summary" | "changes" | "browser";
-
-type OpenReviewerTerminal = (target: { handleId: string; harness: string }) => void;
 
 const VIEWS: { id: InspectorView; label: string; icon: ReactNode }[] = [
 	{
@@ -73,7 +50,7 @@ const VIEWS: { id: InspectorView; label: string; icon: ReactNode }[] = [
 	},
 ];
 
-const prStateTone: Record<PRFacts["state"], string> = {
+const prStateTone: Record<PRState, string> = {
 	open: "border-success/40 bg-success/10 text-success",
 	draft: "border-border bg-raised text-muted-foreground",
 	merged: "border-accent/40 bg-accent-weak text-accent",
@@ -84,13 +61,7 @@ const prStateTone: Record<PRFacts["state"], string> = {
  * Tabbed inspector rail beside the terminal — cloned from agent-orchestrator
  * SessionInspector (Summary · Changes · Browser).
  */
-export function SessionInspector({
-	session,
-	onOpenReviewerTerminal,
-}: {
-	session?: WorkspaceSession;
-	onOpenReviewerTerminal?: OpenReviewerTerminal;
-}) {
+export function SessionInspector({ session }: { session?: WorkspaceSession }) {
 	const [view, setView] = useState<InspectorView>("summary");
 
 	if (!session) {
@@ -122,7 +93,7 @@ export function SessionInspector({
 			</div>
 
 			<div className="session-inspector__body">
-				{view === "summary" ? <SummaryView onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} /> : null}
+				{view === "summary" ? <SummaryView session={session} /> : null}
 				{view === "changes" ? <ChangesView session={session} /> : null}
 				{view === "browser" ? <BrowserView /> : null}
 			</div>
@@ -142,144 +113,26 @@ function Section({ title, action, children }: { title: string; action?: ReactNod
 	);
 }
 
-function SummaryView({
-	session,
-	onOpenReviewerTerminal,
-}: {
-	session: WorkspaceSession;
-	onOpenReviewerTerminal?: OpenReviewerTerminal;
-}) {
-	const hasPr = Boolean(session.pullRequest);
-	const queryClient = useQueryClient();
-	const [reviewNotice, setReviewNotice] = useState<string | null>(null);
-	const query = useQuery({
-		queryKey: ["session-pr", session.id],
-		enabled: hasPr,
-		queryFn: async () => {
-			const { data, error } = await apiClient.GET("/api/v1/sessions/{sessionId}/pr", {
-				params: { path: { sessionId: session.id } },
-			});
-			if (error) return [] as PRFacts[];
-			return data?.prs ?? [];
-		},
-	});
-	const reviewsQuery = useQuery({
-		queryKey: ["session-reviews", session.id],
-		enabled: hasPr,
-		refetchInterval: (query) => {
-			const data = query.state.data as ReviewsResponse | undefined;
-			return data?.reviews.some((review) => review.status === "running") ? 2500 : false;
-		},
-		queryFn: async () => {
-			const { data, error } = await apiClient.GET("/api/v1/sessions/{sessionId}/reviews", {
-				params: { path: { sessionId: session.id } },
-			});
-			if (error) throw new Error(apiErrorMessage(error, "Unable to load reviews"));
-			return data ?? ({ reviewerHandleId: "", reviews: [] } satisfies ReviewsResponse);
-		},
-	});
-	const projectConfigQuery = useQuery({
-		queryKey: ["project-config", session.workspaceId],
-		enabled: hasPr,
-		queryFn: async () => {
-			const { data, error } = await apiClient.GET("/api/v1/projects/{id}", {
-				params: { path: { id: session.workspaceId } },
-			});
-			if (error) return undefined;
-			return projectConfig(data?.project);
-		},
-	});
-	const triggerReview = useMutation({
-		mutationFn: async () => {
-			const { data, error, response } = await apiClient.POST("/api/v1/sessions/{sessionId}/reviews/trigger", {
-				params: { path: { sessionId: session.id } },
-			});
-			if (error) throw new Error(apiErrorMessage(error, "Unable to start review"));
-			return { data, reused: response?.status === 200 };
-		},
-		onMutate: () => {
-			setReviewNotice(null);
-		},
-		onSuccess: ({ data, reused }) => {
-			void queryClient.invalidateQueries({ queryKey: ["session-reviews", session.id] });
-			void queryClient.invalidateQueries({ queryKey: ["session-pr", session.id] });
-			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
-			if (reused) {
-				setReviewNotice("Review is already up to date for this commit.");
-				return;
-			}
-			if (data?.reviewerHandleId) {
-				onOpenReviewerTerminal?.({ handleId: data.reviewerHandleId, harness: data.review.harness || "reviewer" });
-			}
-		},
-	});
-	const prFacts = query.data?.[0];
+function SummaryView({ session }: { session: WorkspaceSession }) {
+	const prs = sortedPRs(session);
 	const branchLabel = session.branch || `session/${session.id}`;
-	const reviews = reviewsQuery.data?.reviews ?? [];
 
 	return (
 		<div role="tabpanel">
-			<Section
-				title="Pull request"
-				action={
-					prFacts?.url ? (
-						<a href={prFacts.url} target="_blank" rel="noopener noreferrer" className="inspector-section__link">
-							Open ↗
-						</a>
-					) : undefined
-				}
-			>
-				{!hasPr ? (
+			<Section title={prs.length > 1 ? `Pull requests (${prs.length})` : "Pull request"}>
+				{prs.length === 0 ? (
 					<p className="inspector-empty">No pull request opened yet.</p>
-				) : query.isLoading ? (
-					<p className="inspector-empty">Loading pull request…</p>
 				) : (
-					<div className="flex flex-col gap-2">
-						<div className="inspector-pr-summary">
-							<GitPullRequest className="h-3.5 w-3.5 shrink-0 text-passive" aria-hidden="true" />
-							<span className="inspector-pr-summary__title">PR #{prFacts?.number ?? session.pullRequest?.number}</span>
-							{prFacts ? (
-								<Badge
-									variant="outline"
-									className={cn(
-										"inspector-pr-summary__state h-5 px-1.5 text-[10px] font-medium",
-										prStateTone[prFacts.state],
-									)}
-								>
-									{prFacts.state}
-								</Badge>
-							) : null}
-						</div>
-						{prFacts ? (
-							<dl className="inspector-kv">
-								<Row k="CI" v={prFacts.ci || "—"} mono />
-								<Row k="Merge" v={prFacts.mergeability || "—"} mono />
-								<Row k="Review" v={prFacts.review || "—"} mono />
-							</dl>
-						) : (
-							<p className="inspector-empty">No enriched PR facts yet.</p>
-						)}
+					<div className="flex flex-col gap-2.5">
+						{prs.map((pr) => (
+							<PRCard key={pr.url} pr={pr} />
+						))}
 					</div>
 				)}
 			</Section>
 
-			<Section title="Reviews">
-				<ReviewPanel
-					config={projectConfigQuery.data}
-					error={reviewsQuery.error ?? triggerReview.error}
-					isLoading={reviewsQuery.isLoading}
-					isTriggering={triggerReview.isPending}
-					onOpenTerminal={onOpenReviewerTerminal}
-					onTrigger={() => triggerReview.mutate()}
-					reviewerHandleId={reviewsQuery.data?.reviewerHandleId ?? ""}
-					reviews={reviews}
-					notice={reviewNotice}
-					session={session}
-				/>
-			</Section>
-
 			<Section title="Activity">
-				<ActivityTimeline reviews={reviews} session={session} />
+				<ActivityTimeline session={session} />
 			</Section>
 
 			<Section title="Overview">
@@ -294,148 +147,39 @@ function SummaryView({
 	);
 }
 
-function projectConfig(project: components["schemas"]["ProjectOrDegraded"] | undefined): ProjectConfig | undefined {
-	if (!project || !("config" in project)) return undefined;
-	return project.config;
-}
-
-function ReviewPanel({
-	session,
-	config,
-	reviews,
-	reviewerHandleId,
-	isLoading,
-	isTriggering,
-	error,
-	notice,
-	onTrigger,
-	onOpenTerminal,
-}: {
-	session: WorkspaceSession;
-	config?: ProjectConfig;
-	reviews: ReviewRun[];
-	reviewerHandleId: string;
-	isLoading: boolean;
-	isTriggering: boolean;
-	error: unknown;
-	notice: string | null;
-	onTrigger: () => void;
-	onOpenTerminal?: OpenReviewerTerminal;
-}) {
-	if (!session.pullRequest) {
-		return <p className="inspector-empty">No pull request opened yet.</p>;
-	}
-	if (isLoading) {
-		return <p className="inspector-empty">Loading reviews...</p>;
-	}
-
-	const latest = latestReview(reviews);
-	const harness = latest?.harness || config?.reviewers?.[0]?.harness || session.provider || "reviewer";
-
+// One PR per card; a session's PRs stack vertically. Mirrors the minimal
+// single-PR rail the parallel-agent tools converged on (emdash, conductor),
+// repeated per PR rather than collapsed into one aggregate widget.
+function PRCard({ pr }: { pr: PullRequestFacts }) {
 	return (
-		<div className="reviewer-list">
-			{error ? <p className="reviewer-error">{apiErrorMessage(error, "Review request failed")}</p> : null}
-			{notice ? <p className="reviewer-notice">{notice}</p> : null}
-			<ReviewerCard
-				handleId={reviewerHandleId}
-				harness={harness}
-				isTriggering={isTriggering}
-				onOpenTerminal={onOpenTerminal}
-				onTrigger={onTrigger}
-				review={latest}
-			/>
-		</div>
-	);
-}
-
-function latestReview(reviews: ReviewRun[]): ReviewRun | undefined {
-	return [...reviews].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0];
-}
-
-function ReviewerCard({
-	harness,
-	review,
-	handleId,
-	isTriggering,
-	onTrigger,
-	onOpenTerminal,
-}: {
-	harness: string;
-	review?: ReviewRun;
-	handleId: string;
-	isTriggering: boolean;
-	onTrigger: () => void;
-	onOpenTerminal?: OpenReviewerTerminal;
-}) {
-	const status = reviewStatus(review);
-	const terminalEnabled = Boolean(handleId && onOpenTerminal);
-	const runLabel = review ? "Re-run review" : "Run review";
-
-	return (
-		<div className={cn("reviewer-card", status.tone && `reviewer-card--${status.tone}`)}>
-			<div className="reviewer-card__top">
-				<div className="reviewer-card__name">
-					<Shield aria-hidden="true" />
-					<span>{harness}</span>
-				</div>
-				<span className={cn("reviewer-status", `reviewer-status--${status.tone}`)}>
-					{status.icon}
-					{status.label}
-				</span>
-			</div>
-			<div className="reviewer-card__actions">
-				<button
-					className="reviewer-card__action reviewer-card__action--primary"
-					disabled={isTriggering}
-					onClick={onTrigger}
-					type="button"
+		<div className="flex flex-col gap-2 rounded-[7px] border border-border bg-surface p-2.5">
+			<div className="flex items-center gap-2">
+				<GitPullRequest className="h-3.5 w-3.5 shrink-0 text-passive" aria-hidden="true" />
+				<span className="text-[12.5px] font-medium text-foreground">PR #{pr.number}</span>
+				<Badge
+					variant="outline"
+					className={cn("ml-auto h-5 px-1.5 text-[10px] font-medium", prStateTone[pr.state])}
 				>
-					<Play aria-hidden="true" />
-					{isTriggering ? "Starting..." : runLabel}
-				</button>
-				{review ? (
-					<button
-						className="reviewer-card__action"
-						disabled={!terminalEnabled}
-						onClick={() => {
-							if (!terminalEnabled) return;
-							onOpenTerminal?.({ handleId, harness });
-						}}
-						type="button"
-					>
-						<Terminal aria-hidden="true" />
-						Open terminal
-					</button>
+					{pr.state}
+				</Badge>
+				{pr.url ? (
+					<a href={pr.url} target="_blank" rel="noopener noreferrer" className="inspector-section__link">
+						Open ↗
+					</a>
 				) : null}
 			</div>
+			<dl className="inspector-kv">
+				<Row k="CI" v={pr.ci || "—"} mono />
+				<Row k="Merge" v={pr.mergeability || "—"} mono />
+				<Row k="Review" v={pr.review || "—"} mono />
+			</dl>
 		</div>
 	);
 }
 
-function reviewStatus(review?: ReviewRun): {
-	label: string;
-	tone: "neutral" | "running" | "success" | "danger";
-	icon: ReactNode;
-} {
-	if (!review) return { label: "Not run", tone: "neutral", icon: null };
-	if (review.status === "running") {
-		return { label: "Running", tone: "running", icon: <Play aria-hidden="true" /> };
-	}
-	if (review.status === "failed") {
-		return { label: "Failed", tone: "danger", icon: <AlertCircle aria-hidden="true" /> };
-	}
-	if (review.verdict === "approved") {
-		return { label: "Approved", tone: "success", icon: <CheckCircle2 aria-hidden="true" /> };
-	}
-	if (review.verdict === "changes_requested") {
-		return { label: "Changes requested", tone: "danger", icon: <CircleMinus aria-hidden="true" /> };
-	}
-	return { label: "Complete", tone: "success", icon: <CheckCircle2 aria-hidden="true" /> };
-}
+type TimelineTone = "now" | "good" | "warn" | "neutral";
 
-type TimelineTone = "now" | "good" | "warn" | "bad" | "neutral";
-
-function ActivityTimeline({ session, reviews }: { session: WorkspaceSession; reviews: ReviewRun[] }) {
+function ActivityTimeline({ session }: { session: WorkspaceSession }) {
 	const events: { tone: TimelineTone; node: ReactNode; ts: string | null }[] = [];
 	const detail = activityDetail(session.status);
 
@@ -452,27 +196,15 @@ function ActivityTimeline({ session, reviews }: { session: WorkspaceSession; rev
 		ts: formatTimeCompact(session.updatedAt),
 	});
 
-	if (session.pullRequest) {
+	for (const pr of sortedPRs(session)) {
 		events.push({
 			tone: "good",
 			node: (
 				<>
-					Opened <b>PR #{session.pullRequest.number}</b>
+					Opened <b>PR #{pr.number}</b>
 				</>
 			),
 			ts: null,
-		});
-	}
-
-	for (const review of reviews.slice(0, 4)) {
-		events.push({
-			tone: reviewTimelineTone(review),
-			node: (
-				<>
-					{reviewTimelineLabel(review)} <span className="inspector-timeline__detail">- {review.harness}</span>
-				</>
-			),
-			ts: formatTimeCompact(review.createdAt),
 		});
 	}
 
@@ -492,7 +224,6 @@ function ActivityTimeline({ session, reviews }: { session: WorkspaceSession; rev
 						event.tone === "now" && "inspector-timeline__ev--now",
 						event.tone === "good" && "inspector-timeline__ev--good",
 						event.tone === "warn" && "inspector-timeline__ev--warn",
-						event.tone === "bad" && "inspector-timeline__ev--bad",
 					)}
 				>
 					<span className="inspector-timeline__node" aria-hidden="true" />
@@ -502,21 +233,6 @@ function ActivityTimeline({ session, reviews }: { session: WorkspaceSession; rev
 			))}
 		</div>
 	);
-}
-
-function reviewTimelineTone(review: ReviewRun): TimelineTone {
-	if (review.status === "failed" || review.verdict === "changes_requested") return "bad";
-	if (review.status === "running") return "warn";
-	if (review.verdict === "approved") return "good";
-	return "neutral";
-}
-
-function reviewTimelineLabel(review: ReviewRun): string {
-	if (review.status === "running") return "Review requested";
-	if (review.status === "failed") return "Review failed";
-	if (review.verdict === "approved") return "Approved";
-	if (review.verdict === "changes_requested") return "Changes requested";
-	return "Review complete";
 }
 
 function activityDetail(status: SessionStatus): string | null {
