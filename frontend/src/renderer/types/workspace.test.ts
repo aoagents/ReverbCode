@@ -173,7 +173,11 @@ describe("PR helpers", () => {
 	});
 
 	it("openPRs returns open and draft only", () => {
-		expect(openPRs(session).map((p) => p.number).sort()).toEqual([41, 42]);
+		expect(
+			openPRs(session)
+				.map((p) => p.number)
+				.sort(),
+		).toEqual([41, 42]);
 	});
 
 	it("mergedPRCount counts merged PRs", () => {

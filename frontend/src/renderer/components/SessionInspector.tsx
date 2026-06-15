@@ -156,10 +156,7 @@ function PRCard({ pr }: { pr: PullRequestFacts }) {
 			<div className="flex items-center gap-2">
 				<GitPullRequest className="h-3.5 w-3.5 shrink-0 text-passive" aria-hidden="true" />
 				<span className="text-[12.5px] font-medium text-foreground">PR #{pr.number}</span>
-				<Badge
-					variant="outline"
-					className={cn("ml-auto h-5 px-1.5 text-[10px] font-medium", prStateTone[pr.state])}
-				>
+				<Badge variant="outline" className={cn("ml-auto h-5 px-1.5 text-[10px] font-medium", prStateTone[pr.state])}>
 					{pr.state}
 				</Badge>
 				{pr.url ? (
