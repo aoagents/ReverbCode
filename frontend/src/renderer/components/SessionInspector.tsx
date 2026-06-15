@@ -1,16 +1,12 @@
-import { useQuery } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
 import { GitBranch, GitCommitHorizontal, GitPullRequest, Plus, Square, Trash2 } from "lucide-react";
-import type { components } from "../../api/schema";
-import { apiClient } from "../lib/api-client";
 import { formatTimeCompact } from "../lib/format-time";
-import type { SessionStatus, WorkspaceSession } from "../types/workspace";
-import { workerDisplayStatus } from "../types/workspace";
+import type { PRState, PullRequestFacts, SessionStatus, WorkspaceSession } from "../types/workspace";
+import { sortedPRs, workerDisplayStatus } from "../types/workspace";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { cn } from "../lib/utils";
 
-type PRFacts = components["schemas"]["SessionPRFacts"];
 type InspectorView = "summary" | "changes" | "browser";
 
 const VIEWS: { id: InspectorView; label: string; icon: ReactNode }[] = [
@@ -54,7 +50,7 @@ const VIEWS: { id: InspectorView; label: string; icon: ReactNode }[] = [
 	},
 ];
 
-const prStateTone: Record<PRFacts["state"], string> = {
+const prStateTone: Record<PRState, string> = {
 	open: "border-success/40 bg-success/10 text-success",
 	draft: "border-border bg-raised text-muted-foreground",
 	merged: "border-accent/40 bg-accent-weak text-accent",
@@ -118,62 +114,19 @@ function Section({ title, action, children }: { title: string; action?: ReactNod
 }
 
 function SummaryView({ session }: { session: WorkspaceSession }) {
-	const hasPr = Boolean(session.pullRequest);
-	const query = useQuery({
-		queryKey: ["session-pr", session.id],
-		enabled: hasPr,
-		queryFn: async () => {
-			const { data, error } = await apiClient.GET("/api/v1/sessions/{sessionId}/pr", {
-				params: { path: { sessionId: session.id } },
-			});
-			if (error) return [] as PRFacts[];
-			return data?.prs ?? [];
-		},
-	});
-	const prFacts = query.data?.[0];
+	const prs = sortedPRs(session);
 	const branchLabel = session.branch || `session/${session.id}`;
 
 	return (
 		<div role="tabpanel">
-			<Section
-				title="Pull request"
-				action={
-					prFacts?.url ? (
-						<a href={prFacts.url} target="_blank" rel="noopener noreferrer" className="inspector-section__link">
-							Open ↗
-						</a>
-					) : undefined
-				}
-			>
-				{!hasPr ? (
+			<Section title={prs.length > 1 ? `Pull requests (${prs.length})` : "Pull request"}>
+				{prs.length === 0 ? (
 					<p className="inspector-empty">No pull request opened yet.</p>
-				) : query.isLoading ? (
-					<p className="inspector-empty">Loading pull request…</p>
 				) : (
-					<div className="flex flex-col gap-2">
-						<div className="flex items-center gap-2">
-							<GitPullRequest className="h-3.5 w-3.5 shrink-0 text-passive" aria-hidden="true" />
-							<span className="text-[12.5px] font-medium text-foreground">
-								PR #{prFacts?.number ?? session.pullRequest?.number}
-							</span>
-							{prFacts ? (
-								<Badge
-									variant="outline"
-									className={cn("ml-auto h-5 px-1.5 text-[10px] font-medium", prStateTone[prFacts.state])}
-								>
-									{prFacts.state}
-								</Badge>
-							) : null}
-						</div>
-						{prFacts ? (
-							<dl className="inspector-kv">
-								<Row k="CI" v={prFacts.ci || "—"} mono />
-								<Row k="Merge" v={prFacts.mergeability || "—"} mono />
-								<Row k="Review" v={prFacts.review || "—"} mono />
-							</dl>
-						) : (
-							<p className="inspector-empty">No enriched PR facts yet.</p>
-						)}
+					<div className="flex flex-col gap-2.5">
+						{prs.map((pr) => (
+							<PRCard key={pr.url} pr={pr} />
+						))}
 					</div>
 				)}
 			</Section>
@@ -190,6 +143,36 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 					<Row k="Session" v={session.id} mono />
 				</dl>
 			</Section>
+		</div>
+	);
+}
+
+// One PR per card; a session's PRs stack vertically. Mirrors the minimal
+// single-PR rail the parallel-agent tools converged on (emdash, conductor),
+// repeated per PR rather than collapsed into one aggregate widget.
+function PRCard({ pr }: { pr: PullRequestFacts }) {
+	return (
+		<div className="flex flex-col gap-2 rounded-[7px] border border-border bg-surface p-2.5">
+			<div className="flex items-center gap-2">
+				<GitPullRequest className="h-3.5 w-3.5 shrink-0 text-passive" aria-hidden="true" />
+				<span className="text-[12.5px] font-medium text-foreground">PR #{pr.number}</span>
+				<Badge
+					variant="outline"
+					className={cn("ml-auto h-5 px-1.5 text-[10px] font-medium", prStateTone[pr.state])}
+				>
+					{pr.state}
+				</Badge>
+				{pr.url ? (
+					<a href={pr.url} target="_blank" rel="noopener noreferrer" className="inspector-section__link">
+						Open ↗
+					</a>
+				) : null}
+			</div>
+			<dl className="inspector-kv">
+				<Row k="CI" v={pr.ci || "—"} mono />
+				<Row k="Merge" v={pr.mergeability || "—"} mono />
+				<Row k="Review" v={pr.review || "—"} mono />
+			</dl>
 		</div>
 	);
 }
@@ -213,12 +196,12 @@ function ActivityTimeline({ session }: { session: WorkspaceSession }) {
 		ts: formatTimeCompact(session.updatedAt),
 	});
 
-	if (session.pullRequest) {
+	for (const pr of sortedPRs(session)) {
 		events.push({
 			tone: "good",
 			node: (
 				<>
-					Opened <b>PR #{session.pullRequest.number}</b>
+					Opened <b>PR #{pr.number}</b>
 				</>
 			),
 			ts: null,

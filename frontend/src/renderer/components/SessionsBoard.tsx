@@ -5,6 +5,7 @@ import {
 	type WorkerDisplayStatus,
 	type WorkspaceSession,
 	attentionZone,
+	openPRs,
 	workerDisplayStatus,
 	workerSessions,
 } from "../types/workspace";
@@ -99,7 +100,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 
 	return (
 		<div className="flex h-full min-h-0 flex-col bg-background text-foreground">
-			<DashboardSubhead title="Board" subtitle="Live agent sessions flowing from work → review → merge." />
+			<DashboardSubhead title={boardTitle} subtitle="Live agent sessions flowing from work → review → merge." />
 
 			<div className="min-h-0 flex-1 overflow-hidden p-[18px]">
 				{workspaceQuery.isError ? (
@@ -197,6 +198,19 @@ function ZoneColumn({
 	);
 }
 
+// One-line PR summary for the card footer. A session can own several PRs, so
+// collapse to a count once past one; detail lives in the inspector stack.
+function prSummary(session: WorkspaceSession): string {
+	const total = session.prs.length;
+	if (total === 0) return "no PR yet";
+	if (total === 1) {
+		const pr = session.prs[0];
+		return `PR #${pr.number} · ${pr.state}`;
+	}
+	const open = openPRs(session).length;
+	return open > 0 ? `${total} PRs · ${open} open` : `${total} PRs`;
+}
+
 function SessionCard({ session, onOpen }: { session: WorkspaceSession; onOpen: () => void }) {
 	const badge = BADGE[workerDisplayStatus(session)];
 	const branch = session.branch || `session/${session.id}`;
@@ -223,7 +237,7 @@ function SessionCard({ session, onOpen }: { session: WorkspaceSession; onOpen: (
 			</div>
 			<div className="px-[13px] pb-2.5 font-mono text-[10.5px] text-passive">{branch}</div>
 			<div className="border-t border-border px-[13px] py-2 font-mono text-[10.5px] text-passive">
-				{session.pullRequest ? `PR #${session.pullRequest.number} · ${session.pullRequest.state}` : "no PR yet"}
+				{prSummary(session)}
 			</div>
 		</button>
 	);

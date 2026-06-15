@@ -1,7 +1,27 @@
 import { useQuery } from "@tanstack/react-query";
+import type { components } from "../../api/schema";
 import { apiClient } from "../lib/api-client";
 import { mockWorkspaces } from "../lib/mock-data";
-import { toAgentProvider, toSessionStatus, type WorkspaceSummary } from "../types/workspace";
+import {
+	type PRState,
+	type PullRequestFacts,
+	toAgentProvider,
+	toSessionStatus,
+	type WorkspaceSummary,
+} from "../types/workspace";
+
+function toPullRequestFacts(pr: components["schemas"]["SessionPRFacts"]): PullRequestFacts {
+	return {
+		url: pr.url,
+		number: pr.number,
+		state: pr.state as PRState,
+		ci: pr.ci,
+		review: pr.review,
+		mergeability: pr.mergeability,
+		reviewComments: pr.reviewComments,
+		updatedAt: pr.updatedAt,
+	};
+}
 
 export const workspaceQueryKey = ["workspaces"] as const;
 const usePreviewData = import.meta.env.VITE_NO_ELECTRON === "1";
@@ -34,6 +54,7 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 				status: toSessionStatus(session.status, session.isTerminated),
 				createdAt: session.createdAt,
 				updatedAt: session.updatedAt,
+				prs: (session.prs ?? []).map(toPullRequestFacts),
 			})),
 	}));
 }
