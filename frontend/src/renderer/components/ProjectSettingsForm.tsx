@@ -11,9 +11,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 
 type Project = components["schemas"]["Project"];
 type ProjectConfig = components["schemas"]["ProjectConfig"];
-
-// Agents the daemon registers. Empty = "use the daemon default".
-const AGENT_OPTIONS = ["claude-code", "codex", "opencode", "amp", "goose", "kiro"] as const;
+type AgentInfo = components["schemas"]["AgentInfo"];
+type AgentCatalog = components["schemas"]["ListAgentsResponse"];
+type Session = components["schemas"]["Session"];
 
 const PERMISSION_MODE_OPTIONS = [
 	{ value: "default", label: "Default" },
@@ -38,13 +38,28 @@ export function ProjectSettingsForm({ projectId }: { projectId: string }) {
 			return data.project as Project;
 		},
 	});
+	const agentsQuery = useQuery({
+		queryKey: ["agents"],
+		queryFn: async () => {
+			const { data, error } = await apiClient.GET("/api/v1/agents");
+			if (error) throw new Error(apiErrorMessage(error));
+			return data as AgentCatalog;
+		},
+	});
 
-	if (query.isLoading) {
+	if (query.isLoading || agentsQuery.isLoading) {
 		return <CenteredNote>Loading project settings…</CenteredNote>;
 	}
 	if (query.isError || !query.data) {
 		return (
 			<CenteredNote>{query.error instanceof Error ? query.error.message : "Could not load project."}</CenteredNote>
+		);
+	}
+	if (agentsQuery.isError || !agentsQuery.data) {
+		return (
+			<CenteredNote>
+				{agentsQuery.error instanceof Error ? agentsQuery.error.message : "Could not load agent catalog."}
+			</CenteredNote>
 		);
 	}
 
@@ -55,6 +70,7 @@ export function ProjectSettingsForm({ projectId }: { projectId: string }) {
 				<SettingsBody
 					key={projectId}
 					project={query.data}
+					agents={agentsQuery.data}
 					onSaved={() => queryClient.invalidateQueries({ queryKey: workspaceQueryKey })}
 					projectId={projectId}
 				/>
@@ -63,9 +79,22 @@ export function ProjectSettingsForm({ projectId }: { projectId: string }) {
 	);
 }
 
-function SettingsBody({ project, projectId, onSaved }: { project: Project; projectId: string; onSaved: () => void }) {
+function SettingsBody({
+	project,
+	projectId,
+	agents,
+	onSaved,
+}: {
+	project: Project;
+	projectId: string;
+	agents: AgentCatalog;
+	onSaved: () => void;
+}) {
 	const queryClient = useQueryClient();
 	const config = project.config ?? {};
+	const agentOptions = agents.installed ?? [];
+	const supportedAgents = agents.supported ?? [];
+	const hasInstalledAgents = agentOptions.length > 0;
 	const [form, setForm] = useState({
 		defaultBranch: config.defaultBranch ?? project.defaultBranch ?? "",
 		sessionPrefix: config.sessionPrefix ?? "",
@@ -75,9 +104,14 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 		permissions: config.agentConfig?.permissions ?? "",
 	});
 	const [savedAt, setSavedAt] = useState<number | null>(null);
+	const [restartedAt, setRestartedAt] = useState<number | null>(null);
 
 	const mutation = useMutation({
 		mutationFn: async () => {
+			const orchestratorAgentChanged = (config.orchestrator?.agent ?? "") !== form.orchestratorAgent;
+			if (orchestratorAgentChanged) {
+				await assertOrchestratorCanRestart(projectId);
+			}
 			// PUT replaces the whole config; merge the edited fields over what loaded
 			// so we don't drop env/symlinks/postCreate the form doesn't expose.
 			const next: ProjectConfig = {
@@ -97,9 +131,17 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				body: { config: next },
 			});
 			if (error) throw new Error(apiErrorMessage(error));
+			if (orchestratorAgentChanged) {
+				const { error: restartError } = await apiClient.POST("/api/v1/orchestrators", {
+					body: { projectId, clean: true },
+				});
+				if (restartError) throw new Error(`Saved config, but failed to restart orchestrator: ${apiErrorMessage(restartError)}`);
+			}
+			return { restarted: orchestratorAgentChanged };
 		},
-		onSuccess: () => {
+		onSuccess: ({ restarted }) => {
 			setSavedAt(Date.now());
+			setRestartedAt(restarted ? Date.now() : null);
 			void queryClient.invalidateQueries({ queryKey: ["project", projectId] });
 			onSaved();
 		},
@@ -155,10 +197,22 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 					<CardTitle className="text-[13px]">Agents</CardTitle>
 				</CardHeader>
 				<CardContent className="flex flex-col gap-4">
+					<div className="rounded-md border border-border bg-muted/20 px-3 py-2 text-[12px] leading-5 text-muted-foreground">
+						<div>
+							{agents.counts.installed} of {agents.counts.supported} supported agents installed on this machine.
+						</div>
+						<div>Only installed agents are selectable. Orchestrator agent changes restart the orchestrator.</div>
+						{!hasInstalledAgents && (
+							<div className="mt-1 text-warning">No supported agent runtime was detected.</div>
+						)}
+					</div>
 					<Field label="Default worker agent" htmlFor="workerAgent">
 						<AgentSelect
 							id="workerAgent"
 							value={form.workerAgent}
+							installed={agentOptions}
+							supported={supportedAgents}
+							disabled={!hasInstalledAgents}
 							onChange={(v) => setForm((f) => ({ ...f, workerAgent: v }))}
 						/>
 					</Field>
@@ -166,6 +220,9 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 						<AgentSelect
 							id="orchestratorAgent"
 							value={form.orchestratorAgent}
+							installed={agentOptions}
+							supported={supportedAgents}
+							disabled={!hasInstalledAgents}
 							onChange={(v) => setForm((f) => ({ ...f, orchestratorAgent: v }))}
 						/>
 					</Field>
@@ -198,11 +255,33 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 					</span>
 				)}
 				{savedAt && !mutation.isPending && !mutation.isError && (
-					<span className="text-[12px] text-success">Saved.</span>
+					<span className="text-[12px] text-success">
+						{restartedAt ? "Saved. Orchestrator restarted." : "Saved."}
+					</span>
 				)}
 			</div>
 		</form>
 	);
+}
+
+async function assertOrchestratorCanRestart(projectId: string) {
+	const { data, error } = await apiClient.GET("/api/v1/orchestrators");
+	if (error) throw new Error(`Could not check orchestrator state: ${apiErrorMessage(error)}`);
+	const busy = (data?.sessions ?? []).find(
+		(session) =>
+			session.projectId === projectId &&
+			session.kind === "orchestrator" &&
+			!session.isTerminated &&
+			orchestratorRestartBlocked(session),
+	);
+	if (busy) {
+		throw new Error("Orchestrator is currently active. Wait until it is idle before switching agents.");
+	}
+}
+
+function orchestratorRestartBlocked(session: Session) {
+	if (session.status === "idle" || session.status === "terminated") return false;
+	return true;
 }
 
 function PermissionModeSelect({
@@ -231,22 +310,56 @@ function PermissionModeSelect({
 	);
 }
 
-function AgentSelect({ id, value, onChange }: { id: string; value: string; onChange: (value: string) => void }) {
+function AgentSelect({
+	id,
+	value,
+	installed,
+	supported,
+	disabled,
+	onChange,
+}: {
+	id: string;
+	value: string;
+	installed: AgentInfo[];
+	supported: AgentInfo[];
+	disabled?: boolean;
+	onChange: (value: string) => void;
+}) {
 	// "" sentinel → daemon default; Select can't hold an empty value, so map it.
+	const installedIds = new Set(installed.map((agent) => agent.id));
+	const supportedById = new Map(supported.map((agent) => [agent.id, agent]));
+	const missingCurrent = value !== "" && !installedIds.has(value);
+	const current = supportedById.get(value);
 	return (
-		<Select value={value || "__default__"} onValueChange={(v) => onChange(v === "__default__" ? "" : v)}>
-			<SelectTrigger id={id} className="h-8 w-full text-[13px]">
-				<SelectValue />
-			</SelectTrigger>
-			<SelectContent>
-				<SelectItem value="__default__">Daemon default</SelectItem>
-				{AGENT_OPTIONS.map((agent) => (
-					<SelectItem key={agent} value={agent}>
-						{agent}
-					</SelectItem>
-				))}
-			</SelectContent>
-		</Select>
+		<div className="flex flex-col gap-1.5">
+			<Select
+				value={value || "__default__"}
+				disabled={disabled}
+				onValueChange={(v) => onChange(v === "__default__" ? "" : v)}
+			>
+				<SelectTrigger id={id} className="h-8 w-full text-[13px]">
+					<SelectValue />
+				</SelectTrigger>
+				<SelectContent>
+					<SelectItem value="__default__">Daemon default</SelectItem>
+					{missingCurrent && (
+						<SelectItem value={value}>
+							{current?.label ?? value} <span className="text-warning">(Not detected)</span>
+						</SelectItem>
+					)}
+					{installed.map((agent) => (
+						<SelectItem key={agent.id} value={agent.id}>
+							{agent.label}
+						</SelectItem>
+					))}
+				</SelectContent>
+			</Select>
+			{missingCurrent && (
+				<span className="text-[12px] text-warning">
+					{current?.label ?? value} is configured but was not detected on this machine.
+				</span>
+			)}
+		</div>
 	);
 }
 

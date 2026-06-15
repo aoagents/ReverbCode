@@ -55,6 +55,8 @@ func Build() ([]byte, error) {
 		*(&openapi31.Server{URL: "http://127.0.0.1:3001"}).WithDescription("Local daemon (loopback only)"),
 	}
 	r.Spec.Tags = []openapi31.Tag{
+		*(&openapi31.Tag{Name: "agents"}).WithDescription(
+			"Supported and locally runnable agent adapters"),
 		*(&openapi31.Tag{Name: "projects"}).WithDescription(
 			"Project registry, configuration, and lifecycle administration"),
 		*(&openapi31.Tag{Name: "sessions"}).WithDescription(
@@ -157,6 +159,9 @@ var schemaNames = map[string]string{
 	"ControllersSpawnOrchestratorRequest":   "SpawnOrchestratorRequest",
 	"ControllersSpawnOrchestratorResponse":  "SpawnOrchestratorResponse",
 	"ControllersOrchestratorResponse":       "OrchestratorResponse",
+	"AgentInventory":                        "ListAgentsResponse",
+	"AgentInfo":                             "AgentInfo",
+	"AgentCounts":                           "AgentCounts",
 	"ControllersListNotificationsQuery":     "ListNotificationsQuery",
 	"ControllersNotificationStreamQuery":    "NotificationStreamQuery",
 	"ControllersNotificationTarget":         "NotificationTarget",
@@ -254,12 +259,27 @@ type operation struct {
 
 func operations() []operation {
 	ops := append([]operation{}, eventOperations()...)
+	ops = append(ops, agentOperations()...)
 	ops = append(ops, projectOperations()...)
 	ops = append(ops, sessionOperations()...)
 	ops = append(ops, prOperations()...)
 	ops = append(ops, reviewOperations()...)
 	ops = append(ops, notificationOperations()...)
 	return ops
+}
+
+func agentOperations() []operation {
+	return []operation{
+		{
+			method: http.MethodGet, path: "/api/v1/agents", id: "listAgents", tag: "agents",
+			summary: "List supported and locally installed agent adapters",
+			resps: []respUnit{
+				{http.StatusOK, controllers.ListAgentsResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+	}
 }
 
 func notificationOperations() []operation {

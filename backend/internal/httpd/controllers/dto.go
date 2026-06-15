@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	agentsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/agent"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 )
 
@@ -261,6 +262,15 @@ type OrchestratorResponse struct {
 	ProjectID   domain.ProjectID `json:"projectId"`
 	ProjectName string           `json:"projectName,omitempty"`
 }
+
+// ListAgentsResponse is the body of GET /api/v1/agents.
+type ListAgentsResponse = agentsvc.Inventory
+
+// AgentInfo is one supported or installed agent entry.
+type AgentInfo = agentsvc.Info
+
+// AgentCounts summarizes supported and installed agents.
+type AgentCounts = agentsvc.Counts
 
 // ListNotificationsQuery is the query string accepted by GET /api/v1/notifications.
 type ListNotificationsQuery struct {
