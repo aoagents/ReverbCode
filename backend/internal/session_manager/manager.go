@@ -720,7 +720,7 @@ func spawnEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueI
 // logged so the degradation isn't silent.
 func (m *Manager) runtimeEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueID, projectEnv map[string]string) map[string]string {
 	env := spawnEnv(id, project, issue, m.dataDir, projectEnv)
-	path, err := hookPATH(m.executable, os.Getenv, projectEnv)
+	path, err := HookPATH(m.executable, os.Getenv, projectEnv)
 	if err != nil {
 		m.logger.Warn("session PATH not pinned to the daemon binary; `ao hooks` callbacks may resolve to a different ao and activity tracking will stall",
 			"session", id, "error", err)
@@ -730,13 +730,14 @@ func (m *Manager) runtimeEnv(id domain.SessionID, project domain.ProjectID, issu
 	return env
 }
 
-// hookPATH builds the PATH value pinned into a spawned session: the daemon
+// HookPATH builds the PATH value pinned into a spawned session: the daemon
 // executable's directory prepended to the base PATH (the project's PATH
 // override when set, else the daemon's inherited PATH — matching what the
 // runtime would have exported anyway). An error means the pin cannot be
 // applied: the executable is unresolvable, or is not named "ao", in which case
-// prepending its directory would not change what `ao` resolves to.
-func hookPATH(executable func() (string, error), getenv func(string) string, projectEnv map[string]string) (string, error) {
+// prepending its directory would not change what `ao` resolves to. Exported so
+// the reviewer launcher can pin its pane's PATH the same way.
+func HookPATH(executable func() (string, error), getenv func(string) string, projectEnv map[string]string) (string, error) {
 	exe, err := executable()
 	if err != nil {
 		return "", fmt.Errorf("resolve daemon executable: %w", err)

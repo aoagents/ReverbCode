@@ -20,11 +20,13 @@ Post your review on the pull request using the available review tooling (request
 
 	prompt = fmt.Sprintf(`Review pull request %s (head commit %s).
 
-When done, write your full review to review.md and record the result with AO by running exactly:
+Do these steps in order:
+1. Post your review on the pull request with `+"`gh`"+` — request changes or approve, with inline comments for specific findings.
+2. Write your full review to review.md and record the result with AO by running exactly:
 
     ao review submit --session %s --run %s --verdict <approved|changes_requested> --body review.md
 
-If you cannot post the review on the provider, still run the command above so the result is recorded.`,
+Only if step 1 genuinely fails on the provider, still run step 2 so the result is recorded.`,
 		spec.PRURL, spec.TargetSHA, spec.WorkerID, spec.RunID)
 	return prompt, systemPrompt
 }
