@@ -298,7 +298,9 @@ function SessionCard({ session, onOpen }: { session: WorkspaceSession; onOpen: (
 						) : null}
 						{reviewers.length > 0 ? <span className="truncate">review: {reviewers.join(", ")}</span> : null}
 						{prSummary.mergeability.state === "conflicting" || prSummary.mergeability.state === "blocked" ? (
-							<span className="truncate">merge: {prSummary.mergeability.reasons.join(", ") || prSummary.mergeability.state}</span>
+							<span className="truncate">
+								merge: {prSummary.mergeability.reasons.join(", ") || prSummary.mergeability.state}
+							</span>
 						) : null}
 					</div>
 				) : (
