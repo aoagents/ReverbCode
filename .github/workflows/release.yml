@@ -1,0 +1,86 @@
+name: Release
+
+# Cross-compiles the Go daemon for every npm target, publishes the raw binaries
+# to a GitHub Release, builds the per-platform @aoagents/ao npm sub-packages from
+# those same binaries, and verifies them with `npm publish --dry-run`.
+#
+# This workflow does NOT publish to npm. Real publishing is the manual,
+# credential-gated `npm-publish.yml`.
+#
+# Trigger: push a `v<version>` tag that matches npm/package.json (e.g. v0.10.0).
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Validate packaging matrix
+        run: node npm/scripts/check.mjs
+
+      - name: Verify tag matches package version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          pkg_version="$(node -p "require('./npm/package.json').version")"
+          tag_version="${GITHUB_REF_NAME#v}"
+          if [ "$pkg_version" != "$tag_version" ]; then
+            echo "Tag $GITHUB_REF_NAME ($tag_version) != npm/package.json version $pkg_version" >&2
+            exit 1
+          fi
+          echo "Releasing @aoagents/ao@$pkg_version"
+
+      # Pure-Go (CGO disabled, modernc SQLite) so a single Linux runner
+      # cross-compiles every GOOS/GOARCH in the matrix.
+      - name: Cross-compile daemon + assemble npm packages
+        run: node npm/scripts/build.mjs
+        env:
+          AO_COMMIT: ${{ github.sha }}
+
+      - name: Collect release binaries + checksums
+        run: node npm/scripts/collect-release.mjs
+
+      - name: Pack npm tarballs
+        run: node npm/scripts/pack.mjs
+
+      - name: Publish binaries to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            npm/build/release/ao-*
+            npm/build/release/SHA256SUMS
+            npm/build/tarballs/*.tgz
+
+      # Prove the tarballs are publishable without touching the registry.
+      - name: Verify npm publish (dry run)
+        run: |
+          for t in npm/build/tarballs/*.tgz; do
+            echo "::group::npm publish --dry-run $t"
+            npm publish --dry-run --access public "$t"
+            echo "::endgroup::"
+          done
+
+      - name: Upload npm tarballs as workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-tarballs
+          path: npm/build/tarballs/*.tgz
+          if-no-files-found: error

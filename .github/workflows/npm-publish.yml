@@ -1,0 +1,83 @@
+name: Publish npm
+
+# Manual, credential-gated publish of @aoagents/ao and its per-platform
+# sub-packages to npm.
+#
+# Safe by default: `dry_run` is true, so a normal run only validates with
+# `npm publish --dry-run` and never contacts the registry's write path. A real
+# publish requires BOTH dry_run=false AND an `NPM_TOKEN` repository secret
+# (absent by default) — so an accidental dispatch cannot publish. Publishing is
+# a deliberate human decision.
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run only (no real publish)"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Validate packaging matrix
+        run: node npm/scripts/check.mjs
+
+      - name: Cross-compile daemon + assemble npm packages
+        run: node npm/scripts/build.mjs
+        env:
+          AO_COMMIT: ${{ github.sha }}
+
+      - name: Pack npm tarballs
+        run: node npm/scripts/pack.mjs
+
+      - name: Guard real publish
+        if: ${{ inputs.dry_run == false }}
+        run: |
+          if [ -z "${NPM_TOKEN}" ]; then
+            echo "dry_run=false but NPM_TOKEN secret is not set; refusing to publish." >&2
+            exit 1
+          fi
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # Publish per-platform sub-packages FIRST, then the main package, so the
+      # main package's optionalDependencies resolve at install time. The main
+      # tarball is the one matching the package version with no platform suffix.
+      - name: Publish
+        run: |
+          flag=""
+          if [ "${DRY_RUN}" = "true" ]; then
+            flag="--dry-run"
+            echo "DRY RUN: validating publish without writing to the registry."
+          fi
+          main_name="aoagents-ao-$(node -p "require('./npm/package.json').version").tgz"
+          publish() {
+            echo "::group::npm publish $flag $1"
+            npm publish --access public $flag "$1"
+            echo "::endgroup::"
+          }
+          for t in npm/build/tarballs/*.tgz; do
+            [ "$(basename "$t")" = "$main_name" ] && continue
+            publish "$t"
+          done
+          publish "npm/build/tarballs/$main_name"
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

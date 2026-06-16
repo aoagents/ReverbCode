@@ -12,6 +12,9 @@ yarn-error.log*
 # Go
 .go/
 bin/
+# but keep the committed npm launcher shim (build output lives in npm/build/)
+!npm/bin/
+!npm/bin/**
 *.test
 *.out
 vendor/
