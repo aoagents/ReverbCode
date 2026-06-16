@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { TerminalTarget } from "../types/terminal";
 import type { WorkspaceSession } from "../types/workspace";
 import type { Theme } from "../stores/ui-store";
 import { useTerminalSession, type AttachableTerminal, type TerminalSessionState } from "../hooks/useTerminalSession";
@@ -8,14 +9,16 @@ type TerminalPaneProps = {
 	session?: WorkspaceSession;
 	theme: Theme;
 	daemonReady: boolean;
+	terminalTarget?: TerminalTarget;
 };
 
-export function TerminalPane({ session, theme, daemonReady }: TerminalPaneProps) {
+export function TerminalPane({ session, theme, daemonReady, terminalTarget }: TerminalPaneProps) {
 	if (!window.ao) {
+		const provider = terminalTarget?.kind === "reviewer" ? terminalTarget.harness : (session?.provider ?? "claude");
 		return (
 			<pre className="h-full overflow-auto bg-terminal p-4 font-mono text-[13px] leading-relaxed text-[var(--term-fg)]">
 				<span className="text-[var(--term-dim)]">~/{session?.workspaceName ?? "reverbcode"}</span>{" "}
-				<span className="text-[var(--term-blue)]">{session?.branch || "main"}</span> $ {session?.provider ?? "claude"}
+				<span className="text-[var(--term-blue)]">{session?.branch || "main"}</span> $ {provider}
 				{"\n"}
 				<span className="text-[var(--term-green)]">✻ Welcome to the agent CLI</span>
 				{"\n\n"}
@@ -26,7 +29,7 @@ export function TerminalPane({ session, theme, daemonReady }: TerminalPaneProps)
 		);
 	}
 
-	return <AttachedTerminal session={session} theme={theme} daemonReady={daemonReady} />;
+	return <AttachedTerminal session={session} theme={theme} daemonReady={daemonReady} terminalTarget={terminalTarget} />;
 }
 
 function bannerText(state: TerminalSessionState, error?: string): string | undefined {
@@ -35,15 +38,19 @@ function bannerText(state: TerminalSessionState, error?: string): string | undef
 	return undefined;
 }
 
-function AttachedTerminal({ session, theme, daemonReady }: TerminalPaneProps) {
+function AttachedTerminal({ session, theme, daemonReady, terminalTarget }: TerminalPaneProps) {
+	const attachSession =
+		session && terminalTarget?.kind === "reviewer"
+			? { ...session, terminalHandleId: terminalTarget.handleId }
+			: session;
 	// One terminal instance per pane lifetime (yyork's core rule): switching
 	// sessions never remounts XtermTerminal — the attachment effect re-points
 	// the mux and clears the screen instead. A keyed remount would tear down the
 	// renderer mid-switch and lose the warm GPU surface.
 	const [terminal, setTerminal] = useState<AttachableTerminal | null>(null);
 	const [initFailed, setInitFailed] = useState(false);
-	const { attach, state, error } = useTerminalSession(session, { daemonReady });
-	const handleId = session?.terminalHandleId;
+	const { attach, state, error } = useTerminalSession(attachSession, { daemonReady });
+	const handleId = attachSession?.terminalHandleId;
 	const hadAttachmentRef = useRef(false);
 
 	const handleReady = useCallback((handle: AttachableTerminal) => setTerminal(handle), []);
