@@ -39,11 +39,13 @@ func (s *Store) GetReviewBySession(ctx context.Context, id domain.SessionID) (do
 	return reviewFromRow(row), true, nil
 }
 
-// InsertReviewRun records a new review pass.
+// InsertReviewRun records a new review pass. A unique-constraint hit on the
+// (session_id, target_sha) index (migration 0013) is surfaced as the sentinel
+// domain.ErrDuplicateReviewRun so the engine can fall back to the existing run.
 func (s *Store) InsertReviewRun(ctx context.Context, r domain.ReviewRun) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	return s.qw.InsertReviewRun(ctx, gen.InsertReviewRunParams{
+	err := s.qw.InsertReviewRun(ctx, gen.InsertReviewRunParams{
 		ID:        r.ID,
 		ReviewID:  r.ReviewID,
 		SessionID: r.SessionID,
@@ -55,6 +57,10 @@ func (s *Store) InsertReviewRun(ctx context.Context, r domain.ReviewRun) error {
 		Body:      r.Body,
 		CreatedAt: r.CreatedAt,
 	})
+	if isSQLiteUnique(err) {
+		return fmt.Errorf("insert review run for session %s sha %s: %w", r.SessionID, r.TargetSHA, domain.ErrDuplicateReviewRun)
+	}
+	return err
 }
 
 // UpdateReviewRunResult sets the status/verdict/body of a running review pass.

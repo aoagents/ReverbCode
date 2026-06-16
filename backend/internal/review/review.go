@@ -245,6 +245,18 @@ func (e *Engine) Trigger(ctx context.Context, workerID domain.SessionID) (Trigge
 		CreatedAt: now,
 	}
 	if err := e.store.InsertReviewRun(ctx, run); err != nil {
+		// The per-worker lock serialises in-process triggers, but the unique
+		// index (migration 0013) can still reject a run a concurrent daemon (or
+		// a pre-lock restart) recorded for this commit. The reviewer is already
+		// launched, so don't surface a raw error: re-read the recorded run and
+		// return it as the existing, not-newly-created pass.
+		if errors.Is(err, domain.ErrDuplicateReviewRun) {
+			if existing, ok, getErr := e.store.GetReviewRunBySessionAndSHA(ctx, workerID, targetSHA); getErr != nil {
+				return TriggerResult{}, getErr
+			} else if ok {
+				return TriggerResult{Run: existing, ReviewerHandleID: handleID, Created: false}, nil
+			}
+		}
 		return TriggerResult{}, err
 	}
 	return TriggerResult{Run: run, ReviewerHandleID: handleID, Created: true}, nil

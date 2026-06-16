@@ -15,6 +15,11 @@ import (
 type fakeStore struct {
 	review *domain.Review
 	runs   []domain.ReviewRun
+	// insertErr, when set, makes the next InsertReviewRun model a concurrent
+	// writer that already recorded a run for this commit: it records that
+	// winner (so a follow-up GetReviewRunBySessionAndSHA finds it) and returns
+	// insertErr instead of recording the caller's run.
+	insertErr error
 }
 
 func (f *fakeStore) UpsertReview(_ context.Context, r domain.Review) error {
@@ -29,6 +34,12 @@ func (f *fakeStore) GetReviewBySession(_ context.Context, _ domain.SessionID) (d
 	return *f.review, true, nil
 }
 func (f *fakeStore) InsertReviewRun(_ context.Context, r domain.ReviewRun) error {
+	if f.insertErr != nil {
+		winner := r
+		winner.ID = "winner-" + r.ID
+		f.runs = append(f.runs, winner)
+		return f.insertErr
+	}
 	f.runs = append(f.runs, r)
 	return nil
 }
@@ -202,6 +213,28 @@ func TestTriggerConcurrentSameWorkerSpawnsOnce(t *testing.T) {
 	}
 	if len(store.runs) != 1 {
 		t.Errorf("recorded review runs = %d, want 1", len(store.runs))
+	}
+}
+
+func TestTriggerFallsBackToExistingRunOnUniqueConflict(t *testing.T) {
+	// The idempotency check passes (no run yet), the reviewer launches, but the
+	// insert loses to a concurrent writer the unique index already accepted.
+	store := &fakeStore{insertErr: domain.ErrDuplicateReviewRun}
+	launcher := &fakeLauncher{handle: "review-mer-1"}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
+
+	res, err := eng.Trigger(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatalf("Trigger: %v", err)
+	}
+	if res.Created {
+		t.Fatalf("expected Created=false on unique conflict: %+v", res)
+	}
+	if res.Run.TargetSHA != "sha1" || res.Run.ID != "winner-id-1" {
+		t.Fatalf("expected the recorded winner run, got %+v", res.Run)
+	}
+	if launcher.spawnCount != 1 {
+		t.Fatalf("reviewer should still have launched once: %+v", launcher)
 	}
 }
 
