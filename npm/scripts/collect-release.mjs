@@ -30,24 +30,24 @@ mkdirSync(releaseDir, { recursive: true });
 const sums = [];
 let collected = 0;
 for (const t of targets) {
-  const src = join(binDir, `${t.os}-${t.arch}`, binaryName(t.os));
-  if (!existsSync(src)) {
-    console.log(`  skip ${t.os}-${t.arch} (not built)`);
-    continue;
-  }
-  const ext = t.os === "win32" ? ".exe" : "";
-  const name = `ao-${t.os}-${t.arch}${ext}`;
-  const dest = join(releaseDir, name);
-  copyFileSync(src, dest);
-  const hash = createHash("sha256").update(readFileSync(dest)).digest("hex");
-  sums.push(`${hash}  ${name}`);
-  console.log(`  ${name}  ${hash.slice(0, 12)}…`);
-  collected++;
+	const src = join(binDir, `${t.os}-${t.arch}`, binaryName(t.os));
+	if (!existsSync(src)) {
+		console.log(`  skip ${t.os}-${t.arch} (not built)`);
+		continue;
+	}
+	const ext = t.os === "win32" ? ".exe" : "";
+	const name = `ao-${t.os}-${t.arch}${ext}`;
+	const dest = join(releaseDir, name);
+	copyFileSync(src, dest);
+	const hash = createHash("sha256").update(readFileSync(dest)).digest("hex");
+	sums.push(`${hash}  ${name}`);
+	console.log(`  ${name}  ${hash.slice(0, 12)}…`);
+	collected++;
 }
 
 if (collected === 0) {
-  console.error("No binaries found under build/bin/. Run scripts/build.mjs first.");
-  process.exit(1);
+	console.error("No binaries found under build/bin/. Run scripts/build.mjs first.");
+	process.exit(1);
 }
 
 writeFileSync(join(releaseDir, "SHA256SUMS"), sums.join("\n") + "\n");

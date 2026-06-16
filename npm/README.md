@@ -15,14 +15,14 @@ The published `@aoagents/ao` tarball ships **no** binary. The prebuilt Go daemon
 (~20 MB, per platform) is delivered through per-platform
 `optionalDependencies` (the esbuild/swc pattern):
 
-| optional dependency        | `os`     | `cpu`   |
-| -------------------------- | -------- | ------- |
-| `@aoagents/ao-darwin-arm64`| darwin   | arm64   |
-| `@aoagents/ao-darwin-x64`  | darwin   | x64     |
-| `@aoagents/ao-linux-x64`   | linux    | x64     |
-| `@aoagents/ao-linux-arm64` | linux    | arm64   |
-| `@aoagents/ao-win32-x64`   | win32    | x64     |
-| `@aoagents/ao-win32-arm64` | win32    | arm64   |
+| optional dependency         | `os`   | `cpu` |
+| --------------------------- | ------ | ----- |
+| `@aoagents/ao-darwin-arm64` | darwin | arm64 |
+| `@aoagents/ao-darwin-x64`   | darwin | x64   |
+| `@aoagents/ao-linux-x64`    | linux  | x64   |
+| `@aoagents/ao-linux-arm64`  | linux  | arm64 |
+| `@aoagents/ao-win32-x64`    | win32  | x64   |
+| `@aoagents/ao-win32-arm64`  | win32  | arm64 |
 
 npm installs **only** the one matching your host. The `ao` command is a thin
 Node shim (`bin/ao.js`) that resolves the installed sub-package, finds its

@@ -23,28 +23,28 @@ const pkg = JSON.parse(readFileSync(join(npmRoot, "package.json"), "utf8"));
 const errors = [];
 
 if (pkg.version !== VERSION) {
-  errors.push(`package.json version ${pkg.version} != targets.mjs VERSION ${VERSION}`);
+	errors.push(`package.json version ${pkg.version} != targets.mjs VERSION ${VERSION}`);
 }
 
 const expected = new Set(targets.map((t) => packageName(t.os, t.arch)));
 const actual = new Set(Object.keys(pkg.optionalDependencies || {}));
 
 for (const name of expected) {
-  if (!actual.has(name)) errors.push(`optionalDependencies missing matrix target: ${name}`);
+	if (!actual.has(name)) errors.push(`optionalDependencies missing matrix target: ${name}`);
 }
 for (const name of actual) {
-  if (!expected.has(name)) errors.push(`optionalDependencies has non-matrix entry: ${name}`);
+	if (!expected.has(name)) errors.push(`optionalDependencies has non-matrix entry: ${name}`);
 }
 for (const [name, range] of Object.entries(pkg.optionalDependencies || {})) {
-  if (range !== VERSION) {
-    errors.push(`optionalDependencies["${name}"] = "${range}", expected exact "${VERSION}"`);
-  }
+	if (range !== VERSION) {
+		errors.push(`optionalDependencies["${name}"] = "${range}", expected exact "${VERSION}"`);
+	}
 }
 
 if (errors.length) {
-  console.error("Packaging consistency check FAILED:");
-  for (const e of errors) console.error(`  - ${e}`);
-  process.exit(1);
+	console.error("Packaging consistency check FAILED:");
+	for (const e of errors) console.error(`  - ${e}`);
+	process.exit(1);
 }
 
 console.log(`Packaging consistency OK (${targets.length} targets @ ${VERSION}).`);
