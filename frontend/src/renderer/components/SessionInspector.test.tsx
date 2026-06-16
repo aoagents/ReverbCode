@@ -12,8 +12,7 @@ const api = vi.hoisted(() => ({
 
 vi.mock("../lib/api-client", () => ({
 	apiClient: api,
-	apiErrorMessage: (error: unknown, fallback = "Request failed") =>
-		error instanceof Error ? error.message : fallback,
+	apiErrorMessage: (error: unknown, fallback = "Request failed") => (error instanceof Error ? error.message : fallback),
 }));
 
 const session = {

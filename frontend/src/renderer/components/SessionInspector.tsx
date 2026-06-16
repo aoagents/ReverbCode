@@ -122,9 +122,7 @@ export function SessionInspector({
 			</div>
 
 			<div className="session-inspector__body">
-				{view === "summary" ? (
-					<SummaryView onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} />
-				) : null}
+				{view === "summary" ? <SummaryView onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} /> : null}
 				{view === "changes" ? <ChangesView session={session} /> : null}
 				{view === "browser" ? <BrowserView /> : null}
 			</div>
@@ -401,7 +399,11 @@ function ReviewerCard({
 	);
 }
 
-function reviewStatus(review?: ReviewRun): { label: string; tone: "neutral" | "running" | "success" | "danger"; icon: ReactNode } {
+function reviewStatus(review?: ReviewRun): {
+	label: string;
+	tone: "neutral" | "running" | "success" | "danger";
+	icon: ReactNode;
+} {
 	if (!review) return { label: "Not run", tone: "neutral", icon: null };
 	if (review.status === "running") {
 		return { label: "Running", tone: "running", icon: <Play aria-hidden="true" /> };
