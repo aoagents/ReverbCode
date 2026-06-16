@@ -78,28 +78,47 @@ func anyMerged(prs []domain.PRFacts) bool {
 }
 
 // aggregatePRStatus is the worst-wins reduction over a session's open PRs.
-// Stacked children blocked by an open parent are excluded: they cannot merge
-// yet, so their pipeline state is not a user-actionable signal for the session.
-// If every open PR is blocked (a degenerate stack with no visible root), it
-// falls back to aggregating across all of them so the session never goes dark.
+// A stacked child blocked by an open parent cannot merge yet, so its readiness
+// signals (mergeable/approved/review-pending/open) are not actionable for the
+// session and are suppressed. Its problem signals are still actionable: failing
+// CI, draft state, and requested-changes/unresolved-comments must stay visible
+// so a broken child is not hidden behind the stack. If no PR contributes any
+// signal (a degenerate stack with no visible root), it falls back to aggregating
+// the raw status across all open PRs so the session never goes dark.
 func aggregatePRStatus(open []domain.PRFacts) domain.SessionStatus {
 	stacks := buildStacks(open)
-	candidates := make([]domain.PRFacts, 0, len(open))
+	candidates := make([]domain.SessionStatus, 0, len(open))
 	for _, p := range open {
-		if !stacks[p.URL].Blocked {
-			candidates = append(candidates, p)
+		s := prPipelineStatus(p)
+		if stacks[p.URL].Blocked && !isActionableChildSignal(s) {
+			continue
 		}
+		candidates = append(candidates, s)
 	}
 	if len(candidates) == 0 {
-		candidates = open
+		for _, p := range open {
+			candidates = append(candidates, prPipelineStatus(p))
+		}
 	}
-	worst := prPipelineStatus(candidates[0])
-	for _, p := range candidates[1:] {
-		if s := prPipelineStatus(p); statusSeverity(s) < statusSeverity(worst) {
+	worst := candidates[0]
+	for _, s := range candidates[1:] {
+		if statusSeverity(s) < statusSeverity(worst) {
 			worst = s
 		}
 	}
 	return worst
+}
+
+// isActionableChildSignal reports whether a blocked stacked child's pipeline
+// status is a problem the user can act on now, independent of the child's
+// inability to merge until its parent does.
+func isActionableChildSignal(s domain.SessionStatus) bool {
+	switch s {
+	case domain.StatusCIFailed, domain.StatusDraft, domain.StatusChangesRequested:
+		return true
+	default:
+		return false
+	}
 }
 
 // statusSeverity ranks PR pipeline statuses from most to least urgent so the

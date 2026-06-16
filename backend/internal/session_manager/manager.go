@@ -677,7 +677,7 @@ func workerMultiPRPrompt() string {
 
 You can open more than one pull request from this session. AO attributes a PR to you when its source branch is your session's working branch or a branch descended from it (a "/"-separated child like ` + "`your-branch/topic`" + `).
 
-- For independent PRs, branch off your base branch as usual and open each PR; all of them stay tracked under this session.
+- For independent PRs, create each source branch as a child of your session branch (` + "`your-branch/<topic>`" + `) so it stays in this session's namespace, then open the PR targeting your base branch as usual. The PR can target the base branch; only the source branch needs to stay under your session branch for AO to track it.
 - To stack a PR on top of another (so it merges after its parent), create the child branch from the parent branch and name it ` + "`<parent-branch>/<topic>`" + `, then target the parent branch in the PR. AO recognizes the stack from the branch relationship and will only nudge you to resolve conflicts on the bottom-most PR.
 
 Keep branch names within your session's branch namespace so AO can track every PR you open.`
