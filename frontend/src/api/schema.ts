@@ -456,7 +456,8 @@ export interface components {
             kind: string;
             projectId: string;
             prs: components["schemas"]["SessionPRFacts"][];
-            status: string;
+            /** @enum {string} */
+            status: "working" | "pr_open" | "draft" | "ci_failed" | "review_pending" | "changes_requested" | "approved" | "mergeable" | "merged" | "needs_input" | "idle" | "terminated" | "no_signal";
             terminalHandleId?: string;
             /** Format: date-time */
             updatedAt: string;
@@ -492,7 +493,7 @@ export interface components {
             reviews: components["schemas"]["ReviewRun"][];
         };
         ListSessionPRsResponse: {
-            prs: components["schemas"]["SessionPRFacts"][];
+            prs: components["schemas"]["SessionPRSummary"][];
             sessionId: string;
         };
         ListSessionsResponse: {
@@ -626,17 +627,85 @@ export interface components {
             ok: boolean;
             sessionId: string;
         };
+        SessionPRCISummary: {
+            failingChecks: components["schemas"]["SessionPRFailingCheck"][];
+            /** @enum {string} */
+            state: "unknown" | "pending" | "passing" | "failing";
+        };
+        SessionPRConflictFile: {
+            path: string;
+            url?: string;
+        };
         SessionPRFacts: {
-            ci: string;
-            mergeability: string;
+            /** @enum {string} */
+            ci: "unknown" | "pending" | "passing" | "failing";
+            /** @enum {string} */
+            mergeability: "unknown" | "mergeable" | "conflicting" | "blocked" | "unstable";
             number: number;
-            review: string;
+            /** @enum {string} */
+            review: "none" | "approved" | "changes_requested" | "review_required";
             reviewComments: boolean;
             /** @enum {string} */
             state: "draft" | "open" | "merged" | "closed";
             /** Format: date-time */
             updatedAt: string;
             url: string;
+        };
+        SessionPRFailingCheck: {
+            conclusion: string;
+            name: string;
+            /** @enum {string} */
+            status: "failed" | "cancelled";
+            url?: string;
+        };
+        SessionPRMergeabilitySummary: {
+            conflictFiles?: components["schemas"]["SessionPRConflictFile"][];
+            prUrl: string;
+            reasons: string[];
+            /** @enum {string} */
+            state: "unknown" | "mergeable" | "conflicting" | "blocked" | "unstable";
+        };
+        SessionPRReviewCommentLink: {
+            file?: string;
+            line?: number;
+            url?: string;
+        };
+        SessionPRReviewSummary: {
+            /** @enum {string} */
+            decision: "none" | "approved" | "changes_requested" | "review_required";
+            hasUnresolvedHumanComments: boolean;
+            unresolvedBy: components["schemas"]["SessionPRUnresolvedReviewer"][];
+        };
+        SessionPRSummary: {
+            author: string;
+            ci: components["schemas"]["SessionPRCISummary"];
+            /** Format: date-time */
+            ciObservedAt?: string;
+            headSha: string;
+            htmlUrl?: string;
+            mergeability: components["schemas"]["SessionPRMergeabilitySummary"];
+            number: number;
+            /** Format: date-time */
+            observedAt?: string;
+            /** @enum {string} */
+            provider: "github";
+            repo: string;
+            review: components["schemas"]["SessionPRReviewSummary"];
+            /** Format: date-time */
+            reviewObservedAt?: string;
+            sourceBranch: string;
+            /** @enum {string} */
+            state: "draft" | "open" | "merged" | "closed";
+            targetBranch: string;
+            title: string;
+            /** Format: date-time */
+            updatedAt: string;
+            url: string;
+        };
+        SessionPRUnresolvedReviewer: {
+            count: number;
+            links: components["schemas"]["SessionPRReviewCommentLink"][];
+            reviewerId: string;
         };
         SessionResponse: {
             session: components["schemas"]["ControllersSessionView"];

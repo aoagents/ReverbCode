@@ -2,7 +2,8 @@ import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { Plus } from "lucide-react";
-import { type AttentionZone, type WorkspaceSession, attentionZone, openPRs, workerSessions } from "../types/workspace";
+import { type AttentionZone, type WorkspaceSession, attentionZone, workerSessions } from "../types/workspace";
+import { useSessionScmSummary } from "../hooks/useSessionScmSummary";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { DashboardSubhead } from "./DashboardSubhead";
 import { OrchestratorIcon } from "./icons";
@@ -255,23 +256,14 @@ function ZoneColumn({
 	);
 }
 
-// One-line PR summary for the card footer. A session can own several PRs, so
-// collapse to a count once past one; detail lives in the inspector stack.
-function prSummary(session: WorkspaceSession): string {
-	const total = session.prs.length;
-	if (total === 0) return "no PR yet";
-	if (total === 1) {
-		const pr = session.prs[0];
-		return `PR #${pr.number} · ${pr.state}`;
-	}
-	const open = openPRs(session).length;
-	return open > 0 ? `${total} PRs · ${open} open` : `${total} PRs`;
-}
 
 function SessionCard({ session, onOpen }: { session: WorkspaceSession; onOpen: () => void }) {
 	const badge = sessionBadge(session);
 	const branch = session.branch || "";
 	const showBranch = branch !== "" && !sameLabel(branch, session.title) && !sameLabel(branch, session.id);
+	const prSummary = useSessionScmSummary(session.id).data?.[0];
+	const failingChecks = prSummary?.ci.failingChecks.slice(0, 2) ?? [];
+	const reviewers = prSummary?.review.unresolvedBy.slice(0, 2).map((reviewer) => reviewer.reviewerId) ?? [];
 	return (
 		<button
 			className="w-full rounded-[7px] border border-border bg-surface text-left transition-colors hover:border-border-strong"
@@ -298,7 +290,20 @@ function SessionCard({ session, onOpen }: { session: WorkspaceSession; onOpen: (
 			</div>
 			{showBranch && <div className="px-[13px] pb-2.5 font-mono text-[10.5px] text-passive">{branch}</div>}
 			<div className="border-t border-border px-[13px] py-2 font-mono text-[10.5px] text-passive">
-				{prSummary(session)}
+				{prSummary ? (
+					<div className="flex flex-col gap-1">
+						<span>PR #{prSummary.number} - {prSummary.state} - CI {prSummary.ci.state}</span>
+						{failingChecks.length > 0 ? (
+							<span className="truncate text-error">{failingChecks.map((check) => check.name).join(", ")}</span>
+						) : null}
+						{reviewers.length > 0 ? <span className="truncate">review: {reviewers.join(", ")}</span> : null}
+						{prSummary.mergeability.state === "conflicting" || prSummary.mergeability.state === "blocked" ? (
+							<span className="truncate">merge: {prSummary.mergeability.reasons.join(", ") || prSummary.mergeability.state}</span>
+						) : null}
+					</div>
+				) : (
+					"no PR yet"
+				)}
 			</div>
 		</button>
 	);

@@ -1283,6 +1283,20 @@ components:
             $ref: '#/components/schemas/SessionPRFacts'
           type: array
         status:
+          enum:
+          - working
+          - pr_open
+          - draft
+          - ci_failed
+          - review_pending
+          - changes_requested
+          - approved
+          - mergeable
+          - merged
+          - needs_input
+          - idle
+          - terminated
+          - no_signal
           type: string
         terminalHandleId:
           type: string
@@ -1383,7 +1397,7 @@ components:
       properties:
         prs:
           items:
-            $ref: '#/components/schemas/SessionPRFacts'
+            $ref: '#/components/schemas/SessionPRSummary'
           type: array
         sessionId:
           type: string
@@ -1730,15 +1744,57 @@ components:
       - sessionId
       - message
       type: object
+    SessionPRCISummary:
+      properties:
+        failingChecks:
+          items:
+            $ref: '#/components/schemas/SessionPRFailingCheck'
+          type: array
+        state:
+          enum:
+          - unknown
+          - pending
+          - passing
+          - failing
+          type: string
+      required:
+      - state
+      - failingChecks
+      type: object
+    SessionPRConflictFile:
+      properties:
+        path:
+          type: string
+        url:
+          type: string
+      required:
+      - path
+      type: object
     SessionPRFacts:
       properties:
         ci:
+          enum:
+          - unknown
+          - pending
+          - passing
+          - failing
           type: string
         mergeability:
+          enum:
+          - unknown
+          - mergeable
+          - conflicting
+          - blocked
+          - unstable
           type: string
         number:
           type: integer
         review:
+          enum:
+          - none
+          - approved
+          - changes_requested
+          - review_required
           type: string
         reviewComments:
           type: boolean
@@ -1763,6 +1819,158 @@ components:
       - mergeability
       - reviewComments
       - updatedAt
+      type: object
+    SessionPRFailingCheck:
+      properties:
+        conclusion:
+          type: string
+        name:
+          type: string
+        status:
+          enum:
+          - failed
+          - cancelled
+          type: string
+        url:
+          type: string
+      required:
+      - name
+      - status
+      - conclusion
+      type: object
+    SessionPRMergeabilitySummary:
+      properties:
+        conflictFiles:
+          items:
+            $ref: '#/components/schemas/SessionPRConflictFile'
+          type: array
+        prUrl:
+          type: string
+        reasons:
+          items:
+            type: string
+          type: array
+        state:
+          enum:
+          - unknown
+          - mergeable
+          - conflicting
+          - blocked
+          - unstable
+          type: string
+      required:
+      - state
+      - reasons
+      - prUrl
+      type: object
+    SessionPRReviewCommentLink:
+      properties:
+        file:
+          type: string
+        line:
+          type: integer
+        url:
+          type: string
+      type: object
+    SessionPRReviewSummary:
+      properties:
+        decision:
+          enum:
+          - none
+          - approved
+          - changes_requested
+          - review_required
+          type: string
+        hasUnresolvedHumanComments:
+          type: boolean
+        unresolvedBy:
+          items:
+            $ref: '#/components/schemas/SessionPRUnresolvedReviewer'
+          type: array
+      required:
+      - decision
+      - hasUnresolvedHumanComments
+      - unresolvedBy
+      type: object
+    SessionPRSummary:
+      properties:
+        author:
+          type: string
+        ci:
+          $ref: '#/components/schemas/SessionPRCISummary'
+        ciObservedAt:
+          format: date-time
+          type: string
+        headSha:
+          type: string
+        htmlUrl:
+          type: string
+        mergeability:
+          $ref: '#/components/schemas/SessionPRMergeabilitySummary'
+        number:
+          type: integer
+        observedAt:
+          format: date-time
+          type: string
+        provider:
+          enum:
+          - github
+          type: string
+        repo:
+          type: string
+        review:
+          $ref: '#/components/schemas/SessionPRReviewSummary'
+        reviewObservedAt:
+          format: date-time
+          type: string
+        sourceBranch:
+          type: string
+        state:
+          enum:
+          - draft
+          - open
+          - merged
+          - closed
+          type: string
+        targetBranch:
+          type: string
+        title:
+          type: string
+        updatedAt:
+          format: date-time
+          type: string
+        url:
+          type: string
+      required:
+      - url
+      - number
+      - title
+      - state
+      - provider
+      - repo
+      - author
+      - sourceBranch
+      - targetBranch
+      - headSha
+      - ci
+      - review
+      - mergeability
+      - updatedAt
+      type: object
+    SessionPRUnresolvedReviewer:
+      properties:
+        count:
+          type: integer
+        links:
+          items:
+            $ref: '#/components/schemas/SessionPRReviewCommentLink'
+          type: array
+        reviewerId:
+          type: string
+      required:
+      - reviewerId
+      - count
+      - links
       type: object
     SessionResponse:
       properties:

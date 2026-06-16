@@ -63,6 +63,14 @@ surface (`npm run sqlc`, `npm run api`).
 - Shell: sidebar (projects + sessions, add/remove project), sessions board,
   session view + inspector, project settings, pull-requests page,
   spawn-orchestrator flow.
+- Desktop status and SCM summary V1: session status comes from
+  `GET /api/v1/sessions`; visible/active PR context comes from
+  `GET /api/v1/sessions/{sessionId}/pr`; `GET /api/v1/events` is kept open as
+  an invalidation stream rather than a full PR payload stream.
+- Concise PR summaries include PR identity, CI state with failing check names
+  and links, human reviewer IDs/counts/links for unresolved review comments,
+  and mergeability reasons. Raw CI logs and review comment bodies are
+  intentionally not part of the desktop V1 API/UI.
 - Terminal pane (xterm) over the mux WebSocket, with a live SSE events
   connection and port-rebind on daemon restart.
 
@@ -73,8 +81,9 @@ surface (`npm run sqlc`, `npm run api`).
   nothing at runtime ([#112](https://github.com/aoagents/agent-orchestrator/issues/112)).
 - **Notifications**: design/in-flight only; no shipped backend notifier or UI
   center.
-- **Live PR/tracker fact surfacing**: the observer writes facts, but exposing
-  the full `pr_*` / `tracker_*` CDC events to live consumers
+- **Full raw PR/tracker fact surfacing**: the SCM observer writes facts and the
+  desktop consumes concise PR summaries, but exposing the full raw `pr_*` /
+  `tracker_*` CDC events to live consumers
   ([#110](https://github.com/aoagents/agent-orchestrator/issues/110)) and in
   `ao session get` ([#111](https://github.com/aoagents/agent-orchestrator/issues/111))
   is still open.

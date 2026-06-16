@@ -97,7 +97,7 @@ describe("createEventTransport", () => {
 		expect(EventSourceStub.instances[1].url).toBe("http://127.0.0.1:3099/api/v1/events");
 	});
 
-	it("debounces a workspace invalidation after a status change", () => {
+	it("debounces workspace and SCM summary invalidation after a status change", () => {
 		vi.useFakeTimers();
 		try {
 			const queryClient = fakeQueryClient();
@@ -107,7 +107,8 @@ describe("createEventTransport", () => {
 			onStatusHandler();
 			expect(queryClient.invalidateQueries).not.toHaveBeenCalled();
 			vi.advanceTimersByTime(200);
-			expect(queryClient.invalidateQueries).toHaveBeenCalledTimes(1);
+			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["workspaces"] });
+			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["session-scm-summary"] });
 		} finally {
 			vi.useRealTimers();
 		}

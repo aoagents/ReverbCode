@@ -7,6 +7,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
+	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
 )
 
 // HTTP response envelopes for the projects surface — the SINGLE definition of
@@ -208,17 +209,134 @@ type SessionPRFacts struct {
 	URL            string                `json:"url"`
 	Number         int                   `json:"number"`
 	State          string                `json:"state" enum:"draft,open,merged,closed"`
-	CI             domain.CIState        `json:"ci"`
-	Review         domain.ReviewDecision `json:"review"`
-	Mergeability   domain.Mergeability   `json:"mergeability"`
+	CI             domain.CIState        `json:"ci" enum:"unknown,pending,passing,failing"`
+	Review         domain.ReviewDecision `json:"review" enum:"none,approved,changes_requested,review_required"`
+	Mergeability   domain.Mergeability   `json:"mergeability" enum:"unknown,mergeable,conflicting,blocked,unstable"`
 	ReviewComments bool                  `json:"reviewComments"`
 	UpdatedAt      time.Time             `json:"updatedAt"`
 }
 
+// SessionPRSummary is the concise desktop SCM read model returned by GET
+// /sessions/{sessionId}/pr. It intentionally omits CI log tails and review
+// comment bodies.
+type SessionPRSummary struct {
+	URL              string                       `json:"url"`
+	HTMLURL          string                       `json:"htmlUrl,omitempty"`
+	Number           int                          `json:"number"`
+	Title            string                       `json:"title"`
+	State            domain.PRState               `json:"state" enum:"draft,open,merged,closed"`
+	Provider         string                       `json:"provider" enum:"github"`
+	Repo             string                       `json:"repo"`
+	Author           string                       `json:"author"`
+	SourceBranch     string                       `json:"sourceBranch"`
+	TargetBranch     string                       `json:"targetBranch"`
+	HeadSHA          string                       `json:"headSha"`
+	CI               SessionPRCISummary           `json:"ci"`
+	Review           SessionPRReviewSummary       `json:"review"`
+	Mergeability     SessionPRMergeabilitySummary `json:"mergeability"`
+	UpdatedAt        time.Time                    `json:"updatedAt"`
+	ObservedAt       time.Time                    `json:"observedAt,omitempty"`
+	CIObservedAt     time.Time                    `json:"ciObservedAt,omitempty"`
+	ReviewObservedAt time.Time                    `json:"reviewObservedAt,omitempty"`
+}
+
+type SessionPRCISummary struct {
+	State         domain.CIState          `json:"state" enum:"unknown,pending,passing,failing"`
+	FailingChecks []SessionPRFailingCheck `json:"failingChecks"`
+}
+
+type SessionPRFailingCheck struct {
+	Name       string               `json:"name"`
+	Status     domain.PRCheckStatus `json:"status" enum:"failed,cancelled"`
+	Conclusion string               `json:"conclusion"`
+	URL        string               `json:"url,omitempty"`
+}
+
+type SessionPRReviewSummary struct {
+	Decision                   domain.ReviewDecision         `json:"decision" enum:"none,approved,changes_requested,review_required"`
+	HasUnresolvedHumanComments bool                          `json:"hasUnresolvedHumanComments"`
+	UnresolvedBy               []SessionPRUnresolvedReviewer `json:"unresolvedBy"`
+}
+
+type SessionPRUnresolvedReviewer struct {
+	ReviewerID string                       `json:"reviewerId"`
+	Count      int                          `json:"count"`
+	Links      []SessionPRReviewCommentLink `json:"links"`
+}
+
+type SessionPRReviewCommentLink struct {
+	URL  string `json:"url,omitempty"`
+	File string `json:"file,omitempty"`
+	Line int    `json:"line,omitempty"`
+}
+
+type SessionPRMergeabilitySummary struct {
+	State         domain.Mergeability     `json:"state" enum:"unknown,mergeable,conflicting,blocked,unstable"`
+	Reasons       []string                `json:"reasons"`
+	PRURL         string                  `json:"prUrl"`
+	ConflictFiles []SessionPRConflictFile `json:"conflictFiles,omitempty"`
+}
+
+type SessionPRConflictFile struct {
+	Path string `json:"path"`
+	URL  string `json:"url,omitempty"`
+}
+
 // ListSessionPRsResponse is the body of GET /sessions/{sessionId}/pr.
 type ListSessionPRsResponse struct {
-	SessionID domain.SessionID `json:"sessionId"`
-	PRs       []SessionPRFacts `json:"prs"`
+	SessionID domain.SessionID   `json:"sessionId"`
+	PRs       []SessionPRSummary `json:"prs"`
+}
+
+func NewSessionPRSummary(in sessionsvc.PRSummary) SessionPRSummary {
+	return SessionPRSummary{
+		URL:              in.URL,
+		HTMLURL:          in.HTMLURL,
+		Number:           in.Number,
+		Title:            in.Title,
+		State:            in.State,
+		Provider:         in.Provider,
+		Repo:             in.Repo,
+		Author:           in.Author,
+		SourceBranch:     in.SourceBranch,
+		TargetBranch:     in.TargetBranch,
+		HeadSHA:          in.HeadSHA,
+		CI:               newSessionPRCISummary(in.CI),
+		Review:           newSessionPRReviewSummary(in.Review),
+		Mergeability:     newSessionPRMergeabilitySummary(in.Mergeability),
+		UpdatedAt:        in.UpdatedAt,
+		ObservedAt:       in.ObservedAt,
+		CIObservedAt:     in.CIObservedAt,
+		ReviewObservedAt: in.ReviewObservedAt,
+	}
+}
+
+func newSessionPRCISummary(in sessionsvc.PRCISummary) SessionPRCISummary {
+	checks := make([]SessionPRFailingCheck, 0, len(in.FailingChecks))
+	for _, ch := range in.FailingChecks {
+		checks = append(checks, SessionPRFailingCheck{Name: ch.Name, Status: ch.Status, Conclusion: ch.Conclusion, URL: ch.URL})
+	}
+	return SessionPRCISummary{State: in.State, FailingChecks: checks}
+}
+
+func newSessionPRReviewSummary(in sessionsvc.PRReviewSummary) SessionPRReviewSummary {
+	reviewers := make([]SessionPRUnresolvedReviewer, 0, len(in.UnresolvedBy))
+	for _, reviewer := range in.UnresolvedBy {
+		links := make([]SessionPRReviewCommentLink, 0, len(reviewer.Links))
+		for _, link := range reviewer.Links {
+			links = append(links, SessionPRReviewCommentLink{URL: link.URL, File: link.File, Line: link.Line})
+		}
+		reviewers = append(reviewers, SessionPRUnresolvedReviewer{ReviewerID: reviewer.ReviewerID, Count: reviewer.Count, Links: links})
+	}
+	return SessionPRReviewSummary{Decision: in.Decision, HasUnresolvedHumanComments: in.HasUnresolvedHumanComments, UnresolvedBy: reviewers}
+}
+
+func newSessionPRMergeabilitySummary(in sessionsvc.PRMergeabilitySummary) SessionPRMergeabilitySummary {
+	files := make([]SessionPRConflictFile, 0, len(in.ConflictFiles))
+	for _, file := range in.ConflictFiles {
+		files = append(files, SessionPRConflictFile{Path: file.Path, URL: file.URL})
+	}
+	return SessionPRMergeabilitySummary{State: in.State, Reasons: in.Reasons, PRURL: in.PRURL, ConflictFiles: files}
 }
 
 // ClaimPRRequest is the body of POST /sessions/{sessionId}/pr/claim.

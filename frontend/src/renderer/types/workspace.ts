@@ -10,7 +10,9 @@ export type SessionStatus =
 	| "merged"
 	| "needs_input"
 	| "idle"
-	| "terminated";
+	| "terminated"
+	| "no_signal"
+	| "unknown";
 
 const sessionStatuses = new Set<SessionStatus>([
 	"working",
@@ -25,11 +27,12 @@ const sessionStatuses = new Set<SessionStatus>([
 	"needs_input",
 	"idle",
 	"terminated",
+	"no_signal",
 ]);
 
 export function toSessionStatus(status?: string, isTerminated = false): SessionStatus {
-	if (isTerminated) return "terminated";
-	return status && sessionStatuses.has(status as SessionStatus) ? (status as SessionStatus) : "working";
+	if (status && sessionStatuses.has(status as SessionStatus)) return status as SessionStatus;
+	return isTerminated ? "terminated" : "unknown";
 }
 
 export type AgentProvider =
@@ -119,12 +122,13 @@ export type WorkspaceSession = {
 };
 
 /** Glanceable worker status. Maps 1:1 to the accent colors in DESIGN.md. */
-export type WorkerDisplayStatus = "working" | "needs_you" | "mergeable" | "ci_failed" | "done";
+export type WorkerDisplayStatus = "working" | "needs_you" | "mergeable" | "ci_failed" | "done" | "unknown";
 
 export function workerDisplayStatus(session: WorkspaceSession): WorkerDisplayStatus {
 	if (session.displayStatus) return session.displayStatus;
 	switch (session.status) {
 		case "needs_input":
+		case "no_signal":
 		case "changes_requested":
 		case "review_pending":
 			return "needs_you";
@@ -136,6 +140,8 @@ export function workerDisplayStatus(session: WorkspaceSession): WorkerDisplaySta
 		case "merged":
 		case "terminated":
 			return "done";
+		case "unknown":
+			return "unknown";
 		default:
 			return "working";
 	}
@@ -194,6 +200,7 @@ export function sessionIsActive(session: WorkspaceSession): boolean {
 export function sessionNeedsAttention(session: WorkspaceSession): boolean {
 	return (
 		session.status === "needs_input" ||
+		session.status === "no_signal" ||
 		session.status === "changes_requested" ||
 		session.status === "review_pending" ||
 		session.status === "ci_failed"
@@ -206,6 +213,7 @@ export const workerStatusLabel: Record<WorkerDisplayStatus, string> = {
 	mergeable: "mergeable",
 	ci_failed: "ci failed",
 	done: "done",
+	unknown: "unknown",
 };
 
 /** Whether a status should breathe (alive/working). */
@@ -246,6 +254,7 @@ export function attentionZone(session: WorkspaceSession): AttentionZone {
 		// Agent waiting on a human (respond) or a problem to investigate (review);
 		// agent-orchestrator collapses these into one "action" zone by default.
 		case "needs_input":
+		case "no_signal":
 		case "ci_failed":
 		case "changes_requested":
 			return "action";
@@ -253,6 +262,7 @@ export function attentionZone(session: WorkspaceSession): AttentionZone {
 		case "review_pending":
 		case "pr_open":
 		case "draft":
+		case "unknown":
 			return "pending";
 		// Agents doing their thing — don't interrupt.
 		case "working":

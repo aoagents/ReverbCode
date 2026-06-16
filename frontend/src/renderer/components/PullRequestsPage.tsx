@@ -1,14 +1,21 @@
 import { useNavigate } from "@tanstack/react-router";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
-import { type PRState, type PullRequestFacts, type WorkspaceSession } from "../types/workspace";
+import {
+	sessionScmSummaryQueryKey,
+	sessionScmSummaryQueryOptions,
+	type SessionPRSummary,
+} from "../hooks/useSessionScmSummary";
+import type { WorkspaceSession } from "../types/workspace";
 import { DashboardSubhead } from "./DashboardSubhead";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
 import { cn } from "../lib/utils";
+
+type PRState = SessionPRSummary["state"];
 
 const stateTone: Record<PRState, string> = {
 	open: "border-success/40 bg-success/10 text-success",
@@ -21,7 +28,7 @@ const stateTone: Record<PRState, string> = {
 const stateRank: Record<PRState, number> = { open: 0, draft: 1, merged: 2, closed: 3 };
 
 type PRRow = {
-	pr: PullRequestFacts;
+	pr: SessionPRSummary;
 	session: WorkspaceSession;
 };
 
@@ -34,8 +41,11 @@ export function PullRequestsPage() {
 	const navigate = useNavigate();
 	const workspaceQuery = useWorkspaceQuery();
 	const sessions = (workspaceQuery.data ?? []).flatMap((w) => w.sessions);
+	const prQueries = useQueries({
+		queries: sessions.map((session) => sessionScmSummaryQueryOptions(session.id)),
+	});
 	const rows: PRRow[] = sessions
-		.flatMap((s) => s.prs.map((pr) => ({ pr, session: s })))
+		.flatMap((session, index) => (prQueries[index]?.data ?? []).map((pr) => ({ pr, session })))
 		.sort((a, b) => stateRank[a.pr.state] - stateRank[b.pr.state] || a.pr.number - b.pr.number);
 
 	return (
@@ -83,7 +93,10 @@ export function PullRequestsPage() {
 function PRRowView({ row, onOpen }: { row: PRRow; onOpen: () => void }) {
 	const queryClient = useQueryClient();
 	const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
-	const refresh = () => void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+	const refresh = () => {
+		void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+		void queryClient.invalidateQueries({ queryKey: sessionScmSummaryQueryKey() });
+	};
 
 	const merge = useMutation({
 		mutationFn: async () => {
@@ -120,10 +133,21 @@ function PRRowView({ row, onOpen }: { row: PRRow; onOpen: () => void }) {
 		<TableRow className="cursor-pointer" onClick={onOpen}>
 			<TableCell className="font-mono text-[12px] text-muted-foreground">#{row.pr.number}</TableCell>
 			<TableCell className="max-w-0">
-				<div className="truncate text-[13px] text-foreground">{row.session.title}</div>
+				<div className="truncate text-[13px] text-foreground">{row.pr.title || row.session.title}</div>
 				<div className="truncate font-mono text-[10px] text-passive">
-					{[row.session.workspaceName, row.session.branch].filter(Boolean).join(" · ")}
+					{[row.session.workspaceName, row.pr.sourceBranch || row.session.branch, `CI ${row.pr.ci.state}`]
+						.filter(Boolean)
+						.join(" · ")}
 				</div>
+				{row.pr.ci.failingChecks.length > 0 ? (
+					<div className="truncate font-mono text-[10px] text-error">
+						{row.pr.ci.failingChecks.map((check) => check.name).join(", ")}
+					</div>
+				) : row.pr.review.unresolvedBy.length > 0 ? (
+					<div className="truncate font-mono text-[10px] text-warning">
+						{row.pr.review.unresolvedBy.map((reviewer) => reviewer.reviewerId).join(", ")}
+					</div>
+				) : null}
 			</TableCell>
 			<TableCell>
 				<Badge variant="outline" className={cn("h-5 px-1.5 text-[10px] font-medium", stateTone[row.pr.state])}>

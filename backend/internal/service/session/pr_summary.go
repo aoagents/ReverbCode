@@ -1,0 +1,287 @@
+package session
+
+import (
+	"context"
+	"fmt"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
+)
+
+// PRSummary is the user-facing SCM read model for one PR owned by a session.
+type PRSummary struct {
+	URL              string
+	HTMLURL          string
+	Number           int
+	Title            string
+	State            domain.PRState
+	Provider         string
+	Repo             string
+	Author           string
+	SourceBranch     string
+	TargetBranch     string
+	HeadSHA          string
+	CI               PRCISummary
+	Review           PRReviewSummary
+	Mergeability     PRMergeabilitySummary
+	UpdatedAt        time.Time
+	ObservedAt       time.Time
+	CIObservedAt     time.Time
+	ReviewObservedAt time.Time
+}
+
+type PRCISummary struct {
+	State         domain.CIState
+	FailingChecks []PRFailingCheck
+}
+
+type PRFailingCheck struct {
+	Name       string
+	Status     domain.PRCheckStatus
+	Conclusion string
+	URL        string
+}
+
+type PRReviewSummary struct {
+	Decision                   domain.ReviewDecision
+	HasUnresolvedHumanComments bool
+	UnresolvedBy               []PRUnresolvedReviewer
+}
+
+type PRUnresolvedReviewer struct {
+	ReviewerID string
+	Count      int
+	Links      []PRReviewCommentLink
+}
+
+type PRReviewCommentLink struct {
+	URL  string
+	File string
+	Line int
+}
+
+type PRMergeabilitySummary struct {
+	State         domain.Mergeability
+	Reasons       []string
+	PRURL         string
+	ConflictFiles []PRConflictFile
+}
+
+type PRConflictFile struct {
+	Path string
+	URL  string
+}
+
+// ListPRSummaries returns all PRs owned by a session with concise SCM details
+// assembled from persisted PR/check/review facts.
+func (s *Service) ListPRSummaries(ctx context.Context, id domain.SessionID) ([]PRSummary, error) {
+	if _, ok, err := s.store.GetSession(ctx, id); err != nil {
+		return nil, fmt.Errorf("get %s: %w", id, err)
+	} else if !ok {
+		return nil, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	prs, err := s.store.ListPRsBySession(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]PRSummary, 0, len(prs))
+	for _, pr := range prs {
+		checks, err := s.store.ListChecks(ctx, pr.URL)
+		if err != nil {
+			return nil, err
+		}
+		threads, err := s.store.ListPRReviewThreads(ctx, pr.URL)
+		if err != nil {
+			return nil, err
+		}
+		comments, err := s.store.ListPRComments(ctx, pr.URL)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, summarizePR(pr, checks, threads, comments))
+	}
+	sortPRSummaries(out)
+	return out, nil
+}
+
+func summarizePR(pr domain.PullRequest, checks []domain.PullRequestCheck, threads []domain.PullRequestReviewThread, comments []domain.PullRequestComment) PRSummary {
+	return PRSummary{
+		URL:              pr.URL,
+		HTMLURL:          firstNonEmpty(pr.HTMLURL, pr.URL),
+		Number:           pr.Number,
+		Title:            pr.Title,
+		State:            pullRequestState(pr),
+		Provider:         firstNonEmpty(pr.Provider, "github"),
+		Repo:             pr.Repo,
+		Author:           pr.Author,
+		SourceBranch:     pr.SourceBranch,
+		TargetBranch:     pr.TargetBranch,
+		HeadSHA:          pr.HeadSHA,
+		CI:               summarizeCI(pr.CI, checks),
+		Review:           summarizeReview(pr.Review, comments),
+		Mergeability:     summarizeMergeability(pr, threads),
+		UpdatedAt:        pr.UpdatedAt,
+		ObservedAt:       pr.ObservedAt,
+		CIObservedAt:     pr.CIObservedAt,
+		ReviewObservedAt: pr.ReviewObservedAt,
+	}
+}
+
+func summarizeCI(state domain.CIState, checks []domain.PullRequestCheck) PRCISummary {
+	out := PRCISummary{State: ciOrUnknown(state)}
+	for _, ch := range checks {
+		if ch.Status != domain.PRCheckFailed && ch.Status != domain.PRCheckCancelled {
+			continue
+		}
+		out.FailingChecks = append(out.FailingChecks, PRFailingCheck{
+			Name:       ch.Name,
+			Status:     ch.Status,
+			Conclusion: ch.Conclusion,
+			URL:        ch.URL,
+		})
+	}
+	return out
+}
+
+func summarizeReview(decision domain.ReviewDecision, comments []domain.PullRequestComment) PRReviewSummary {
+	out := PRReviewSummary{Decision: reviewOrNone(decision)}
+	byReviewer := map[string]int{}
+	order := []string{}
+	links := map[string][]PRReviewCommentLink{}
+	for _, c := range comments {
+		if c.Resolved || c.IsBot {
+			continue
+		}
+		reviewer := strings.TrimSpace(c.Author)
+		if reviewer == "" {
+			reviewer = "unknown"
+		}
+		if _, ok := byReviewer[reviewer]; !ok {
+			order = append(order, reviewer)
+		}
+		byReviewer[reviewer]++
+		links[reviewer] = append(links[reviewer], PRReviewCommentLink{
+			URL:  c.URL,
+			File: c.File,
+			Line: c.Line,
+		})
+	}
+	sort.Strings(order)
+	for _, reviewer := range order {
+		out.UnresolvedBy = append(out.UnresolvedBy, PRUnresolvedReviewer{
+			ReviewerID: reviewer,
+			Count:      byReviewer[reviewer],
+			Links:      links[reviewer],
+		})
+	}
+	out.HasUnresolvedHumanComments = len(out.UnresolvedBy) > 0
+	return out
+}
+
+func summarizeMergeability(pr domain.PullRequest, _ []domain.PullRequestReviewThread) PRMergeabilitySummary {
+	return PRMergeabilitySummary{
+		State:   mergeabilityOrUnknown(pr.Mergeability),
+		Reasons: mergeabilityReasons(pr),
+		PRURL:   firstNonEmpty(pr.HTMLURL, pr.URL),
+	}
+}
+
+func mergeabilityReasons(pr domain.PullRequest) []string {
+	reasons := map[string]bool{}
+	add := func(reason string) {
+		if reason != "" {
+			reasons[reason] = true
+		}
+	}
+	if pr.Mergeability == domain.MergeConflicting || containsAny(pr.ProviderMergeable, "conflict", "dirty") || containsAny(pr.ProviderMergeStateStatus, "conflict", "dirty") {
+		add("conflicts")
+	}
+	if containsAny(pr.ProviderMergeStateStatus, "behind") {
+		add("behind_base")
+	}
+	if pr.Draft {
+		add("draft")
+	}
+	if pr.CI == domain.CIFailing {
+		add("ci_failing")
+	}
+	if pr.Review == domain.ReviewChangesRequest {
+		add("changes_requested")
+	}
+	if pr.Review == domain.ReviewRequired {
+		add("review_required")
+	}
+	if pr.Mergeability == domain.MergeBlocked && len(reasons) == 0 {
+		add("blocked_by_provider")
+	}
+	if pr.Mergeability == domain.MergeUnstable && len(reasons) == 0 {
+		add("blocked_by_provider")
+	}
+	out := make([]string, 0, len(reasons))
+	for reason := range reasons {
+		out = append(out, reason)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func containsAny(s string, needles ...string) bool {
+	s = strings.ToLower(s)
+	for _, needle := range needles {
+		if strings.Contains(s, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func sortPRSummaries(prs []PRSummary) {
+	sort.SliceStable(prs, func(i, j int) bool {
+		ia, ja := prSummaryActive(prs[i]), prSummaryActive(prs[j])
+		if ia != ja {
+			return ia
+		}
+		return prs[i].UpdatedAt.After(prs[j].UpdatedAt)
+	})
+}
+
+func prSummaryActive(pr PRSummary) bool {
+	return pr.State != domain.PRStateMerged && pr.State != domain.PRStateClosed
+}
+
+func pullRequestState(pr domain.PullRequest) domain.PRState {
+	switch {
+	case pr.Merged:
+		return domain.PRStateMerged
+	case pr.Closed:
+		return domain.PRStateClosed
+	case pr.Draft:
+		return domain.PRStateDraft
+	default:
+		return domain.PRStateOpen
+	}
+}
+
+func ciOrUnknown(state domain.CIState) domain.CIState {
+	if state == "" {
+		return domain.CIUnknown
+	}
+	return state
+}
+
+func reviewOrNone(decision domain.ReviewDecision) domain.ReviewDecision {
+	if decision == "" {
+		return domain.ReviewNone
+	}
+	return decision
+}
+
+func mergeabilityOrUnknown(state domain.Mergeability) domain.Mergeability {
+	if state == "" {
+		return domain.MergeUnknown
+	}
+	return state
+}

@@ -94,7 +94,7 @@ func (f *fakeSessionService) Send(context.Context, domain.SessionID, string) err
 	return nil
 }
 
-func (f *fakeSessionService) ListPRs(context.Context, domain.SessionID) ([]domain.PRFacts, error) {
+func (f *fakeSessionService) ListPRSummaries(context.Context, domain.SessionID) ([]sessionsvc.PRSummary, error) {
 	return nil, nil
 }
 
