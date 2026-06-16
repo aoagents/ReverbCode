@@ -21,7 +21,9 @@ Post your review on the pull request using the available review tooling (request
 	prompt = fmt.Sprintf(`Review pull request %s (head commit %s).
 
 Do these steps in order:
-1. Post your review on the pull request with `+"`gh`"+` — request changes or approve, with inline comments for specific findings.
+1. Post your review on the pull request with `+"`gh`"+`, with inline comments for specific findings:
+   - If changes are needed, request changes.
+   - If it is ready, approve it. GitHub does not let you approve a PR you opened — if the approval is rejected because you are the PR author, post the same review as a regular comment instead (a COMMENT-event review whose body states it is an approval).
 2. Write your full review to review.md and record the result with AO by running exactly:
 
     ao review submit --session %s --run %s --verdict <approved|changes_requested> --body review.md
