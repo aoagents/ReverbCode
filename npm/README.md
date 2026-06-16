@@ -68,7 +68,8 @@ npm install -g --prefix "$prefix" \
 
 ### Release & publish
 
-- `.github/workflows/release.yml` (on a `v*` tag): cross-compiles every target,
+- `.github/workflows/release.yml` (on a `daemon-v*` tag, e.g. `daemon-v0.10.0`,
+  mirroring the Electron app's `desktop-v*` lane): cross-compiles every target,
   publishes the raw binaries to the GitHub Release, builds the npm sub-packages
   from those binaries, and runs `npm publish --dry-run` as a verification gate.
 - `.github/workflows/npm-publish.yml` (manual `workflow_dispatch`): builds the

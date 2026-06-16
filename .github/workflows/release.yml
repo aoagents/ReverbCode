@@ -1,4 +1,4 @@
-name: Release
+name: Daemon release
 
 # Cross-compiles the Go daemon for every npm target, publishes the raw binaries
 # to a GitHub Release, builds the per-platform @aoagents/ao npm sub-packages from
@@ -7,12 +7,14 @@ name: Release
 # This workflow does NOT publish to npm. Real publishing is the manual,
 # credential-gated `npm-publish.yml`.
 #
-# Trigger: push a `v<version>` tag that matches npm/package.json (e.g. v0.10.0).
+# Trigger: push a `daemon-v<version>` tag that matches npm/package.json
+# (e.g. daemon-v0.10.0). This mirrors the Electron app's `desktop-v*` lane so the
+# two release artifacts have distinct, self-describing tags.
 
 on:
   push:
     tags:
-      - "v*"
+      - "daemon-v*"
   workflow_dispatch:
 
 permissions:
@@ -37,10 +39,10 @@ jobs:
         run: node npm/scripts/check.mjs
 
       - name: Verify tag matches package version
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/daemon-v')
         run: |
           pkg_version="$(node -p "require('./npm/package.json').version")"
-          tag_version="${GITHUB_REF_NAME#v}"
+          tag_version="${GITHUB_REF_NAME#daemon-v}"
           if [ "$pkg_version" != "$tag_version" ]; then
             echo "Tag $GITHUB_REF_NAME ($tag_version) != npm/package.json version $pkg_version" >&2
             exit 1
@@ -61,7 +63,7 @@ jobs:
         run: node npm/scripts/pack.mjs
 
       - name: Publish binaries to GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/daemon-v')
         uses: softprops/action-gh-release@v2
         with:
           files: |
