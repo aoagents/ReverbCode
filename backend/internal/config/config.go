@@ -5,7 +5,9 @@
 package config
 
 import (
+	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -153,6 +155,20 @@ func Load() (Config, error) {
 		cfg.AllowedOrigins = origins
 	}
 
+	// One-time migration of pre-#233 state from the old os.UserConfigDir()
+	// location to the canonical ~/.ao home. Only attempted in the fully-default
+	// case: an explicit AO_DATA_DIR or AO_RUN_FILE means the operator is directing
+	// paths, so we must not move data out from under them.
+	if os.Getenv("AO_DATA_DIR") == "" && os.Getenv("AO_RUN_FILE") == "" {
+		if legacy, err := migrateLegacyStateDir(); err != nil {
+			slog.Warn("config: could not migrate pre-#233 state to ~/.ao; your previous "+
+				"projects and sessions remain at the old location and must be moved by hand",
+				"legacy", legacy, "err", err)
+		} else if legacy != "" {
+			slog.Info("config: migrated pre-#233 state dir to ~/.ao", "from", legacy)
+		}
+	}
+
 	runFile, err := resolveRunFilePath()
 	if err != nil {
 		return Config{}, err
@@ -216,4 +232,51 @@ func defaultStateDir() (string, error) {
 		return "", fmt.Errorf("resolve state dir: %w", err)
 	}
 	return filepath.Join(homeDir, ".ao"), nil
+}
+
+// legacyStateDirName is the directory the daemon used under os.UserConfigDir()
+// before #233 moved the canonical state home to ~/.ao (e.g.
+// ~/.config/agent-orchestrator on Linux, ~/Library/Application Support/
+// agent-orchestrator on macOS). Its internal layout (data/, running.json) is
+// identical to the new home, so a whole-directory move preserves everything.
+const legacyStateDirName = "agent-orchestrator"
+
+// migrateLegacyStateDir performs a one-time, best-effort move of pre-#233 state
+// into the canonical ~/.ao home. It runs only when the canonical home does not
+// yet exist and the legacy directory does, so an upgrading user keeps their
+// projects/sessions instead of silently booting against an empty database.
+//
+// It never overwrites an existing ~/.ao, and on any failure it leaves the legacy
+// data untouched (and therefore still recoverable). The returned string is the
+// legacy path that was moved, or "" when there was nothing to migrate.
+func migrateLegacyStateDir() (string, error) {
+	stateDir, err := defaultStateDir()
+	if err != nil {
+		return "", err
+	}
+	switch _, statErr := os.Stat(stateDir); {
+	case statErr == nil:
+		return "", nil // canonical home already exists — never clobber it
+	case !errors.Is(statErr, os.ErrNotExist):
+		return "", fmt.Errorf("stat %s: %w", stateDir, statErr)
+	}
+
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		//nolint:nilerr // no resolvable config dir simply means no legacy state to migrate
+		return "", nil
+	}
+	legacy := filepath.Join(configDir, legacyStateDirName)
+	if info, statErr := os.Stat(legacy); statErr != nil || !info.IsDir() {
+		//nolint:nilerr // an absent/unreadable legacy dir is not a Load failure — nothing to migrate
+		return "", nil
+	}
+
+	// Atomic when both live on one filesystem, which is the common case (both
+	// under $HOME). A cross-device legacy location fails here and surfaces as a
+	// warning rather than a silent, partial copy.
+	if err := os.Rename(legacy, stateDir); err != nil {
+		return legacy, fmt.Errorf("move %s to %s: %w", legacy, stateDir, err)
+	}
+	return legacy, nil
 }

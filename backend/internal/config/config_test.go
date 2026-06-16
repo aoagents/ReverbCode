@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -104,6 +105,116 @@ func TestLoadInvalid(t *testing.T) {
 			}
 		})
 	}
+}
+
+// seedLegacyState lays down a fake pre-#233 state dir under the resolved
+// os.UserConfigDir() and returns the legacy root plus the marker DB path.
+func seedLegacyState(t *testing.T) (legacyRoot, dbPath string) {
+	t.Helper()
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatalf("UserConfigDir: %v", err)
+	}
+	legacyRoot = filepath.Join(configDir, legacyStateDirName)
+	dbPath = filepath.Join(legacyRoot, "data", "ao.db")
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0o750); err != nil {
+		t.Fatalf("seed legacy data dir: %v", err)
+	}
+	if err := os.WriteFile(dbPath, []byte("legacy-db-marker"), 0o600); err != nil {
+		t.Fatalf("seed legacy db: %v", err)
+	}
+	return legacyRoot, dbPath
+}
+
+func TestLegacyStateDirMigration(t *testing.T) {
+	// Isolate HOME and XDG_CONFIG_HOME so UserHomeDir/UserConfigDir resolve into
+	// the temp dir, and clear path overrides so Load takes the default branch.
+	t.Run("migrates pre-#233 state when ~/.ao is absent", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)                                         // UserHomeDir on unix
+		t.Setenv("USERPROFILE", home)                                  // UserHomeDir on Windows
+		t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))    // UserConfigDir on Linux
+		t.Setenv("APPDATA", filepath.Join(home, "AppData", "Roaming")) // UserConfigDir on Windows
+		t.Setenv("AO_DATA_DIR", "")
+		t.Setenv("AO_RUN_FILE", "")
+
+		legacyRoot, _ := seedLegacyState(t)
+
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		// The marker DB now lives under the canonical home...
+		migrated := filepath.Join(cfg.DataDir, "ao.db")
+		got, err := os.ReadFile(migrated)
+		if err != nil {
+			t.Fatalf("read migrated db at %s: %v", migrated, err)
+		}
+		if string(got) != "legacy-db-marker" {
+			t.Errorf("migrated db = %q, want legacy-db-marker", got)
+		}
+		// ...and the legacy directory is gone (it was moved, not copied).
+		if _, err := os.Stat(legacyRoot); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("legacy dir still present after migration: stat err = %v", err)
+		}
+	})
+
+	t.Run("does not clobber an existing ~/.ao", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)                                         // UserHomeDir on unix
+		t.Setenv("USERPROFILE", home)                                  // UserHomeDir on Windows
+		t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))    // UserConfigDir on Linux
+		t.Setenv("APPDATA", filepath.Join(home, "AppData", "Roaming")) // UserConfigDir on Windows
+		t.Setenv("AO_DATA_DIR", "")
+		t.Setenv("AO_RUN_FILE", "")
+
+		// Canonical home already exists with its own DB.
+		canonicalDB := filepath.Join(home, ".ao", "data", "ao.db")
+		if err := os.MkdirAll(filepath.Dir(canonicalDB), 0o750); err != nil {
+			t.Fatalf("seed canonical: %v", err)
+		}
+		if err := os.WriteFile(canonicalDB, []byte("canonical-db"), 0o600); err != nil {
+			t.Fatalf("seed canonical db: %v", err)
+		}
+		legacyRoot, legacyDB := seedLegacyState(t)
+
+		if _, err := Load(); err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		// Canonical untouched, legacy left in place (recoverable).
+		got, _ := os.ReadFile(canonicalDB)
+		if string(got) != "canonical-db" {
+			t.Errorf("canonical db = %q, want canonical-db (must not be overwritten)", got)
+		}
+		if _, err := os.Stat(legacyDB); err != nil {
+			t.Errorf("legacy db should be left untouched, stat err = %v", err)
+		}
+		_ = legacyRoot
+	})
+
+	t.Run("explicit AO_DATA_DIR disables migration", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)                                         // UserHomeDir on unix
+		t.Setenv("USERPROFILE", home)                                  // UserHomeDir on Windows
+		t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))    // UserConfigDir on Linux
+		t.Setenv("APPDATA", filepath.Join(home, "AppData", "Roaming")) // UserConfigDir on Windows
+		t.Setenv("AO_DATA_DIR", filepath.Join(home, "explicit-data"))
+		t.Setenv("AO_RUN_FILE", "")
+
+		legacyRoot, legacyDB := seedLegacyState(t)
+
+		if _, err := Load(); err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		// Operator-directed paths: legacy data must be left exactly where it is.
+		if _, err := os.Stat(legacyDB); err != nil {
+			t.Errorf("legacy db moved despite explicit AO_DATA_DIR: %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(home, ".ao")); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("~/.ao created despite explicit AO_DATA_DIR: stat err = %v", err)
+		}
+		_ = legacyRoot
+	})
 }
 
 func TestLoadAllowedOrigins(t *testing.T) {
