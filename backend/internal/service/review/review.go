@@ -18,11 +18,14 @@ var (
 	ErrNotFound = reviewcore.ErrNotFound
 )
 
+// ReviewTarget is one PR's review state within a worker session.
+type ReviewTarget = reviewcore.ReviewTarget
+
 // Manager is the reviews surface the HTTP controller depends on.
 type Manager interface {
-	Trigger(ctx context.Context, workerID domain.SessionID) (reviewcore.TriggerResult, error)
+	Trigger(ctx context.Context, workerID domain.SessionID, prURL string) (reviewcore.TriggerResult, error)
 	Submit(ctx context.Context, workerID domain.SessionID, runID string, verdict domain.ReviewVerdict, body string) (domain.ReviewRun, error)
-	List(ctx context.Context, workerID domain.SessionID) (reviewcore.SessionReviews, error)
+	List(ctx context.Context, workerID domain.SessionID, prURL string) (reviewcore.SessionReviews, error)
 }
 
 // Service is the API-facing review service. It delegates to the core engine.
@@ -38,8 +41,8 @@ func New(engine *reviewcore.Engine) *Service {
 }
 
 // Trigger starts (or reuses) a review pass for a worker's PR.
-func (s *Service) Trigger(ctx context.Context, workerID domain.SessionID) (reviewcore.TriggerResult, error) {
-	return s.engine.Trigger(ctx, workerID)
+func (s *Service) Trigger(ctx context.Context, workerID domain.SessionID, prURL string) (reviewcore.TriggerResult, error) {
+	return s.engine.Trigger(ctx, workerID, prURL)
 }
 
 // Submit records a reviewer's result for a specific worker review pass.
@@ -48,6 +51,6 @@ func (s *Service) Submit(ctx context.Context, workerID domain.SessionID, runID s
 }
 
 // List returns a worker's review state.
-func (s *Service) List(ctx context.Context, workerID domain.SessionID) (reviewcore.SessionReviews, error) {
-	return s.engine.List(ctx, workerID)
+func (s *Service) List(ctx context.Context, workerID domain.SessionID, prURL string) (reviewcore.SessionReviews, error) {
+	return s.engine.List(ctx, workerID, prURL)
 }

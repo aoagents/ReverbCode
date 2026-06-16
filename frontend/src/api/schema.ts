@@ -473,6 +473,7 @@ export interface components {
         ListReviewsResponse: {
             reviewerHandleId: string;
             reviews: components["schemas"]["ReviewRun"][];
+            targets: components["schemas"]["ReviewTargetResponse"][];
         };
         ListSessionPRsResponse: {
             prs: components["schemas"]["SessionPRFacts"][];
@@ -591,6 +592,11 @@ export interface components {
             review: components["schemas"]["ReviewRun"];
             reviewerHandleId: string;
         };
+        ReviewTargetResponse: {
+            prUrl: string;
+            reviewerHandleId: string;
+            reviews: components["schemas"]["ReviewRun"][];
+        };
         RoleOverride: {
             agent?: string;
             agentConfig?: components["schemas"]["AgentConfig"];
@@ -679,6 +685,10 @@ export interface components {
             runId: string;
             /** @description Review verdict: approved or changes_requested. */
             verdict: string;
+        };
+        TriggerReviewInput: {
+            /** @description Tracked PR URL to review. Required when the session owns multiple PRs. */
+            prUrl?: string;
         };
         WorkspaceRepo: {
             name: string;
@@ -1817,7 +1827,10 @@ export interface operations {
     };
     listReviews: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Tracked PR URL to list review runs for. Omit to list all PR review targets for the session. */
+                prUrl?: string;
+            };
             header?: never;
             path: {
                 /** @description Session identifier, e.g. project-1. */
@@ -1929,7 +1942,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["TriggerReviewInput"];
+            };
+        };
         responses: {
             /** @description OK */
             200: {

@@ -10,8 +10,8 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/gen"
 )
 
-// UpsertReview inserts the per-worker review row, or reuses the existing one
-// (session_id is unique) by refreshing its harness/pr_url/updated_at.
+// UpsertReview inserts the per-PR review row, or reuses the existing one for
+// the same worker session and PR by refreshing its harness/handle/updated_at.
 func (s *Store) UpsertReview(ctx context.Context, r domain.Review) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
@@ -27,16 +27,29 @@ func (s *Store) UpsertReview(ctx context.Context, r domain.Review) error {
 	})
 }
 
-// GetReviewBySession returns the review row for a worker session, ok=false if none.
-func (s *Store) GetReviewBySession(ctx context.Context, id domain.SessionID) (domain.Review, bool, error) {
-	row, err := s.qr.GetReviewBySession(ctx, id)
+// GetReviewBySessionAndPR returns the review row for one session PR.
+func (s *Store) GetReviewBySessionAndPR(ctx context.Context, id domain.SessionID, prURL string) (domain.Review, bool, error) {
+	row, err := s.qr.GetReviewBySessionAndPR(ctx, gen.GetReviewBySessionAndPRParams{SessionID: id, PRURL: prURL})
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.Review{}, false, nil
 	}
 	if err != nil {
-		return domain.Review{}, false, fmt.Errorf("get review by session %s: %w", id, err)
+		return domain.Review{}, false, fmt.Errorf("get review for session %s pr %s: %w", id, prURL, err)
 	}
 	return reviewFromRow(row), true, nil
+}
+
+// ListReviewsBySession returns all per-PR review rows for a worker session.
+func (s *Store) ListReviewsBySession(ctx context.Context, id domain.SessionID) ([]domain.Review, error) {
+	rows, err := s.qr.ListReviewsBySession(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("list reviews for session %s: %w", id, err)
+	}
+	out := make([]domain.Review, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, reviewFromRow(row))
+	}
+	return out, nil
 }
 
 // InsertReviewRun records a new review pass.
@@ -85,16 +98,15 @@ func (s *Store) GetReviewRun(ctx context.Context, id string) (domain.ReviewRun, 
 	return reviewRunFromRow(row), true, nil
 }
 
-// GetReviewRunBySessionAndSHA returns the most recent review pass for a worker
-// session at a specific commit, ok=false if none. It lets a repeat trigger for
-// the same PR head short-circuit to the existing run.
-func (s *Store) GetReviewRunBySessionAndSHA(ctx context.Context, id domain.SessionID, targetSHA string) (domain.ReviewRun, bool, error) {
-	row, err := s.qr.GetReviewRunBySessionAndSHA(ctx, gen.GetReviewRunBySessionAndSHAParams{SessionID: id, TargetSha: targetSHA})
+// GetReviewRunBySessionPRAndSHA returns the most recent review pass for one
+// session PR at a specific commit.
+func (s *Store) GetReviewRunBySessionPRAndSHA(ctx context.Context, id domain.SessionID, prURL, targetSHA string) (domain.ReviewRun, bool, error) {
+	row, err := s.qr.GetReviewRunBySessionPRAndSHA(ctx, gen.GetReviewRunBySessionPRAndSHAParams{SessionID: id, PRURL: prURL, TargetSha: targetSHA})
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.ReviewRun{}, false, nil
 	}
 	if err != nil {
-		return domain.ReviewRun{}, false, fmt.Errorf("get review run for session %s sha %s: %w", id, targetSHA, err)
+		return domain.ReviewRun{}, false, fmt.Errorf("get review run for session %s pr %s sha %s: %w", id, prURL, targetSHA, err)
 	}
 	return reviewRunFromRow(row), true, nil
 }
@@ -104,6 +116,19 @@ func (s *Store) ListReviewRunsBySession(ctx context.Context, id domain.SessionID
 	rows, err := s.qr.ListReviewRunsBySession(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("list review runs for session %s: %w", id, err)
+	}
+	out := make([]domain.ReviewRun, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, reviewRunFromRow(row))
+	}
+	return out, nil
+}
+
+// ListReviewRunsBySessionAndPR returns review passes for one session PR.
+func (s *Store) ListReviewRunsBySessionAndPR(ctx context.Context, id domain.SessionID, prURL string) ([]domain.ReviewRun, error) {
+	rows, err := s.qr.ListReviewRunsBySessionAndPR(ctx, gen.ListReviewRunsBySessionAndPRParams{SessionID: id, PRURL: prURL})
+	if err != nil {
+		return nil, fmt.Errorf("list review runs for session %s pr %s: %w", id, prURL, err)
 	}
 	out := make([]domain.ReviewRun, 0, len(rows))
 	for _, row := range rows {
