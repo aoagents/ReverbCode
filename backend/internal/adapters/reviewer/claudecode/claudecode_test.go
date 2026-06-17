@@ -14,7 +14,9 @@ type captureAgent struct {
 	got ports.LaunchConfig
 }
 
-func (a *captureAgent) GetConfigSpec(context.Context) (ports.ConfigSpec, error) { return ports.ConfigSpec{}, nil }
+func (a *captureAgent) GetConfigSpec(context.Context) (ports.ConfigSpec, error) {
+	return ports.ConfigSpec{}, nil
+}
 func (a *captureAgent) GetLaunchCommand(_ context.Context, cfg ports.LaunchConfig) ([]string, error) {
 	a.got = cfg
 	return []string{"claude"}, nil
