@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -149,6 +150,12 @@ func NewRootCommand(deps Deps) *cobra.Command {
 		Version:       VersionString(),
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+			if shouldEmitCLIInvocation(cmd) {
+				ctx.emitCLIInvoked(cmd.Context(), cmd)
+			}
+			return nil
+		},
 	}
 	root.SetIn(deps.In)
 	root.SetOut(deps.Out)
@@ -180,6 +187,24 @@ func NewRootCommand(deps Deps) *cobra.Command {
 
 type commandContext struct {
 	deps Deps
+}
+
+func shouldEmitCLIInvocation(cmd *cobra.Command) bool {
+	switch strings.TrimSpace(cmd.CommandPath()) {
+	case "ao daemon", "ao start", "ao completion", "ao help":
+		return false
+	default:
+		return true
+	}
+}
+
+func (c *commandContext) emitCLIInvoked(ctx context.Context, cmd *cobra.Command) {
+	reqCtx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
+	_ = c.postLoopbackJSON(reqCtx, "/internal/telemetry/cli-invoked", map[string]string{
+		"command":     cmd.Name(),
+		"commandPath": cmd.CommandPath(),
+	})
 }
 
 func noArgs(cmd *cobra.Command, args []string) error {

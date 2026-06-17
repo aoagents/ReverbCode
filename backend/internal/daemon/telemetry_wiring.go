@@ -13,5 +13,14 @@ func newTelemetrySink(cfg config.Config, store *sqlite.Store, log *slog.Logger) 
 	if !cfg.Telemetry.Events && !cfg.Telemetry.Metrics {
 		return telemetryadapter.NoopSink{}
 	}
-	return telemetryadapter.NewLocalSQLiteSink(store, log)
+	local := telemetryadapter.NewLocalSQLiteSink(store, log)
+	if cfg.Telemetry.Remote != config.TelemetryRemotePostHog {
+		return local
+	}
+	remote, err := telemetryadapter.NewPostHogSink(cfg.DataDir, cfg.Telemetry.PostHogKey, cfg.Telemetry.PostHogHost, nil, log)
+	if err != nil {
+		log.Warn("telemetry remote sink disabled", "remote", cfg.Telemetry.Remote, "error", err)
+		return local
+	}
+	return telemetryadapter.NewFanoutSink(local, remote)
 }
