@@ -62,7 +62,7 @@ func (l *lifecycleStack) Stop() {
 // over the real zellij runtime, a per-session gitworktree workspace, the shared
 // store + LCM, the per-session agent resolver (AO_AGENT default), and the
 // agent messenger. The returned service is mounted at httpd APIDeps.Sessions.
-func startSession(cfg config.Config, runtime *zellij.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, messenger ports.AgentMessenger, log *slog.Logger) (*sessionsvc.Service, reviewsvc.Manager, error) {
+func startSession(cfg config.Config, runtime *zellij.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, messenger ports.AgentMessenger, telemetry ports.EventSink, log *slog.Logger) (*sessionsvc.Service, reviewsvc.Manager, error) {
 	// Resolve the default agent once and share it with both the resolver (which
 	// launches it for an unspecified harness) and the session manager (which
 	// persists it onto the seed row), so the stored harness matches what runs.
@@ -106,6 +106,7 @@ func startSession(cfg config.Config, runtime *zellij.Runtime, store *sqlite.Stor
 		Store:     store,
 		PRClaimer: store,
 		SCM:       scmProvider,
+		Telemetry: telemetry,
 		// no_signal only makes sense for harnesses whose adapters install
 		// activity hooks; the deriver registry is the source of truth for that.
 		SignalCapable: activitydispatch.SupportsHarness,

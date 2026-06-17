@@ -80,6 +80,7 @@ type Service struct {
 	prClaimer ports.PRClaimer
 	scm       scmProvider
 	clock     func() time.Time
+	telemetry ports.EventSink
 	// signalCapable reports whether a harness has a hook pipeline that can
 	// deliver activity signals at all. Only capable harnesses are eligible for
 	// the no_signal downgrade — a hook-less harness staying silent forever is
@@ -101,6 +102,7 @@ type Deps struct {
 	PRClaimer ports.PRClaimer
 	SCM       scmProvider
 	Clock     func() time.Time
+	Telemetry ports.EventSink
 	// SignalCapable gates the no_signal status downgrade per harness; daemon
 	// wiring passes activitydispatch.SupportsHarness. Left nil, no session is
 	// ever downgraded to no_signal.
@@ -109,7 +111,7 @@ type Deps struct {
 
 // NewWithDeps wires a session service with optional PR-claim dependencies.
 func NewWithDeps(d Deps) *Service {
-	s := &Service{manager: d.Manager, store: d.Store, prClaimer: d.PRClaimer, scm: d.SCM, clock: d.Clock, signalCapable: d.SignalCapable}
+	s := &Service{manager: d.Manager, store: d.Store, prClaimer: d.PRClaimer, scm: d.SCM, clock: d.Clock, signalCapable: d.SignalCapable, telemetry: d.Telemetry}
 	if s.prClaimer == nil {
 		if w, ok := d.Store.(ports.PRClaimer); ok {
 			s.prClaimer = w
@@ -128,8 +130,10 @@ func (s *Service) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	}
 	rec, err := s.manager.Spawn(ctx, cfg)
 	if err != nil {
+		s.emitSpawnFailed(cfg, err)
 		return domain.Session{}, toAPIError(err)
 	}
+	s.emitSpawned(rec)
 	return s.toSession(ctx, rec)
 }
 
@@ -151,6 +155,45 @@ func (s *Service) requireProject(ctx context.Context, id domain.ProjectID) error
 		return apierr.NotFound("PROJECT_NOT_FOUND", "Unknown project — register it with `ao project add`")
 	}
 	return nil
+}
+
+func (s *Service) emitSpawned(rec domain.SessionRecord) {
+	if s.telemetry == nil {
+		return
+	}
+	projectID := rec.ProjectID
+	sessionID := rec.ID
+	s.telemetry.Emit(context.Background(), ports.TelemetryEvent{
+		Name:       "ao.session.spawned",
+		Source:     "session_service",
+		OccurredAt: s.clock().UTC(),
+		Level:      ports.TelemetryLevelInfo,
+		ProjectID:  &projectID,
+		SessionID:  &sessionID,
+		Payload: map[string]any{
+			"kind":    string(rec.Kind),
+			"harness": string(rec.Harness),
+		},
+	})
+}
+
+func (s *Service) emitSpawnFailed(cfg ports.SpawnConfig, err error) {
+	if s.telemetry == nil {
+		return
+	}
+	projectID := cfg.ProjectID
+	s.telemetry.Emit(context.Background(), ports.TelemetryEvent{
+		Name:       "ao.session.spawn_failed",
+		Source:     "session_service",
+		OccurredAt: s.clock().UTC(),
+		Level:      ports.TelemetryLevelError,
+		ProjectID:  &projectID,
+		Payload: map[string]any{
+			"kind":    string(cfg.Kind),
+			"harness": string(cfg.Harness),
+			"error":   err.Error(),
+		},
+	})
 }
 
 // SpawnOrchestrator spawns an orchestrator session for a project. When clean is

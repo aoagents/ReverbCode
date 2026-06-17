@@ -112,7 +112,7 @@ func Run() error {
 	// zellij runtime, a gitworktree workspace, the per-session agent resolver
 	// (AO_AGENT default, validated here), and the agent messenger, then mount it
 	// on the API.
-	sessionSvc, reviewSvc, err := startSession(cfg, runtimeAdapter, store, lcStack.LCM, messenger, log)
+	sessionSvc, reviewSvc, err := startSession(cfg, runtimeAdapter, store, lcStack.LCM, messenger, telemetrySink, log)
 	if err != nil {
 		stop()
 		lcStack.Stop()
