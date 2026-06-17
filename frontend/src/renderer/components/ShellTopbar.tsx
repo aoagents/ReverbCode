@@ -156,9 +156,7 @@ export function ShellTopbar() {
 						)}
 						{/* Kill control sits beside the orchestrator link for active workers —
 						    moved here from the inspector's Summary "Danger zone". */}
-						{!isOrchestrator && session && sessionIsActive(session) ? (
-							<TopbarKillButton session={session} />
-						) : null}
+						{!isOrchestrator && session && sessionIsActive(session) ? <TopbarKillButton session={session} /> : null}
 						{/* Inspector collapse (worker sessions only — orchestrators have no rail). */}
 						{!isOrchestrator && (
 							<button
