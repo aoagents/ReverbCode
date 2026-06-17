@@ -1,11 +1,12 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
 import { GitBranch, GitCommitHorizontal, GitPullRequest, Plus, Square, Trash2 } from "lucide-react";
 import type { components } from "../../api/schema";
-import { apiClient } from "../lib/api-client";
+import { apiClient, apiErrorMessage } from "../lib/api-client";
+import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { formatTimeCompact } from "../lib/format-time";
 import type { SessionStatus, WorkspaceSession } from "../types/workspace";
-import { workerDisplayStatus } from "../types/workspace";
+import { sessionIsActive, workerDisplayStatus } from "../types/workspace";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { cn } from "../lib/utils";
@@ -190,6 +191,70 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 					<Row k="Session" v={session.id} mono />
 				</dl>
 			</Section>
+
+			{sessionIsActive(session) ? (
+				<Section title="Danger zone">
+					<KillSessionButton session={session} />
+				</Section>
+			) : null}
+		</div>
+	);
+}
+
+// Stop a running worker and tear down its runtime/workspace. Kill is
+// irreversible from the UI, so the button arms a one-step confirmation before
+// firing POST /sessions/{id}/kill, then invalidates the workspace query so the
+// session drops into the board's terminated group.
+function KillSessionButton({ session }: { session: WorkspaceSession }) {
+	const queryClient = useQueryClient();
+	const [confirming, setConfirming] = useState(false);
+	const [error, setError] = useState<string | null>(null);
+
+	const kill = useMutation({
+		mutationFn: async () => {
+			const { error: apiError } = await apiClient.POST("/api/v1/sessions/{sessionId}/kill", {
+				params: { path: { sessionId: session.id } },
+			});
+			if (apiError) throw new Error(apiErrorMessage(apiError));
+		},
+		onSuccess: () => {
+			setConfirming(false);
+			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+		},
+		onError: (e) => setError(e instanceof Error ? e.message : "Kill failed"),
+	});
+
+	return (
+		<div className="flex flex-col gap-2">
+			{confirming ? (
+				<div className="flex items-center gap-2">
+					<Button
+						variant="outline"
+						className="flex-1 border-error/40 text-error hover:bg-error/10 hover:text-error"
+						disabled={kill.isPending}
+						onClick={() => kill.mutate()}
+					>
+						<Square aria-hidden="true" />
+						{kill.isPending ? "Killing…" : "Confirm kill"}
+					</Button>
+					<Button variant="ghost" disabled={kill.isPending} onClick={() => setConfirming(false)}>
+						Cancel
+					</Button>
+				</div>
+			) : (
+				<Button
+					variant="outline"
+					className="w-full border-error/40 text-error hover:bg-error/10 hover:text-error"
+					onClick={() => {
+						setError(null);
+						setConfirming(true);
+					}}
+				>
+					<Square aria-hidden="true" />
+					Kill session
+				</Button>
+			)}
+			{error ? <p className="text-[11px] text-error">{error}</p> : null}
 		</div>
 	);
 }
