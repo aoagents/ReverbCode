@@ -48,24 +48,6 @@ const reviewSession = {
 	pullRequest: { number: 3, state: "open" },
 } satisfies WorkspaceSession;
 
-function renderInspector(
-	session: WorkspaceSession = worker,
-	onOpenReviewerTerminal?: Parameters<typeof SessionInspector>[0]["onOpenReviewerTerminal"],
-) {
-	const queryClient = new QueryClient({
-		defaultOptions: {
-			queries: { retry: false },
-			mutations: { retry: false },
-		},
-	});
-	render(
-		<QueryClientProvider client={queryClient}>
-			<SessionInspector onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} />
-		</QueryClientProvider>,
-	);
-	return queryClient;
-}
-
 function renderWithQuery(children: ReactNode) {
 	const client = new QueryClient({
 		defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -194,46 +176,5 @@ describe("SessionInspector reviews", () => {
 		await userEvent.click(screen.getByRole("button", { name: /open terminal/i }));
 
 		expect(onOpenReviewerTerminal).toHaveBeenCalledWith({ handleId: "reviewer-pane", harness: "codex" });
-	});
-});
-
-describe("SessionInspector kill button", () => {
-	it("arms a confirmation before killing an active session", async () => {
-		renderInspector();
-
-		await userEvent.click(screen.getByRole("button", { name: "Kill session" }));
-		expect(postMock).not.toHaveBeenCalled();
-
-		await userEvent.click(screen.getByRole("button", { name: "Confirm kill" }));
-
-		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
-		expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/kill", {
-			params: { path: { sessionId: "sess-1" } },
-		});
-	});
-
-	it("can back out of the confirmation without killing", async () => {
-		renderInspector();
-
-		await userEvent.click(screen.getByRole("button", { name: "Kill session" }));
-		await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
-
-		expect(screen.getByRole("button", { name: "Kill session" })).toBeInTheDocument();
-		expect(postMock).not.toHaveBeenCalled();
-	});
-
-	it("surfaces the daemon error when the kill fails", async () => {
-		postMock.mockResolvedValue({ data: undefined, error: { message: "session not found" } });
-		renderInspector();
-
-		await userEvent.click(screen.getByRole("button", { name: "Kill session" }));
-		await userEvent.click(screen.getByRole("button", { name: "Confirm kill" }));
-
-		expect(await screen.findByText("session not found")).toBeInTheDocument();
-	});
-
-	it("hides the kill button for terminated sessions", () => {
-		renderInspector({ ...worker, status: "terminated" });
-		expect(screen.queryByRole("button", { name: "Kill session" })).not.toBeInTheDocument();
 	});
 });

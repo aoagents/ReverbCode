@@ -345,6 +345,74 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	color: var(--fg);
 }
 
+.dashboard-app-header__kill-btn {
+	display: grid;
+	width: 34px;
+	height: 34px;
+	place-items: center;
+	border-radius: 7px;
+	color: var(--red);
+	transition:
+		background 0.12s ease,
+		color 0.12s ease;
+}
+
+.dashboard-app-header__kill-btn:hover {
+	background: color-mix(in srgb, var(--red) 12%, transparent);
+}
+
+.dashboard-app-header__kill-confirm {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.dashboard-app-header__kill-confirm-btn {
+	display: inline-flex;
+	height: 34px;
+	align-items: center;
+	gap: 6px;
+	border-radius: 7px;
+	border: 1px solid color-mix(in srgb, var(--red) 40%, transparent);
+	padding: 0 12px;
+	font-size: 13px;
+	font-weight: 600;
+	line-height: 1;
+	color: var(--red);
+	background: color-mix(in srgb, var(--red) 10%, transparent);
+	transition: background 0.12s ease;
+}
+
+.dashboard-app-header__kill-confirm-btn:hover {
+	background: color-mix(in srgb, var(--red) 16%, transparent);
+}
+
+.dashboard-app-header__kill-confirm-btn:disabled {
+	opacity: 0.6;
+}
+
+.dashboard-app-header__kill-cancel-btn {
+	display: inline-flex;
+	height: 34px;
+	align-items: center;
+	border-radius: 7px;
+	padding: 0 10px;
+	font-size: 13px;
+	font-weight: 600;
+	line-height: 1;
+	color: var(--fg-muted);
+	transition: color 0.12s ease;
+}
+
+.dashboard-app-header__kill-cancel-btn:hover {
+	color: var(--fg);
+}
+
+.dashboard-app-header__kill-error {
+	font-size: 11px;
+	color: var(--red);
+}
+
 .dashboard-app-header__primary-btn {
 	display: inline-flex;
 	height: 34px;
