@@ -12,7 +12,7 @@ Triage bugs into well-structured GitHub issues on the ReverbCode repo.
 > exposing a loopback HTTP API on `127.0.0.1:3001`; the frontend is an Electron +
 > React supervisor (`frontend/`). There is **no** pm2/tmux/Node runtime here —
 > the daemon owns lifecycle and sessions run under the **Zellij** runtime
-> adapter. Triage against *this* stack, not the old TypeScript agent-orchestrator.
+> adapter. Triage against _this_ stack, not the old TypeScript agent-orchestrator.
 
 ## ⚠️ Which `ao` are you running?
 
@@ -40,10 +40,10 @@ cd backend && go build -o /tmp/ao ./cmd/ao
 ```
 
 **Confirm `ao status` reports `port: 3001` before trusting any output.** Throughout
-this skill, `ao` means *your verified ReverbCode binary* (`/tmp/ao` or the bundled
+this skill, `ao` means _your verified ReverbCode binary_ (`/tmp/ao` or the bundled
 one), never a bare PATH lookup.
 
-> Note: spawned sessions get a PATH pin so the *session's* `ao` resolves to the
+> Note: spawned sessions get a PATH pin so the _session's_ `ao` resolves to the
 > daemon's own executable (see `hookPATH` in
 > `backend/internal/session_manager/manager.go`). That pin only applies inside
 > sessions — your interactive shell is still on its own PATH, so pin it yourself.
@@ -281,10 +281,10 @@ label you want doesn't exist, **state it in the issue body instead** (e.g.
 **Confidence scoring** (always state in the issue body):
 
 | Level      | Meaning                                                     |
-| ---------- | ---------------------------------------------------------- |
+| ---------- | ----------------------------------------------------------- |
 | **High**   | Traced exact code path, specific lines, mechanism explained |
-| **Medium** | Strong hypothesis but unconfirmed                          |
-| **Low**    | Can't trace, multiple conflicting theories                 |
+| **Medium** | Strong hypothesis but unconfirmed                           |
+| **Low**    | Can't trace, multiple conflicting theories                  |
 
 ### 5e. Cross-link related issues
 
@@ -346,17 +346,17 @@ any priority/confidence stated in the body), root cause summary.
 
 ### A. Subsystem Quick Reference
 
-| Subsystem                       | Collect                                   | Key files                                              |
-| ------------------------------- | ----------------------------------------- | ------------------------------------------------------ |
-| **CLI** (`ao start/stop/spawn`) | Version, install method, OS, which binary | `backend/internal/cli/`, `backend/cmd/ao/main.go`      |
+| Subsystem                       | Collect                                   | Key files                                                                  |
+| ------------------------------- | ----------------------------------------- | -------------------------------------------------------------------------- |
+| **CLI** (`ao start/stop/spawn`) | Version, install method, OS, which binary | `backend/internal/cli/`, `backend/cmd/ao/main.go`                          |
 | **Daemon / HTTP API**           | `ao status`, port, daemon.log             | `backend/internal/daemon/daemon.go`, `backend/internal/httpd/controllers/` |
-| **Sessions / Lifecycle**        | Session ID, spawn config, runtime, state  | `backend/internal/session_manager/manager.go`         |
-| **Runtime (Zellij)**            | Zellij version, `zellij list-sessions`    | `backend/internal/adapters/runtime/`                  |
-| **Terminal mux**                | Runtime type, shell, attach behavior      | `backend/internal/terminal/`                          |
-| **Agent harness**              | Harness name + version                    | `backend/internal/adapters/agent/<harness>/`          |
-| **Storage**                     | DB state, migrations                      | `backend/internal/storage/sqlite/`, `~/.ao/data/ao.db` |
-| **Hooks**                       | Hook event, agent, payload                | `backend/internal/cli/hooks.go`                       |
-| **Frontend (Electron/React)**   | Screenshot, viewport, daemon connectivity | `frontend/src/`                                        |
+| **Sessions / Lifecycle**        | Session ID, spawn config, runtime, state  | `backend/internal/session_manager/manager.go`                              |
+| **Runtime (Zellij)**            | Zellij version, `zellij list-sessions`    | `backend/internal/adapters/runtime/`                                       |
+| **Terminal mux**                | Runtime type, shell, attach behavior      | `backend/internal/terminal/`                                               |
+| **Agent harness**               | Harness name + version                    | `backend/internal/adapters/agent/<harness>/`                               |
+| **Storage**                     | DB state, migrations                      | `backend/internal/storage/sqlite/`, `~/.ao/data/ao.db`                     |
+| **Hooks**                       | Hook event, agent, payload                | `backend/internal/cli/hooks.go`                                            |
+| **Frontend (Electron/React)**   | Screenshot, viewport, daemon connectivity | `frontend/src/`                                                            |
 
 **Misrouting patterns:**
 
