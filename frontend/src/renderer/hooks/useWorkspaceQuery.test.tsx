@@ -20,10 +20,15 @@ function wrapper({ children }: { children: ReactNode }) {
 function respondWith(payload: {
 	projects?: { data?: unknown; error?: unknown };
 	sessions?: { data?: unknown; error?: unknown };
+	prsBySession?: Record<string, { data?: unknown; error?: unknown }>;
 }) {
-	getMock.mockImplementation(async (url: string) => {
+	getMock.mockImplementation(async (url: string, options?: { params?: { path?: { sessionId?: string } } }) => {
 		if (url === "/api/v1/projects") return payload.projects ?? { data: { projects: [] }, error: undefined };
 		if (url === "/api/v1/sessions") return payload.sessions ?? { data: { sessions: [] }, error: undefined };
+		if (url === "/api/v1/sessions/{sessionId}/pr") {
+			const sessionId = options?.params?.path?.sessionId ?? "";
+			return payload.prsBySession?.[sessionId] ?? { data: { sessionId, prs: [] }, error: undefined };
+		}
 		throw new Error(`unexpected GET ${url}`);
 	});
 }
@@ -89,6 +94,113 @@ describe("useWorkspaceQuery", () => {
 			provider: "codex",
 			status: "working",
 		});
+	});
+
+	it("hydrates each session's pullRequest from the /pr endpoint (issue #251)", async () => {
+		respondWith({
+			projects: { data: { projects: [{ id: "proj-1", name: "my-app", path: "/p" }] }, error: undefined },
+			sessions: {
+				data: {
+					sessions: [
+						{
+							id: "sess-1",
+							projectId: "proj-1",
+							status: "pr_open",
+							isTerminated: false,
+							updatedAt: "2026-06-10T16:15:04Z",
+						},
+						{
+							id: "sess-2",
+							projectId: "proj-1",
+							status: "working",
+							isTerminated: false,
+							updatedAt: "2026-06-10T16:15:04Z",
+						},
+					],
+				},
+				error: undefined,
+			},
+			prsBySession: {
+				"sess-1": {
+					data: {
+						sessionId: "sess-1",
+						prs: [
+							{
+								number: 278,
+								state: "open",
+								url: "u",
+								ci: "passing",
+								review: "approved",
+								mergeability: "clean",
+								reviewComments: false,
+								updatedAt: "2026-06-10T16:15:04Z",
+							},
+						],
+					},
+					error: undefined,
+				},
+			},
+		});
+
+		const { result } = renderHook(() => useWorkspaceQuery(), { wrapper });
+		await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+		const sessions = result.current.data?.[0].sessions ?? [];
+		expect(sessions[0].pullRequest).toEqual({ number: 278, state: "open" });
+		// No PR for the endpoint's empty response → undefined, so the empty states render.
+		expect(sessions[1].pullRequest).toBeUndefined();
+	});
+
+	it("treats a per-session PR fetch error as no PR without failing the query", async () => {
+		respondWith({
+			projects: { data: { projects: [{ id: "proj-1", name: "my-app", path: "/p" }] }, error: undefined },
+			sessions: {
+				data: {
+					sessions: [
+						{
+							id: "sess-1",
+							projectId: "proj-1",
+							status: "pr_open",
+							isTerminated: false,
+							updatedAt: "2026-06-10T16:15:04Z",
+						},
+					],
+				},
+				error: undefined,
+			},
+			prsBySession: { "sess-1": { data: undefined, error: new Error("pr backend down") } },
+		});
+
+		const { result } = renderHook(() => useWorkspaceQuery(), { wrapper });
+		await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+		expect(result.current.data?.[0].sessions[0].pullRequest).toBeUndefined();
+	});
+
+	it("skips the PR fetch for terminated sessions", async () => {
+		respondWith({
+			projects: { data: { projects: [{ id: "proj-1", name: "my-app", path: "/p" }] }, error: undefined },
+			sessions: {
+				data: {
+					sessions: [
+						{
+							id: "sess-1",
+							projectId: "proj-1",
+							status: "merged",
+							isTerminated: true,
+							updatedAt: "2026-06-10T16:15:04Z",
+						},
+					],
+				},
+				error: undefined,
+			},
+		});
+
+		const { result } = renderHook(() => useWorkspaceQuery(), { wrapper });
+		await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+		expect(getMock).not.toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/pr", expect.anything());
+		expect(result.current.data?.[0].sessions[0].pullRequest).toBeUndefined();
 	});
 
 	it("marks terminated sessions regardless of their reported status", async () => {

@@ -15,6 +15,7 @@ var ctx = context.Background()
 
 type fakeStore struct {
 	sessions   map[domain.SessionID]domain.SessionRecord
+	prs        map[domain.SessionID][]domain.PullRequest
 	signatures map[string]string
 
 	signatureWriteErr error
@@ -22,12 +23,16 @@ type fakeStore struct {
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{sessions: map[domain.SessionID]domain.SessionRecord{}, signatures: map[string]string{}}
+	return &fakeStore{sessions: map[domain.SessionID]domain.SessionRecord{}, prs: map[domain.SessionID][]domain.PullRequest{}, signatures: map[string]string{}}
 }
 
 func (f *fakeStore) GetSession(_ context.Context, id domain.SessionID) (domain.SessionRecord, bool, error) {
 	r, ok := f.sessions[id]
 	return r, ok, nil
+}
+
+func (f *fakeStore) ListPRsBySession(_ context.Context, id domain.SessionID) ([]domain.PullRequest, error) {
+	return f.prs[id], nil
 }
 
 func (f *fakeStore) UpdateSession(_ context.Context, rec domain.SessionRecord) error {
@@ -259,6 +264,7 @@ func TestPRObservation_MergeConflictNudgesAgent(t *testing.T) {
 func TestPRObservation_MergedTerminatesWithoutNudge(t *testing.T) {
 	m, st, msg := newManager()
 	st.sessions["mer-1"] = working("mer-1")
+	st.prs["mer-1"] = []domain.PullRequest{{URL: "pr1", Merged: true}}
 	if err := m.ApplyPRObservation(ctx, "mer-1", ports.PRObservation{Fetched: true, URL: "pr1", Merged: true}); err != nil {
 		t.Fatal(err)
 	}
@@ -268,6 +274,91 @@ func TestPRObservation_MergedTerminatesWithoutNudge(t *testing.T) {
 	}
 	if len(msg.msgs) != 0 {
 		t.Fatalf("merged PR should not send nudge, got %v", msg.msgs)
+	}
+}
+
+// A session with one merged PR and one still-open PR must NOT terminate: the
+// completion bar is "no open PR remains AND at least one merged".
+func TestPRObservation_MergedWithOpenSiblingDoesNotTerminate(t *testing.T) {
+	m, st, _ := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	st.prs["mer-1"] = []domain.PullRequest{
+		{URL: "pr1", Merged: true},
+		{URL: "pr2"},
+	}
+	if err := m.ApplyPRObservation(ctx, "mer-1", ports.PRObservation{Fetched: true, URL: "pr1", Merged: true}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions["mer-1"]; got.IsTerminated {
+		t.Fatalf("session with an open sibling PR must stay alive, got %+v", got)
+	}
+}
+
+// Once the last open PR merges (all PRs now merged), the session terminates.
+func TestPRObservation_LastMergeTerminatesSession(t *testing.T) {
+	m, st, _ := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	st.prs["mer-1"] = []domain.PullRequest{
+		{URL: "pr1", Merged: true},
+		{URL: "pr2", Merged: true},
+	}
+	if err := m.ApplyPRObservation(ctx, "mer-1", ports.PRObservation{Fetched: true, URL: "pr2", Merged: true}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions["mer-1"]; !got.IsTerminated {
+		t.Fatalf("session should terminate once all PRs are merged, got %+v", got)
+	}
+}
+
+// A closed PR that leaves the session with an open sibling and no merge does not
+// terminate; closing the last PR with no merge also does not terminate (nothing
+// shipped).
+func TestPRObservation_ClosedWithoutMergeDoesNotTerminate(t *testing.T) {
+	m, st, _ := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	st.prs["mer-1"] = []domain.PullRequest{{URL: "pr1", Closed: true}}
+	if err := m.ApplyPRObservation(ctx, "mer-1", ports.PRObservation{Fetched: true, URL: "pr1", Closed: true}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions["mer-1"]; got.IsTerminated {
+		t.Fatalf("a closed-without-merge PR must not terminate the session, got %+v", got)
+	}
+}
+
+// A PR stacked on an open parent (its target branch is the parent's source
+// branch) is exempt from the merge-conflict nudge: conflicts there are expected
+// until the parent merges.
+func TestPRObservation_StackedChildConflictSuppressed(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	st.prs["mer-1"] = []domain.PullRequest{
+		{URL: "parent", SourceBranch: "ao/x", TargetBranch: "main"},
+		{URL: "child", SourceBranch: "ao/x/auth", TargetBranch: "ao/x"},
+	}
+	o := ports.PRObservation{Fetched: true, URL: "child", Mergeability: domain.MergeConflicting}
+	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 0 {
+		t.Fatalf("stacked child conflict should be suppressed, got %v", msg.msgs)
+	}
+}
+
+// The bottom-of-stack PR (not stacked on any open parent) still gets the
+// merge-conflict nudge even when it has open stacked children.
+func TestPRObservation_BottomOfStackConflictNudges(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	st.prs["mer-1"] = []domain.PullRequest{
+		{URL: "parent", SourceBranch: "ao/x", TargetBranch: "main"},
+		{URL: "child", SourceBranch: "ao/x/auth", TargetBranch: "ao/x"},
+	}
+	o := ports.PRObservation{Fetched: true, URL: "parent", Mergeability: domain.MergeConflicting}
+	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 1 || !strings.Contains(msg.msgs[0], "merge conflicts") {
+		t.Fatalf("bottom-of-stack conflict should nudge, got %v", msg.msgs)
 	}
 }
 

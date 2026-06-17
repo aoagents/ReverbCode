@@ -654,8 +654,9 @@ func (m *Manager) buildSystemPrompt(ctx context.Context, kind domain.SessionKind
 			return "", err
 		}
 		if ok {
-			return workerOrchestratorPrompt(orchestratorID), nil
+			return workerOrchestratorPrompt(orchestratorID) + "\n\n" + workerMultiPRPrompt(), nil
 		}
+		return workerMultiPRPrompt(), nil
 	}
 	return "", nil
 }
@@ -696,6 +697,23 @@ An active orchestrator session exists for this project. If you hit a true blocke
 Only ping the orchestrator for true blockers, cross-session coordination, or decisions that cannot be resolved within your own task.`, orchestratorID)
 }
 
+// workerMultiPRPrompt explains the branch convention AO uses to attribute pull
+// requests to this session. A worker may open several PRs in one session: AO
+// tracks every open PR whose source branch is the session's own branch or a
+// descendant of it. Stacking a PR on top of another therefore only requires
+// branching off with a `<session-branch>/<topic>` name; PRs on unrelated
+// branches are attributed to whichever session owns their branch prefix.
+func workerMultiPRPrompt() string {
+	return `## Pull requests for this session
+
+You can open more than one pull request from this session. AO attributes a PR to you when its source branch is your session's working branch or a branch descended from it (a "/"-separated child like ` + "`your-branch/topic`" + `).
+
+- For independent PRs, create each source branch as a child of your session branch (` + "`your-branch/<topic>`" + `) so it stays in this session's namespace, then open the PR targeting your base branch as usual. The PR can target the base branch; only the source branch needs to stay under your session branch for AO to track it.
+- To stack a PR on top of another (so it merges after its parent), create the child branch from the parent branch and name it ` + "`<parent-branch>/<topic>`" + `, then target the parent branch in the PR. AO recognizes the stack from the branch relationship and will only nudge you to resolve conflicts on the bottom-most PR.
+
+Keep branch names within your session's branch namespace so AO can track every PR you open.`
+}
+
 // spawnEnv builds the runtime environment: the per-project env vars first, then
 // the AO-internal vars last so they always win (a project cannot override
 // AO_SESSION_ID and friends).
@@ -720,7 +738,7 @@ func spawnEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueI
 // logged so the degradation isn't silent.
 func (m *Manager) runtimeEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueID, projectEnv map[string]string) map[string]string {
 	env := spawnEnv(id, project, issue, m.dataDir, projectEnv)
-	path, err := hookPATH(m.executable, os.Getenv, projectEnv)
+	path, err := HookPATH(m.executable, os.Getenv, projectEnv)
 	if err != nil {
 		m.logger.Warn("session PATH not pinned to the daemon binary; `ao hooks` callbacks may resolve to a different ao and activity tracking will stall",
 			"session", id, "error", err)
@@ -730,13 +748,14 @@ func (m *Manager) runtimeEnv(id domain.SessionID, project domain.ProjectID, issu
 	return env
 }
 
-// hookPATH builds the PATH value pinned into a spawned session: the daemon
+// HookPATH builds the PATH value pinned into a spawned session: the daemon
 // executable's directory prepended to the base PATH (the project's PATH
 // override when set, else the daemon's inherited PATH — matching what the
 // runtime would have exported anyway). An error means the pin cannot be
 // applied: the executable is unresolvable, or is not named "ao", in which case
-// prepending its directory would not change what `ao` resolves to.
-func hookPATH(executable func() (string, error), getenv func(string) string, projectEnv map[string]string) (string, error) {
+// prepending its directory would not change what `ao` resolves to. Exported so
+// the reviewer launcher can pin its pane's PATH the same way.
+func HookPATH(executable func() (string, error), getenv func(string) string, projectEnv map[string]string) (string, error) {
 	exe, err := executable()
 	if err != nil {
 		return "", fmt.Errorf("resolve daemon executable: %w", err)

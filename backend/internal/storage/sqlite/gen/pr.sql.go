@@ -181,6 +181,79 @@ func (q *Queries) GetPRLastNudgeSignature(ctx context.Context, url string) (stri
 	return last_nudge_signature, err
 }
 
+const listPRFactsBySession = `-- name: ListPRFactsBySession :many
+SELECT
+    pr.url,
+    pr.number,
+    pr.pr_state,
+    pr.review_decision,
+    pr.ci_state,
+    pr.mergeability,
+    pr.source_branch,
+    pr.target_branch,
+    pr.updated_at,
+    EXISTS (
+        SELECT 1
+        FROM pr_comment
+        WHERE pr_comment.pr_url = pr.url
+          AND pr_comment.resolved = 0
+          AND pr_comment.is_bot = 0
+    ) AS review_comments
+FROM pr
+WHERE pr.session_id = ?
+ORDER BY pr.updated_at DESC
+`
+
+type ListPRFactsBySessionRow struct {
+	URL            string
+	Number         int64
+	PRState        domain.PRState
+	ReviewDecision domain.ReviewDecision
+	CIState        domain.CIState
+	Mergeability   domain.Mergeability
+	SourceBranch   string
+	TargetBranch   string
+	UpdatedAt      time.Time
+	ReviewComments bool
+}
+
+// All PR snapshots for a session (every state), with source/target branch for
+// stack derivation and the unresolved-comment flag. The status aggregator
+// filters open vs merged/closed in Go and derives stacks from the branches.
+func (q *Queries) ListPRFactsBySession(ctx context.Context, sessionID domain.SessionID) ([]ListPRFactsBySessionRow, error) {
+	rows, err := q.db.QueryContext(ctx, listPRFactsBySession, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListPRFactsBySessionRow{}
+	for rows.Next() {
+		var i ListPRFactsBySessionRow
+		if err := rows.Scan(
+			&i.URL,
+			&i.Number,
+			&i.PRState,
+			&i.ReviewDecision,
+			&i.CIState,
+			&i.Mergeability,
+			&i.SourceBranch,
+			&i.TargetBranch,
+			&i.UpdatedAt,
+			&i.ReviewComments,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPRsBySession = `-- name: ListPRsBySession :many
 SELECT url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at, provider, host, repo, source_branch, target_branch, head_sha, title, additions, deletions, changed_files, author, base_sha, merge_commit_sha, is_draft, is_merged, is_closed, provider_state, provider_mergeable, provider_merge_state_status, html_url, created_at_provider, updated_at_provider, merged_at_provider, closed_at_provider, metadata_hash, ci_hash, review_hash, observed_at, ci_observed_at, review_observed_at, last_nudge_signature FROM pr
 WHERE session_id = ?

@@ -12,6 +12,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -74,6 +75,12 @@ type Engine struct {
 	launcher Launcher
 	clock    func() time.Time
 	newID    func() string
+
+	// triggerMu guards triggerLocks; triggerLocks holds one mutex per worker
+	// session so concurrent Trigger calls for the same worker serialise (see
+	// lockWorker). Distinct workers never contend.
+	triggerMu    sync.Mutex
+	triggerLocks map[domain.SessionID]*sync.Mutex
 }
 
 // New wires an Engine from its dependencies, defaulting the clock and id source.
@@ -87,14 +94,35 @@ func New(d Deps) *Engine {
 		newID = uuid.NewString
 	}
 	return &Engine{
-		store:    d.Store,
-		sessions: d.Sessions,
-		prs:      d.PRs,
-		projects: d.Projects,
-		launcher: d.Launcher,
-		clock:    clock,
-		newID:    newID,
+		store:        d.Store,
+		sessions:     d.Sessions,
+		prs:          d.PRs,
+		projects:     d.Projects,
+		launcher:     d.Launcher,
+		clock:        clock,
+		newID:        newID,
+		triggerLocks: make(map[domain.SessionID]*sync.Mutex),
 	}
+}
+
+// lockWorker serialises Trigger calls for a single worker session and returns
+// the unlock func. Without it, two concurrent triggers for the same worker can
+// both pass the per-commit idempotency check and each spawn a reviewer against
+// the same deterministic handle, leaving two running runs for one commit (#242).
+//
+// The per-worker mutex is created on first use and kept for the lifetime of the
+// engine; the entry is a single pointer, so the unbounded-by-session-count map
+// is a negligible, bounded-in-practice cost.
+func (e *Engine) lockWorker(id domain.SessionID) func() {
+	e.triggerMu.Lock()
+	mu, ok := e.triggerLocks[id]
+	if !ok {
+		mu = &sync.Mutex{}
+		e.triggerLocks[id] = mu
+	}
+	e.triggerMu.Unlock()
+	mu.Lock()
+	return mu.Unlock
 }
 
 // TriggerResult is the outcome of a trigger: the (new or existing) run, the live
@@ -122,6 +150,14 @@ func (e *Engine) Trigger(ctx context.Context, workerID domain.SessionID) (Trigge
 	if workerID == "" {
 		return TriggerResult{}, fmt.Errorf("%w: worker session id is required", ErrInvalid)
 	}
+
+	// Serialise concurrent triggers for this worker so the idempotency check
+	// below (and the reviewer spawn that follows it) can't be raced into a
+	// double-spawn. Held across the spawn deliberately: the loser then re-reads
+	// the freshly-recorded run and short-circuits to Created:false.
+	unlock := e.lockWorker(workerID)
+	defer unlock()
+
 	worker, ok, err := e.sessions.GetSession(ctx, workerID)
 	if err != nil {
 		return TriggerResult{}, err
@@ -209,6 +245,18 @@ func (e *Engine) Trigger(ctx context.Context, workerID domain.SessionID) (Trigge
 		CreatedAt: now,
 	}
 	if err := e.store.InsertReviewRun(ctx, run); err != nil {
+		// The per-worker lock serialises in-process triggers, but the unique
+		// index (migration 0013) can still reject a run a concurrent daemon (or
+		// a pre-lock restart) recorded for this commit. The reviewer is already
+		// launched, so don't surface a raw error: re-read the recorded run and
+		// return it as the existing, not-newly-created pass.
+		if errors.Is(err, domain.ErrDuplicateReviewRun) {
+			if existing, ok, getErr := e.store.GetReviewRunBySessionAndSHA(ctx, workerID, targetSHA); getErr != nil {
+				return TriggerResult{}, getErr
+			} else if ok {
+				return TriggerResult{Run: existing, ReviewerHandleID: handleID, Created: false}, nil
+			}
+		}
 		return TriggerResult{}, err
 	}
 	return TriggerResult{Run: run, ReviewerHandleID: handleID, Created: true}, nil

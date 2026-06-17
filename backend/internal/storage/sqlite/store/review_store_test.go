@@ -2,11 +2,54 @@ package store_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
+
+func TestInsertReviewRunDuplicateSHAMapsToSentinel(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	rec, err := s.CreateSession(ctx, sampleRecord("mer"))
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	if err := s.UpsertReview(ctx, domain.Review{
+		ID: "rev-1", SessionID: rec.ID, ProjectID: rec.ProjectID,
+		Harness: domain.ReviewerClaudeCode, CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("upsert review: %v", err)
+	}
+	run := domain.ReviewRun{
+		ID: "run-1", ReviewID: "rev-1", SessionID: rec.ID, Harness: domain.ReviewerClaudeCode,
+		TargetSHA: "sha1", Status: domain.ReviewRunRunning, Verdict: domain.VerdictNone, CreatedAt: now,
+	}
+	if err := s.InsertReviewRun(ctx, run); err != nil {
+		t.Fatalf("first insert: %v", err)
+	}
+
+	// A second run for the same (session_id, target_sha) hits the partial unique
+	// index (migration 0013) and must surface as the sentinel so the engine can
+	// fall back to the existing run.
+	dup := run
+	dup.ID = "run-2"
+	if err := s.InsertReviewRun(ctx, dup); !errors.Is(err, domain.ErrDuplicateReviewRun) {
+		t.Fatalf("duplicate insert err = %v, want ErrDuplicateReviewRun", err)
+	}
+
+	// An empty target_sha is excluded from the index, so two are allowed.
+	for _, id := range []string{"run-empty-1", "run-empty-2"} {
+		r := run
+		r.ID, r.TargetSHA = id, ""
+		if err := s.InsertReviewRun(ctx, r); err != nil {
+			t.Fatalf("empty-sha insert %s: %v", id, err)
+		}
+	}
+}
 
 func TestReviewUpsertReusesRowAndRunRoundTrip(t *testing.T) {
 	s := newTestStore(t)

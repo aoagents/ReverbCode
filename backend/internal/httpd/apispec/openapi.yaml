@@ -1257,6 +1257,49 @@ components:
       - sessionId
       - reason
       type: object
+    ControllersSessionView:
+      properties:
+        activity:
+          $ref: '#/components/schemas/DomainActivity'
+        createdAt:
+          format: date-time
+          type: string
+        displayName:
+          type: string
+        harness:
+          type: string
+        id:
+          type: string
+        isTerminated:
+          type: boolean
+        issueId:
+          type: string
+        kind:
+          type: string
+        projectId:
+          type: string
+        prs:
+          items:
+            $ref: '#/components/schemas/SessionPRFacts'
+          type: array
+        status:
+          type: string
+        terminalHandleId:
+          type: string
+        updatedAt:
+          format: date-time
+          type: string
+      required:
+      - id
+      - projectId
+      - kind
+      - activity
+      - isTerminated
+      - createdAt
+      - updatedAt
+      - status
+      - prs
+      type: object
     DegradedProject:
       properties:
         id:
@@ -1352,7 +1395,7 @@ components:
       properties:
         sessions:
           items:
-            $ref: '#/components/schemas/Session'
+            $ref: '#/components/schemas/ControllersSessionView'
           type: array
       required:
       - sessions
@@ -1591,7 +1634,7 @@ components:
         ok:
           type: boolean
         session:
-          $ref: '#/components/schemas/Session'
+          $ref: '#/components/schemas/ControllersSessionView'
         sessionId:
           type: string
       required:
@@ -1687,44 +1730,6 @@ components:
       - sessionId
       - message
       type: object
-    Session:
-      properties:
-        activity:
-          $ref: '#/components/schemas/DomainActivity'
-        createdAt:
-          format: date-time
-          type: string
-        displayName:
-          type: string
-        harness:
-          type: string
-        id:
-          type: string
-        isTerminated:
-          type: boolean
-        issueId:
-          type: string
-        kind:
-          type: string
-        projectId:
-          type: string
-        status:
-          type: string
-        terminalHandleId:
-          type: string
-        updatedAt:
-          format: date-time
-          type: string
-      required:
-      - id
-      - projectId
-      - kind
-      - activity
-      - isTerminated
-      - createdAt
-      - updatedAt
-      - status
-      type: object
     SessionPRFacts:
       properties:
         ci:
@@ -1762,7 +1767,7 @@ components:
     SessionResponse:
       properties:
         session:
-          $ref: '#/components/schemas/Session'
+          $ref: '#/components/schemas/ControllersSessionView'
       required:
       - session
       type: object

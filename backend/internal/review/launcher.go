@@ -3,9 +3,11 @@ package review
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
 )
 
 // Launcher spawns, re-notifies, and probes a reviewer over a worker's worktree.
@@ -97,12 +99,30 @@ func (l *agentLauncher) Spawn(ctx context.Context, spec LaunchSpec) (string, err
 		SessionID:     domain.SessionID(handleID),
 		WorkspacePath: spec.WorkspacePath,
 		Argv:          cmd.Argv,
-		Env:           cmd.Env,
+		Env:           pinnedEnv(cmd.Env),
 	})
 	if err != nil {
 		return "", fmt.Errorf("reviewer runtime: %w", err)
 	}
 	return handle.ID, nil
+}
+
+// pinnedEnv returns the reviewer command's env with PATH pinned to the daemon's
+// own directory, so the bare `ao` the reviewer runs (e.g. `ao review submit`)
+// resolves to this daemon's CLI rather than a foreign `ao` first on the
+// inherited PATH. Mirrors the worker-session pin in the session manager.
+// Best-effort: an unpinnable daemon (not named "ao") keeps the inherited PATH.
+func pinnedEnv(base map[string]string) map[string]string {
+	path, err := sessionmanager.HookPATH(os.Executable, os.Getenv, base)
+	if err != nil {
+		return base
+	}
+	env := make(map[string]string, len(base)+1)
+	for k, v := range base {
+		env[k] = v
+	}
+	env["PATH"] = path
+	return env
 }
 
 func (l *agentLauncher) Notify(ctx context.Context, handleID string, spec LaunchSpec) error {
