@@ -510,7 +510,9 @@ function ProjectItem({
 							<Waypoints aria-hidden="true" />
 						</button>
 					</TooltipTrigger>
-					<TooltipContent>{isSpawning ? "Spawning…" : orchestrator ? "Orchestrator" : "Spawn orchestrator"}</TooltipContent>
+					<TooltipContent>
+						{isSpawning ? "Spawning…" : orchestrator ? "Orchestrator" : "Spawn orchestrator"}
+					</TooltipContent>
 				</Tooltip>
 				<DropdownMenu>
 					<DropdownMenuTrigger asChild>
