@@ -19,9 +19,14 @@ const noSignalGrace = 90 * time.Second
 // session's harness has an activity hook pipeline at all; only then can
 // prolonged silence mean the pipeline is broken (no_signal) rather than the
 // permanent, normal silence of a hook-less harness.
-func deriveStatus(rec domain.SessionRecord, pr *domain.PRFacts, now time.Time, signalCapable bool) domain.SessionStatus {
+//
+// A session may own several PRs at once (independent or stacked). The PR-derived
+// status is the worst-wins aggregate across its open PRs; stacked children whose
+// parent is still open are exempt from the aggregation since they cannot merge
+// until the parent does. Merged/closed PRs only matter once no open PR remains.
+func deriveStatus(rec domain.SessionRecord, prs []domain.PRFacts, now time.Time, signalCapable bool) domain.SessionStatus {
 	if rec.IsTerminated {
-		if pr != nil && pr.Merged {
+		if anyMerged(prs) {
 			return domain.StatusMerged
 		}
 		return domain.StatusTerminated
@@ -31,13 +36,12 @@ func deriveStatus(rec domain.SessionRecord, pr *domain.PRFacts, now time.Time, s
 		return domain.StatusNeedsInput
 	}
 
-	if pr != nil {
-		if pr.Merged {
-			return domain.StatusMerged
-		}
-		if !pr.Closed {
-			return prPipelineStatus(*pr)
-		}
+	open := openPRs(prs)
+	if len(open) > 0 {
+		return aggregatePRStatus(open)
+	}
+	if anyMerged(prs) {
+		return domain.StatusMerged
 	}
 
 	if rec.Activity.State == domain.ActivityActive {
@@ -51,6 +55,94 @@ func deriveStatus(rec domain.SessionRecord, pr *domain.PRFacts, now time.Time, s
 		return domain.StatusNoSignal
 	}
 	return domain.StatusIdle
+}
+
+// openPRs returns the PRs that are neither merged nor closed, preserving order.
+func openPRs(prs []domain.PRFacts) []domain.PRFacts {
+	out := make([]domain.PRFacts, 0, len(prs))
+	for _, p := range prs {
+		if !p.Merged && !p.Closed {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func anyMerged(prs []domain.PRFacts) bool {
+	for _, p := range prs {
+		if p.Merged {
+			return true
+		}
+	}
+	return false
+}
+
+// aggregatePRStatus is the worst-wins reduction over a session's open PRs.
+// A stacked child blocked by an open parent cannot merge yet, so its readiness
+// signals (mergeable/approved/review-pending/open) are not actionable for the
+// session and are suppressed. Its problem signals are still actionable: failing
+// CI, draft state, and requested-changes/unresolved-comments must stay visible
+// so a broken child is not hidden behind the stack. If no PR contributes any
+// signal (a degenerate stack with no visible root), it falls back to aggregating
+// the raw status across all open PRs so the session never goes dark.
+func aggregatePRStatus(open []domain.PRFacts) domain.SessionStatus {
+	stacks := buildStacks(open)
+	candidates := make([]domain.SessionStatus, 0, len(open))
+	for _, p := range open {
+		s := prPipelineStatus(p)
+		if stacks[p.URL].Blocked && !isActionableChildSignal(s) {
+			continue
+		}
+		candidates = append(candidates, s)
+	}
+	if len(candidates) == 0 {
+		for _, p := range open {
+			candidates = append(candidates, prPipelineStatus(p))
+		}
+	}
+	worst := candidates[0]
+	for _, s := range candidates[1:] {
+		if statusSeverity(s) < statusSeverity(worst) {
+			worst = s
+		}
+	}
+	return worst
+}
+
+// isActionableChildSignal reports whether a blocked stacked child's pipeline
+// status is a problem the user can act on now, independent of the child's
+// inability to merge until its parent does.
+func isActionableChildSignal(s domain.SessionStatus) bool {
+	switch s {
+	case domain.StatusCIFailed, domain.StatusDraft, domain.StatusChangesRequested:
+		return true
+	default:
+		return false
+	}
+}
+
+// statusSeverity ranks PR pipeline statuses from most to least urgent so the
+// aggregate surfaces the PR that most needs attention. mergeable is least urgent
+// so a session only reports mergeable when every aggregated PR is mergeable.
+func statusSeverity(s domain.SessionStatus) int {
+	switch s {
+	case domain.StatusCIFailed:
+		return 0
+	case domain.StatusChangesRequested:
+		return 1
+	case domain.StatusDraft:
+		return 2
+	case domain.StatusReviewPending:
+		return 3
+	case domain.StatusPROpen:
+		return 4
+	case domain.StatusApproved:
+		return 5
+	case domain.StatusMergeable:
+		return 6
+	default:
+		return 7
+	}
 }
 
 func prPipelineStatus(pr domain.PRFacts) domain.SessionStatus {

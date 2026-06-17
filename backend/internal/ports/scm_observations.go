@@ -104,6 +104,10 @@ type SCMPRObservation struct {
 	Closed bool
 	// SourceBranch is the PR head/source branch name.
 	SourceBranch string
+	// HeadRepo is the full name (owner/name) of the repository the PR head
+	// branch lives in. It matches the base repo for same-repo PRs and differs
+	// for PRs opened from a fork, so branch-prefix attribution can ignore forks.
+	HeadRepo string
 	// TargetBranch is the PR base/target branch name.
 	TargetBranch string
 	// HeadSHA is the current head commit SHA for the PR.

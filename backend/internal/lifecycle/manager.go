@@ -18,6 +18,11 @@ import (
 type sessionStore interface {
 	GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error)
 	UpdateSession(ctx context.Context, rec domain.SessionRecord) error
+	// ListPRsBySession returns every PR row tracked for the session. The
+	// reducer reads it to apply the multi-PR completion rule (terminate only
+	// when no open PR remains and at least one merged) and to suppress
+	// merge-conflict nudges on PRs stacked behind an open parent.
+	ListPRsBySession(ctx context.Context, id domain.SessionID) ([]domain.PullRequest, error)
 	// GetPRLastNudgeSignature / UpdatePRLastNudgeSignature persist the
 	// reaction-dedup map so nudges survive a daemon restart.
 	GetPRLastNudgeSignature(ctx context.Context, prURL string) (string, error)

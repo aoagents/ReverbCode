@@ -38,7 +38,7 @@ const (
 type Provider interface {
 	ParseRepository(remote string) (ports.SCMRepo, bool)
 	RepoPRListGuard(ctx context.Context, repo ports.SCMRepo, etag string) (ports.SCMGuardResult, error)
-	DetectPRByBranch(ctx context.Context, repo ports.SCMRepo, branch string) (ports.SCMPRObservation, error)
+	ListOpenPRsByRepo(ctx context.Context, repo ports.SCMRepo) ([]ports.SCMPRObservation, error)
 	CommitChecksGuard(ctx context.Context, repo ports.SCMRepo, headSHA, etag string) (ports.SCMGuardResult, error)
 	FetchPullRequests(ctx context.Context, refs []ports.SCMPRRef) ([]ports.SCMObservation, error)
 	FetchFailedCheckLogTail(ctx context.Context, repo ports.SCMRepo, check ports.SCMCheckObservation) (string, error)
@@ -191,6 +191,14 @@ type subject struct {
 	hasPR   bool
 }
 
+// sessionRepo pairs a live session with its parsed repo and branch for per-repo
+// branch-prefix discovery of new (including stacked) pull requests.
+type sessionRepo struct {
+	session domain.SessionRecord
+	repo    ports.SCMRepo
+	branch  string
+}
+
 type repoGuardState struct {
 	result  ports.SCMGuardResult
 	hadETag bool
@@ -226,11 +234,11 @@ func (o *Observer) Poll(ctx context.Context) error {
 	if o.disabled {
 		return nil
 	}
-	subjects, err := o.discoverSubjects(ctx)
+	subjects, sessionRepos, err := o.discoverSubjects(ctx)
 	if err != nil {
 		return err
 	}
-	if len(subjects) == 0 {
+	if len(sessionRepos) == 0 {
 		return nil
 	}
 	proceed, err := o.checkCredentials(ctx)
@@ -241,7 +249,7 @@ func (o *Observer) Poll(ctx context.Context) error {
 		return nil
 	}
 
-	repoGuards := o.guardRepos(ctx, subjects)
+	repoGuards := o.guardRepos(ctx, sessionRepos)
 	repoRefreshOK := pendingRepoRefreshes(repoGuards)
 	markRepoRefreshFailed := func(repo ports.SCMRepo) {
 		key := prKey(repo, 0)
@@ -252,7 +260,7 @@ func (o *Observer) Poll(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	o.detectMissingPRs(ctx, subjects, repoGuards, now, markRepoRefreshFailed)
+	o.discoverNewPRs(ctx, sessionRepos, subjects, repoGuards, now, markRepoRefreshFailed)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -405,13 +413,19 @@ func (o *Observer) checkCredentials(ctx context.Context) (bool, error) {
 	return observe.CheckCredentialsOnce(ctx, probe, &o.credentialsChecked, &o.disabled, o.logger, "scm observer")
 }
 
-func (o *Observer) discoverSubjects(ctx context.Context) (map[string]*subject, error) {
+// discoverSubjects builds the per-PR refresh subjects (one per open tracked PR)
+// and the per-session repo list used for branch-prefix discovery of new PRs. A
+// session may own several PRs, so each open tracked PR becomes its own subject;
+// merged/closed PRs are not re-fetched since lifecycle already saw the terminal
+// transition and the completion rule reads them from the store.
+func (o *Observer) discoverSubjects(ctx context.Context) (map[string]*subject, []sessionRepo, error) {
 	sessions, err := o.store.ListAllSessions(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	projects := map[domain.ProjectID]domain.ProjectRecord{}
 	out := map[string]*subject{}
+	var sessionRepos []sessionRepo
 	for _, sess := range sessions {
 		if sess.IsTerminated {
 			continue
@@ -424,7 +438,7 @@ func (o *Observer) discoverSubjects(ctx context.Context) (map[string]*subject, e
 		if !ok {
 			p, found, err := o.store.GetProject(ctx, string(sess.ProjectID))
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			if !found || !p.ArchivedAt.IsZero() {
 				continue
@@ -445,47 +459,37 @@ func (o *Observer) discoverSubjects(ctx context.Context) (map[string]*subject, e
 			o.logger.Debug("scm observer: project has no supported SCM origin", "project", proj.ID, "origin", proj.RepoOriginURL)
 			continue
 		}
+		sessionRepos = append(sessionRepos, sessionRepo{session: sess, repo: repo, branch: branch})
 		prs, err := o.store.ListPRsBySession(ctx, sess.ID)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		known, hasPR := chooseKnownPR(prs)
-		s := &subject{session: sess, repo: repo, branch: branch, known: known, hasPR: hasPR}
-		if hasPR && known.Number > 0 {
-			key := prKey(repo, known.Number)
+		for _, pr := range openTrackedPRs(prs) {
+			key := prKey(repo, pr.Number)
 			if existing, ok := out[key]; ok {
 				o.logger.Warn("scm observer: duplicate tracked PR ownership skipped", "pr", key, "kept_session", existing.session.ID, "skipped_session", sess.ID)
 				continue
 			}
-			out[key] = s
-		} else {
-			out["session:"+string(sess.ID)] = s
+			out[key] = &subject{session: sess, repo: repo, branch: branch, known: pr, hasPR: true}
 		}
 	}
-	return out, nil
+	return out, sessionRepos, nil
 }
 
-func chooseKnownPR(prs []domain.PullRequest) (domain.PullRequest, bool) {
-	if len(prs) == 0 {
-		return domain.PullRequest{}, false
-	}
+func openTrackedPRs(prs []domain.PullRequest) []domain.PullRequest {
+	out := make([]domain.PullRequest, 0, len(prs))
 	for _, pr := range prs {
 		if pr.Number > 0 && !pr.Merged && !pr.Closed {
-			return pr, true
+			out = append(out, pr)
 		}
 	}
-	for _, pr := range prs {
-		if pr.Number > 0 {
-			return pr, true
-		}
-	}
-	return domain.PullRequest{}, false
+	return out
 }
 
-func (o *Observer) guardRepos(ctx context.Context, subjects map[string]*subject) map[string]repoGuardState {
+func (o *Observer) guardRepos(ctx context.Context, sessionRepos []sessionRepo) map[string]repoGuardState {
 	repos := map[string]ports.SCMRepo{}
-	for _, s := range subjects {
-		repos[prKey(s.repo, 0)] = s.repo
+	for _, sr := range sessionRepos {
+		repos[prKey(sr.repo, 0)] = sr.repo
 	}
 	out := map[string]repoGuardState{}
 	for key, repo := range repos {
@@ -511,39 +515,115 @@ func pendingRepoRefreshes(guards map[string]repoGuardState) map[string]bool {
 	return out
 }
 
-func (o *Observer) detectMissingPRs(ctx context.Context, subjects map[string]*subject, guards map[string]repoGuardState, now time.Time, markRepoFailed func(ports.SCMRepo)) {
-	for oldKey, s := range subjects {
-		if s.hasPR {
-			continue
-		}
-		g := guards[prKey(s.repo, 0)]
+// discoverNewPRs lists each repo's open PRs once and attaches any not-yet-tracked
+// PR to the session that owns its source branch. A session owns a PR when the
+// PR's source branch equals the session branch or descends from it (the
+// "branch/..." stacking convention). One session may therefore pick up several
+// PRs (its root plus stacked children). Repos whose PR-list guard reports
+// NotModified against a known ETag are skipped, since nothing new can have
+// appeared since the last poll.
+func (o *Observer) discoverNewPRs(ctx context.Context, sessionRepos []sessionRepo, subjects map[string]*subject, guards map[string]repoGuardState, now time.Time, markRepoFailed func(ports.SCMRepo)) {
+	byRepo := map[string][]sessionRepo{}
+	repos := map[string]ports.SCMRepo{}
+	for _, sr := range sessionRepos {
+		key := prKey(sr.repo, 0)
+		byRepo[key] = append(byRepo[key], sr)
+		repos[key] = sr.repo
+	}
+	for repoKey, repo := range repos {
+		g := guards[repoKey]
 		if g.err != nil {
 			continue
 		}
 		if g.result.NotModified && g.hadETag {
 			continue
 		}
-		pr, err := o.provider.DetectPRByBranch(ctx, s.repo, s.branch)
+		pulls, err := o.provider.ListOpenPRsByRepo(ctx, repo)
 		if err != nil {
-			o.logger.Debug("scm observer: no PR detected for branch", "session", s.session.ID, "branch", s.branch, "err", err)
+			o.logger.Debug("scm observer: open PR list failed", "repo", repoFullName(repo), "err", err)
 			if markRepoFailed != nil && !errors.Is(err, ports.ErrSCMNotFound) {
-				markRepoFailed(s.repo)
+				markRepoFailed(repo)
 			}
 			continue
 		}
-		if pr.Number <= 0 {
-			continue
+		for _, pr := range pulls {
+			if pr.Number <= 0 || pr.SourceBranch == "" {
+				continue
+			}
+			// Branch-prefix attribution must only claim PRs whose head branch
+			// lives in the project repo. A fork PR can carry a head branch whose
+			// name matches an AO session branch; its commits live in the fork, so
+			// auto-claiming it would misattribute work. Same-repo PRs always
+			// report the base repo's full name as their head repo, so anything
+			// else (including an empty head repo from a deleted fork) is skipped.
+			if !strings.EqualFold(pr.HeadRepo, repoFullName(repo)) {
+				continue
+			}
+			key := prKey(repo, pr.Number)
+			if _, ok := subjects[key]; ok {
+				continue
+			}
+			sr, ok := matchSession(byRepo[repoKey], pr.SourceBranch)
+			if !ok {
+				continue
+			}
+			known := domain.PullRequest{
+				URL:          firstNonEmpty(pr.URL, pr.HTMLURL),
+				SessionID:    sr.session.ID,
+				Number:       pr.Number,
+				Draft:        pr.Draft,
+				SourceBranch: pr.SourceBranch,
+				TargetBranch: pr.TargetBranch,
+				HeadSHA:      pr.HeadSHA,
+				Provider:     repo.Provider,
+				Host:         repo.Host,
+				Repo:         repoFullName(repo),
+				UpdatedAt:    now,
+			}
+			// Persist the discovered PR as an open baseline row immediately, before
+			// the refresh/lifecycle pass runs. A session can own several PRs, and a
+			// terminal observation for one of them triggers a completion check that
+			// reads every PR of the session from the store. Without this write, an
+			// open sibling/child discovered in the same poll would not yet be
+			// durable, and the session could terminate while that PR is still open.
+			if err := o.store.WriteSCMObservation(ctx, known, nil, nil, nil, ports.ReviewWritePreserve); err != nil {
+				o.logger.Error("scm observer: persist discovered PR failed", "session", sr.session.ID, "pr", known.URL, "err", err)
+				if markRepoFailed != nil {
+					markRepoFailed(repo)
+				}
+				continue
+			}
+			subjects[key] = &subject{
+				session: sr.session,
+				repo:    repo,
+				branch:  sr.branch,
+				known:   known,
+				hasPR:   true,
+			}
 		}
-		newKey := prKey(s.repo, pr.Number)
-		if existing, ok := subjects[newKey]; ok && existing != s {
-			o.logger.Warn("scm observer: detected PR is already tracked by another session", "pr", newKey, "kept_session", existing.session.ID, "skipped_session", s.session.ID)
-			continue
-		}
-		s.known = domain.PullRequest{URL: pr.URL, SessionID: s.session.ID, Number: pr.Number, SourceBranch: pr.SourceBranch, TargetBranch: pr.TargetBranch, HeadSHA: pr.HeadSHA, Provider: s.repo.Provider, Host: s.repo.Host, Repo: repoFullName(s.repo), UpdatedAt: now}
-		s.hasPR = true
-		delete(subjects, oldKey)
-		subjects[newKey] = s
 	}
+}
+
+// matchSession picks the session that owns sourceBranch. A session owns the
+// branch when it is an exact match or a stacked descendant ("branch/..."). When
+// several session branches are prefixes of the same source branch the longest
+// (most specific) one wins, so a child session claims its own stacked PRs rather
+// than the ancestor session.
+func matchSession(candidates []sessionRepo, sourceBranch string) (sessionRepo, bool) {
+	var best sessionRepo
+	bestLen := -1
+	for _, sr := range candidates {
+		if sr.branch == "" {
+			continue
+		}
+		if sr.branch == sourceBranch || strings.HasPrefix(sourceBranch, sr.branch+"/") {
+			if len(sr.branch) > bestLen {
+				best = sr
+				bestLen = len(sr.branch)
+			}
+		}
+	}
+	return best, bestLen >= 0
 }
 
 func (o *Observer) selectRefreshCandidates(ctx context.Context, subjects map[string]*subject, guards map[string]repoGuardState, markRepoFailed func(ports.SCMRepo)) refreshSelection {

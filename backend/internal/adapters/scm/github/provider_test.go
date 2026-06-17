@@ -258,6 +258,24 @@ func TestParsePRURL(t *testing.T) {
 	}
 }
 
+func TestRestListPullToSCMCarriesHeadRepo(t *testing.T) {
+	var pull restListPull
+	pull.Number = 7
+	pull.State = "open"
+	pull.Head.Ref = "feat/x"
+	pull.Head.SHA = "deadbeef"
+	pull.Head.Repo.FullName = "forker/hello"
+	pull.Base.Ref = "main"
+
+	obs := restListPullToSCM(pull)
+	if obs.SourceBranch != "feat/x" {
+		t.Fatalf("SourceBranch = %q, want feat/x", obs.SourceBranch)
+	}
+	if obs.HeadRepo != "forker/hello" {
+		t.Fatalf("HeadRepo = %q, want forker/hello", obs.HeadRepo)
+	}
+}
+
 func TestObserve_HappyPath(t *testing.T) {
 	f := newFakeGH(t)
 	fx := basePRFixture()

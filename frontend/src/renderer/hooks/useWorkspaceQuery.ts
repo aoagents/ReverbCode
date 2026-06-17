@@ -1,10 +1,24 @@
 import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "../lib/api-client";
 import { mockWorkspaces } from "../lib/mock-data";
-import { toAgentProvider, toSessionStatus, type WorkspaceSummary } from "../types/workspace";
+import { toAgentProvider, toSessionStatus, type WorkspaceSession, type WorkspaceSummary } from "../types/workspace";
 
 export const workspaceQueryKey = ["workspaces"] as const;
 const usePreviewData = import.meta.env.VITE_NO_ELECTRON === "1";
+
+// GET /sessions/{sessionId}/pr is the single source of truth for PR facts — no
+// PR data rides on the session list — so we hydrate each session's lightweight
+// {number, state} here, centrally, for every consumer (Summary, Board, PR page,
+// Sidebar) that reads this query's cache. A per-session failure is treated as
+// "no PR" rather than failing the whole workspace query.
+async function fetchSessionPR(sessionId: string): Promise<WorkspaceSession["pullRequest"]> {
+	const { data, error } = await apiClient.GET("/api/v1/sessions/{sessionId}/pr", {
+		params: { path: { sessionId } },
+	});
+	if (error) return undefined;
+	const pr = data?.prs?.[0];
+	return pr ? { number: pr.number, state: pr.state } : undefined;
+}
 
 async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 	if (usePreviewData) {
@@ -16,11 +30,21 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 
 	if (projectsError || sessionsError) throw projectsError ?? sessionsError;
 
+	const sessions = sessionsData?.sessions ?? [];
+	// Skip terminated sessions — their PRs are archived and the call is wasted.
+	const prBySession = new Map(
+		await Promise.all(
+			sessions
+				.filter((session) => !session.isTerminated)
+				.map(async (session) => [session.id, await fetchSessionPR(session.id)] as const),
+		),
+	);
+
 	return (projectsData?.projects ?? []).map((project) => ({
 		id: project.id,
 		name: project.name,
 		path: project.path,
-		sessions: (sessionsData?.sessions ?? [])
+		sessions: sessions
 			.filter((session) => session.projectId === project.id)
 			.map((session) => ({
 				id: session.id,
@@ -34,6 +58,7 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 				status: toSessionStatus(session.status, session.isTerminated),
 				createdAt: session.createdAt,
 				updatedAt: session.updatedAt,
+				pullRequest: prBySession.get(session.id),
 			})),
 	}));
 }
