@@ -503,9 +503,7 @@ function ProjectItem({
 											    id (useWorkspaceQuery), so skip the line rather than
 											    repeat the same string twice. */}
 											{session.title !== session.id && (
-												<span className="block truncate font-mono text-[10px] text-passive">
-													{session.id}
-												</span>
+												<span className="block truncate font-mono text-[10px] text-passive">{session.id}</span>
 											)}
 										</span>
 									</button>
