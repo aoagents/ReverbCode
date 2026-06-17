@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/go-chi/chi/v5"
+
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 )
 
@@ -47,6 +49,23 @@ func TestCLIInvokedRouteRequiresLoopback(t *testing.T) {
 	}
 	if len(sink.events) != 0 {
 		t.Fatalf("events = %d, want 0", len(sink.events))
+	}
+}
+
+func TestCLIUsageErrorRouteEmitsTelemetry(t *testing.T) {
+	sink := &captureSink{}
+	r := chi.NewRouter()
+	mountTelemetry(r, sink)
+
+	req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/internal/telemetry/cli-usage-error", strings.NewReader(`{"command":"status","commandPath":"ao status","error":"too many args"}`))
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202", rec.Code)
+	}
+	if len(sink.events) != 1 || sink.events[0].Name != "ao.cli.usage_errors" {
+		t.Fatalf("events = %#v, want one ao.cli.usage_errors event", sink.events)
 	}
 }
 

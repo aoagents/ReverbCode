@@ -103,6 +103,12 @@ type cliInvokedRequest struct {
 	CommandPath string `json:"commandPath"`
 }
 
+type cliUsageErrorRequest struct {
+	Command     string `json:"command"`
+	CommandPath string `json:"commandPath"`
+	Error       string `json:"error"`
+}
+
 func mountTelemetry(r chi.Router, sink ports.EventSink) {
 	if sink == nil {
 		return
@@ -137,6 +143,41 @@ func mountTelemetry(r chi.Router, sink ports.EventSink) {
 			Payload: map[string]any{
 				"command":      body.Command,
 				"command_path": body.CommandPath,
+			},
+		})
+		w.WriteHeader(http.StatusAccepted)
+	})
+	r.Post("/internal/telemetry/cli-usage-error", func(w http.ResponseWriter, req *http.Request) {
+		if !localControlRequest(req) {
+			envelope.WriteJSON(w, http.StatusForbidden, map[string]any{
+				"status":  "forbidden",
+				"service": daemonmeta.ServiceName,
+			})
+			return
+		}
+
+		var body cliUsageErrorRequest
+		dec := json.NewDecoder(req.Body)
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&body); err != nil {
+			envelope.WriteAPIError(w, req, http.StatusBadRequest, "bad_request", "INVALID_JSON", "request body must be valid JSON", nil)
+			return
+		}
+		if body.CommandPath == "" {
+			envelope.WriteAPIError(w, req, http.StatusBadRequest, "bad_request", "COMMAND_PATH_REQUIRED", "commandPath is required", nil)
+			return
+		}
+
+		sink.Emit(req.Context(), ports.TelemetryEvent{
+			Name:       "ao.cli.usage_errors",
+			Source:     "cli",
+			OccurredAt: time.Now().UTC(),
+			Level:      ports.TelemetryLevelWarn,
+			RequestID:  middleware.GetReqID(req.Context()),
+			Payload: map[string]any{
+				"command":      body.Command,
+				"command_path": body.CommandPath,
+				"error":        body.Error,
 			},
 		})
 		w.WriteHeader(http.StatusAccepted)

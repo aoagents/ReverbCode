@@ -12,6 +12,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 )
@@ -70,6 +71,16 @@ type fakeProjectTeardowner struct {
 	err      error
 }
 
+type captureSink struct {
+	events []ports.TelemetryEvent
+}
+
+func (s *captureSink) Emit(_ context.Context, ev ports.TelemetryEvent) {
+	s.events = append(s.events, ev)
+}
+
+func (*captureSink) Close(context.Context) error { return nil }
+
 func (f *fakeProjectTeardowner) TeardownProject(_ context.Context, project domain.ProjectID) error {
 	f.projects = append(f.projects, project)
 	return f.err
@@ -120,6 +131,54 @@ func TestManager_AddListGetRemove(t *testing.T) {
 
 	_, err = m.Remove(ctx, "ao")
 	wantCode(t, err, "PROJECT_NOT_FOUND")
+}
+
+func TestManager_AddEmitsProjectAndFirstProjectTelemetry(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	sink := &captureSink{}
+	m := project.NewWithDeps(project.Deps{Store: store, Telemetry: sink})
+
+	if _, err := m.Add(ctx, project.AddInput{Path: gitRepo(t), ProjectID: ptr("ao")}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if len(sink.events) != 2 {
+		t.Fatalf("events = %#v, want projects.created + first_project_added", sink.events)
+	}
+	if sink.events[0].Name != "ao.projects.created" || sink.events[1].Name != "ao.onboarding.first_project_added" {
+		t.Fatalf("event names = %#v", []string{sink.events[0].Name, sink.events[1].Name})
+	}
+}
+
+func TestManager_AddDoesNotRepeatFirstProjectTelemetry(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	sink := &captureSink{}
+	m := project.NewWithDeps(project.Deps{Store: store, Telemetry: sink})
+
+	if _, err := m.Add(ctx, project.AddInput{Path: gitRepo(t), ProjectID: ptr("ao")}); err != nil {
+		t.Fatalf("Add first: %v", err)
+	}
+	if _, err := m.Add(ctx, project.AddInput{Path: gitRepo(t), ProjectID: ptr("ao2")}); err != nil {
+		t.Fatalf("Add second: %v", err)
+	}
+	var firstProjectCount int
+	for _, ev := range sink.events {
+		if ev.Name == "ao.onboarding.first_project_added" {
+			firstProjectCount++
+		}
+	}
+	if firstProjectCount != 1 {
+		t.Fatalf("first project telemetry count = %d, want 1", firstProjectCount)
+	}
 }
 
 func TestManager_RemoveTeardownsBeforeArchive(t *testing.T) {

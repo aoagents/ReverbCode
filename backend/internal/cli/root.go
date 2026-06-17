@@ -20,7 +20,18 @@ import (
 
 // Execute runs the ao CLI with process stdio.
 func Execute() error {
-	return NewRootCommand(DefaultDeps()).Execute()
+	return executeWithDeps(DefaultDeps(), os.Args[1:])
+}
+
+func executeWithDeps(deps Deps, args []string) error {
+	deps = deps.withDefaults()
+	cmd := NewRootCommand(deps)
+	cmd.SetArgs(args)
+	err := cmd.Execute()
+	if err != nil && ExitCode(err) == 2 {
+		(&commandContext{deps: deps}).emitCLIUsageError(context.Background(), args, err)
+	}
+	return err
 }
 
 // usageError marks a command-line misuse (bad flag, wrong arg count). It lets
@@ -205,6 +216,33 @@ func (c *commandContext) emitCLIInvoked(ctx context.Context, cmd *cobra.Command)
 		"command":     cmd.Name(),
 		"commandPath": cmd.CommandPath(),
 	})
+}
+
+func (c *commandContext) emitCLIUsageError(ctx context.Context, args []string, err error) {
+	command, commandPath := usageErrorCommand(args)
+	reqCtx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
+	_ = c.postLoopbackJSON(reqCtx, "/internal/telemetry/cli-usage-error", map[string]string{
+		"command":     command,
+		"commandPath": commandPath,
+		"error":       err.Error(),
+	})
+}
+
+func usageErrorCommand(args []string) (string, string) {
+	tokens := []string{"ao"}
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "-") {
+			break
+		}
+		tokens = append(tokens, arg)
+	}
+	commandPath := strings.Join(tokens, " ")
+	command := "ao"
+	if len(tokens) > 1 {
+		command = tokens[len(tokens)-1]
+	}
+	return command, commandPath
 }
 
 func noArgs(cmd *cobra.Command, args []string) error {

@@ -85,6 +85,37 @@ func TestVersionEmitsCLIInvocationBestEffort(t *testing.T) {
 	}
 }
 
+func TestUsageErrorEmitsCLIUsageTelemetryBestEffort(t *testing.T) {
+	cfg := setConfigEnv(t)
+	called := make(chan string, 1)
+	if err := runfile.Write(cfg.runFile, runfile.Info{PID: os.Getpid(), Port: 3001, StartedAt: time.Unix(100, 0).UTC()}); err != nil {
+		t.Fatal(err)
+	}
+
+	deps := Deps{
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if req.URL.Path == "/internal/telemetry/cli-usage-error" {
+				called <- req.URL.Path
+				return jsonResponse(http.StatusAccepted, ""), nil
+			}
+			return jsonResponse(http.StatusNotFound, ""), nil
+		})},
+		ProcessAlive: func(pid int) bool { return pid == os.Getpid() },
+	}
+	err := executeWithDeps(deps, []string{"status", "extra"})
+	if err == nil {
+		t.Fatal("expected usage error")
+	}
+	select {
+	case path := <-called:
+		if path != "/internal/telemetry/cli-usage-error" {
+			t.Fatalf("telemetry path = %q, want /internal/telemetry/cli-usage-error", path)
+		}
+	default:
+		t.Fatal("usage error did not emit CLI usage telemetry")
+	}
+}
+
 func TestStatusStoppedJSON(t *testing.T) {
 	setConfigEnv(t)
 
