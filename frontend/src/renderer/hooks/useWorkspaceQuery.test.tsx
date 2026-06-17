@@ -102,8 +102,20 @@ describe("useWorkspaceQuery", () => {
 			sessions: {
 				data: {
 					sessions: [
-						{ id: "sess-1", projectId: "proj-1", status: "pr_open", isTerminated: false, updatedAt: "2026-06-10T16:15:04Z" },
-						{ id: "sess-2", projectId: "proj-1", status: "working", isTerminated: false, updatedAt: "2026-06-10T16:15:04Z" },
+						{
+							id: "sess-1",
+							projectId: "proj-1",
+							status: "pr_open",
+							isTerminated: false,
+							updatedAt: "2026-06-10T16:15:04Z",
+						},
+						{
+							id: "sess-2",
+							projectId: "proj-1",
+							status: "working",
+							isTerminated: false,
+							updatedAt: "2026-06-10T16:15:04Z",
+						},
 					],
 				},
 				error: undefined,
@@ -112,7 +124,18 @@ describe("useWorkspaceQuery", () => {
 				"sess-1": {
 					data: {
 						sessionId: "sess-1",
-						prs: [{ number: 278, state: "open", url: "u", ci: "passing", review: "approved", mergeability: "clean", reviewComments: false, updatedAt: "2026-06-10T16:15:04Z" }],
+						prs: [
+							{
+								number: 278,
+								state: "open",
+								url: "u",
+								ci: "passing",
+								review: "approved",
+								mergeability: "clean",
+								reviewComments: false,
+								updatedAt: "2026-06-10T16:15:04Z",
+							},
+						],
 					},
 					error: undefined,
 				},
@@ -134,7 +157,13 @@ describe("useWorkspaceQuery", () => {
 			sessions: {
 				data: {
 					sessions: [
-						{ id: "sess-1", projectId: "proj-1", status: "pr_open", isTerminated: false, updatedAt: "2026-06-10T16:15:04Z" },
+						{
+							id: "sess-1",
+							projectId: "proj-1",
+							status: "pr_open",
+							isTerminated: false,
+							updatedAt: "2026-06-10T16:15:04Z",
+						},
 					],
 				},
 				error: undefined,
@@ -154,7 +183,13 @@ describe("useWorkspaceQuery", () => {
 			sessions: {
 				data: {
 					sessions: [
-						{ id: "sess-1", projectId: "proj-1", status: "merged", isTerminated: true, updatedAt: "2026-06-10T16:15:04Z" },
+						{
+							id: "sess-1",
+							projectId: "proj-1",
+							status: "merged",
+							isTerminated: true,
+							updatedAt: "2026-06-10T16:15:04Z",
+						},
 					],
 				},
 				error: undefined,
