@@ -9,7 +9,7 @@ import type { ReactNode } from "react";
 // into every consumer.
 const { getMock, navigateMock } = vi.hoisted(() => ({ getMock: vi.fn(), navigateMock: vi.fn() }));
 
-vi.mock("../lib/api-client", () => ({
+vi.mock("../../lib/api-client", () => ({
 	apiClient: { GET: getMock, POST: vi.fn() },
 	apiErrorMessage: (e: unknown) => (e instanceof Error ? e.message : "error"),
 }));
@@ -19,8 +19,8 @@ vi.mock("@tanstack/react-router", async (importOriginal) => {
 	return { ...actual, useNavigate: () => navigateMock };
 });
 
-import { SessionsBoard } from "./SessionsBoard";
-import { PullRequestsPage } from "./PullRequestsPage";
+import { SessionsBoard } from "../../components/SessionsBoard";
+import { PullRequestsPage } from "../../components/PullRequestsPage";
 
 // One ordinary project with one worker session that has an open PR (#278).
 function respondWithProjectAndPR() {
