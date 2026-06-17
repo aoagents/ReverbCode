@@ -62,6 +62,34 @@ func TestReviewSubmitReadsBodyFile(t *testing.T) {
 	}
 }
 
+func TestReviewSubmitReadsInlineBody(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, capture := reviewServer(t, http.StatusOK, `{"review":{"verdict":"changes_requested"}}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, errOut, err := executeCLI(t, aliveDeps(),
+		"review", "submit", "mer-1", "--run", "run-1", "--verdict", "changes_requested", "--body-text", "please fix")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	var req submitReviewRequest
+	if err := json.Unmarshal([]byte(capture.body), &req); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if req.Body != "please fix" {
+		t.Fatalf("inline body not forwarded; request = %+v", req)
+	}
+}
+
+func TestReviewSubmitBodyAndBodyTextIsUsageError(t *testing.T) {
+	setConfigEnv(t)
+	_, _, err := executeCLI(t, aliveDeps(),
+		"review", "submit", "mer-1", "--run", "run-1", "--verdict", "approved", "--body", "x.md", "--body-text", "y")
+	if got := ExitCode(err); got != 2 {
+		t.Fatalf("exit code = %d, want 2 (usage); err=%v", got, err)
+	}
+}
+
 func TestReviewSubmitUsesSessionFlag(t *testing.T) {
 	cfg := setConfigEnv(t)
 	srv, capture := reviewServer(t, http.StatusOK, `{"review":{"verdict":"approved"}}`)

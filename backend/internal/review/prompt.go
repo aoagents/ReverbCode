@@ -20,9 +20,9 @@ Post your review on the pull request using the available review tooling (request
 
 	prompt = fmt.Sprintf(`Review pull request %s (head commit %s).
 
-When done, write your full review to review.md and record the result with AO by running exactly:
+You are read-only: you can read the checkout and run gh, git diff/log/show, and ao — you cannot write or edit files, so do not write a review file. When done, record the result with AO by passing your full review inline:
 
-    ao review submit --session %s --run %s --verdict <approved|changes_requested> --body review.md
+    ao review submit --session %s --run %s --verdict <approved|changes_requested> --body-text "<your full review as Markdown>"
 
 If you cannot post the review on the provider, still run the command above so the result is recorded.`,
 		spec.PRURL, spec.TargetSHA, spec.WorkerID, spec.RunID)
