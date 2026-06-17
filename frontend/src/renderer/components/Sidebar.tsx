@@ -498,7 +498,15 @@ function ProjectItem({
 											>
 												{session.title}
 											</span>
-											<span className="block truncate font-mono text-[10px] text-passive">{session.id}</span>
+											{/* The id is a secondary handle; when the worker has no
+											    displayName/issueId the title already falls back to the
+											    id (useWorkspaceQuery), so skip the line rather than
+											    repeat the same string twice. */}
+											{session.title !== session.id && (
+												<span className="block truncate font-mono text-[10px] text-passive">
+													{session.id}
+												</span>
+											)}
 										</span>
 									</button>
 								</SidebarMenuSubButton>
