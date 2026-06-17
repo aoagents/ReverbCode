@@ -235,15 +235,15 @@ function SummaryView({
 					<p className="inspector-empty">Loading pull request…</p>
 				) : (
 					<div className="flex flex-col gap-2">
-						<div className="flex items-center gap-2">
+						<div className="inspector-pr-summary">
 							<GitPullRequest className="h-3.5 w-3.5 shrink-0 text-passive" aria-hidden="true" />
-							<span className="text-[12.5px] font-medium text-foreground">
+							<span className="inspector-pr-summary__title">
 								PR #{prFacts?.number ?? session.pullRequest?.number}
 							</span>
 							{prFacts ? (
 								<Badge
 									variant="outline"
-									className={cn("ml-auto h-5 px-1.5 text-[10px] font-medium", prStateTone[prFacts.state])}
+									className={cn("inspector-pr-summary__state h-5 px-1.5 text-[10px] font-medium", prStateTone[prFacts.state])}
 								>
 									{prFacts.state}
 								</Badge>
