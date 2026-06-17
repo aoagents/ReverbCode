@@ -1,4 +1,5 @@
 import { SidebarProvider } from "@/components/ui/sidebar";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -26,15 +27,20 @@ const workspace: WorkspaceSummary = {
 };
 
 function renderSidebar(onRemoveProject = vi.fn().mockResolvedValue(undefined)) {
+	const queryClient = new QueryClient({
+		defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+	});
 	render(
-		<SidebarProvider>
-			<Sidebar
-				daemonStatus={{ state: "running" }}
-				onCreateProject={vi.fn()}
-				onRemoveProject={onRemoveProject}
-				workspaces={[workspace]}
-			/>
-		</SidebarProvider>,
+		<QueryClientProvider client={queryClient}>
+			<SidebarProvider>
+				<Sidebar
+					daemonStatus={{ state: "running" }}
+					onCreateProject={vi.fn()}
+					onRemoveProject={onRemoveProject}
+					workspaces={[workspace]}
+				/>
+			</SidebarProvider>
+		</QueryClientProvider>,
 	);
 	return onRemoveProject;
 }
@@ -74,6 +80,23 @@ describe("Sidebar", () => {
 		expect(onRemoveProject).not.toHaveBeenCalled();
 	});
 
+	it("reveals dashboard and orchestrator buttons alongside the kebab on the project row", () => {
+		renderSidebar();
+
+		expect(screen.getByLabelText("Open Project One dashboard")).toBeInTheDocument();
+		expect(screen.getByLabelText("Spawn Project One orchestrator")).toBeInTheDocument();
+		expect(screen.getByLabelText("Project actions for Project One")).toBeInTheDocument();
+	});
+
+	it("navigates to the project board when the dashboard button is clicked", async () => {
+		const user = userEvent.setup();
+		renderSidebar();
+
+		await user.click(screen.getByLabelText("Open Project One dashboard"));
+
+		expect(navigateMock).toHaveBeenCalledWith({ to: "/projects/$projectId", params: { projectId: "proj-1" } });
+	});
+
 	it("hides the worker count in every state that reveals project actions", () => {
 		renderSidebar();
 
@@ -81,9 +104,9 @@ describe("Sidebar", () => {
 		const count = screen.getByText("0");
 
 		if (!projectRow) throw new Error("Project row button not found");
-		expect(projectRow).toHaveClass("group-hover/menu-item:pr-[34px]");
-		expect(projectRow).toHaveClass("group-focus-within/menu-item:pr-[34px]");
-		expect(projectRow).toHaveClass("group-has-data-[state=open]/menu-item:pr-[34px]");
+		expect(projectRow).toHaveClass("group-hover/menu-item:pr-[78px]");
+		expect(projectRow).toHaveClass("group-focus-within/menu-item:pr-[78px]");
+		expect(projectRow).toHaveClass("group-has-data-[state=open]/menu-item:pr-[78px]");
 		expect(count).toHaveClass("group-hover/menu-item:opacity-0");
 		expect(count).toHaveClass("group-focus-within/menu-item:opacity-0");
 		expect(count).toHaveClass("group-has-data-[state=open]/menu-item:opacity-0");
