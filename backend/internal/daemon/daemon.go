@@ -10,11 +10,13 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/zellij"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd"
 	"github.com/aoagents/agent-orchestrator/backend/internal/notify"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/runfile"
 	notificationsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/notification"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
@@ -49,6 +51,19 @@ func Run() error {
 		return fmt.Errorf("open store: %w", err)
 	}
 	defer func() { _ = store.Close() }()
+
+	telemetrySink := newTelemetrySink(cfg, store, log)
+	defer func() { _ = telemetrySink.Close(context.Background()) }()
+	telemetrySink.Emit(context.Background(), ports.TelemetryEvent{
+		Name:       "ao.daemon.started",
+		Source:     "daemon",
+		OccurredAt: time.Now().UTC(),
+		Level:      ports.TelemetryLevelInfo,
+		Payload: map[string]any{
+			"port":  cfg.Port,
+			"agent": cfg.Agent,
+		},
+	})
 
 	// signal.NotifyContext cancels ctx on SIGINT/SIGTERM, which drives the
 	// graceful shutdown inside Server.Run and stops the background goroutines.
