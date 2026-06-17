@@ -91,28 +91,25 @@ describe("parseRunFile", () => {
 });
 
 describe("defaultRunFilePath", () => {
-	it("mirrors Go os.UserConfigDir on macOS", () => {
-		expect(defaultRunFilePath("darwin", {}, "/Users/me")).toBe(
-			"/Users/me/Library/Application Support/agent-orchestrator/running.json",
-		);
+	it("matches Go's canonical AO home default on macOS", () => {
+		expect(defaultRunFilePath("darwin", {}, "/Users/me")).toBe("/Users/me/.ao/running.json");
 	});
 
-	it("prefers XDG_CONFIG_HOME on linux, falling back to ~/.config", () => {
-		expect(defaultRunFilePath("linux", { XDG_CONFIG_HOME: "/xdg" }, "/home/me")).toBe(
-			"/xdg/agent-orchestrator/running.json",
-		);
-		expect(defaultRunFilePath("linux", {}, "/home/me")).toBe("/home/me/.config/agent-orchestrator/running.json");
+	it("ignores XDG_CONFIG_HOME on linux", () => {
+		expect(defaultRunFilePath("linux", { XDG_CONFIG_HOME: "/xdg" }, "/home/me")).toBe("/home/me/.ao/running.json");
+		expect(defaultRunFilePath("linux", {}, "/home/me")).toBe("/home/me/.ao/running.json");
 	});
 
-	it("uses APPDATA on windows and returns null when it is unset", () => {
-		expect(defaultRunFilePath("win32", { APPDATA: "C:\\Users\\me\\AppData\\Roaming" }, "C:\\Users\\me")).toContain(
-			"agent-orchestrator",
+	it("ignores APPDATA on windows", () => {
+		expect(defaultRunFilePath("win32", { APPDATA: "C:\\Users\\me\\AppData\\Roaming" }, "C:\\Users\\me")).toBe(
+			"C:\\Users\\me/.ao/running.json",
 		);
-		expect(defaultRunFilePath("win32", {}, "C:\\Users\\me")).toBeNull();
+		expect(defaultRunFilePath("win32", {}, "C:\\Users\\me")).toBe("C:\\Users\\me/.ao/running.json");
 	});
 
-	it("returns null when no config root can be resolved", () => {
+	it("returns null when no home directory can be resolved", () => {
 		expect(defaultRunFilePath("linux", {}, "")).toBeNull();
 		expect(defaultRunFilePath("darwin", {}, "")).toBeNull();
+		expect(defaultRunFilePath("win32", {}, "")).toBeNull();
 	});
 });

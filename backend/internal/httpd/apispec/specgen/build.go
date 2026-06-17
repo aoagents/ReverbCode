@@ -63,6 +63,8 @@ func Build() ([]byte, error) {
 			"Pull-request actions (SCM lane)"),
 		*(&openapi31.Tag{Name: "reviews"}).WithDescription(
 			"Code-review runs and findings"),
+		*(&openapi31.Tag{Name: "notifications"}).WithDescription(
+			"Durable dashboard notifications"),
 		*(&openapi31.Tag{Name: "events"}).WithDescription(
 			"Server-sent CDC event stream with durable replay"),
 	}
@@ -155,17 +157,21 @@ var schemaNames = map[string]string{
 	"ControllersSpawnOrchestratorRequest":   "SpawnOrchestratorRequest",
 	"ControllersSpawnOrchestratorResponse":  "SpawnOrchestratorResponse",
 	"ControllersOrchestratorResponse":       "OrchestratorResponse",
+	"ControllersListNotificationsQuery":     "ListNotificationsQuery",
+	"ControllersNotificationStreamQuery":    "NotificationStreamQuery",
+	"ControllersNotificationTarget":         "NotificationTarget",
+	"ControllersNotificationResponse":       "NotificationResponse",
+	"ControllersListNotificationsResponse":  "ListNotificationsResponse",
 	// httpd/controllers — PR wire envelopes
 	"ControllersMergePRResponse":         "MergePRResponse",
 	"ControllersResolveCommentsRequest":  "ResolveCommentsRequest",
 	"ControllersResolveCommentsResponse": "ResolveCommentsResponse",
 	// httpd/controllers — review wire envelopes
 	"ControllersListReviewsResponse": "ListReviewsResponse",
-	"ControllersExecuteReviewInput":  "ExecuteReviewInput",
-	"ControllersReviewResponse":      "ReviewResponse",
-	// service/review entities
-	"ReviewRun":     "ReviewRun",
-	"ReviewFinding": "ReviewFinding",
+	"ControllersReviewRunResponse":   "ReviewRunResponse",
+	"ControllersSubmitReviewInput":   "SubmitReviewInput",
+	// domain review entities
+	"DomainReviewRun": "ReviewRun",
 	// service/project entities + DTOs
 	"ProjectProject":        "Project",
 	"ProjectSummary":        "ProjectSummary",
@@ -252,38 +258,73 @@ func operations() []operation {
 	ops = append(ops, sessionOperations()...)
 	ops = append(ops, prOperations()...)
 	ops = append(ops, reviewOperations()...)
+	ops = append(ops, notificationOperations()...)
 	return ops
 }
 
-// reviewOperations declares the /reviews operations. Must stay 1:1 with the
-// routes ReviewsController.Register mounts (enforced by the parity test).
-func reviewOperations() []operation {
+func notificationOperations() []operation {
 	return []operation{
 		{
-			method: http.MethodGet, path: "/api/v1/reviews", id: "listReviews", tag: "reviews",
-			summary: "List code-review runs",
+			method: http.MethodGet, path: "/api/v1/notifications", id: "listNotifications", tag: "notifications",
+			summary:    "List unread notifications",
+			pathParams: []any{controllers.ListNotificationsQuery{}},
 			resps: []respUnit{
-				{http.StatusOK, controllers.ListReviewsResponse{}},
+				{http.StatusOK, controllers.ListNotificationsResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
 			},
 		},
 		{
-			method: http.MethodPost, path: "/api/v1/reviews/execute", id: "executeReview", tag: "reviews",
-			summary: "Start a code-review run for a session's PR",
-			reqBody: controllers.ExecuteReviewInput{},
+			method: http.MethodGet, path: "/api/v1/notifications/stream", id: "streamNotifications", tag: "notifications",
+			summary:    "Stream created notifications",
+			pathParams: []any{controllers.NotificationStreamQuery{}},
 			resps: []respUnit{
-				{http.StatusCreated, controllers.ReviewResponse{}},
-				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusOK, ""},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+			contentTypes: map[int]string{http.StatusOK: "text/event-stream"},
+		},
+	}
+}
+
+// reviewOperations declares the session-scoped /reviews operations. Must stay
+// 1:1 with the routes ReviewsController.Register mounts (enforced by the parity
+// test).
+func reviewOperations() []operation {
+	return []operation{
+		{
+			method: http.MethodGet, path: "/api/v1/sessions/{sessionId}/reviews", id: "listReviews", tag: "reviews",
+			summary:    "List a worker's code-review runs",
+			pathParams: []any{controllers.SessionIDParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ListReviewsResponse{}},
 				{http.StatusUnprocessableEntity, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
 			},
 		},
 		{
-			method: http.MethodPost, path: "/api/v1/reviews/{id}/send", id: "sendReview", tag: "reviews",
-			summary:    "Send a review run's findings to its PR",
-			pathParams: []any{controllers.ReviewIDParam{}},
+			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/reviews/trigger", id: "triggerReview", tag: "reviews",
+			summary:    "Trigger a code review of a worker's PR",
+			pathParams: []any{controllers.SessionIDParam{}},
 			resps: []respUnit{
-				{http.StatusOK, controllers.ReviewResponse{}},
+				{http.StatusOK, controllers.ReviewRunResponse{}},
+				{http.StatusCreated, controllers.ReviewRunResponse{}},
+				{http.StatusUnprocessableEntity, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/reviews/submit", id: "submitReview", tag: "reviews",
+			summary:    "Record a reviewer's result for a worker's PR",
+			pathParams: []any{controllers.SessionIDParam{}},
+			reqBody:    controllers.SubmitReviewInput{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ReviewRunResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusUnprocessableEntity, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
 			},

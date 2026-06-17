@@ -9,16 +9,24 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/activitydispatch"
 	agentregistry "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/registry"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/zellij"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/workspace/gitworktree"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/lifecycle"
 	"github.com/aoagents/agent-orchestrator/backend/internal/observe/reaper"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	reviewcore "github.com/aoagents/agent-orchestrator/backend/internal/review"
+	reviewsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/review"
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
 	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 )
+
+type notificationSink interface {
+	Notify(context.Context, ports.NotificationIntent) error
+}
 
 // lifecycleStack owns the runtime reaper goroutine started with the lifecycle
 // reducer. The reducer itself is only used for wiring observations into storage.
@@ -35,8 +43,8 @@ type lifecycleStack struct {
 // reaper. The goroutine stops when ctx is cancelled; Stop waits for it to drain.
 // The messenger is the per-daemon agent messenger the LCM uses to nudge agents
 // in response to SCM observations (CI failure, review feedback, merge conflict).
-func startLifecycle(ctx context.Context, store *sqlite.Store, runtime ports.Runtime, messenger ports.AgentMessenger, logger *slog.Logger) *lifecycleStack {
-	lcm := lifecycle.New(store, messenger)
+func startLifecycle(ctx context.Context, store *sqlite.Store, runtime ports.Runtime, messenger ports.AgentMessenger, notifier notificationSink, logger *slog.Logger) *lifecycleStack {
+	lcm := lifecycle.New(store, messenger, lifecycle.WithNotificationSink(notifier))
 	rp := reaper.New(lcm, store, runtime, reaper.Config{Logger: logger})
 	return &lifecycleStack{LCM: lcm, reaperDone: rp.Start(ctx)}
 }
@@ -54,10 +62,17 @@ func (l *lifecycleStack) Stop() {
 // over the real zellij runtime, a per-session gitworktree workspace, the shared
 // store + LCM, the per-session agent resolver (AO_AGENT default), and the
 // agent messenger. The returned service is mounted at httpd APIDeps.Sessions.
-func startSession(cfg config.Config, runtime ports.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, messenger ports.AgentMessenger, log *slog.Logger) (*sessionsvc.Service, error) {
-	agents, err := buildAgentResolver(cfg.Agent, log)
+func startSession(cfg config.Config, runtime *zellij.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, messenger ports.AgentMessenger, log *slog.Logger) (*sessionsvc.Service, reviewsvc.Manager, error) {
+	// Resolve the default agent once and share it with both the resolver (which
+	// launches it for an unspecified harness) and the session manager (which
+	// persists it onto the seed row), so the stored harness matches what runs.
+	defaultAgent := cfg.Agent
+	if defaultAgent == "" {
+		defaultAgent = config.DefaultAgent
+	}
+	agents, err := buildAgentResolver(defaultAgent, log)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	ws, err := gitworktree.New(gitworktree.Options{
 		// Per-session worktrees live under the data dir, so a single AO_DATA_DIR
@@ -69,23 +84,24 @@ func startSession(cfg config.Config, runtime ports.Runtime, store *sqlite.Store,
 		RepoResolver: projectRepoResolver{store: store},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("session workspace: %w", err)
+		return nil, nil, fmt.Errorf("session workspace: %w", err)
 	}
 	mgr := sessionmanager.New(sessionmanager.Deps{
-		Runtime:   runtime,
-		Agents:    agents,
-		Workspace: ws,
-		Store:     store,
-		Messenger: messenger,
-		Lifecycle: lcm,
-		DataDir:   cfg.DataDir,
-		Logger:    log,
+		Runtime:        runtime,
+		Agents:         agents,
+		Workspace:      ws,
+		Store:          store,
+		Messenger:      messenger,
+		Lifecycle:      lcm,
+		DataDir:        cfg.DataDir,
+		DefaultHarness: domain.AgentHarness(defaultAgent),
+		Logger:         log,
 	})
 	scmProvider, err := newGitHubSCMProvider(log)
 	if err != nil {
 		logSCMProviderDisabled(log, err)
 	}
-	return sessionsvc.NewWithDeps(sessionsvc.Deps{
+	sessionSvc := sessionsvc.NewWithDeps(sessionsvc.Deps{
 		Manager:   mgr,
 		Store:     store,
 		PRClaimer: store,
@@ -93,7 +109,24 @@ func startSession(cfg config.Config, runtime ports.Runtime, store *sqlite.Store,
 		// no_signal only makes sense for harnesses whose adapters install
 		// activity hooks; the deriver registry is the source of truth for that.
 		SignalCapable: activitydispatch.SupportsHarness,
-	}), nil
+	})
+	// Triggering a review spawns a reviewer over the worker's worktree, resolved
+	// from the reviewer registry (distinct from the worker agent set). The
+	// reviewer posts its review to the PR itself, so the service needs no SCM
+	// writer.
+	reviewers, err := reviewer.NewResolver()
+	if err != nil {
+		return nil, nil, fmt.Errorf("reviewer resolver: %w", err)
+	}
+	reviewEngine := reviewcore.New(reviewcore.Deps{
+		Store:    store,
+		Sessions: store,
+		PRs:      store,
+		Projects: store,
+		Launcher: reviewcore.NewLauncher(reviewers, runtime),
+	})
+	reviewSvc := reviewsvc.New(reviewEngine)
+	return sessionSvc, reviewSvc, nil
 }
 
 // runtimeMessageSender is the narrow part of the concrete runtime needed by

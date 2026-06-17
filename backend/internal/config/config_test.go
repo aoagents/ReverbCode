@@ -33,18 +33,18 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.RunFilePath == "" {
 		t.Error("RunFilePath is empty, want a resolved default path")
 	}
-	configDir, err := os.UserConfigDir()
+	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		t.Fatalf("UserConfigDir: %v", err)
+		t.Fatalf("UserHomeDir: %v", err)
 	}
-	wantRunFilePath := filepath.Join(configDir, "agent-orchestrator", "running.json")
+	wantRunFilePath := filepath.Join(homeDir, ".ao", "running.json")
 	if cfg.RunFilePath != wantRunFilePath {
 		t.Errorf("RunFilePath = %q, want %q", cfg.RunFilePath, wantRunFilePath)
 	}
 	if cfg.DataDir == "" {
 		t.Error("DataDir is empty, want a resolved default path")
 	}
-	wantDataDir := filepath.Join(configDir, "agent-orchestrator", "data")
+	wantDataDir := filepath.Join(homeDir, ".ao", "data")
 	if cfg.DataDir != wantDataDir {
 		t.Errorf("DataDir = %q, want %q", cfg.DataDir, wantDataDir)
 	}

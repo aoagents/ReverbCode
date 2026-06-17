@@ -7,88 +7,98 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apispec"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
 	reviewsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/review"
 )
 
-// ReviewIDParam is the {id} path parameter on the /reviews/{id} routes.
-type ReviewIDParam struct {
-	ID string `path:"id" description:"Review run id."`
-}
-
-// ListReviewsResponse is the body of GET /api/v1/reviews.
+// ListReviewsResponse is the body of GET /api/v1/sessions/{sessionId}/reviews.
+// reviewerHandleId is the live reviewer pane's runtime handle, for the UI to
+// attach its terminal over /mux (empty when no reviewer has run).
 type ListReviewsResponse struct {
-	Reviews []reviewsvc.Run `json:"reviews"`
+	ReviewerHandleID string             `json:"reviewerHandleId"`
+	Reviews          []domain.ReviewRun `json:"reviews"`
 }
 
-// ExecuteReviewInput is the body of POST /api/v1/reviews/execute.
-type ExecuteReviewInput struct {
-	SessionID string `json:"sessionId" description:"Session whose PR to review."`
+// ReviewRunResponse is the body of trigger (200/201) and submit (200). It
+// carries the run plus the reviewer pane handle so the UI can attach a terminal.
+type ReviewRunResponse struct {
+	Review           domain.ReviewRun `json:"review"`
+	ReviewerHandleID string           `json:"reviewerHandleId"`
 }
 
-// ReviewResponse is the { review } body of execute (201) and send (200).
-type ReviewResponse struct {
-	Review reviewsvc.Run `json:"review"`
+// SubmitReviewInput is the body of POST /api/v1/sessions/{sessionId}/reviews/submit.
+type SubmitReviewInput struct {
+	RunID   string `json:"runId" description:"Review run id being completed."`
+	Verdict string `json:"verdict" description:"Review verdict: approved or changes_requested."`
+	Body    string `json:"body" description:"Review body recorded by AO. Required for changes_requested."`
 }
 
-// ReviewsController owns the /reviews routes. A nil Svc returns 501.
+// ReviewsController owns the session-scoped /reviews routes. A nil Svc returns 501.
 type ReviewsController struct {
 	Svc reviewsvc.Manager
 }
 
 // Register mounts the review routes on the supplied router.
 func (c *ReviewsController) Register(r chi.Router) {
-	r.Get("/reviews", c.list)
-	r.Post("/reviews/execute", c.execute)
-	r.Post("/reviews/{id}/send", c.send)
+	r.Get("/sessions/{sessionId}/reviews", c.list)
+	r.Post("/sessions/{sessionId}/reviews/trigger", c.trigger)
+	r.Post("/sessions/{sessionId}/reviews/submit", c.submit)
 }
 
 func (c *ReviewsController) list(w http.ResponseWriter, r *http.Request) {
 	if c.Svc == nil {
-		apispec.NotImplemented(w, r, "GET", "/api/v1/reviews")
+		apispec.NotImplemented(w, r, "GET", "/api/v1/sessions/{sessionId}/reviews")
 		return
 	}
-	runs, err := c.Svc.List(r.Context())
+	res, err := c.Svc.List(r.Context(), sessionID(r))
 	if err != nil {
 		writeReviewError(w, r, err)
 		return
 	}
+	runs := res.Runs
 	if runs == nil {
-		runs = []reviewsvc.Run{}
+		runs = []domain.ReviewRun{}
 	}
-	envelope.WriteJSON(w, http.StatusOK, ListReviewsResponse{Reviews: runs})
+	envelope.WriteJSON(w, http.StatusOK, ListReviewsResponse{ReviewerHandleID: res.ReviewerHandleID, Reviews: runs})
 }
 
-func (c *ReviewsController) execute(w http.ResponseWriter, r *http.Request) {
+func (c *ReviewsController) trigger(w http.ResponseWriter, r *http.Request) {
 	if c.Svc == nil {
-		apispec.NotImplemented(w, r, "POST", "/api/v1/reviews/execute")
+		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/{sessionId}/reviews/trigger")
 		return
 	}
-	var in ExecuteReviewInput
+	res, err := c.Svc.Trigger(r.Context(), sessionID(r))
+	if err != nil {
+		writeReviewError(w, r, err)
+		return
+	}
+	// 201 when a new pass was started; 200 when an existing run for the same
+	// commit was reused.
+	status := http.StatusOK
+	if res.Created {
+		status = http.StatusCreated
+	}
+	envelope.WriteJSON(w, status, ReviewRunResponse{Review: res.Run, ReviewerHandleID: res.ReviewerHandleID})
+}
+
+func (c *ReviewsController) submit(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/{sessionId}/reviews/submit")
+		return
+	}
+	var in SubmitReviewInput
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_BODY", "Invalid request body", nil)
 		return
 	}
-	run, err := c.Svc.Execute(r.Context(), in.SessionID)
+	run, err := c.Svc.Submit(r.Context(), sessionID(r), in.RunID, domain.ReviewVerdict(in.Verdict), in.Body)
 	if err != nil {
 		writeReviewError(w, r, err)
 		return
 	}
-	envelope.WriteJSON(w, http.StatusCreated, ReviewResponse{Review: run})
-}
-
-func (c *ReviewsController) send(w http.ResponseWriter, r *http.Request) {
-	if c.Svc == nil {
-		apispec.NotImplemented(w, r, "POST", "/api/v1/reviews/{id}/send")
-		return
-	}
-	run, err := c.Svc.Send(r.Context(), chi.URLParam(r, "id"))
-	if err != nil {
-		writeReviewError(w, r, err)
-		return
-	}
-	envelope.WriteJSON(w, http.StatusOK, ReviewResponse{Review: run})
+	envelope.WriteJSON(w, http.StatusOK, ReviewRunResponse{Review: run})
 }
 
 func writeReviewError(w http.ResponseWriter, r *http.Request, err error) {
@@ -96,7 +106,7 @@ func writeReviewError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, reviewsvc.ErrInvalid):
 		envelope.WriteAPIError(w, r, http.StatusUnprocessableEntity, "unprocessable", "REVIEW_INVALID", err.Error(), nil)
 	case errors.Is(err, reviewsvc.ErrNotFound):
-		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "REVIEW_NOT_FOUND", "Unknown review run", nil)
+		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "REVIEW_NOT_FOUND", err.Error(), nil)
 	default:
 		envelope.WriteAPIError(w, r, http.StatusInternalServerError, "internal", "REVIEW_OPERATION_FAILED", "Review operation failed", nil)
 	}

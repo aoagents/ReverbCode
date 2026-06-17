@@ -74,7 +74,11 @@ export default defineConfig({
 	],
 	test: {
 		environment: "jsdom",
-		exclude: ["node_modules/**", "dist/**", "dist-electron/**", "e2e/**"],
+		// Anchor node_modules at any depth: a bare "node_modules/**" replaces
+		// vitest's default "**/node_modules/**" and only matches the root, so the
+		// tracked src/landing preview app's nested node_modules would otherwise
+		// have its vendored third-party test suites collected and run.
+		exclude: ["**/node_modules/**", "dist/**", "dist-electron/**", "e2e/**"],
 		globals: true,
 		setupFiles: "./src/renderer/test/setup.ts",
 	},

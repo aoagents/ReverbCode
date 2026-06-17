@@ -23,6 +23,10 @@ func TestProjectConfigValidate(t *testing.T) {
 		{"symlink parent escape", ProjectConfig{Symlinks: []string{"../escape"}}, true},
 		{"symlink embedded parent", ProjectConfig{Symlinks: []string{"a/../../b"}}, true},
 		{"symlink bare ..", ProjectConfig{Symlinks: []string{".."}}, true},
+		{"good reviewers", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerClaudeCode}}}, false},
+		{"unknown reviewer harness", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: "nope"}}}, true},
+		{"worker harness is not auto a reviewer", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerHarness(HarnessCodex)}}}, true},
+		{"empty reviewer harness", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ""}}}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -66,6 +70,25 @@ func TestProjectConfigWithDefaults(t *testing.T) {
 	}
 	if got.AgentConfig.Model != "m" {
 		t.Fatalf("WithDefaults dropped a set field: %#v", got.AgentConfig)
+	}
+}
+
+func TestResolveReviewerHarness(t *testing.T) {
+	// A configured reviewer always wins, regardless of the worker harness.
+	cfg := ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerClaudeCode}}}
+	if got := cfg.ResolveReviewerHarness(HarnessAider); got != ReviewerClaudeCode {
+		t.Fatalf("configured reviewer = %q, want claude-code", got)
+	}
+
+	// No reviewer configured: reuse the worker harness when it is also a
+	// supported reviewer (claude-code is).
+	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessClaudeCode); got != ReviewerClaudeCode {
+		t.Fatalf("default = %q, want reviewer claude-code", got)
+	}
+
+	// A worker harness that is not a supported reviewer falls back to claude-code.
+	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessAider); got != FallbackReviewerHarness {
+		t.Fatalf("fallback = %q, want %q", got, FallbackReviewerHarness)
 	}
 }
 

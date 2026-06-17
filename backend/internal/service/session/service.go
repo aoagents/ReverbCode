@@ -339,10 +339,14 @@ func toAPIError(err error) error {
 		return apierr.Conflict("SESSION_INCOMPLETE_HANDLE", "Session is missing runtime or workspace handles", nil)
 	case errors.Is(err, sessionmanager.ErrProjectNotResolvable):
 		return apierr.Invalid("PROJECT_NOT_RESOLVABLE", "Project is not registered or has no repo — register it with `ao project add`", nil)
+	case errors.Is(err, sessionmanager.ErrUnknownHarness):
+		return apierr.Invalid("UNKNOWN_HARNESS", err.Error(), nil)
 	case errors.Is(err, ports.ErrWorkspaceBranchCheckedOutElsewhere):
 		return apierr.Conflict("BRANCH_CHECKED_OUT_ELSEWHERE", err.Error(), nil)
 	case errors.Is(err, ports.ErrWorkspaceBranchNotFetched):
 		return apierr.Invalid("BRANCH_NOT_FETCHED", err.Error(), nil)
+	case errors.Is(err, ports.ErrWorkspaceBranchInvalid):
+		return apierr.Invalid("INVALID_BRANCH", err.Error(), nil)
 	case errors.Is(err, ports.ErrAgentBinaryNotFound):
 		return apierr.Invalid("AGENT_BINARY_NOT_FOUND", err.Error(), nil)
 	default:

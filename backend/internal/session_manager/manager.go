@@ -28,6 +28,10 @@ var (
 	// ErrProjectNotResolvable means the spawn's project has no usable repo
 	// (unregistered, archived, or missing a path). The API maps it to a 400.
 	ErrProjectNotResolvable = errors.New("session: project repo not resolvable")
+	// ErrUnknownHarness means the requested agent harness has no registered
+	// adapter. The API maps it to a 400 so a typo'd `--harness` is a validation
+	// error, not an opaque 500.
+	ErrUnknownHarness = errors.New("session: unknown agent harness")
 )
 
 // Env vars a spawned process reads to learn who it is.
@@ -82,7 +86,11 @@ type Manager struct {
 	messenger ports.AgentMessenger
 	lcm       lifecycleRecorder
 	dataDir   string
-	clock     func() time.Time
+	// defaultHarness is the daemon's configured default agent (AO_AGENT). A spawn
+	// that names no harness resolves to it before the seed row is written, so the
+	// stored/returned harness matches the agent the resolver actually launches.
+	defaultHarness domain.AgentHarness
+	clock          func() time.Time
 	// lookPath is exec.LookPath in production; tests substitute a stub so
 	// they don't need real binaries on PATH. Returns ports.ErrAgentBinaryNotFound
 	// when the binary is missing so the sentinel propagates through toAPIError.
@@ -105,7 +113,12 @@ type Deps struct {
 	// DataDir is exported to spawned agents as AO_DATA_DIR so their hook
 	// commands can open the same store.
 	DataDir string
-	Clock   func() time.Time
+	// DefaultHarness is the daemon's configured default agent (AO_AGENT), used to
+	// resolve a spawn that names no harness. Wiring passes config.DefaultAgent;
+	// left empty, an unspecified harness stays empty (the resolver still defaults
+	// it at launch, but the record won't reflect the real agent).
+	DefaultHarness domain.AgentHarness
+	Clock          func() time.Time
 	// LookPath overrides exec.LookPath for the pre-launch agent-binary check.
 	// Production wiring leaves this nil and the manager defaults to
 	// exec.LookPath; tests inject a stub so they need not seed real binaries.
@@ -123,20 +136,24 @@ type Deps struct {
 // time.Now when Deps.Clock is nil.
 func New(d Deps) *Manager {
 	m := &Manager{
-		runtime:    d.Runtime,
-		agents:     d.Agents,
-		workspace:  d.Workspace,
-		store:      d.Store,
-		messenger:  d.Messenger,
-		lcm:        d.Lifecycle,
-		dataDir:    d.DataDir,
-		clock:      d.Clock,
-		lookPath:   d.LookPath,
-		executable: d.Executable,
-		logger:     d.Logger,
+		runtime:        d.Runtime,
+		agents:         d.Agents,
+		workspace:      d.Workspace,
+		store:          d.Store,
+		messenger:      d.Messenger,
+		lcm:            d.Lifecycle,
+		dataDir:        d.DataDir,
+		defaultHarness: d.DefaultHarness,
+		clock:          d.Clock,
+		lookPath:       d.LookPath,
+		executable:     d.Executable,
+		logger:         d.Logger,
 	}
 	if m.clock == nil {
-		m.clock = time.Now
+		// UTC so spawn-stamped CreatedAt/UpdatedAt match every other session
+		// write (rename, activity) — all of which use time.Now().UTC(). A local
+		// default produced mixed-timezone timestamps in `ao session get`.
+		m.clock = func() time.Time { return time.Now().UTC() }
 	}
 	if m.lookPath == nil {
 		m.lookPath = exec.LookPath
@@ -162,6 +179,20 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	// A per-project role override picks the harness when the spawn names none,
 	// so a project can default workers to one agent and orchestrators to another.
 	cfg.Harness = effectiveHarness(cfg.Harness, cfg.Kind, project.Config)
+	// Resolve an unspecified harness to the daemon default BEFORE the seed row is
+	// written, so the stored/returned harness matches the agent the resolver
+	// launches (otherwise a default-agent session persists an empty harness and
+	// the UI can't tell which agent is running).
+	if cfg.Harness == "" {
+		cfg.Harness = m.defaultHarness
+	}
+
+	// Reject an unknown harness before any durable state is created. Doing this
+	// after CreateSession would leave a terminated orphan row and waste a
+	// worktree on a spawn that can never launch.
+	if _, ok := m.agents.Agent(cfg.Harness); !ok {
+		return domain.SessionRecord{}, fmt.Errorf("spawn: %w: %q", ErrUnknownHarness, cfg.Harness)
+	}
 
 	prompt, systemPrompt, err := m.buildSpawnTexts(ctx, cfg)
 	if err != nil {
@@ -707,7 +738,7 @@ func spawnEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueI
 // logged so the degradation isn't silent.
 func (m *Manager) runtimeEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueID, projectEnv map[string]string) map[string]string {
 	env := spawnEnv(id, project, issue, m.dataDir, projectEnv)
-	path, err := hookPATH(m.executable, os.Getenv, projectEnv)
+	path, err := HookPATH(m.executable, os.Getenv, projectEnv)
 	if err != nil {
 		m.logger.Warn("session PATH not pinned to the daemon binary; `ao hooks` callbacks may resolve to a different ao and activity tracking will stall",
 			"session", id, "error", err)
@@ -717,13 +748,14 @@ func (m *Manager) runtimeEnv(id domain.SessionID, project domain.ProjectID, issu
 	return env
 }
 
-// hookPATH builds the PATH value pinned into a spawned session: the daemon
+// HookPATH builds the PATH value pinned into a spawned session: the daemon
 // executable's directory prepended to the base PATH (the project's PATH
 // override when set, else the daemon's inherited PATH — matching what the
 // runtime would have exported anyway). An error means the pin cannot be
 // applied: the executable is unresolvable, or is not named "ao", in which case
-// prepending its directory would not change what `ao` resolves to.
-func hookPATH(executable func() (string, error), getenv func(string) string, projectEnv map[string]string) (string, error) {
+// prepending its directory would not change what `ao` resolves to. Exported so
+// the reviewer launcher can pin its pane's PATH the same way.
+func HookPATH(executable func() (string, error), getenv func(string) string, projectEnv map[string]string) (string, error) {
 	exe, err := executable()
 	if err != nil {
 		return "", fmt.Errorf("resolve daemon executable: %w", err)

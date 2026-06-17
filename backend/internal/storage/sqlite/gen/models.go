@@ -21,6 +21,18 @@ type ChangeLog struct {
 	CreatedAt time.Time
 }
 
+type Notification struct {
+	ID        string
+	SessionID domain.SessionID
+	ProjectID domain.ProjectID
+	PRURL     string
+	Type      domain.NotificationType
+	Title     string
+	Body      string
+	Status    domain.NotificationStatus
+	CreatedAt time.Time
+}
+
 type PR struct {
 	URL                      string
 	SessionID                domain.SessionID
@@ -109,6 +121,30 @@ type Project struct {
 	ArchivedAt    sql.NullTime
 	Config        sql.NullString
 	Kind          string
+}
+
+type Review struct {
+	ID               string
+	SessionID        domain.SessionID
+	ProjectID        domain.ProjectID
+	Harness          domain.ReviewerHarness
+	PRURL            string
+	ReviewerHandleID string
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+}
+
+type ReviewRun struct {
+	ID        string
+	ReviewID  string
+	SessionID domain.SessionID
+	Harness   domain.ReviewerHarness
+	PRURL     string
+	TargetSha string
+	Status    domain.ReviewRunStatus
+	Verdict   domain.ReviewVerdict
+	Body      string
+	CreatedAt time.Time
 }
 
 type Session struct {

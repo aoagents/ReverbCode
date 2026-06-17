@@ -36,7 +36,8 @@ const STATUS_PILL: Record<WorkerDisplayStatus, { label: string; tone: string; br
 // (.is-under-titlebar-nav pads past them). The
 // variant is derived from the route, not props: a sessionId in the URL swaps
 // the lead to the session identity (orchestrator crumb + mode badge, or worker
-// branch + status pill) and the actions to Kanban/inspector controls;
+// branch + status pill) and the actions to board/orchestrator + inspector
+// controls (orchestrators open the Kanban board; workers open their orchestrator);
 // otherwise it's the dashboard crumb plus the Orchestrator launcher when a
 // project is in scope. Merges the old DashboardTopbar/Topbar pair —
 // agent-orchestrator keeps those as two components aligned only by CSS.
@@ -127,16 +128,30 @@ export function ShellTopbar() {
 			<div className="dashboard-app-header__actions">
 				{isSessionRoute ? (
 					<>
-						<button
-							aria-label={isOrchestrator ? "Open Kanban" : "Back to board"}
-							className="dashboard-app-header__primary-btn"
-							onClick={openBoard}
-							style={noDragStyle}
-							type="button"
-						>
-							<LayoutGrid className="h-3.5 w-3.5" aria-hidden="true" />
-							{isOrchestrator ? "Open Kanban" : "Kanban"}
-						</button>
+						{isOrchestrator ? (
+							<button
+								aria-label="Open Kanban"
+								className="dashboard-app-header__primary-btn"
+								onClick={openBoard}
+								style={noDragStyle}
+								type="button"
+							>
+								<LayoutGrid className="h-3.5 w-3.5" aria-hidden="true" />
+								Open Kanban
+							</button>
+						) : (
+							<button
+								aria-label="Open orchestrator"
+								className="dashboard-app-header__primary-btn"
+								disabled={isSpawning}
+								onClick={() => void openOrchestrator()}
+								style={noDragStyle}
+								type="button"
+							>
+								<Waypoints className="h-3.5 w-3.5" aria-hidden="true" />
+								{isSpawning ? "Spawning…" : "Open orchestrator"}
+							</button>
+						)}
 						{/* Inspector collapse (worker sessions only — orchestrators have no rail). */}
 						{!isOrchestrator && (
 							<button

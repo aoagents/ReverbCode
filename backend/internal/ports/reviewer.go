@@ -1,0 +1,62 @@
+package ports
+
+import (
+	"context"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+)
+
+// Reviewer is the contract a code-review adapter satisfies. It is deliberately
+// separate from Agent: a reviewer is invoked once over a checkout to review a
+// PR, and need not be a prompt-fed interactive agent. A prompt-driven reviewer
+// (claude-code) builds its own prompt internally; a one-shot CLI (greptile)
+// returns its own argv with no prompt at all.
+type Reviewer interface {
+	// ReviewCommand builds the command (and any extra env) AO should run to
+	// spawn a fresh reviewer over the worker's checkout for a PR.
+	ReviewCommand(ctx context.Context, inv ReviewInvocation) (ReviewCommandSpec, error)
+	// ReviewMessage builds the text AO injects into an already-running reviewer
+	// pane to ask it to review a new commit. It must be self-contained (carry
+	// the ids the reviewer needs to submit) since AO passes no environment.
+	ReviewMessage(ctx context.Context, inv ReviewInvocation) (string, error)
+}
+
+// ReviewInvocation describes one review pass for a reviewer to act on. All ids
+// the reviewer needs are passed explicitly here (and embedded in the prompt /
+// message), never through environment variables.
+type ReviewInvocation struct {
+	// ReviewerID is a stable id for the reviewer's runtime instance (pane,
+	// native session id), derived from the worker session.
+	ReviewerID string
+	// RunID is the review_run this pass completes; the reviewer passes it to
+	// `ao review submit`.
+	RunID string
+	// WorkerSessionID is the worker whose PR is under review.
+	WorkerSessionID domain.SessionID
+	// PRURL is the pull request to review.
+	PRURL string
+	// TargetSHA is the PR head commit under review.
+	TargetSHA string
+	// WorkspacePath is the worker's checkout the reviewer reads.
+	WorkspacePath string
+	// Prompt and SystemPrompt are the review instructions AO authored centrally,
+	// mirroring the worker's LaunchConfig.Prompt / SystemPrompt split: SystemPrompt
+	// carries the standing reviewer role, Prompt the per-pass task. A prompt-driven
+	// adapter (claude-code) feeds them to the agent; a one-shot CLI reviewer may
+	// ignore them.
+	Prompt       string
+	SystemPrompt string
+}
+
+// ReviewCommandSpec is how to launch a reviewer: the argv and any extra env the
+// adapter needs. AO supplies the workspace and review-tracking env around it.
+type ReviewCommandSpec struct {
+	Argv []string
+	Env  map[string]string
+}
+
+// ReviewerResolver maps a reviewer harness onto its adapter. ok=false means no
+// adapter is registered for that harness.
+type ReviewerResolver interface {
+	Reviewer(harness domain.ReviewerHarness) (Reviewer, bool)
+}

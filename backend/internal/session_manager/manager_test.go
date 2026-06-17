@@ -180,6 +180,11 @@ type singleAgent struct{ agent ports.Agent }
 
 func (s singleAgent) Agent(domain.AgentHarness) (ports.Agent, bool) { return s.agent, true }
 
+// missingAgents resolves no harness, simulating a typo'd or unregistered agent.
+type missingAgents struct{}
+
+func (missingAgents) Agent(domain.AgentHarness) (ports.Agent, bool) { return nil, false }
+
 type fakeWorkspace struct {
 	createErr  error
 	destroyErr error
@@ -279,6 +284,34 @@ func TestSpawn_ResolvesProjectConfig(t *testing.T) {
 	}
 }
 
+// TestSpawn_PersistsResolvedDefaultHarness locks the fix for the mislabelled
+// agent: a spawn that names no harness must persist the daemon's default agent
+// (so the API/UI report what actually runs), while an explicit harness wins.
+func TestSpawn_PersistsResolvedDefaultHarness(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	m := New(Deps{
+		Runtime: &fakeRuntime{}, Agents: fakeAgents{}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath:       func(string) (string, error) { return "/bin/true", nil },
+		DefaultHarness: domain.HarnessClaudeCode,
+	})
+
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions["mer-1"].Harness; got != domain.HarnessClaudeCode {
+		t.Fatalf("unspecified harness = %q, want resolved default %q", got, domain.HarnessClaudeCode)
+	}
+
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessCodex}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions["mer-2"].Harness; got != domain.HarnessCodex {
+		t.Fatalf("explicit harness = %q, want %q", got, domain.HarnessCodex)
+	}
+}
+
 func TestSpawn_AssignsIDAndGoesIdle(t *testing.T) {
 	m, st, rt, _ := newManager()
 	s, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Prompt: "do it"})
@@ -298,6 +331,25 @@ func TestSpawn_AssignsIDAndGoesIdle(t *testing.T) {
 		t.Fatal("handle not folded")
 	}
 }
+
+// TestSpawn_StampsUTCTimestamps locks the default clock to UTC so spawn-stamped
+// CreatedAt/UpdatedAt match every other session write (rename, activity), which
+// all use time.Now().UTC(). A local default produced mixed-timezone timestamps
+// in `ao session get` (created in local time, updated in UTC).
+func TestSpawn_StampsUTCTimestamps(t *testing.T) {
+	m, st, _, _ := newManager()
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
+		t.Fatal(err)
+	}
+	rec := st.sessions["mer-1"]
+	if loc := rec.CreatedAt.Location(); loc != time.UTC {
+		t.Fatalf("CreatedAt location = %v, want UTC", loc)
+	}
+	if loc := rec.UpdatedAt.Location(); loc != time.UTC {
+		t.Fatalf("UpdatedAt location = %v, want UTC", loc)
+	}
+}
+
 func TestSpawn_RollsBackOnRuntimeFailure(t *testing.T) {
 	m, st, _, ws := newManager()
 	m.runtime = &fakeRuntime{createErr: errors.New("boom")}
@@ -804,6 +856,29 @@ func TestSpawn_RejectsMissingAgentBinary(t *testing.T) {
 	}
 	if !st.sessions["mer-1"].IsTerminated {
 		t.Fatal("the orphan row should be marked terminated after the failed spawn")
+	}
+}
+
+func TestSpawn_RejectsUnknownHarness(t *testing.T) {
+	st := newFakeStore()
+	rt := &fakeRuntime{}
+	ws := &fakeWorkspace{}
+	m := New(Deps{Runtime: rt, Agents: missingAgents{}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: func(string) (string, error) { return "/bin/true", nil }})
+
+	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Harness: "bogus"})
+	if !errors.Is(err, ErrUnknownHarness) {
+		t.Fatalf("err = %v, want ErrUnknownHarness", err)
+	}
+	// The harness is rejected before any durable state is created — no seed row,
+	// no worktree — so an unknown harness never leaves an orphan behind.
+	if len(st.sessions) != 0 {
+		t.Fatalf("no session row should be created, got %d", len(st.sessions))
+	}
+	if ws.lastCfg.SessionID != "" || ws.destroyed != 0 {
+		t.Fatal("workspace must not be created for an unknown harness")
+	}
+	if rt.created != 0 {
+		t.Fatal("runtime must not be created for an unknown harness")
 	}
 }
 
