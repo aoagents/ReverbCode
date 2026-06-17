@@ -48,7 +48,10 @@ const reviewSession = {
 	pullRequest: { number: 3, state: "open" },
 } satisfies WorkspaceSession;
 
-function renderInspector(session: WorkspaceSession = worker, onOpenReviewerTerminal?: Parameters<typeof SessionInspector>[0]["onOpenReviewerTerminal"]) {
+function renderInspector(
+	session: WorkspaceSession = worker,
+	onOpenReviewerTerminal?: Parameters<typeof SessionInspector>[0]["onOpenReviewerTerminal"],
+) {
 	const queryClient = new QueryClient({
 		defaultOptions: {
 			queries: { retry: false },
