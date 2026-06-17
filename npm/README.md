@@ -76,3 +76,10 @@ npm install -g --prefix "$prefix" \
   packages and publishes. It defaults to a **dry run**; a real publish requires
   `dry_run=false` **and** an `NPM_TOKEN` secret, neither of which is wired by
   default. Publishing is a deliberate human action.
+
+  **dist-tag:** the rewrite publishes to **`next`**, not `latest`. During the
+  legacy-to-rewrite cutover, `latest` is parked on the bridge (`@aoagents/ao@0.9.6`);
+  the bridge's `ao update` resolves the rewrite via
+  `npm view @aoagents/ao@next version`. Publishing the rewrite to `latest` would
+  strand pre-bridge users, so the workflow refuses `dist_tag=latest` unless
+  `allow_latest=true` is set for the deliberate post-adoption flip.

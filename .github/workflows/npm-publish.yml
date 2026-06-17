@@ -6,8 +6,15 @@ name: Publish npm
 # Safe by default: `dry_run` is true, so a normal run only validates with
 # `npm publish --dry-run` and never contacts the registry's write path. A real
 # publish requires BOTH dry_run=false AND an `NPM_TOKEN` repository secret
-# (absent by default) — so an accidental dispatch cannot publish. Publishing is
+# (absent by default), so an accidental dispatch cannot publish. Publishing is
 # a deliberate human decision.
+#
+# dist-tag: the rewrite publishes to `next`, NOT `latest`. During the cutover
+# window `latest` is parked on the legacy bridge (0.9.6); the bridge's
+# `ao update` resolves the rewrite via `npm view @aoagents/ao@next version`
+# (cutover plan sections 7 and 9). Publishing the rewrite to `latest` would
+# strand pre-bridge users, so it is blocked unless `allow_latest` is explicitly
+# set when the team deliberately flips `latest` to the rewrite after adoption.
 
 on:
   workflow_dispatch:
@@ -16,6 +23,14 @@ on:
         description: "Dry run only (no real publish)"
         type: boolean
         default: true
+      dist_tag:
+        description: "npm dist-tag to publish under (rewrite must stay on 'next' during cutover)"
+        type: string
+        default: "next"
+      allow_latest:
+        description: "Permit publishing to the 'latest' dist-tag (only for the deliberate post-adoption flip)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -47,6 +62,24 @@ jobs:
       - name: Pack npm tarballs
         run: node npm/scripts/pack.mjs
 
+      - name: Guard dist-tag
+        run: |
+          if [ -z "${DIST_TAG}" ]; then
+            echo "dist_tag is empty; expected 'next' (or 'latest' only for the post-adoption flip)." >&2
+            exit 1
+          fi
+          if [ "${DIST_TAG}" = "latest" ] && [ "${ALLOW_LATEST}" != "true" ]; then
+            echo "Refusing to publish the rewrite to the 'latest' dist-tag during the cutover window." >&2
+            echo "'latest' is parked on the bridge (0.9.6); publishing the rewrite there would strand" >&2
+            echo "pre-bridge users (cutover plan section 9). Re-run with allow_latest=true only when the" >&2
+            echo "team is deliberately flipping 'latest' to the rewrite after adoption." >&2
+            exit 1
+          fi
+          echo "Publishing under dist-tag: ${DIST_TAG}"
+        env:
+          DIST_TAG: ${{ inputs.dist_tag }}
+          ALLOW_LATEST: ${{ inputs.allow_latest }}
+
       - name: Guard real publish
         if: ${{ inputs.dry_run == false }}
         run: |
@@ -69,8 +102,8 @@ jobs:
           fi
           main_name="aoagents-ao-$(node -p "require('./npm/package.json').version").tgz"
           publish() {
-            echo "::group::npm publish $flag $1"
-            npm publish --access public $flag "$1"
+            echo "::group::npm publish --tag ${DIST_TAG} $flag $1"
+            npm publish --access public --tag "${DIST_TAG}" $flag "$1"
             echo "::endgroup::"
           }
           for t in npm/build/tarballs/*.tgz; do
@@ -80,4 +113,5 @@ jobs:
           publish "npm/build/tarballs/$main_name"
         env:
           DRY_RUN: ${{ inputs.dry_run }}
+          DIST_TAG: ${{ inputs.dist_tag }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
