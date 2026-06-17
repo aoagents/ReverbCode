@@ -1,9 +1,11 @@
 -- Review rows are now scoped to one pull request within a worker session.
 -- Workspace sessions can own multiple PRs, so session_id alone is not a
--- stable review identity.
+-- stable review identity. Review-run idempotency is likewise scoped to the PR.
 
 -- +goose Up
 -- +goose StatementBegin
+DROP INDEX IF EXISTS idx_review_run_session_sha;
+
 CREATE TABLE review_new (
     id                 TEXT PRIMARY KEY,
     session_id         TEXT NOT NULL REFERENCES sessions (id) ON DELETE CASCADE,
@@ -24,7 +26,8 @@ DROP TABLE review;
 ALTER TABLE review_new RENAME TO review;
 
 CREATE INDEX idx_review_session ON review (session_id);
-CREATE INDEX idx_review_run_session_pr_sha ON review_run (session_id, pr_url, target_sha, created_at);
+CREATE UNIQUE INDEX idx_review_run_session_pr_sha
+    ON review_run (session_id, pr_url, target_sha) WHERE target_sha != '';
 CREATE INDEX idx_review_run_session_pr_created ON review_run (session_id, pr_url, created_at);
 -- +goose StatementEnd
 
@@ -52,4 +55,7 @@ ORDER BY updated_at DESC;
 
 DROP TABLE review;
 ALTER TABLE review_old RENAME TO review;
+
+CREATE UNIQUE INDEX idx_review_run_session_sha
+    ON review_run (session_id, target_sha) WHERE target_sha != '';
 -- +goose StatementEnd
