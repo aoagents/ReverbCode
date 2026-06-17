@@ -70,9 +70,10 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 		WorkspacePath: inv.WorkspacePath,
 		Prompt:        inv.Prompt,
 		SystemPrompt:  inv.SystemPrompt,
-		// Launch off bypassPermissions so the allow/deny lists are enforced:
-		// the reviewer's read-only guarantee is the sandbox, not just the
-		// prompt. Permissions is left unset (default mode) on purpose.
+		// Launch off bypassPermissions so the allow/deny lists are enforced.
+		// Set an explicit non-bypass mode instead of deferring to the user's
+		// Claude defaultMode, which may itself be bypassPermissions.
+		Permissions:     ports.PermissionModeAuto,
 		AllowedTools:    reviewerAllowedTools,
 		DisallowedTools: reviewerDisallowedTools,
 	})
