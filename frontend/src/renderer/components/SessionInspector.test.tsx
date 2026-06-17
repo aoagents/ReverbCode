@@ -119,6 +119,52 @@ describe("SessionInspector reviews", () => {
 		expect(onOpenReviewerTerminal).toHaveBeenCalledWith({ handleId: "reviewer-pane", harness: "codex" });
 	});
 
+	it("shows an up-to-date notice instead of opening the terminal when the backend reuses a run", async () => {
+		mockCommonGets(
+			[
+				{
+					id: "run-1",
+					reviewId: "review-1",
+					sessionId: "sess-1",
+					harness: "codex",
+					status: "complete",
+					verdict: "approved",
+					body: "Looks good.",
+					prUrl: "https://github.com/aoagents/reverbcode/pull/3",
+					targetSha: "abc123",
+					createdAt: "2026-06-16T10:06:00Z",
+				},
+			],
+			"reviewer-pane",
+		);
+		api.POST.mockResolvedValue({
+			response: { status: 200 },
+			data: {
+				reviewerHandleId: "reviewer-pane",
+				review: {
+					id: "run-1",
+					reviewId: "review-1",
+					sessionId: "sess-1",
+					harness: "codex",
+					status: "complete",
+					verdict: "approved",
+					body: "Looks good.",
+					prUrl: "https://github.com/aoagents/reverbcode/pull/3",
+					targetSha: "abc123",
+					createdAt: "2026-06-16T10:06:00Z",
+				},
+			},
+		});
+		const onOpenReviewerTerminal = vi.fn();
+
+		renderWithQuery(<SessionInspector onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} />);
+
+		fireEvent.click(await screen.findByRole("button", { name: /re-run review/i }));
+
+		expect(await screen.findByText("Review is already up to date for this commit.")).toBeInTheDocument();
+		expect(onOpenReviewerTerminal).not.toHaveBeenCalled();
+	});
+
 	it("shows an approved review and opens its terminal", async () => {
 		mockCommonGets(
 			[
