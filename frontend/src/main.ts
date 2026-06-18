@@ -364,7 +364,9 @@ ipcMain.handle("daemon:getStatus", () => daemonStatus);
 ipcMain.handle("daemon:start", () => startDaemon());
 ipcMain.handle("daemon:stop", () => stopDaemon());
 ipcMain.handle("app:getVersion", () => app.getVersion());
-ipcMain.handle("telemetry:getBootstrap", () => buildTelemetryBootstrap(process.env, app.getVersion(), process.platform));
+ipcMain.handle("telemetry:getBootstrap", () =>
+	buildTelemetryBootstrap(process.env, app.getVersion(), process.platform),
+);
 ipcMain.handle("app:chooseDirectory", async () => {
 	const options: OpenDialogOptions = {
 		properties: ["openDirectory"],
