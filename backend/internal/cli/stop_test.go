@@ -81,3 +81,40 @@ func TestWaitForStoppedRemovesOwnRunFile(t *testing.T) {
 		t.Fatalf("own run-file should have been removed, got %#v", info)
 	}
 }
+
+func TestWaitForStoppedWaitsAfterRunFileRemovedUntilProcessExits(t *testing.T) {
+	dir := t.TempDir()
+	runFile := filepath.Join(dir, "running.json")
+
+	const stoppedPID = 1111
+	now := time.Unix(200, 0).UTC()
+	aliveChecks := 0
+	sleeps := 0
+	c := &commandContext{deps: Deps{
+		ProcessAlive: func(int) bool {
+			aliveChecks++
+			return aliveChecks < 3
+		},
+		Now: func() time.Time {
+			return now
+		},
+		Sleep: func(d time.Duration) {
+			sleeps++
+			now = now.Add(d)
+		},
+	}.withDefaults()}
+
+	st, err := c.waitForStopped(context.Background(), stoppedPID, runFile, dir, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.State != stateStopped {
+		t.Fatalf("state = %q, want stopped", st.State)
+	}
+	if sleeps == 0 {
+		t.Fatal("waitForStopped returned before waiting for process exit")
+	}
+	if aliveChecks < 3 {
+		t.Fatalf("process checks = %d, want at least 3", aliveChecks)
+	}
+}
