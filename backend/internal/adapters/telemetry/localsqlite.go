@@ -40,6 +40,7 @@ type LocalSQLiteSink struct {
 	lastPrune time.Time
 }
 
+// NewLocalSQLiteSink starts a buffered SQLite-backed telemetry sink.
 func NewLocalSQLiteSink(store localStore, log *slog.Logger) *LocalSQLiteSink {
 	s := &LocalSQLiteSink{
 		store: store,
@@ -53,6 +54,7 @@ func NewLocalSQLiteSink(store localStore, log *slog.Logger) *LocalSQLiteSink {
 	return s
 }
 
+// Emit enqueues an event for best-effort persistence.
 func (s *LocalSQLiteSink) Emit(_ context.Context, ev ports.TelemetryEvent) {
 	select {
 	case s.ch <- ev:
@@ -61,6 +63,7 @@ func (s *LocalSQLiteSink) Emit(_ context.Context, ev ports.TelemetryEvent) {
 	}
 }
 
+// Close drains the worker until completion or context cancellation.
 func (s *LocalSQLiteSink) Close(ctx context.Context) error {
 	s.closeOnce.Do(func() { close(s.ch) })
 	done := make(chan struct{})

@@ -39,6 +39,7 @@ type PostHogSink struct {
 	closeOnce  sync.Once
 }
 
+// NewPostHogSink starts a buffered PostHog exporter with a stable install ID.
 func NewPostHogSink(dataDir, apiKey, host string, client postHogClient, log *slog.Logger) (*PostHogSink, error) {
 	if strings.TrimSpace(apiKey) == "" {
 		return nil, fmt.Errorf("posthog api key is required")
@@ -66,6 +67,7 @@ func NewPostHogSink(dataDir, apiKey, host string, client postHogClient, log *slo
 	return s, nil
 }
 
+// Emit enqueues an event for best-effort export.
 func (s *PostHogSink) Emit(_ context.Context, ev ports.TelemetryEvent) {
 	select {
 	case s.ch <- ev:
@@ -74,6 +76,7 @@ func (s *PostHogSink) Emit(_ context.Context, ev ports.TelemetryEvent) {
 	}
 }
 
+// Close drains the exporter until completion or context cancellation.
 func (s *PostHogSink) Close(ctx context.Context) error {
 	s.closeOnce.Do(func() { close(s.ch) })
 	done := make(chan struct{})

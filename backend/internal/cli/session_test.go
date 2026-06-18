@@ -17,14 +17,28 @@ type sessionRequestLog struct {
 	requests []string
 }
 
-func (l *sessionRequestLog) append(r *http.Request) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
+const cliInvokedRequest = "POST /internal/telemetry/cli-invoked"
+
+func requestLogEntry(r *http.Request) string {
 	entry := r.Method + " " + r.URL.Path
 	if r.URL.RawQuery != "" {
 		entry += "?" + r.URL.RawQuery
 	}
-	l.requests = append(l.requests, entry)
+	return entry
+}
+
+func appendPrimaryRequest(dst *[]string, r *http.Request) {
+	entry := requestLogEntry(r)
+	if entry == cliInvokedRequest {
+		return
+	}
+	*dst = append(*dst, entry)
+}
+
+func (l *sessionRequestLog) append(r *http.Request) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	appendPrimaryRequest(&l.requests, r)
 }
 
 func (l *sessionRequestLog) all() []string {

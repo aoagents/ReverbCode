@@ -41,7 +41,9 @@ const (
 type TelemetryRemote string
 
 const (
-	TelemetryRemoteOff     TelemetryRemote = "off"
+	// TelemetryRemoteOff disables remote telemetry export.
+	TelemetryRemoteOff TelemetryRemote = "off"
+	// TelemetryRemotePostHog exports allowlisted events to PostHog.
 	TelemetryRemotePostHog TelemetryRemote = "posthog"
 )
 

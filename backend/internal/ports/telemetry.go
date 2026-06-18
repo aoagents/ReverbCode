@@ -11,9 +11,13 @@ import (
 type TelemetryLevel string
 
 const (
+	// TelemetryLevelDebug marks verbose diagnostic events.
 	TelemetryLevelDebug TelemetryLevel = "debug"
-	TelemetryLevelInfo  TelemetryLevel = "info"
-	TelemetryLevelWarn  TelemetryLevel = "warn"
+	// TelemetryLevelInfo marks normal operational events.
+	TelemetryLevelInfo TelemetryLevel = "info"
+	// TelemetryLevelWarn marks degraded but non-fatal events.
+	TelemetryLevelWarn TelemetryLevel = "warn"
+	// TelemetryLevelError marks failed operations.
 	TelemetryLevelError TelemetryLevel = "error"
 )
 

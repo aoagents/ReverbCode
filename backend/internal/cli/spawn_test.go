@@ -45,7 +45,7 @@ func TestSpawnClaimPRWiring(t *testing.T) {
 	cfg := setConfigEnv(t)
 	var requests []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests = append(requests, r.Method+" "+r.URL.Path)
+		appendPrimaryRequest(&requests, r)
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/demo":
@@ -84,7 +84,7 @@ func TestSpawnClaimPRFailureRollsBackSession(t *testing.T) {
 	var requests []string
 	sessions := map[string]bool{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests = append(requests, r.Method+" "+r.URL.Path)
+		appendPrimaryRequest(&requests, r)
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/demo":

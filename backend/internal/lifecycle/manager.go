@@ -159,7 +159,7 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 			SessionDisplayName: next.DisplayName,
 		}
 	}
-	waitingEvents := m.waitingInputEvents(rec, next, prevState, prevAt, now)
+	waitingEvents := m.waitingInputEvents(next, prevState, prevAt, now)
 	m.mu.Unlock()
 	for _, ev := range waitingEvents {
 		m.emitTelemetry(ctx, ev)
@@ -168,7 +168,7 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	return nil
 }
 
-func (m *Manager) waitingInputEvents(prev, next domain.SessionRecord, prevState domain.ActivityState, prevAt, now time.Time) []ports.TelemetryEvent {
+func (m *Manager) waitingInputEvents(next domain.SessionRecord, prevState domain.ActivityState, prevAt, now time.Time) []ports.TelemetryEvent {
 	if m.telemetry == nil {
 		return nil
 	}
