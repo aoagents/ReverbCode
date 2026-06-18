@@ -497,12 +497,8 @@ export interface components {
         ImportReport: {
             dryRun: boolean;
             notes?: string[];
-            orchestratorsAbsent: number;
-            orchestratorsImported: number;
-            orchestratorsSkipped: number;
             projectsImported: number;
             projectsSkipped: number;
-            transcriptsRelocated: number;
         };
         ImportRunResponse: {
             report: components["schemas"]["ImportReport"];

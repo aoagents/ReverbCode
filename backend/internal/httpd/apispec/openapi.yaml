@@ -1394,26 +1394,14 @@ components:
           items:
             type: string
           type: array
-        orchestratorsAbsent:
-          type: integer
-        orchestratorsImported:
-          type: integer
-        orchestratorsSkipped:
-          type: integer
         projectsImported:
           type: integer
         projectsSkipped:
-          type: integer
-        transcriptsRelocated:
           type: integer
       required:
       - dryRun
       - projectsImported
       - projectsSkipped
-      - orchestratorsImported
-      - orchestratorsSkipped
-      - orchestratorsAbsent
-      - transcriptsRelocated
       type: object
     ImportRunResponse:
       properties:

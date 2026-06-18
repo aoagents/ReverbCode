@@ -43,9 +43,6 @@ type Service interface {
 type Deps struct {
 	// Store is the rewrite's durable store (the daemon's shared *sqlite.Store).
 	Store Store
-	// DataDir is the rewrite data dir, forwarded to the engine to compute the
-	// transcript destination slug. It must match the daemon's AO_DATA_DIR.
-	DataDir string
 	// Root overrides the legacy AO root to read. Empty → the default
 	// (~/.agent-orchestrator).
 	Root string
@@ -53,9 +50,8 @@ type Deps struct {
 
 // Manager implements Service over the daemon's store and config.
 type Manager struct {
-	store   Store
-	dataDir string
-	root    string
+	store Store
+	root  string
 }
 
 var _ Service = (*Manager)(nil)
@@ -67,7 +63,7 @@ func New(deps Deps) *Manager {
 	if root == "" {
 		root = legacyimport.DefaultLegacyRootDir()
 	}
-	return &Manager{store: deps.Store, dataDir: deps.DataDir, root: root}
+	return &Manager{store: deps.Store, root: root}
 }
 
 // Status reports import availability without touching legacy or rewrite data
@@ -91,8 +87,5 @@ func (m *Manager) Status(ctx context.Context) (Status, error) {
 // partially-populated database) is safe and never overwrites. Legacy files are
 // never modified.
 func (m *Manager) Run(ctx context.Context) (legacyimport.Report, error) {
-	return legacyimport.Run(ctx, m.store, legacyimport.Options{
-		Root:    m.root,
-		DataDir: m.dataDir,
-	})
+	return legacyimport.Run(ctx, m.store, legacyimport.Options{Root: m.root})
 }

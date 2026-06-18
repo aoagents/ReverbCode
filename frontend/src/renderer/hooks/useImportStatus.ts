@@ -10,10 +10,6 @@ export type ImportStatus = { available: boolean; legacyRoot: string };
 export type ImportReport = {
 	projectsImported: number;
 	projectsSkipped: number;
-	orchestratorsImported: number;
-	orchestratorsSkipped: number;
-	orchestratorsAbsent: number;
-	transcriptsRelocated: number;
 	notes?: string[];
 };
 
@@ -41,7 +37,7 @@ export function useImportStatus() {
 
 // useRunImport triggers the legacy import through the live daemon and, on
 // success, invalidates both the import status (so the offer retires) and the
-// workspace query (so the imported projects and revived orchestrator appear).
+// workspace query (so the imported projects appear).
 export function useRunImport() {
 	const queryClient = useQueryClient();
 	return useMutation<ImportReport, Error>({

@@ -72,7 +72,7 @@ func TestImportAPI_StatusError(t *testing.T) {
 }
 
 func TestImportAPI_Run(t *testing.T) {
-	svc := &fakeImportService{report: legacyimport.Report{ProjectsImported: 2, OrchestratorsImported: 1}}
+	svc := &fakeImportService{report: legacyimport.Report{ProjectsImported: 2, ProjectsSkipped: 1}}
 	srv := newImportTestServer(t, svc)
 
 	body, status, _ := doRequest(t, srv, "POST", "/api/v1/import", "")
@@ -84,14 +84,14 @@ func TestImportAPI_Run(t *testing.T) {
 	}
 	var resp struct {
 		Report struct {
-			ProjectsImported      int `json:"projectsImported"`
-			OrchestratorsImported int `json:"orchestratorsImported"`
+			ProjectsImported int `json:"projectsImported"`
+			ProjectsSkipped  int `json:"projectsSkipped"`
 		} `json:"report"`
 	}
 	if err := json.Unmarshal(body, &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if resp.Report.ProjectsImported != 2 || resp.Report.OrchestratorsImported != 1 {
+	if resp.Report.ProjectsImported != 2 || resp.Report.ProjectsSkipped != 1 {
 		t.Fatalf("report = %+v", resp.Report)
 	}
 }

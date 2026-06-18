@@ -48,7 +48,7 @@ beforeEach(() => {
 describe("ImportOffer", () => {
 	it("shows the offer when the daemon reports an importable install", async () => {
 		renderOffer();
-		expect(await screen.findByText(/Import projects and orchestrator/i)).toBeInTheDocument();
+		expect(await screen.findByText(/Import projects from your earlier AO/i)).toBeInTheDocument();
 		expect(screen.getByText("/home/u/.agent-orchestrator")).toBeInTheDocument();
 	});
 
@@ -56,35 +56,35 @@ describe("ImportOffer", () => {
 		getMock.mockResolvedValue({ data: { available: false, legacyRoot: "" }, error: undefined });
 		renderOffer();
 		await waitFor(() => expect(getMock).toHaveBeenCalled());
-		expect(screen.queryByText(/Import projects and orchestrator/i)).not.toBeInTheDocument();
+		expect(screen.queryByText(/Import projects from your earlier AO/i)).not.toBeInTheDocument();
 	});
 
 	it("runs the import on accept", async () => {
 		renderOffer();
-		await screen.findByText(/Import projects and orchestrator/i);
+		await screen.findByText(/Import projects from your earlier AO/i);
 
 		await userEvent.click(screen.getByRole("button", { name: "Import" }));
 
 		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
 		expect(postMock).toHaveBeenCalledWith("/api/v1/import");
 		// On success the banner retires.
-		await waitFor(() => expect(screen.queryByText(/Import projects and orchestrator/i)).not.toBeInTheDocument());
+		await waitFor(() => expect(screen.queryByText(/Import projects from your earlier AO/i)).not.toBeInTheDocument());
 	});
 
 	it("dismisses without importing on decline", async () => {
 		renderOffer();
-		await screen.findByText(/Import projects and orchestrator/i);
+		await screen.findByText(/Import projects from your earlier AO/i);
 
 		await userEvent.click(screen.getByRole("button", { name: "Not now" }));
 
-		expect(screen.queryByText(/Import projects and orchestrator/i)).not.toBeInTheDocument();
+		expect(screen.queryByText(/Import projects from your earlier AO/i)).not.toBeInTheDocument();
 		expect(postMock).not.toHaveBeenCalled();
 	});
 
 	it("surfaces the daemon error when the import fails", async () => {
 		postMock.mockResolvedValue({ data: undefined, error: { message: "disk full" } });
 		renderOffer();
-		await screen.findByText(/Import projects and orchestrator/i);
+		await screen.findByText(/Import projects from your earlier AO/i);
 
 		await userEvent.click(screen.getByRole("button", { name: "Import" }));
 

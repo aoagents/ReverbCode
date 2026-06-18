@@ -114,7 +114,7 @@ func Run() error {
 		Reviews:            reviewSvc,
 		Notifications:      notifier,
 		NotificationStream: notificationHub,
-		Import:             importsvc.New(importsvc.Deps{Store: store, DataDir: cfg.DataDir}),
+		Import:             importsvc.New(importsvc.Deps{Store: store}),
 		CDC:                store,
 		Events:             cdcPipe.Broadcaster,
 		Activity:           lcStack.LCM,

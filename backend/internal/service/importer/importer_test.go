@@ -14,12 +14,11 @@ import (
 // plus the project listing the service's detection probe reads.
 type fakeStore struct {
 	projects map[string]domain.ProjectRecord
-	sessions map[domain.SessionID]domain.SessionRecord
 	listErr  error
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{projects: map[string]domain.ProjectRecord{}, sessions: map[domain.SessionID]domain.SessionRecord{}}
+	return &fakeStore{projects: map[string]domain.ProjectRecord{}}
 }
 
 func (f *fakeStore) GetProject(_ context.Context, id string) (domain.ProjectRecord, bool, error) {
@@ -29,17 +28,6 @@ func (f *fakeStore) GetProject(_ context.Context, id string) (domain.ProjectReco
 func (f *fakeStore) UpsertProject(_ context.Context, r domain.ProjectRecord) error {
 	f.projects[r.ID] = r
 	return nil
-}
-func (f *fakeStore) GetSession(_ context.Context, id domain.SessionID) (domain.SessionRecord, bool, error) {
-	r, ok := f.sessions[id]
-	return r, ok, nil
-}
-func (f *fakeStore) ImportSession(_ context.Context, rec domain.SessionRecord, _ int64) (bool, error) {
-	if _, ok := f.sessions[rec.ID]; ok {
-		return false, nil
-	}
-	f.sessions[rec.ID] = rec
-	return true, nil
 }
 func (f *fakeStore) ListProjects(_ context.Context) ([]domain.ProjectRecord, error) {
 	if f.listErr != nil {
@@ -120,7 +108,7 @@ func TestStatus_ListError(t *testing.T) {
 func TestRun_ImportsThenStatusFlipsUnavailable(t *testing.T) {
 	root := writeLegacyRoot(t)
 	store := newFakeStore()
-	svc := New(Deps{Store: store, Root: root, DataDir: filepath.Join(t.TempDir(), "data")})
+	svc := New(Deps{Store: store, Root: root})
 
 	rep, err := svc.Run(context.Background())
 	if err != nil {
