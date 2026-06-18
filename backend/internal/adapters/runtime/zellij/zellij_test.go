@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os/exec"
+	"path/filepath"
 	"reflect"
 	"runtime"
 	"strings"
@@ -271,12 +272,25 @@ func TestCreateRejectsInvalidEnvKeys(t *testing.T) {
 	r.runner = &fakeRunner{}
 	_, err := r.Create(context.Background(), ports.RuntimeConfig{
 		SessionID:     "sess-1",
-		WorkspacePath: "/tmp/ws",
+		WorkspacePath: t.TempDir(),
 		Argv:          []string{"echo", "ready"},
 		Env:           map[string]string{"BAD KEY": "x"},
 	})
 	if err == nil || !strings.Contains(err.Error(), "invalid env key") {
 		t.Fatalf("Create err = %v, want invalid env key", err)
+	}
+}
+
+func TestCreateRejectsMissingWorkspacePath(t *testing.T) {
+	r := New(Options{Binary: "zellij-test", Timeout: time.Second, Shell: "/bin/zsh"})
+	r.runner = &fakeRunner{}
+	_, err := r.Create(context.Background(), ports.RuntimeConfig{
+		SessionID:     "sess-1",
+		WorkspacePath: filepath.Join(t.TempDir(), "missing"),
+		Argv:          []string{"echo", "ready"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "workspace path") {
+		t.Fatalf("Create err = %v, want workspace path error", err)
 	}
 }
 
@@ -287,7 +301,7 @@ func TestCreateStartsSessionAndDiscoversPane(t *testing.T) {
 
 	handle, err := r.Create(context.Background(), ports.RuntimeConfig{
 		SessionID:     "sess-1",
-		WorkspacePath: "/tmp/ws",
+		WorkspacePath: t.TempDir(),
 		Argv:          []string{"echo", "ready"},
 		Env:           map[string]string{"AO_SESSION_ID": "sess-1"},
 	})
@@ -329,7 +343,7 @@ func TestCreateClearsStaleSessionBeforeCreating(t *testing.T) {
 
 	if _, err := r.Create(context.Background(), ports.RuntimeConfig{
 		SessionID:     "sess-1",
-		WorkspacePath: "/tmp/ws",
+		WorkspacePath: t.TempDir(),
 		Argv:          []string{"echo", "ready"},
 	}); err != nil {
 		t.Fatalf("Create: %v", err)
