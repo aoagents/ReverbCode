@@ -9,6 +9,7 @@ import { pathToFileURL } from "node:url";
 import { resolveDaemonLaunch } from "./shared/daemon-launch";
 import { createListenPortScanner, defaultRunFilePath, parseRunFile } from "./shared/daemon-discovery";
 import type { DaemonStatus } from "./shared/daemon-status";
+import { DEFAULT_POSTHOG_HOST, DEFAULT_POSTHOG_PROJECT_KEY } from "./shared/posthog-config";
 import { buildTelemetryBootstrap } from "./shared/telemetry";
 
 // Globals injected at compile time by @electron-forge/plugin-vite.
@@ -147,6 +148,16 @@ function runFilePath(): string | null {
 	return defaultRunFilePath(process.platform, process.env, os.homedir());
 }
 
+function daemonEnv(): NodeJS.ProcessEnv {
+	return {
+		...process.env,
+		AO_TELEMETRY_EVENTS: process.env.AO_TELEMETRY_EVENTS ?? "on",
+		AO_TELEMETRY_REMOTE: process.env.AO_TELEMETRY_REMOTE ?? "posthog",
+		AO_TELEMETRY_POSTHOG_KEY: process.env.AO_TELEMETRY_POSTHOG_KEY ?? DEFAULT_POSTHOG_PROJECT_KEY,
+		AO_TELEMETRY_POSTHOG_HOST: process.env.AO_TELEMETRY_POSTHOG_HOST ?? DEFAULT_POSTHOG_HOST,
+	};
+}
+
 function startDaemon(): DaemonStatus {
 	if (daemonProcess) {
 		return daemonStatus;
@@ -187,7 +198,7 @@ function startDaemon(): DaemonStatus {
 	// the whole group via killDaemon() reaches the daemon and any PTY children.
 	const child = spawn(launch.command, launch.args, {
 		cwd: launch.cwd,
-		env: process.env,
+		env: daemonEnv(),
 		shell: launch.shell,
 		detached: true,
 	});

@@ -7,9 +7,10 @@ import { fileURLToPath, URL } from "node:url";
 import { TanStackRouterVite } from "@tanstack/router-plugin/vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
+import { DEFAULT_POSTHOG_HOST } from "./src/shared/posthog-config";
 
 const POSTHOG_ORIGIN = (() => {
-	const configured = process.env.VITE_AO_POSTHOG_HOST?.trim();
+	const configured = process.env.VITE_AO_POSTHOG_HOST?.trim() || DEFAULT_POSTHOG_HOST;
 	if (!configured) return "";
 	try {
 		return new URL(configured).origin;
