@@ -127,10 +127,10 @@ function setup({ attachedSession = session as WorkspaceSession | undefined, mux 
 	const wrapper = ({ children }: { children: ReactNode }) => (
 		<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
 	);
-	const view = renderHook(
-		({ currentSession }) => useTerminalSession(currentSession, { mux: mux.mux }),
-		{ initialProps: { currentSession: attachedSession }, wrapper },
-	);
+	const view = renderHook(({ currentSession }) => useTerminalSession(currentSession, { mux: mux.mux }), {
+		initialProps: { currentSession: attachedSession },
+		wrapper,
+	});
 	const terminal = createFakeTerminal();
 	let detach: () => void = () => undefined;
 	act(() => {

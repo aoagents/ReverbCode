@@ -107,20 +107,17 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		r.mux = null;
 	}, []);
 
-	const openVisible = useCallback(
-		(clearBeforeOpen = false) => {
-			const r = runtime.current;
-			const { terminal, handle, mux } = r;
-			if (!terminal || !handle || !mux || r.detached) return;
-			if (clearBeforeOpen || !r.firstAttach) {
-				terminal.clear();
-			}
-			r.firstAttach = false;
-			mux.open(handle, terminal.cols, terminal.rows);
-			mux.resize(handle, terminal.cols, terminal.rows);
-		},
-		[],
-	);
+	const openVisible = useCallback((clearBeforeOpen = false) => {
+		const r = runtime.current;
+		const { terminal, handle, mux } = r;
+		if (!terminal || !handle || !mux || r.detached) return;
+		if (clearBeforeOpen || !r.firstAttach) {
+			terminal.clear();
+		}
+		r.firstAttach = false;
+		mux.open(handle, terminal.cols, terminal.rows);
+		mux.resize(handle, terminal.cols, terminal.rows);
+	}, []);
 	openVisibleRef.current = openVisible;
 
 	const bindVisible = useCallback(() => {
