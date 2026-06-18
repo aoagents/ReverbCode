@@ -67,6 +67,8 @@ func Build() ([]byte, error) {
 			"Durable dashboard notifications"),
 		*(&openapi31.Tag{Name: "events"}).WithDescription(
 			"Server-sent CDC event stream with durable replay"),
+		*(&openapi31.Tag{Name: "import"}).WithDescription(
+			"Legacy AO import: detection and trigger"),
 	}
 
 	for _, op := range operations() {
@@ -162,6 +164,11 @@ var schemaNames = map[string]string{
 	"ControllersNotificationTarget":         "NotificationTarget",
 	"ControllersNotificationResponse":       "NotificationResponse",
 	"ControllersListNotificationsResponse":  "ListNotificationsResponse",
+	// httpd/controllers (import wire envelopes)
+	"ControllersImportStatusResponse": "ImportStatusResponse",
+	"ControllersImportRunResponse":    "ImportRunResponse",
+	// internal/legacyimport
+	"LegacyimportReport": "ImportReport",
 	// httpd/controllers — PR wire envelopes
 	"ControllersMergePRResponse":         "MergePRResponse",
 	"ControllersResolveCommentsRequest":  "ResolveCommentsRequest",
@@ -259,7 +266,33 @@ func operations() []operation {
 	ops = append(ops, prOperations()...)
 	ops = append(ops, reviewOperations()...)
 	ops = append(ops, notificationOperations()...)
+	ops = append(ops, importOperations()...)
 	return ops
+}
+
+// importOperations declares the legacy-import operations. The set must stay
+// 1:1 with the routes ImportController.Register mounts (TestRouteSpecParity).
+func importOperations() []operation {
+	return []operation{
+		{
+			method: http.MethodGet, path: "/api/v1/import", id: "importStatus", tag: "import",
+			summary: "Report whether a legacy AO install is available to import",
+			resps: []respUnit{
+				{http.StatusOK, controllers.ImportStatusResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/import", id: "runImport", tag: "import",
+			summary: "Import projects and the orchestrator from a legacy AO install",
+			resps: []respUnit{
+				{http.StatusOK, controllers.ImportRunResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+	}
 }
 
 func notificationOperations() []operation {
