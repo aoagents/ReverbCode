@@ -8,12 +8,15 @@
 //  - Nothing writes into the buffer at mount. Status/empty-state belongs to DOM
 //    chrome around the terminal, not inside it. Writing before layout settles
 //    is what crashed xterm's Viewport (`dimensions` of a zero-sized renderer).
-//  - Fitting runs on several triggers, not one: FitAddon derives the column
-//    count from measured cell width, and if it measures before the monospace
-//    font's real metrics are resolved it over-counts columns and the grid
-//    overflows the panel. So: next frame, two settle timeouts, fonts.ready,
-//    and a ResizeObserver. xterm itself only fires onResize when the grid
-//    actually changed, so repeated fits don't spam the PTY.
+//  - Fitting runs on several triggers, not one: FitAddon derives the grid from
+//    the measured cell box, and if it measures before the monospace font's real
+//    metrics (and the post-open renderer) are resolved it mis-counts cols/rows
+//    and the grid clips inside the panel. So: next frame, two settle timeouts,
+//    fonts.ready, a ResizeObserver, AND an onRender convergence loop that
+//    re-fits until the proposed grid stops changing (the last is the only
+//    trigger that recovers a clipped grid without the host box resizing). xterm
+//    itself only fires onResize when the grid actually changed, so repeated
+//    fits don't spam the PTY.
 
 import { useEffect, useRef } from "react";
 import { Terminal } from "@xterm/xterm";
@@ -153,12 +156,76 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		};
 
 		const raf = requestAnimationFrame(fitTerminal);
-		const settleTimers = [window.setTimeout(fitTerminal, 50), window.setTimeout(fitTerminal, 250)];
+		// 50/250ms catch the common settle; 600/1200ms are a session-bounded
+		// backstop. By 600ms the WebGL atlas and font metrics are unambiguously
+		// warm, so even if the convergence loop below detached at a briefly-stable
+		// wrong measurement, this re-measures the real cell box and corrects —
+		// which fires the PTY resize that makes zellij repaint cleanly (clearing
+		// any ghost frame). fit() is idempotent: a no-op when the grid is already
+		// right, so a correct terminal never reflows.
+		const settleTimers = [50, 250, 600, 1200].map((ms) => window.setTimeout(fitTerminal, ms));
 		if (document.fonts?.ready) {
 			void document.fonts.ready.then(fitTerminal);
 		}
 		const observer = new ResizeObserver(fitTerminal);
 		observer.observe(host);
+
+		// Recovery re-fit that does NOT depend on the host box changing size.
+		//
+		// FitAddon derives the grid by dividing the pane box by the renderer's
+		// measured cell box. That box is measured asynchronously: the WebGL
+		// renderer loads after open() and the monospace font's real metrics
+		// resolve a frame or more later, so the early fits above can divide by a
+		// not-yet-final cell box, mis-count cols/rows, and clip the grid inside the
+		// pane. The fixed settle window (rAF, timeouts, fonts.ready) may all run
+		// before the cell box is final, and the ResizeObserver never fires to
+		// correct it because the host's pixel box is a stable height:100%, so a
+		// wrong grid would otherwise freeze for the whole session.
+		//
+		// onRender fires on every renderer repaint, including the repaint after
+		// the metrics settle. Each fire re-proposes dimensions from the *current*
+		// measured cell box. Crucially we never re-fit straight off a single
+		// frame's proposal: the WebGL atlas warm-up can emit a one-frame transient
+		// cell box (e.g. a doubled box on a HiDPI display) that halves the grid,
+		// and committing it would lock the terminal at half size and detach (the
+		// #313 ghost). So a differing proposal must REPEAT identically across two
+		// consecutive renders — proving the measurement settled — before we apply
+		// it. proposeDimensions returns undefined until the cell box is non-zero,
+		// so a fit is never accepted from an unmeasured cell. Once the proposal
+		// holds at the live grid for a few frames (or a hard re-fit cap is hit) the
+		// listener detaches, so steady-state content renders cost nothing.
+		const STABLE_FRAMES_TARGET = 3;
+		const MAX_REFITS = 20;
+		let stableFrames = 0;
+		let refits = 0;
+		let pending: { cols: number; rows: number } | null = null;
+		const stabilizer = term.onRender(() => {
+			const proposed = fit.proposeDimensions();
+			if (!proposed || !proposed.cols || !proposed.rows) return;
+			if (proposed.cols !== term.cols || proposed.rows !== term.rows) {
+				stableFrames = 0;
+				// Only act once the same differing proposal repeats — a single-frame
+				// transient never gets committed, it just updates `pending`.
+				if (pending && pending.cols === proposed.cols && pending.rows === proposed.rows) {
+					pending = null;
+					if (refits++ >= MAX_REFITS) {
+						stabilizer.dispose();
+						return;
+					}
+					fitTerminal();
+					return;
+				}
+				pending = { cols: proposed.cols, rows: proposed.rows };
+				return;
+			}
+			pending = null;
+			if (++stableFrames >= STABLE_FRAMES_TARGET) stabilizer.dispose();
+		});
+
+		// OS window resize and monitor/DPR changes also alter the true cell box
+		// without touching the host's height:100% box, so the ResizeObserver above
+		// misses them. Listen on window directly as a session-long recovery path.
+		window.addEventListener("resize", fitTerminal);
 
 		// Live cols/rows getters: the owner reads the current grid at attach time,
 		// not a snapshot taken at ready time (the first fit may not have run yet).
@@ -182,6 +249,8 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			cancelAnimationFrame(raf);
 			for (const timer of settleTimers) window.clearTimeout(timer);
 			observer.disconnect();
+			stabilizer.dispose();
+			window.removeEventListener("resize", fitTerminal);
 			try {
 				term.dispose();
 			} catch {

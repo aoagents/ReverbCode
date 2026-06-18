@@ -10,7 +10,9 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
+	"github.com/aoagents/agent-orchestrator/backend/internal/legacyimport"
 	"github.com/aoagents/agent-orchestrator/backend/internal/runfile"
+	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 )
 
 const defaultStartTimeout = 10 * time.Second
@@ -74,6 +76,12 @@ func (c *commandContext) startDaemon(ctx context.Context, opts startOptions) (da
 		}
 	}
 
+	// First-boot opt-in: before launching the daemon (so the import runs with the
+	// store unlocked and the daemon as sole writer afterwards), offer to import a
+	// legacy AO install. Declining or any import failure is non-fatal — the
+	// daemon still starts and the user can run `ao import` later.
+	c.maybeFirstBootImport(ctx, cfg)
+
 	exe, err := c.deps.Executable()
 	if err != nil {
 		return daemonStatus{}, fmt.Errorf("resolve executable: %w", err)
@@ -107,6 +115,49 @@ func (c *commandContext) startDaemon(ctx context.Context, opts startOptions) (da
 		return daemonStatus{}, fmt.Errorf("%w; see daemon log %s", err, logPath)
 	}
 	return ready, nil
+}
+
+// maybeFirstBootImport offers to import a legacy AO install the first time the
+// daemon is started against an empty rewrite database. It is best-effort: every
+// failure path degrades to "start the daemon fresh" so a broken or absent legacy
+// store can never block startup. A non-interactive boot (Electron/headless)
+// never auto-imports; it prints a one-line hint to run `ao import` explicitly.
+func (c *commandContext) maybeFirstBootImport(ctx context.Context, cfg config.Config) {
+	root := legacyimport.DefaultLegacyRootDir()
+	if !legacyimport.HasLegacyData(root) {
+		return
+	}
+
+	store, err := sqlite.Open(cfg.DataDir)
+	if err != nil {
+		return // the daemon will surface a real store error on its own open
+	}
+	defer func() { _ = store.Close() }()
+
+	projects, err := store.ListProjects(ctx)
+	if err != nil || len(projects) > 0 {
+		// Already imported (or populated) — don't offer again.
+		return
+	}
+
+	out := c.deps.Out
+	if !stdinIsInteractive(c.deps.In) {
+		_, _ = fmt.Fprintf(out, "Found existing AO projects at %s. Run `ao import` to bring them in.\n", root)
+		return
+	}
+
+	ok, err := confirm(c.deps.In, out, "Found existing AO projects and sessions. Import them now?", true)
+	if err != nil || !ok {
+		_, _ = fmt.Fprintln(out, "Continuing fresh. Run `ao import` later to bring in your existing data.")
+		return
+	}
+
+	rep, err := legacyimport.Run(ctx, store, legacyimport.Options{Root: root, DataDir: cfg.DataDir})
+	if err != nil {
+		_, _ = fmt.Fprintf(out, "Import failed: %v\nContinuing fresh; legacy data is untouched. Retry with `ao import`.\n", err)
+		return
+	}
+	_ = writeImportSummary(out, rep)
 }
 
 func (c *commandContext) waitForReady(ctx context.Context, timeout time.Duration) (daemonStatus, error) {

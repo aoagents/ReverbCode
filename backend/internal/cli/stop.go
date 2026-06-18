@@ -112,20 +112,27 @@ func (c *commandContext) waitForStopped(ctx context.Context, pid int, runFilePat
 			return daemonStatus{}, err
 		}
 		alive := c.deps.ProcessAlive(pid)
-		if info == nil {
-			return daemonStatus{State: stateStopped, RunFile: runFilePath, DataDir: dataDir}, nil
-		}
 		if !alive {
 			// Only remove the run-file if it still belongs to the process we
 			// stopped. A concurrent `ao start` may have already written a new
 			// run-file for a different daemon; removing that would corrupt its
 			// handshake and make a live daemon look stopped.
-			if info.PID == pid {
+			if info != nil && info.PID == pid {
 				if err := runfile.Remove(runFilePath); err != nil {
 					return daemonStatus{}, err
 				}
 			}
 			return daemonStatus{State: stateStopped, RunFile: runFilePath, DataDir: dataDir}, nil
+		}
+		if info == nil {
+			// The daemon removes running.json before the process necessarily exits.
+			// Keep waiting so Windows releases inherited handles such as daemon.log
+			// before tests or callers clean up the data directory.
+			if !c.deps.Now().Before(deadline) {
+				return daemonStatus{}, fmt.Errorf("daemon pid %d removed run-file but did not exit within %s", pid, timeout)
+			}
+			c.deps.Sleep(100 * time.Millisecond)
+			continue
 		}
 		if !c.deps.Now().Before(deadline) {
 			return daemonStatus{}, fmt.Errorf("daemon pid %d did not stop within %s", pid, timeout)

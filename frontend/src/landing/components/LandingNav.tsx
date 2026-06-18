@@ -1,5 +1,8 @@
 "use client";
 
+import Image from "next/image";
+import Link from "next/link";
+
 function XIcon() {
 	return (
 		<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
@@ -31,17 +34,24 @@ export function LandingNav() {
 				href="#"
 				className="inline-flex items-center gap-2 text-base font-semibold text-white no-underline font-sans font-[680] tracking-tight"
 			>
-				<img src="/ao-logo.svg" alt="" aria-hidden="true" width={28} height={28} className="h-7 w-7" />
+				<Image
+					src="/ao-logo.png"
+					alt=""
+					aria-hidden
+					width={28}
+					height={28}
+					className="h-7 w-7 rounded-md object-cover"
+				/>
 				Agent Orchestrator
 			</a>
 			<ul className="hidden md:flex items-center gap-8 list-none">
 				<li>
-					<a
+					<Link
 						href="/docs"
 						className="text-sm text-[var(--landing-muted)] no-underline hover:text-white transition-colors"
 					>
 						Docs
-					</a>
+					</Link>
 				</li>
 				<li>
 					<a

@@ -605,10 +605,13 @@ func (o *Observer) discoverNewPRs(ctx context.Context, sessionRepos []sessionRep
 }
 
 // matchSession picks the session that owns sourceBranch. A session owns the
-// branch when it is an exact match or a stacked descendant ("branch/..."). When
-// several session branches are prefixes of the same source branch the longest
-// (most specific) one wins, so a child session claims its own stacked PRs rather
-// than the ancestor session.
+// branch when it is an exact match or a stacked descendant ("branch/..."). The
+// default worker branch is a leaf named "<namespace>/root"; for that shape the
+// session also owns sibling branches under "<namespace>/..." so Git can create
+// child PR branches without colliding with the root ref. When several session
+// branches are prefixes of the same source branch the longest (most specific)
+// one wins, so a child session claims its own stacked PRs rather than the
+// ancestor session.
 func matchSession(candidates []sessionRepo, sourceBranch string) (sessionRepo, bool) {
 	var best sessionRepo
 	bestLen := -1
@@ -616,14 +619,24 @@ func matchSession(candidates []sessionRepo, sourceBranch string) (sessionRepo, b
 		if sr.branch == "" {
 			continue
 		}
-		if sr.branch == sourceBranch || strings.HasPrefix(sourceBranch, sr.branch+"/") {
-			if len(sr.branch) > bestLen {
-				best = sr
-				bestLen = len(sr.branch)
+		for _, prefix := range sessionBranchPrefixes(sr.branch) {
+			if prefix == sourceBranch || strings.HasPrefix(sourceBranch, prefix+"/") {
+				if len(prefix) > bestLen {
+					best = sr
+					bestLen = len(prefix)
+				}
 			}
 		}
 	}
 	return best, bestLen >= 0
+}
+
+func sessionBranchPrefixes(branch string) []string {
+	prefixes := []string{branch}
+	if namespace, ok := strings.CutSuffix(branch, "/root"); ok && namespace != "" {
+		prefixes = append(prefixes, namespace)
+	}
+	return prefixes
 }
 
 func (o *Observer) selectRefreshCandidates(ctx context.Context, subjects map[string]*subject, guards map[string]repoGuardState, markRepoFailed func(ports.SCMRepo)) refreshSelection {

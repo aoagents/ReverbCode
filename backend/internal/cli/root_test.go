@@ -230,6 +230,7 @@ func TestStopDoesNotShutdownUnverifiedReusedPID(t *testing.T) {
 func TestStopUsesShutdownEndpoint(t *testing.T) {
 	cfg := setConfigEnv(t)
 	shutdownCalled := make(chan struct{}, 1)
+	var shutdownSeen atomic.Bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/healthz":
@@ -240,6 +241,7 @@ func TestStopUsesShutdownEndpoint(t *testing.T) {
 			if err := runfile.Remove(cfg.runFile); err != nil {
 				t.Fatal(err)
 			}
+			shutdownSeen.Store(true)
 			shutdownCalled <- struct{}{}
 			_, _ = fmt.Fprintf(w, `{"status":"shutting_down","service":%q,"pid":%d}`, daemonmeta.ServiceName, os.Getpid())
 		default:
@@ -253,7 +255,12 @@ func TestStopUsesShutdownEndpoint(t *testing.T) {
 	}
 
 	out, _, err := executeCLI(t, Deps{
-		ProcessAlive: func(pid int) bool { return pid == os.Getpid() },
+		ProcessAlive: func(pid int) bool {
+			if pid != os.Getpid() {
+				return false
+			}
+			return !shutdownSeen.Load()
+		},
 	}, "stop", "--json")
 	if err != nil {
 		t.Fatal(err)

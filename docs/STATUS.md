@@ -5,6 +5,10 @@ Electron/React frontend both drive a live daemon over HTTP/SSE/WebSocket. The
 core GitHub flow works end-to-end: add project → spawn session/orchestrator →
 attach terminal → observe PR → merge.
 
+This file tracks progress. For what the product _is_ and how to run it, see the
+top-level [`README.md`](../README.md); for the backend mental model see
+[`architecture.md`](architecture.md).
+
 ## Build & test
 
 The local gate is the backend Go build and race-enabled test suite:
@@ -39,10 +43,13 @@ surface (`npm run sqlc`, `npm run api`).
 - SCM observer (`internal/observe/scm`) wired into the daemon: GitHub provider,
   lazy/non-blocking auth, per-PR polling with ETag guards and semantic diffing,
   feeding PR facts into lifecycle, which sends agent nudges for CI failures,
-  review feedback, and merge conflicts.
+  review feedback, and merge conflicts
+  ([#75](https://github.com/aoagents/agent-orchestrator/issues/75),
+  [#108](https://github.com/aoagents/agent-orchestrator/issues/108),
+  [#109](https://github.com/aoagents/agent-orchestrator/issues/109)).
 - Terminal mux over WebSocket (`/mux`): per-client `zellij attach` PTY.
 - Lifecycle reducer plus reaper (`internal/observe/reaper`).
-- Agent adapter platform under `internal/adapters/agent/` (20+ adapters) with a
+- Agent adapter platform under `internal/adapters/agent/` (23 adapters) with a
   registry and `ao hooks` activity dispatch.
 - OpenAPI spec generated from Go DTOs; frontend TS types generated from it and
   drift-checked in CI.
@@ -76,5 +83,3 @@ surface (`npm run sqlc`, `npm run api`).
 
 Tracking milestone:
 [`rewrite`](https://github.com/aoagents/agent-orchestrator/milestone/1).
-</content>
-</invoke>
