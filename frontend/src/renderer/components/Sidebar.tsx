@@ -1,6 +1,17 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
-import { ChevronRight, GitPullRequest, LayoutDashboard, Moon, MoreVertical, Plus, Search, Settings, Sun, Trash2 } from "lucide-react";
+import {
+	ChevronRight,
+	GitPullRequest,
+	LayoutDashboard,
+	Moon,
+	MoreVertical,
+	Plus,
+	Search,
+	Settings,
+	Sun,
+	Trash2,
+} from "lucide-react";
 import { useState } from "react";
 import {
 	attentionZone,
@@ -157,12 +168,7 @@ export function Sidebar({ daemonStatus, workspaceError, workspaces, onCreateProj
 								onClick={selection.goHome}
 								type="button"
 							>
-								<img
-									src={aoLogo}
-									alt=""
-									aria-hidden="true"
-									className="h-[22px] w-[22px] rounded-[6px] object-cover"
-								/>
+								<img src={aoLogo} alt="" aria-hidden="true" className="h-[22px] w-[22px] rounded-[6px] object-cover" />
 							</button>
 						</TooltipTrigger>
 						<TooltipContent side="right" hidden={state !== "collapsed"}>
