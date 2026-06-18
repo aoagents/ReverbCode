@@ -3,11 +3,14 @@ package review
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 // --- fakes ---
@@ -217,8 +220,8 @@ func TestTriggerConcurrentSameWorkerSpawnsOnce(t *testing.T) {
 }
 
 func TestTriggerFallsBackToExistingRunOnUniqueConflict(t *testing.T) {
-	// The idempotency check passes (no run yet), the reviewer launches, but the
-	// insert loses to a concurrent writer the unique index already accepted.
+	// The idempotency check passes (no run yet), but the insert loses to a
+	// concurrent writer the unique index already accepted.
 	store := &fakeStore{insertErr: domain.ErrDuplicateReviewRun}
 	launcher := &fakeLauncher{handle: "review-mer-1"}
 	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
@@ -233,8 +236,8 @@ func TestTriggerFallsBackToExistingRunOnUniqueConflict(t *testing.T) {
 	if res.Run.TargetSHA != "sha1" || res.Run.ID != "winner-id-1" {
 		t.Fatalf("expected the recorded winner run, got %+v", res.Run)
 	}
-	if launcher.spawnCount != 1 {
-		t.Fatalf("reviewer should still have launched once: %+v", launcher)
+	if launcher.spawnCount != 0 {
+		t.Fatalf("reviewer should not launch after unique conflict: %+v", launcher)
 	}
 }
 
@@ -300,16 +303,43 @@ func TestTriggerSpawnsWhenReviewerDead(t *testing.T) {
 	}
 }
 
-func TestTriggerLaunchFailureRecordsNothing(t *testing.T) {
+func TestTriggerLaunchFailureRecordsFailedRun(t *testing.T) {
 	store := &fakeStore{}
-	launcher := &fakeLauncher{spawnErr: errors.New("boom")}
+	launcher := &fakeLauncher{spawnErr: fmt.Errorf("claude: %w", ports.ErrAgentBinaryNotFound)}
 	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
 
-	if _, err := eng.Trigger(context.Background(), "mer-1"); err == nil {
-		t.Fatal("want launch error")
+	if _, err := eng.Trigger(context.Background(), "mer-1"); !errors.Is(err, ports.ErrAgentBinaryNotFound) {
+		t.Fatalf("err = %v, want ports.ErrAgentBinaryNotFound", err)
 	}
-	if len(store.runs) != 0 || store.review != nil {
-		t.Fatalf("nothing should be persisted on launch failure: review=%+v runs=%+v", store.review, store.runs)
+	if store.review == nil || len(store.runs) != 1 {
+		t.Fatalf("expected persisted failed review/run: review=%+v runs=%+v", store.review, store.runs)
+	}
+	run := store.runs[0]
+	if run.Status != domain.ReviewRunFailed || run.Verdict != domain.VerdictNone {
+		t.Fatalf("run = %+v, want failed with no verdict", run)
+	}
+	if !strings.Contains(run.Body, "claude") || !strings.Contains(run.Body, ports.ErrAgentBinaryNotFound.Error()) {
+		t.Fatalf("run body = %q, want launch cause", run.Body)
+	}
+}
+
+func TestTriggerRetriesAfterFailedRunForSameCommit(t *testing.T) {
+	store := &fakeStore{
+		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", ReviewerHandleID: "review-mer-1"},
+		runs:   []domain.ReviewRun{{ID: "run-failed", ReviewID: "rev-1", SessionID: "mer-1", TargetSHA: "sha1", Status: domain.ReviewRunFailed}},
+	}
+	launcher := &fakeLauncher{handle: "review-mer-1"}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
+
+	res, err := eng.Trigger(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatalf("Trigger: %v", err)
+	}
+	if !res.Created || res.Run.ID == "run-failed" {
+		t.Fatalf("expected retry to create a new run, got %+v", res)
+	}
+	if len(store.runs) != 2 || !launcher.spawned {
+		t.Fatalf("expected new launch/run after failed pass: launched=%v runs=%+v", launcher.spawned, store.runs)
 	}
 }
 

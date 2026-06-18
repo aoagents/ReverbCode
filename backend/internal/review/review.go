@@ -142,10 +142,11 @@ type SessionReviews struct {
 }
 
 // Trigger starts (or reuses) a review of a worker's PR at its current head:
-//   - if a run already exists for this commit, it is returned unchanged;
+//   - if a non-failed run already exists for this commit, it is returned unchanged;
 //   - otherwise, if a live reviewer pane exists, it is messaged to review the
 //     new commit; if not, a fresh reviewer is spawned;
-//   - only after the reviewer is launched is the run recorded.
+//   - the run is recorded before launch so startup failures leave a visible
+//     failed pass instead of an empty gap.
 func (e *Engine) Trigger(ctx context.Context, workerID domain.SessionID) (TriggerResult, error) {
 	if workerID == "" {
 		return TriggerResult{}, fmt.Errorf("%w: worker session id is required", ErrInvalid)
@@ -183,10 +184,11 @@ func (e *Engine) Trigger(ctx context.Context, workerID domain.SessionID) (Trigge
 		return TriggerResult{}, err
 	}
 
-	// Idempotency: a pass already exists for this commit — return it as-is.
+	// Idempotency: return a non-failed pass as-is. Failed passes stay visible
+	// but can be retried after the user fixes the underlying issue.
 	if existing, ok, err := e.store.GetReviewRunBySessionAndSHA(ctx, workerID, targetSHA); err != nil {
 		return TriggerResult{}, err
-	} else if ok {
+	} else if ok && existing.Status != domain.ReviewRunFailed {
 		return TriggerResult{Run: existing, ReviewerHandleID: review.ReviewerHandleID, Created: false}, nil
 	}
 
@@ -206,30 +208,7 @@ func (e *Engine) Trigger(ctx context.Context, workerID domain.SessionID) (Trigge
 		TargetSHA:     targetSHA,
 	}
 
-	// Reuse a live reviewer pane if there is one; otherwise spawn a fresh one.
-	handleID := ""
-	if hasReview && review.ReviewerHandleID != "" {
-		alive, err := e.launcher.Alive(ctx, review.ReviewerHandleID)
-		if err != nil {
-			return TriggerResult{}, err
-		}
-		if alive {
-			if err := e.launcher.Notify(ctx, review.ReviewerHandleID, spec); err != nil {
-				return TriggerResult{}, fmt.Errorf("notify reviewer: %w", err)
-			}
-			handleID = review.ReviewerHandleID
-		}
-	}
-	if handleID == "" {
-		h, err := e.launcher.Spawn(ctx, spec)
-		if err != nil {
-			return TriggerResult{}, fmt.Errorf("launch reviewer: %w", err)
-		}
-		handleID = h
-	}
-
-	// The reviewer is running; now record the pass.
-	review, err = e.upsertReview(ctx, worker, harness, pr.URL, handleID, now)
+	review, err = e.upsertReview(ctx, worker, harness, pr.URL, review.ReviewerHandleID, now)
 	if err != nil {
 		return TriggerResult{}, err
 	}
@@ -245,20 +224,51 @@ func (e *Engine) Trigger(ctx context.Context, workerID domain.SessionID) (Trigge
 		CreatedAt: now,
 	}
 	if err := e.store.InsertReviewRun(ctx, run); err != nil {
-		// The per-worker lock serialises in-process triggers, but the unique
-		// index (migration 0013) can still reject a run a concurrent daemon (or
-		// a pre-lock restart) recorded for this commit. The reviewer is already
-		// launched, so don't surface a raw error: re-read the recorded run and
-		// return it as the existing, not-newly-created pass.
 		if errors.Is(err, domain.ErrDuplicateReviewRun) {
 			if existing, ok, getErr := e.store.GetReviewRunBySessionAndSHA(ctx, workerID, targetSHA); getErr != nil {
 				return TriggerResult{}, getErr
 			} else if ok {
-				return TriggerResult{Run: existing, ReviewerHandleID: handleID, Created: false}, nil
+				return TriggerResult{Run: existing, ReviewerHandleID: review.ReviewerHandleID, Created: false}, nil
 			}
 		}
 		return TriggerResult{}, err
 	}
+
+	failRun := func(err error) (TriggerResult, error) {
+		if _, updateErr := e.store.UpdateReviewRunResult(ctx, run.ID, domain.ReviewRunFailed, domain.VerdictNone, err.Error()); updateErr != nil {
+			return TriggerResult{}, updateErr
+		}
+		return TriggerResult{}, err
+	}
+
+	// Reuse a live reviewer pane if there is one; otherwise spawn a fresh one.
+	handleID := ""
+	if hasReview && review.ReviewerHandleID != "" {
+		alive, err := e.launcher.Alive(ctx, review.ReviewerHandleID)
+		if err != nil {
+			return failRun(err)
+		}
+		if alive {
+			if err := e.launcher.Notify(ctx, review.ReviewerHandleID, spec); err != nil {
+				return failRun(fmt.Errorf("notify reviewer: %w", err))
+			}
+			handleID = review.ReviewerHandleID
+		}
+	}
+	if handleID == "" {
+		h, err := e.launcher.Spawn(ctx, spec)
+		if err != nil {
+			return failRun(fmt.Errorf("launch reviewer: %w", err))
+		}
+		handleID = h
+	}
+
+	// The reviewer is running; now record the pass.
+	review, err = e.upsertReview(ctx, worker, harness, pr.URL, handleID, now)
+	if err != nil {
+		return TriggerResult{}, err
+	}
+	run.ReviewID = review.ID
 	return TriggerResult{Run: run, ReviewerHandleID: handleID, Created: true}, nil
 }
 
