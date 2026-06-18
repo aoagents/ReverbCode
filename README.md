@@ -14,6 +14,8 @@ See [`docs/architecture.md`](docs/architecture.md) for the backend mental model
 and [`AGENTS.md`](AGENTS.md) for the contributor / worker contract. For current
 progress (what's shipped vs. in flight) see [`docs/STATUS.md`](docs/STATUS.md).
 
+> New contributors: skim `AGENTS.md` first for the hard rules before opening a PR.
+
 ## What it does
 
 - **Agent-agnostic.** A 23-adapter platform under
