@@ -234,11 +234,11 @@ func (e *Engine) Trigger(ctx context.Context, workerID domain.SessionID) (Trigge
 		return TriggerResult{}, err
 	}
 
-	failRun := func(err error) (TriggerResult, error) {
+	failRun := func(err error) error {
 		if _, updateErr := e.store.UpdateReviewRunResult(ctx, run.ID, domain.ReviewRunFailed, domain.VerdictNone, err.Error()); updateErr != nil {
-			return TriggerResult{}, updateErr
+			return updateErr
 		}
-		return TriggerResult{}, err
+		return err
 	}
 
 	// Reuse a live reviewer pane if there is one; otherwise spawn a fresh one.
@@ -246,11 +246,11 @@ func (e *Engine) Trigger(ctx context.Context, workerID domain.SessionID) (Trigge
 	if hasReview && review.ReviewerHandleID != "" {
 		alive, err := e.launcher.Alive(ctx, review.ReviewerHandleID)
 		if err != nil {
-			return failRun(err)
+			return TriggerResult{}, failRun(err)
 		}
 		if alive {
 			if err := e.launcher.Notify(ctx, review.ReviewerHandleID, spec); err != nil {
-				return failRun(fmt.Errorf("notify reviewer: %w", err))
+				return TriggerResult{}, failRun(fmt.Errorf("notify reviewer: %w", err))
 			}
 			handleID = review.ReviewerHandleID
 		}
@@ -258,7 +258,7 @@ func (e *Engine) Trigger(ctx context.Context, workerID domain.SessionID) (Trigge
 	if handleID == "" {
 		h, err := e.launcher.Spawn(ctx, spec)
 		if err != nil {
-			return failRun(fmt.Errorf("launch reviewer: %w", err))
+			return TriggerResult{}, failRun(fmt.Errorf("launch reviewer: %w", err))
 		}
 		handleID = h
 	}
