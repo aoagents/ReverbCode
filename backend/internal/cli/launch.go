@@ -36,9 +36,24 @@ func (c *commandContext) launchAgent(ctx context.Context) error {
 		return fmt.Errorf("launch: %w", err)
 	}
 
-	cmd := exec.CommandContext(ctx, spec.Argv[0], spec.Argv[1:]...)
-	cmd.Dir = spec.WorkspacePath
-	cmd.Env = withoutLaunchSpecEnv(os.Environ())
+	env := withoutLaunchSpecEnv(os.Environ())
+	launchErr := c.runLaunchCommand(ctx, spec.WorkspacePath, spec.Argv, env)
+	if len(spec.FallbackArgv) == 0 {
+		return launchErr
+	}
+	if launchErr != nil {
+		_, _ = fmt.Fprintf(c.deps.Err, "\r\n[ao launch] agent process exited: %v\r\n", launchErr)
+	}
+	return c.runLaunchCommand(ctx, spec.WorkspacePath, spec.FallbackArgv, env)
+}
+
+func (c *commandContext) runLaunchCommand(ctx context.Context, dir string, argv, env []string) error {
+	if len(argv) == 0 {
+		return errors.New("launch: command argv is required")
+	}
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	cmd.Dir = dir
+	cmd.Env = env
 	cmd.Stdin = c.deps.In
 	cmd.Stdout = c.deps.Out
 	cmd.Stderr = c.deps.Err

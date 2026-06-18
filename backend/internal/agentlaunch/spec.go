@@ -14,6 +14,7 @@ const EnvSpecPath = "AO_LAUNCH_SPEC"
 type Spec struct {
 	WorkspacePath string   `json:"workspacePath"`
 	Argv          []string `json:"argv"`
+	FallbackArgv  []string `json:"fallbackArgv,omitempty"`
 }
 
 // WriteTemp serialises spec to a temporary JSON file and returns its path.

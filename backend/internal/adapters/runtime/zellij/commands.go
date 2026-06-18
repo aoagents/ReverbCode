@@ -39,6 +39,9 @@ func listPanesArgs(id string) []string {
 }
 
 func pasteArgs(id, paneID, chunk string) []string {
+	if runtime.GOOS == "windows" {
+		return []string{"--session", id, "action", "write-chars", "--pane-id", paneID, chunk}
+	}
 	return []string{"--session", id, "action", "paste", "--pane-id", paneID, chunk}
 }
 
@@ -98,6 +101,23 @@ func windowsLaunchArgv(launcherBinary string) []string {
 		command = "ao"
 	}
 	return []string{command, "launch"}
+}
+
+func windowsFallbackShellArgv(shellPath string) []string {
+	if strings.TrimSpace(shellPath) == "" {
+		shellPath = "powershell.exe"
+	}
+	base := strings.ToLower(filepathBase(shellPath))
+	if strings.Contains(base, "cmd") {
+		return []string{shellPath, "/D", "/Q", "/K"}
+	}
+	if strings.Contains(base, "powershell") || strings.Contains(base, "pwsh") {
+		return []string{shellPath, "-NoLogo", "-NoProfile", "-NoExit"}
+	}
+	if strings.Contains(base, "sh") {
+		return []string{shellPath, "-i"}
+	}
+	return []string{shellPath}
 }
 
 // directLayoutString builds a layout that runs argv[0] with argv[1:] as zellij

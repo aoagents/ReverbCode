@@ -96,7 +96,11 @@ func TestCommandBuilders(t *testing.T) {
 	if got, want := listPanesArgs("sess-1"), []string{"--session", "sess-1", "action", "list-panes", "--all", "--json"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("listPanesArgs = %#v, want %#v", got, want)
 	}
-	if got, want := pasteArgs("sess-1", "terminal_0", "hello"), []string{"--session", "sess-1", "action", "paste", "--pane-id", "terminal_0", "hello"}; !reflect.DeepEqual(got, want) {
+	pasteAction := "paste"
+	if runtime.GOOS == "windows" {
+		pasteAction = "write-chars"
+	}
+	if got, want := pasteArgs("sess-1", "terminal_0", "hello"), []string{"--session", "sess-1", "action", pasteAction, "--pane-id", "terminal_0", "hello"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("pasteArgs = %#v, want %#v", got, want)
 	}
 	if got, want := dumpScreenArgs("sess-1", "terminal_0"), []string{"--session", "sess-1", "action", "dump-screen", "--pane-id", "terminal_0", "--full"}; !reflect.DeepEqual(got, want) {
@@ -314,7 +318,18 @@ func TestCreateRejectsInvalidEnvKeys(t *testing.T) {
 }
 
 func TestCreateStartsSessionAndDiscoversPane(t *testing.T) {
-	fr := &fakeRunner{outputs: [][]byte{[]byte("zellij 0.44.3"), nil, nil, []byte(`[{"id":0,"is_plugin":true,"title":"zellij:tab-bar"},{"id":3,"is_plugin":false,"title":"agent"}]`)}}
+	panesOut := []byte(`[{"id":0,"is_plugin":true,"title":"zellij:tab-bar"},{"id":3,"is_plugin":false,"title":"agent"}]`)
+	outputs := [][]byte{
+		[]byte("zellij 0.44.3"),
+		nil,
+		nil,
+		panesOut,
+	}
+	if runtime.GOOS == "windows" {
+		outputs = append(outputs, panesOut)
+	}
+	outputs = append(outputs, []byte("sess-1 [Created 1s ago] \n"))
+	fr := &fakeRunner{outputs: outputs}
 	r := New(Options{Binary: "zellij-test", Timeout: time.Second, Shell: "/bin/zsh", SocketDir: "/tmp/zj", ConfigDir: "/tmp/cfg"})
 	r.runner = fr
 
@@ -330,8 +345,12 @@ func TestCreateStartsSessionAndDiscoversPane(t *testing.T) {
 	if handle != (ports.RuntimeHandle{ID: "sess-1/terminal_3"}) {
 		t.Fatalf("handle = %+v, want zellij handle", handle)
 	}
-	if len(fr.calls) != 4 {
-		t.Fatalf("calls = %d, want 4", len(fr.calls))
+	wantCalls := 5
+	if runtime.GOOS == "windows" {
+		wantCalls = 6
+	}
+	if len(fr.calls) != wantCalls {
+		t.Fatalf("calls = %d, want %d", len(fr.calls), wantCalls)
 	}
 	if got, want := fr.calls[0].args, []string{"--config-dir", "/tmp/cfg", "--version"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("version args = %#v, want %#v", got, want)
@@ -345,18 +364,34 @@ func TestCreateStartsSessionAndDiscoversPane(t *testing.T) {
 	if got := fr.calls[3].args; !reflect.DeepEqual(got, append([]string{"--config-dir", "/tmp/cfg"}, listPanesArgs("sess-1")...)) {
 		t.Fatalf("list panes args = %#v", got)
 	}
+	listSessionsCall := 4
+	if runtime.GOOS == "windows" {
+		if got := fr.calls[4].args; !reflect.DeepEqual(got, append([]string{"--config-dir", "/tmp/cfg"}, listPanesArgs("sess-1")...)) {
+			t.Fatalf("ready list panes args = %#v", got)
+		}
+		listSessionsCall = 5
+	}
+	if got := fr.calls[listSessionsCall].args; !reflect.DeepEqual(got, append([]string{"--config-dir", "/tmp/cfg"}, listSessionsArgs()...)) {
+		t.Fatalf("list sessions args = %#v", got)
+	}
 	if got, want := fr.calls[0].env, expectedZellijEnv("/tmp/zj"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("env = %#v, want %#v", got, want)
 	}
 }
 
 func TestCreateClearsStaleSessionBeforeCreating(t *testing.T) {
-	fr := &fakeRunner{outputs: [][]byte{
+	panesOut := []byte(`[{"id":1,"is_plugin":false,"title":"agent"}]`)
+	outputs := [][]byte{
 		[]byte("zellij 0.44.3"),
 		nil,
 		nil,
-		[]byte(`[{"id":1,"is_plugin":false,"title":"agent"}]`),
-	}}
+		panesOut,
+	}
+	if runtime.GOOS == "windows" {
+		outputs = append(outputs, panesOut)
+	}
+	outputs = append(outputs, []byte("sess-1 [Created 1s ago] \n"))
+	fr := &fakeRunner{outputs: outputs}
 	r := New(Options{Binary: "zellij-test", Timeout: time.Second, Shell: "/bin/zsh"})
 	r.runner = fr
 
@@ -368,8 +403,12 @@ func TestCreateClearsStaleSessionBeforeCreating(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	if len(fr.calls) != 4 {
-		t.Fatalf("calls = %d, want 4", len(fr.calls))
+	wantCalls := 5
+	if runtime.GOOS == "windows" {
+		wantCalls = 6
+	}
+	if len(fr.calls) != wantCalls {
+		t.Fatalf("calls = %d, want %d", len(fr.calls), wantCalls)
 	}
 	if got, want := fr.calls[1].args, []string{"delete-session", "--force", "sess-1"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("delete args = %#v, want %#v", got, want)
@@ -505,6 +544,20 @@ func TestGetOutputTrimsLines(t *testing.T) {
 	}
 	if out != "two\nthree\n" {
 		t.Fatalf("output = %q, want last two lines", out)
+	}
+}
+
+func TestGetOutputTrimsTrailingScreenPaddingBeforeTailing(t *testing.T) {
+	fr := &fakeRunner{outputs: [][]byte{[]byte("ready\nprompt> echo hi\nhi\n\n\n\n")}}
+	r := New(Options{Timeout: time.Second})
+	r.runner = fr
+
+	out, err := r.GetOutput(context.Background(), ports.RuntimeHandle{ID: "sess-1/terminal_0"}, 2)
+	if err != nil {
+		t.Fatalf("GetOutput: %v", err)
+	}
+	if out != "prompt> echo hi\nhi\n" {
+		t.Fatalf("output = %q, want last non-padding lines", out)
 	}
 }
 
