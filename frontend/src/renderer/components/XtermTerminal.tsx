@@ -8,12 +8,15 @@
 //  - Nothing writes into the buffer at mount. Status/empty-state belongs to DOM
 //    chrome around the terminal, not inside it. Writing before layout settles
 //    is what crashed xterm's Viewport (`dimensions` of a zero-sized renderer).
-//  - Fitting runs on several triggers, not one: FitAddon derives the column
-//    count from measured cell width, and if it measures before the monospace
-//    font's real metrics are resolved it over-counts columns and the grid
-//    overflows the panel. So: next frame, two settle timeouts, fonts.ready,
-//    and a ResizeObserver. xterm itself only fires onResize when the grid
-//    actually changed, so repeated fits don't spam the PTY.
+//  - Fitting runs on several triggers, not one: FitAddon derives the grid from
+//    the measured cell box, and if it measures before the monospace font's real
+//    metrics (and the post-open renderer) are resolved it mis-counts cols/rows
+//    and the grid clips inside the panel. So: next frame, two settle timeouts,
+//    fonts.ready, a ResizeObserver, AND an onRender convergence loop that
+//    re-fits until the proposed grid stops changing (the last is the only
+//    trigger that recovers a clipped grid without the host box resizing). xterm
+//    itself only fires onResize when the grid actually changed, so repeated
+//    fits don't spam the PTY.
 
 import { useEffect, useRef } from "react";
 import { Terminal } from "@xterm/xterm";
@@ -160,6 +163,50 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		const observer = new ResizeObserver(fitTerminal);
 		observer.observe(host);
 
+		// Recovery re-fit that does NOT depend on the host box changing size.
+		//
+		// FitAddon derives the row count by dividing the pane height by the
+		// renderer's measured cell box. That box is measured asynchronously: the
+		// WebGL renderer loads after open() and the monospace font's real metrics
+		// resolve a frame or more later, so the early fits above can divide by a
+		// too-tall cell height, under-count rows, and clip the grid to the top of
+		// the pane. The fixed settle window (rAF, timeouts, fonts.ready) may all
+		// run before the cell box is final, and the ResizeObserver never fires to
+		// correct it because the host's pixel box is a stable height:100%, so a
+		// short grid would otherwise freeze for the whole session.
+		//
+		// onRender fires on every renderer repaint, including the repaint after
+		// the metrics settle. Each fire re-proposes dimensions from the *current*
+		// measured cell box and re-fits when they differ, converging the grid to
+		// the true row count once the cell height is real. proposeDimensions
+		// returns undefined until the cell box is non-zero, so a fit is never
+		// accepted from an unmeasured cell. Once the proposal holds for a few
+		// frames (or a hard re-fit cap is hit) the listener detaches, so
+		// steady-state content renders cost nothing.
+		const STABLE_FRAMES_TARGET = 3;
+		const MAX_REFITS = 20;
+		let stableFrames = 0;
+		let refits = 0;
+		const stabilizer = term.onRender(() => {
+			const proposed = fit.proposeDimensions();
+			if (!proposed || !proposed.cols || !proposed.rows) return;
+			if (proposed.cols !== term.cols || proposed.rows !== term.rows) {
+				if (refits++ >= MAX_REFITS) {
+					stabilizer.dispose();
+					return;
+				}
+				stableFrames = 0;
+				fitTerminal();
+				return;
+			}
+			if (++stableFrames >= STABLE_FRAMES_TARGET) stabilizer.dispose();
+		});
+
+		// OS window resize and monitor/DPR changes also alter the true cell box
+		// without touching the host's height:100% box, so the ResizeObserver above
+		// misses them. Listen on window directly as a session-long recovery path.
+		window.addEventListener("resize", fitTerminal);
+
 		// Live cols/rows getters: the owner reads the current grid at attach time,
 		// not a snapshot taken at ready time (the first fit may not have run yet).
 		const handle: AttachableTerminal = {
@@ -182,6 +229,8 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			cancelAnimationFrame(raf);
 			for (const timer of settleTimers) window.clearTimeout(timer);
 			observer.disconnect();
+			stabilizer.dispose();
+			window.removeEventListener("resize", fitTerminal);
 			try {
 				term.dispose();
 			} catch {
