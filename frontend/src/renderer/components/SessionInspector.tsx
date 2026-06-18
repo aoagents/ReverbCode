@@ -1,17 +1,12 @@
-import { useQuery } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
-import { GitBranch, GitCommitHorizontal, GitPullRequest, Plus, Square, Trash2 } from "lucide-react";
-import type { components } from "../../api/schema";
-import { apiClient } from "../lib/api-client";
+import { GitPullRequest } from "lucide-react";
 import { formatTimeCompact } from "../lib/format-time";
-import type { SessionStatus, WorkspaceSession } from "../types/workspace";
-import { workerDisplayStatus } from "../types/workspace";
+import type { PRState, PullRequestFacts, SessionStatus, WorkspaceSession } from "../types/workspace";
+import { sortedPRs, workerDisplayStatus } from "../types/workspace";
 import { Badge } from "./ui/badge";
-import { Button } from "./ui/button";
 import { cn } from "../lib/utils";
 
-type PRFacts = components["schemas"]["SessionPRFacts"];
-type InspectorView = "summary" | "changes" | "browser";
+type InspectorView = "summary" | "reviews" | "browser";
 
 const VIEWS: { id: InspectorView; label: string; icon: ReactNode }[] = [
 	{
@@ -29,15 +24,11 @@ const VIEWS: { id: InspectorView; label: string; icon: ReactNode }[] = [
 		),
 	},
 	{
-		id: "changes",
-		label: "Changes",
+		id: "reviews",
+		label: "Reviews",
 		icon: (
 			<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
-				<path d="M12 3v6" />
-				<path d="M9 6h6" />
-				<path d="M11 18H7a2 2 0 0 1-2-2V6" />
-				<path d="M13 15h4" />
-				<path d="M19 9v7a2 2 0 0 1-2 2h-2" />
+				<path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
 			</svg>
 		),
 	},
@@ -54,7 +45,7 @@ const VIEWS: { id: InspectorView; label: string; icon: ReactNode }[] = [
 	},
 ];
 
-const prStateTone: Record<PRFacts["state"], string> = {
+const prStateTone: Record<PRState, string> = {
 	open: "border-success/40 bg-success/10 text-success",
 	draft: "border-border bg-raised text-muted-foreground",
 	merged: "border-accent/40 bg-accent-weak text-accent",
@@ -62,8 +53,7 @@ const prStateTone: Record<PRFacts["state"], string> = {
 };
 
 /**
- * Tabbed inspector rail beside the terminal — cloned from agent-orchestrator
- * SessionInspector (Summary · Changes · Browser).
+ * Tabbed inspector rail beside the terminal (Summary · Reviews · Browser).
  */
 export function SessionInspector({ session }: { session?: WorkspaceSession }) {
 	const [view, setView] = useState<InspectorView>("summary");
@@ -98,7 +88,7 @@ export function SessionInspector({ session }: { session?: WorkspaceSession }) {
 
 			<div className="session-inspector__body">
 				{view === "summary" ? <SummaryView session={session} /> : null}
-				{view === "changes" ? <ChangesView session={session} /> : null}
+				{view === "reviews" ? <ReviewsView /> : null}
 				{view === "browser" ? <BrowserView /> : null}
 			</div>
 		</aside>
@@ -118,62 +108,19 @@ function Section({ title, action, children }: { title: string; action?: ReactNod
 }
 
 function SummaryView({ session }: { session: WorkspaceSession }) {
-	const hasPr = Boolean(session.pullRequest);
-	const query = useQuery({
-		queryKey: ["session-pr", session.id],
-		enabled: hasPr,
-		queryFn: async () => {
-			const { data, error } = await apiClient.GET("/api/v1/sessions/{sessionId}/pr", {
-				params: { path: { sessionId: session.id } },
-			});
-			if (error) return [] as PRFacts[];
-			return data?.prs ?? [];
-		},
-	});
-	const prFacts = query.data?.[0];
+	const prs = sortedPRs(session);
 	const branchLabel = session.branch || `session/${session.id}`;
 
 	return (
 		<div role="tabpanel">
-			<Section
-				title="Pull request"
-				action={
-					prFacts?.url ? (
-						<a href={prFacts.url} target="_blank" rel="noopener noreferrer" className="inspector-section__link">
-							Open ↗
-						</a>
-					) : undefined
-				}
-			>
-				{!hasPr ? (
+			<Section title={prs.length > 1 ? `Pull requests (${prs.length})` : "Pull request"}>
+				{prs.length === 0 ? (
 					<p className="inspector-empty">No pull request opened yet.</p>
-				) : query.isLoading ? (
-					<p className="inspector-empty">Loading pull request…</p>
 				) : (
-					<div className="flex flex-col gap-2">
-						<div className="flex items-center gap-2">
-							<GitPullRequest className="h-3.5 w-3.5 shrink-0 text-passive" aria-hidden="true" />
-							<span className="text-[12.5px] font-medium text-foreground">
-								PR #{prFacts?.number ?? session.pullRequest?.number}
-							</span>
-							{prFacts ? (
-								<Badge
-									variant="outline"
-									className={cn("ml-auto h-5 px-1.5 text-[10px] font-medium", prStateTone[prFacts.state])}
-								>
-									{prFacts.state}
-								</Badge>
-							) : null}
-						</div>
-						{prFacts ? (
-							<dl className="inspector-kv">
-								<Row k="CI" v={prFacts.ci || "—"} mono />
-								<Row k="Merge" v={prFacts.mergeability || "—"} mono />
-								<Row k="Review" v={prFacts.review || "—"} mono />
-							</dl>
-						) : (
-							<p className="inspector-empty">No enriched PR facts yet.</p>
-						)}
+					<div className="flex flex-col gap-2.5">
+						{prs.map((pr) => (
+							<PRCard key={pr.url} pr={pr} />
+						))}
 					</div>
 				)}
 			</Section>
@@ -190,6 +137,33 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 					<Row k="Session" v={session.id} mono />
 				</dl>
 			</Section>
+		</div>
+	);
+}
+
+// One PR per card; a session's PRs stack vertically. Mirrors the minimal
+// single-PR rail the parallel-agent tools converged on (emdash, conductor),
+// repeated per PR rather than collapsed into one aggregate widget.
+function PRCard({ pr }: { pr: PullRequestFacts }) {
+	return (
+		<div className="flex flex-col gap-2 rounded-[7px] border border-border bg-surface p-2.5">
+			<div className="flex items-center gap-2">
+				<GitPullRequest className="h-3.5 w-3.5 shrink-0 text-passive" aria-hidden="true" />
+				<span className="text-[12.5px] font-medium text-foreground">PR #{pr.number}</span>
+				<Badge variant="outline" className={cn("ml-auto h-5 px-1.5 text-[10px] font-medium", prStateTone[pr.state])}>
+					{pr.state}
+				</Badge>
+				{pr.url ? (
+					<a href={pr.url} target="_blank" rel="noopener noreferrer" className="inspector-section__link">
+						Open ↗
+					</a>
+				) : null}
+			</div>
+			<dl className="inspector-kv">
+				<Row k="CI" v={pr.ci || "—"} mono />
+				<Row k="Merge" v={pr.mergeability || "—"} mono />
+				<Row k="Review" v={pr.review || "—"} mono />
+			</dl>
 		</div>
 	);
 }
@@ -213,12 +187,12 @@ function ActivityTimeline({ session }: { session: WorkspaceSession }) {
 		ts: formatTimeCompact(session.updatedAt),
 	});
 
-	if (session.pullRequest) {
+	for (const pr of sortedPRs(session)) {
 		events.push({
 			tone: "good",
 			node: (
 				<>
-					Opened <b>PR #{session.pullRequest.number}</b>
+					Opened <b>PR #{pr.number}</b>
 				</>
 			),
 			ts: null,
@@ -298,67 +272,15 @@ function InspectorStatusPill({ session }: { session: WorkspaceSession }) {
 	);
 }
 
-function ChangesView({ session }: { session: WorkspaceSession }) {
-	const files = session.changedFiles ?? [];
-
+function ReviewsView() {
 	return (
-		<div role="tabpanel" className="flex min-h-0 flex-1 flex-col">
-			<div className="inspector-changes__head">
-				<span className="inspector-changes__title">Changed</span>
-				<span className="inspector-changes__count">{files.length}</span>
-			</div>
-
-			<div className="inspector-changes__actions">
-				<button className="inspector-changes__action" type="button">
-					All files
-				</button>
-				<button className="inspector-changes__action inspector-changes__action--danger" type="button">
-					<Trash2 aria-hidden="true" />
-					Discard all
-				</button>
-				<button className="inspector-changes__action inspector-changes__action--end" type="button">
-					<Plus aria-hidden="true" />
-					Stage all
-				</button>
-			</div>
-
-			<div className="inspector-changes__list">
-				{files.length === 0 ? (
-					<p className="inspector-empty inspector-empty--center">No changes yet.</p>
-				) : (
-					files.map((file) => (
-						<div className="inspector-changes__file" key={file.path}>
-							<span className="inspector-changes__path">{file.path}</span>
-							<span className="inspector-changes__add">+{file.additions}</span>
-							<span className="inspector-changes__del">−{file.deletions}</span>
-							<Square className={cn("inspector-changes__stage", file.staged && "is-staged")} aria-hidden="true" />
-						</div>
-					))
-				)}
-			</div>
-
-			<div className="inspector-changes__commit">
-				<input
-					className="inspector-changes__input"
-					defaultValue={session.commitMessage ?? ""}
-					key={session.id}
-					placeholder="Commit message"
-				/>
-				<textarea className="inspector-changes__textarea" placeholder="Description" rows={2} />
-				<Button className="w-full" disabled={files.length === 0} variant="primary">
-					<GitCommitHorizontal aria-hidden="true" />
-					Commit &amp; Push
-				</Button>
-			</div>
-
-			<div className="inspector-changes__footer">
-				<GitBranch aria-hidden="true" />
-				<span className="inspector-changes__branch">{session.branch || "—"}</span>
-				<button className="inspector-changes__pr" type="button">
-					<Plus aria-hidden="true" />
-					<GitPullRequest aria-hidden="true" />
-					Create PR
-				</button>
+		<div role="tabpanel">
+			<div className="inspector-empty inspector-empty--browser">
+				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+					<path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
+				</svg>
+				<p>No reviews yet.</p>
+				<span>Reviews from this session's PRs will appear here.</span>
 			</div>
 		</div>
 	);

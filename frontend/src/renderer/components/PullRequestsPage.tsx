@@ -3,14 +3,12 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
-import type { WorkspaceSession } from "../types/workspace";
+import { type PRState, type PullRequestFacts, type WorkspaceSession } from "../types/workspace";
 import { DashboardSubhead } from "./DashboardSubhead";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
 import { cn } from "../lib/utils";
-
-type PRState = NonNullable<WorkspaceSession["pullRequest"]>["state"];
 
 const stateTone: Record<PRState, string> = {
 	open: "border-success/40 bg-success/10 text-success",
@@ -23,26 +21,22 @@ const stateTone: Record<PRState, string> = {
 const stateRank: Record<PRState, number> = { open: 0, draft: 1, merged: 2, closed: 3 };
 
 type PRRow = {
-	number: number;
-	state: PRState;
+	pr: PullRequestFacts;
 	session: WorkspaceSession;
 };
 
-// The PR board, ported from agent-orchestrator's PullRequestsPage. The Go
-// daemon has no PR-list endpoint, so the board is derived from session PR
-// fields (every session carries pullRequest); actions hit /prs/{number}/merge
-// and /resolve-comments. Per-PR CI/review facts live on the session route's
-// inspector.
+// The PR board, ported from agent-orchestrator's PullRequestsPage. One row per
+// attributed PR — a session can own several (a stack or independent PRs), so we
+// flatMap the session's prs list rather than assuming one. Actions hit
+// /prs/{number}/merge and /resolve-comments. Per-PR CI/review facts also live on
+// the session route's inspector.
 export function PullRequestsPage() {
 	const navigate = useNavigate();
 	const workspaceQuery = useWorkspaceQuery();
 	const sessions = (workspaceQuery.data ?? []).flatMap((w) => w.sessions);
 	const rows: PRRow[] = sessions
-		.filter((s): s is WorkspaceSession & { pullRequest: NonNullable<WorkspaceSession["pullRequest"]> } =>
-			Boolean(s.pullRequest),
-		)
-		.map((s) => ({ number: s.pullRequest.number, state: s.pullRequest.state, session: s }))
-		.sort((a, b) => stateRank[a.state] - stateRank[b.state] || a.number - b.number);
+		.flatMap((s) => s.prs.map((pr) => ({ pr, session: s })))
+		.sort((a, b) => stateRank[a.pr.state] - stateRank[b.pr.state] || a.pr.number - b.pr.number);
 
 	return (
 		<div className="flex h-full min-h-0 flex-col bg-background text-foreground">
@@ -68,7 +62,7 @@ export function PullRequestsPage() {
 						<TableBody>
 							{rows.map((row) => (
 								<PRRowView
-									key={`${row.session.id}-${row.number}`}
+									key={`${row.session.id}-${row.pr.number}`}
 									row={row}
 									onOpen={() =>
 										void navigate({
@@ -94,7 +88,7 @@ function PRRowView({ row, onOpen }: { row: PRRow; onOpen: () => void }) {
 	const merge = useMutation({
 		mutationFn: async () => {
 			const { data, error } = await apiClient.POST("/api/v1/prs/{id}/merge", {
-				params: { path: { id: String(row.number) } },
+				params: { path: { id: String(row.pr.number) } },
 			});
 			if (error) throw new Error(apiErrorMessage(error));
 			return data;
@@ -109,7 +103,7 @@ function PRRowView({ row, onOpen }: { row: PRRow; onOpen: () => void }) {
 	const resolve = useMutation({
 		mutationFn: async () => {
 			const { error } = await apiClient.POST("/api/v1/prs/{id}/resolve-comments", {
-				params: { path: { id: String(row.number) } },
+				params: { path: { id: String(row.pr.number) } },
 			});
 			if (error) throw new Error(apiErrorMessage(error));
 		},
@@ -120,11 +114,11 @@ function PRRowView({ row, onOpen }: { row: PRRow; onOpen: () => void }) {
 		onError: (e) => setNote({ ok: false, text: e instanceof Error ? e.message : "resolve failed" }),
 	});
 
-	const actionable = row.state === "open" || row.state === "draft";
+	const actionable = row.pr.state === "open" || row.pr.state === "draft";
 
 	return (
 		<TableRow className="cursor-pointer" onClick={onOpen}>
-			<TableCell className="font-mono text-[12px] text-muted-foreground">#{row.number}</TableCell>
+			<TableCell className="font-mono text-[12px] text-muted-foreground">#{row.pr.number}</TableCell>
 			<TableCell className="max-w-0">
 				<div className="truncate text-[13px] text-foreground">{row.session.title}</div>
 				<div className="truncate font-mono text-[10px] text-passive">
@@ -132,8 +126,8 @@ function PRRowView({ row, onOpen }: { row: PRRow; onOpen: () => void }) {
 				</div>
 			</TableCell>
 			<TableCell>
-				<Badge variant="outline" className={cn("h-5 px-1.5 text-[10px] font-medium", stateTone[row.state])}>
-					{row.state}
+				<Badge variant="outline" className={cn("h-5 px-1.5 text-[10px] font-medium", stateTone[row.pr.state])}>
+					{row.pr.state}
 				</Badge>
 			</TableCell>
 			<TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
