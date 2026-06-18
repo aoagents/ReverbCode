@@ -348,16 +348,14 @@ func TestCreateClearsStaleSessionBeforeCreating(t *testing.T) {
 
 func TestAttachCommandDisablesPaneFrames(t *testing.T) {
 	r := New(Options{})
-	args, err := r.AttachCommand(ports.RuntimeHandle{ID: "sess-1/terminal_0"})
+	args, _, err := r.AttachCommand(ports.RuntimeHandle{ID: "sess-1/terminal_0"})
 	if err != nil {
 		t.Fatalf("AttachCommand: %v", err)
 	}
 	if runtime.GOOS == "windows" {
-		joined := strings.Join(args, " ")
-		for _, want := range []string{"--pane-frames", "false"} {
-			if !strings.Contains(joined, want) {
-				t.Fatalf("windows attach command missing %q: %#v", want, args)
-			}
+		want := []string{r.binary, "attach", "sess-1", "options", "--pane-frames", "false"}
+		if !reflect.DeepEqual(args, want) {
+			t.Fatalf("AttachCommand = %#v, want %#v", args, want)
 		}
 		return
 	}
@@ -369,16 +367,13 @@ func TestAttachCommandDisablesPaneFrames(t *testing.T) {
 
 func TestAttachCommandUsesSocketDir(t *testing.T) {
 	r := New(Options{SocketDir: "/tmp/zj"})
-	args, err := r.AttachCommand(ports.RuntimeHandle{ID: "sess-1/terminal_0"})
+	args, _, err := r.AttachCommand(ports.RuntimeHandle{ID: "sess-1/terminal_0"})
 	if err != nil {
 		t.Fatalf("AttachCommand: %v", err)
 	}
 	if runtime.GOOS == "windows" {
-		if len(args) < 4 || args[0] != "powershell.exe" {
-			t.Fatalf("attach command = %#v, want powershell wrapper", args)
-		}
-		if !strings.Contains(strings.Join(args, " "), "ZELLIJ_SOCKET_DIR") {
-			t.Fatalf("attach command missing socket dir env: %#v", args)
+		if got, want := args[0], r.binary; got != want {
+			t.Fatalf("attach binary = %q, want %q", got, want)
 		}
 		return
 	}

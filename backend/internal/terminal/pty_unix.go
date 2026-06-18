@@ -18,13 +18,18 @@ import (
 // birth when a size is known: `zellij attach` reads the tty size once at
 // startup, and a post-spawn TIOCSWINSZ depends on SIGWINCH delivery that can
 // race the client installing its handler — StartWithSize makes the first read
-// correct by construction. ctx cancellation kills the process. Windows uses a
-// stub (see pty_windows.go) until a ConPTY path is added.
-func defaultSpawn(ctx context.Context, argv []string, rows, cols uint16) (ptyProcess, error) {
+// correct by construction. env, when non-nil, replaces the inherited
+// environment (mirrors exec.Cmd.Env semantics). ctx cancellation kills the
+// process. Windows uses a stub (see pty_windows.go) until a ConPTY path is
+// added.
+func defaultSpawn(ctx context.Context, argv []string, env []string, rows, cols uint16) (ptyProcess, error) {
 	if len(argv) == 0 {
 		return nil, errors.New("terminal: empty attach command")
 	}
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	if env != nil {
+		cmd.Env = env
+	}
 	var f *os.File
 	var err error
 	if rows > 0 && cols > 0 {

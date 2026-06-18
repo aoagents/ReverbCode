@@ -242,15 +242,17 @@ func noActiveSessionsOutput(out string) bool {
 }
 
 // AttachCommand returns the argv a human runs to attach their terminal to the
-// session.
-func (r *Runtime) AttachCommand(handle ports.RuntimeHandle) ([]string, error) {
+// session, plus an optional env block that the spawn should apply (used on
+// Windows where wrapping the attach in an `env` shim is unsafe under ConPTY).
+func (r *Runtime) AttachCommand(handle ports.RuntimeHandle) ([]string, []string, error) {
 	id, _, err := handleID(handle)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	args := append([]string{}, r.baseArgs()...)
 	args = append(args, attachArgs(id)...)
-	return attachCommandWithEnv(r.binary, r.socketDir, args...), nil
+	argv, env := attachCommandWithEnv(r.binary, r.socketDir, args...)
+	return argv, env, nil
 }
 
 func (r *Runtime) ensureSupportedVersion(ctx context.Context) error {
@@ -337,37 +339,26 @@ func (r *Runtime) env() []string {
 	return append(env, "ZELLIJ_SOCKET_DIR="+r.socketDir)
 }
 
-func attachCommandWithEnv(binary, socketDir string, args ...string) []string {
+func attachCommandWithEnv(binary, socketDir string, args ...string) ([]string, []string) {
+	if runtime.GOOS == "windows" {
+		// Windows ConPTY attaches the child directly. Avoid shell wrappers here:
+		// malformed ConPTY startup around powershell.exe/cmd.exe surfaces as modal
+		// application-error dialogs. Per-session ZELLIJ_SOCKET_DIR is delivered
+		// via the spawn's env block (CreateProcess) instead of an `env` shim.
+		var envBlock []string
+		if socketDir != "" {
+			envBlock = upsertEnv(append([]string(nil), os.Environ()...), "ZELLIJ_SOCKET_DIR="+socketDir)
+		}
+		return append([]string{binary}, args...), envBlock
+	}
 	env := zellijColorEnv(nil)
 	if socketDir != "" {
 		env = append(env, "ZELLIJ_SOCKET_DIR="+socketDir)
 	}
-	if runtime.GOOS == "windows" {
-		command := strings.Builder{}
-		command.WriteString("Remove-Item Env:NO_COLOR -ErrorAction SilentlyContinue; ")
-		for _, pair := range env {
-			key, value, ok := strings.Cut(pair, "=")
-			if !ok {
-				continue
-			}
-			command.WriteString("$env:")
-			command.WriteString(key)
-			command.WriteString(" = ")
-			command.WriteString(psQuote(value))
-			command.WriteString("; ")
-		}
-		command.WriteString("& ")
-		command.WriteString(psQuote(binary))
-		for _, arg := range args {
-			command.WriteByte(' ')
-			command.WriteString(psQuote(arg))
-		}
-		return []string{"powershell.exe", "-NoLogo", "-NoProfile", "-Command", command.String()}
-	}
 	argv := []string{"env", "-u", "NO_COLOR"}
 	argv = append(argv, env...)
 	argv = append(argv, binary)
-	return append(argv, args...)
+	return append(argv, args...), nil
 }
 
 func zellijCommandEnv(base, overrides []string) []string {

@@ -14,7 +14,7 @@ import (
 // exactly once. Without the sync.Once a second Wait blocks forever, so this test
 // would hang (caught by the watchdog) rather than fail.
 func TestCreackPTYCloseIsIdempotent(t *testing.T) {
-	p, err := defaultSpawn(context.Background(), []string{"/bin/sh", "-c", "sleep 30"}, 0, 0)
+	p, err := defaultSpawn(context.Background(), []string{"/bin/sh", "-c", "sleep 30"}, nil, 0, 0)
 	if err != nil {
 		t.Fatalf("spawn: %v", err)
 	}
@@ -41,7 +41,7 @@ func TestCreackPTYCloseIsIdempotent(t *testing.T) {
 // the pane" desync.
 func TestCreackPTYResizeSignalsOnIdenticalSize(t *testing.T) {
 	p, err := defaultSpawn(context.Background(),
-		[]string{"/bin/sh", "-c", `trap 'echo WINCHED' WINCH; while :; do sleep 0.05; done`}, 0, 0)
+		[]string{"/bin/sh", "-c", `trap 'echo WINCHED' WINCH; while :; do sleep 0.05; done`}, nil, 0, 0)
 	if err != nil {
 		t.Fatalf("spawn: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestCreackPTYResizeSignalsOnIdenticalSize(t *testing.T) {
 // races the client installing its WINCH handler (a missed signal strands the
 // zellij session at the previous client's size).
 func TestCreackPTYSpawnsAtRequestedSize(t *testing.T) {
-	p, err := defaultSpawn(context.Background(), []string{"/bin/sh", "-c", "stty size"}, 40, 140)
+	p, err := defaultSpawn(context.Background(), []string{"/bin/sh", "-c", "stty size"}, nil, 40, 140)
 	if err != nil {
 		t.Fatalf("spawn: %v", err)
 	}
@@ -113,7 +113,7 @@ func TestCreackPTYSpawnsAtRequestedSize(t *testing.T) {
 func TestCreackPTYCloseTermsBeforeKill(t *testing.T) {
 	t.Run("cooperative process exits within the grace", func(t *testing.T) {
 		p, err := defaultSpawn(context.Background(),
-			[]string{"/bin/sh", "-c", `trap 'exit 0' TERM; while :; do sleep 0.05; done`}, 0, 0)
+			[]string{"/bin/sh", "-c", `trap 'exit 0' TERM; while :; do sleep 0.05; done`}, nil, 0, 0)
 		if err != nil {
 			t.Fatalf("spawn: %v", err)
 		}
@@ -127,7 +127,7 @@ func TestCreackPTYCloseTermsBeforeKill(t *testing.T) {
 
 	t.Run("TERM-ignoring process is killed after the grace", func(t *testing.T) {
 		p, err := defaultSpawn(context.Background(),
-			[]string{"/bin/sh", "-c", `trap '' TERM; while :; do sleep 0.05; done`}, 0, 0)
+			[]string{"/bin/sh", "-c", `trap '' TERM; while :; do sleep 0.05; done`}, nil, 0, 0)
 		if err != nil {
 			t.Fatalf("spawn: %v", err)
 		}
