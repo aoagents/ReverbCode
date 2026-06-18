@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
+import { useQueryClient } from "@tanstack/react-query";
 import {
 	type AttentionZone,
 	type WorkerDisplayStatus,
@@ -9,7 +10,9 @@ import {
 	workerSessions,
 } from "../types/workspace";
 import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
+import { agentsQueryKey, useAgentsQuery } from "../hooks/useAgentsQuery";
 import { DashboardSubhead } from "./DashboardSubhead";
+import { Button } from "./ui/button";
 import { cn } from "../lib/utils";
 
 type SessionsBoardProps = {
@@ -73,10 +76,15 @@ const BADGE: Record<WorkerDisplayStatus, { label: string; className: string }> =
 
 export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const navigate = useNavigate();
+	const queryClient = useQueryClient();
 	const workspaceQuery = useWorkspaceQuery();
+	const agentsQuery = useAgentsQuery();
 	const all = workspaceQuery.data ?? [];
 	const workspaces = projectId ? all.filter((w) => w.id === projectId) : all;
 	const sessions = workspaces.flatMap((w) => workerSessions(w.sessions));
+	const authorizedAgentIds = new Set((agentsQuery.data?.authorized ?? []).map((agent) => agent.id));
+	const loginNeededAgents = (agentsQuery.data?.installed ?? []).filter((agent) => !authorizedAgentIds.has(agent.id));
+	const showAgentSetupWarning = !agentsQuery.isLoading && authorizedAgentIds.size === 0;
 
 	const byZone = new Map<AttentionZone, WorkspaceSession[]>();
 	for (const session of sessions) {
@@ -97,6 +105,23 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	return (
 		<div className="flex h-full min-h-0 flex-col bg-background text-foreground">
 			<DashboardSubhead title="Board" subtitle="Live agent sessions flowing from work → review → merge." />
+
+			{showAgentSetupWarning && (
+				<div className="shrink-0 px-[18px] pt-[14px]">
+					<div className="flex items-center justify-between gap-3 rounded-md border border-warning/40 bg-warning/5 px-3 py-2 text-[12px] leading-5 text-warning">
+						<span>{agentSetupMessage(loginNeededAgents)}</span>
+						<Button
+							type="button"
+							variant="outline"
+							size="sm"
+							disabled={agentsQuery.isFetching}
+							onClick={() => queryClient.invalidateQueries({ queryKey: agentsQueryKey })}
+						>
+							{agentsQuery.isFetching ? "Reloading..." : "Reload agents"}
+						</Button>
+					</div>
+				</div>
+			)}
 
 			<div className="min-h-0 flex-1 overflow-hidden p-[18px]">
 				{workspaceQuery.isError ? (
@@ -156,6 +181,17 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			)}
 		</div>
 	);
+}
+
+function agentSetupMessage(loginNeededAgents: { id: string; label?: string }[]) {
+	if (loginNeededAgents.length === 0) return "Install and log in to a supported agent, then reload agents.";
+	return `Log in to ${formatAgentList(loginNeededAgents)}, then reload agents.`;
+}
+
+function formatAgentList(agents: { id: string; label?: string }[]) {
+	const labels = agents.map((agent) => agent.label || agent.id).sort((a, b) => a.localeCompare(b));
+	if (labels.length <= 2) return labels.join(" and ");
+	return `${labels.slice(0, -1).join(", ")}, and ${labels.at(-1)}`;
 }
 
 function ZoneColumn({

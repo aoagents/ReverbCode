@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
+import { agentsQueryKey, type AgentCatalog, useAgentsQuery } from "../hooks/useAgentsQuery";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { findProjectOrchestrator } from "../types/workspace";
 import { DashboardSubhead } from "./DashboardSubhead";
@@ -13,12 +14,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 type Project = components["schemas"]["Project"];
 type ProjectConfig = components["schemas"]["ProjectConfig"];
 type AgentInfo = components["schemas"]["AgentInfo"];
-type AgentCatalog = components["schemas"]["ListAgentsResponse"];
 type AgentCatalogWithAuth = AgentCatalog & {
 	authorized?: AgentInfo[];
-	counts: AgentCatalog["counts"] & { authorized?: number };
 };
-type Session = components["schemas"]["Session"];
+type Session = components["schemas"]["ControllersSessionView"];
 
 const PERMISSION_MODE_OPTIONS = [
 	{ value: "default", label: "Default" },
@@ -45,14 +44,7 @@ export function ProjectSettingsForm({ projectId }: { projectId: string }) {
 			return data.project as Project;
 		},
 	});
-	const agentsQuery = useQuery({
-		queryKey: ["agents"],
-		queryFn: async () => {
-			const { data, error } = await apiClient.GET("/api/v1/agents");
-			if (error) throw new Error(apiErrorMessage(error));
-			return data as AgentCatalog;
-		},
-	});
+	const agentsQuery = useAgentsQuery();
 
 	if (query.isLoading || agentsQuery.isLoading) {
 		return <CenteredNote>Loading project settings…</CenteredNote>;
@@ -78,6 +70,8 @@ export function ProjectSettingsForm({ projectId }: { projectId: string }) {
 					key={projectId}
 					project={query.data}
 					agents={agentsQuery.data}
+					isReloadingAgents={agentsQuery.isFetching}
+					onReloadAgents={() => queryClient.invalidateQueries({ queryKey: agentsQueryKey })}
 					onSaved={() => queryClient.invalidateQueries({ queryKey: workspaceQueryKey })}
 					projectId={projectId}
 				/>
@@ -90,11 +84,15 @@ function SettingsBody({
 	project,
 	projectId,
 	agents,
+	isReloadingAgents,
+	onReloadAgents,
 	onSaved,
 }: {
 	project: Project;
 	projectId: string;
 	agents: AgentCatalog;
+	isReloadingAgents: boolean;
+	onReloadAgents: () => void;
 	onSaved: () => void;
 }) {
 	const queryClient = useQueryClient();
@@ -107,7 +105,6 @@ function SettingsBody({
 	const agentLabels = new Map(
 		[...supportedAgents, ...installedAgents, ...agentOptions].map((agent) => [agent.id, agent.label] as const),
 	);
-	const authorizedCount = agentCatalog.counts.authorized ?? agentOptions.length;
 	const authStatusUnavailable = agentCatalog.authorized === undefined && installedAgents.length > 0;
 	const liveOrchestrator = findProjectOrchestrator(workspaces, projectId);
 	const savedOrchestratorAgent = effectiveDesiredOrchestratorAgent(project);
@@ -325,20 +322,14 @@ function SettingsBody({
 
 			<Card>
 				<CardHeader>
-					<CardTitle className="text-[13px]">Agents</CardTitle>
+					<div className="flex items-center justify-between gap-3">
+						<CardTitle className="text-[13px]">Agents</CardTitle>
+						<Button type="button" variant="outline" disabled={isReloadingAgents} onClick={onReloadAgents}>
+							{isReloadingAgents ? "Reloading..." : "Reload agents"}
+						</Button>
+					</div>
 				</CardHeader>
 				<CardContent className="flex flex-col gap-4">
-					<div className="rounded-md border border-border bg-muted/20 px-3 py-2 text-[12px] leading-5 text-muted-foreground">
-						<div>
-							{agents.counts.installed} of {agents.counts.supported} supported agents installed on this machine.
-						</div>
-						<div>
-							{authorizedCount} installed agents authorized. Only authorized agents are selectable. Orchestrator agent changes restart the orchestrator.
-						</div>
-						{authorizedCount === 0 && (
-							<div className="mt-1 text-warning">No authorized supported agent runtime was detected.</div>
-						)}
-					</div>
 					<Field label="Default worker agent" htmlFor="workerAgent">
 						<AgentSelect
 							id="workerAgent"
@@ -577,16 +568,16 @@ function AgentSelect({
 				<SelectContent>
 					<SelectItem value="__default__">Daemon default</SelectItem>
 					{needsFallbackOption && (
-						<SelectItem value={value} disabled>
-							<span className="flex min-w-0 flex-1 items-center justify-between gap-4">
+						<SelectItem value={value} disabled className="[&>span:last-child]:w-full">
+							<span className="flex min-w-0 w-full items-center justify-between gap-4">
 								<span className="truncate">{value}</span>
 								<span className="shrink-0 text-[11px] text-muted-foreground">Needs install</span>
 							</span>
 						</SelectItem>
 					)}
 					{options.map((agent) => (
-						<SelectItem key={agent.id} value={agent.id} disabled={agent.disabled}>
-							<span className="flex min-w-0 flex-1 items-center justify-between gap-4">
+						<SelectItem key={agent.id} value={agent.id} disabled={agent.disabled} className="[&>span:last-child]:w-full">
+							<span className="flex min-w-0 w-full items-center justify-between gap-4">
 								<span className="truncate">{agent.label}</span>
 								{agent.reason && <span className="shrink-0 text-[11px] text-muted-foreground">{agent.reason}</span>}
 							</span>

@@ -161,7 +161,6 @@ var schemaNames = map[string]string{
 	"ControllersOrchestratorResponse":       "OrchestratorResponse",
 	"AgentInventory":                        "ListAgentsResponse",
 	"AgentInfo":                             "AgentInfo",
-	"AgentCounts":                           "AgentCounts",
 	"ControllersListNotificationsQuery":     "ListNotificationsQuery",
 	"ControllersNotificationStreamQuery":    "NotificationStreamQuery",
 	"ControllersNotificationTarget":         "NotificationTarget",

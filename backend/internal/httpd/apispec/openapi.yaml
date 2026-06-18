@@ -1220,19 +1220,6 @@ components:
         permissions:
           type: string
       type: object
-    AgentCounts:
-      properties:
-        authorized:
-          type: integer
-        installed:
-          type: integer
-        supported:
-          type: integer
-      required:
-      - supported
-      - installed
-      - authorized
-      type: object
     AgentInfo:
       properties:
         authStatus:
@@ -1409,8 +1396,6 @@ components:
           items:
             $ref: '#/components/schemas/AgentInfo'
           type: array
-        counts:
-          $ref: '#/components/schemas/AgentCounts'
         installed:
           items:
             $ref: '#/components/schemas/AgentInfo'
@@ -1423,7 +1408,6 @@ components:
       - supported
       - installed
       - authorized
-      - counts
       type: object
     ListNotificationsResponse:
       properties:

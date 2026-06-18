@@ -88,34 +88,8 @@ describe("ProjectSettingsForm", () => {
 				agentConfig: {
 					model: "claude-opus-4-5",
 					permissions: "auto",
-		getMock.mockResolvedValue({
-			data: {
-				status: "ok",
-				project: {
-					id: "proj-1",
-					name: "Project One",
-					kind: "single_repo",
-					path: "/repo/project-one",
-					repo: "git@github.com:acme/project-one.git",
-					defaultBranch: "main",
-					config: {
-						defaultBranch: "develop",
-						sessionPrefix: "po",
-						env: { FOO: "bar" },
-						symlinks: [".env"],
-						postCreate: ["npm install"],
-						worker: {
-							agent: "codex",
-							agentConfig: { model: "worker-model" },
-						},
-						orchestrator: { agent: "claude-code" },
-						agentConfig: {
-							model: "claude-opus-4-5",
-							permissions: "auto",
-						},
-						reviewers: [{ harness: "claude-code" }],
-					},
 				},
+				reviewers: [{ harness: "claude-code" }],
 			},
 		});
 		mockAgents({
@@ -137,15 +111,14 @@ describe("ProjectSettingsForm", () => {
 				{ id: "goose", label: "Goose", authStatus: "authorized" },
 				{ id: "opencode", label: "OpenCode", authStatus: "authorized" },
 			],
-			counts: { supported: 4, installed: 4, authorized: 4 },
 		});
 		mockGetResponses();
 
 		renderSettings();
 
 		expect(await screen.findByText("git@github.com:acme/project-one.git")).toBeInTheDocument();
-		expect(screen.getByText("4 of 4 supported agents installed on this machine.")).toBeInTheDocument();
-		expect(screen.getByText(/4 installed agents authorized/)).toBeInTheDocument();
+		expect(screen.queryByText(/supported agents installed on this machine/)).not.toBeInTheDocument();
+		expect(screen.queryByText(/installed agents authorized/)).not.toBeInTheDocument();
 		expect(screen.getByLabelText("Default branch")).toHaveValue("develop");
 		expect(screen.getByLabelText("Session prefix")).toHaveValue("po");
 		expect(screen.getByLabelText("Model override")).toHaveValue("claude-opus-4-5");
@@ -156,8 +129,6 @@ describe("ProjectSettingsForm", () => {
 		expect(workerAgent).toHaveTextContent("Codex");
 		expect(orchestratorAgent).toHaveTextContent("Claude Code");
 		const reviewerAgent = screen.getByRole("combobox", { name: "Default reviewer agent" });
-		expect(workerAgent).toHaveTextContent("codex");
-		expect(orchestratorAgent).toHaveTextContent("claude-code");
 		expect(permissionMode).toHaveTextContent("Auto");
 		expect(reviewerAgent).toHaveTextContent("claude-code");
 
@@ -203,6 +174,82 @@ describe("ProjectSettingsForm", () => {
 		expect(await screen.findByText("Saved. Orchestrator restarted.")).toBeInTheDocument();
 	});
 
+	it("reuses the cached agent catalog across project settings switches", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+		});
+		mockAgents({
+			supported: [{ id: "codex", label: "Codex" }],
+			installed: [{ id: "codex", label: "Codex" }],
+			authorized: [{ id: "codex", label: "Codex", authStatus: "authorized" }],
+		});
+		mockGetResponses();
+		const queryClient = new QueryClient({
+			defaultOptions: {
+				queries: { retry: false },
+				mutations: { retry: false },
+			},
+		});
+
+		const view = render(
+			<QueryClientProvider client={queryClient}>
+				<ProjectSettingsForm projectId="proj-1" />
+			</QueryClientProvider>,
+		);
+
+		await waitFor(() => expect(screen.getAllByText("/repo/project-one").length).toBeGreaterThan(0));
+		expect(agentRequestCount()).toBe(1);
+
+		mockProject({
+			id: "proj-2",
+			name: "Project Two",
+			kind: "single_repo",
+			path: "/repo/project-two",
+			repo: "",
+			defaultBranch: "main",
+		});
+
+		view.rerender(
+			<QueryClientProvider client={queryClient}>
+				<ProjectSettingsForm projectId="proj-2" />
+			</QueryClientProvider>,
+		);
+
+		await waitFor(() => expect(screen.getAllByText("/repo/project-two").length).toBeGreaterThan(0));
+		expect(agentRequestCount()).toBe(1);
+	});
+
+	it("lets project settings manually reload the shared agent catalog", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+		});
+		mockAgents({
+			supported: [{ id: "codex", label: "Codex" }],
+			installed: [{ id: "codex", label: "Codex" }],
+			authorized: [{ id: "codex", label: "Codex", authStatus: "authorized" }],
+		});
+		mockGetResponses();
+
+		renderSettings();
+
+		expect(await screen.findByRole("combobox", { name: "Default worker agent" })).toBeInTheDocument();
+		expect(agentRequestCount()).toBe(1);
+
+		await userEvent.click(screen.getByRole("button", { name: "Reload agents" }));
+
+		await waitFor(() => expect(agentRequestCount()).toBe(2));
+	});
+
 	it("does not restart the orchestrator when unrelated settings change", async () => {
 		mockProject({
 			id: "proj-1",
@@ -220,7 +267,6 @@ describe("ProjectSettingsForm", () => {
 			supported: [{ id: "codex", label: "Codex" }],
 			installed: [{ id: "codex", label: "Codex" }],
 			authorized: [{ id: "codex", label: "Codex", authStatus: "authorized" }],
-			counts: { supported: 1, installed: 1, authorized: 1 },
 		});
 		mockGetResponses();
 
@@ -260,7 +306,6 @@ describe("ProjectSettingsForm", () => {
 				{ id: "claude-code", label: "Claude Code", authStatus: "authorized" },
 				{ id: "codex", label: "Codex", authStatus: "authorized" },
 			],
-			counts: { supported: 2, installed: 2, authorized: 2 },
 		});
 		mockOrchestrators([
 			{
@@ -310,7 +355,6 @@ describe("ProjectSettingsForm", () => {
 				{ id: "claude-code", label: "Claude Code", authStatus: "authorized" },
 				{ id: "codex", label: "Codex", authStatus: "authorized" },
 			],
-			counts: { supported: 2, installed: 2, authorized: 2 },
 		});
 		mockOrchestrators([
 			{
@@ -360,7 +404,6 @@ describe("ProjectSettingsForm", () => {
 				{ id: "claude-code", label: "Claude Code", authStatus: "authorized" },
 				{ id: "codex", label: "Codex", authStatus: "authorized" },
 			],
-			counts: { supported: 2, installed: 2, authorized: 2 },
 		});
 		mockOrchestrators([
 			{
@@ -440,7 +483,6 @@ describe("ProjectSettingsForm", () => {
 				{ id: "claude-code", label: "Claude Code", authStatus: "authorized" },
 				{ id: "codex", label: "Codex", authStatus: "authorized" },
 			],
-			counts: { supported: 2, installed: 2, authorized: 2 },
 		});
 		mockOrchestrators([
 			{
@@ -485,7 +527,6 @@ describe("ProjectSettingsForm", () => {
 				{ id: "claude-code", label: "Claude Code", authStatus: "authorized" },
 				{ id: "codex", label: "Codex", authStatus: "authorized" },
 			],
-			counts: { supported: 2, installed: 2, authorized: 2 },
 		});
 		mockOrchestrators([
 			{
@@ -531,7 +572,6 @@ describe("ProjectSettingsForm", () => {
 			],
 			installed: [{ id: "codex", label: "Codex" }],
 			authorized: [{ id: "codex", label: "Codex", authStatus: "authorized" }],
-			counts: { supported: 2, installed: 1, authorized: 1 },
 		});
 		mockGetResponses();
 
@@ -556,13 +596,12 @@ describe("ProjectSettingsForm", () => {
 			supported: [{ id: "codex", label: "Codex" }],
 			installed: [],
 			authorized: [],
-			counts: { supported: 1, installed: 0, authorized: 0 },
 		});
 		mockGetResponses();
 
 		renderSettings();
 
-		expect(await screen.findByText("No authorized supported agent runtime was detected.")).toBeInTheDocument();
+		expect(await screen.findByRole("combobox", { name: "Default worker agent" })).toBeInTheDocument();
 		const workerAgent = screen.getByRole("combobox", { name: "Default worker agent" });
 		const orchestratorAgent = screen.getByRole("combobox", { name: "Default orchestrator agent" });
 		expect(workerAgent).not.toBeDisabled();
@@ -594,7 +633,6 @@ describe("ProjectSettingsForm", () => {
 				{ id: "codex", label: "Codex", authStatus: "authorized" },
 			],
 			authorized: [{ id: "codex", label: "Codex", authStatus: "authorized" }],
-			counts: { supported: 2, installed: 2, authorized: 1 },
 		});
 		mockGetResponses();
 
@@ -631,7 +669,6 @@ describe("ProjectSettingsForm", () => {
 				{ id: "b-auth", label: "B Authorized", authStatus: "authorized" },
 				{ id: "a-auth", label: "A Authorized", authStatus: "authorized" },
 			],
-			counts: { supported: 4, installed: 3, authorized: 2 },
 		});
 		mockGetResponses();
 
@@ -663,7 +700,6 @@ describe("ProjectSettingsForm", () => {
 				{ id: "aider", label: "Aider" },
 			],
 			installed: [{ id: "codex", label: "Codex" }],
-			counts: { supported: 2, installed: 1 },
 		});
 		mockGetResponses();
 
@@ -692,7 +728,6 @@ describe("ProjectSettingsForm", () => {
 			supported: [{ id: "codex", label: "Codex" }],
 			installed: [{ id: "codex", label: "Codex" }],
 			authorized: [{ id: "codex", label: "Codex", authStatus: "authorized" }],
-			counts: { supported: 1, installed: 1, authorized: 1 },
 		});
 		mockGetResponses();
 		putMock.mockResolvedValue({
@@ -760,4 +795,8 @@ function mockGetResponses() {
 		if (path === "/api/v1/sessions") return Promise.resolve(sessionsListResponse);
 		return Promise.resolve(projectResponse);
 	});
+}
+
+function agentRequestCount() {
+	return getMock.mock.calls.filter(([path]) => path === "/api/v1/agents").length;
 }
