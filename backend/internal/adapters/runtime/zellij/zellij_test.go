@@ -201,6 +201,18 @@ func TestBuildLayoutExportsEnvAndKeepsPaneAlive(t *testing.T) {
 		"ODD":           "can't",
 		"PATH":          "/custom/bin:/usr/bin",
 	}}, "/bin/zsh")
+	if runtime.GOOS == "windows" {
+		for _, want := range []string{
+			`cwd "/tmp/ws"`,
+			`pane command="ao" name="agent" borderless=true`,
+			`args "run"`,
+		} {
+			if !strings.Contains(got, want) {
+				t.Fatalf("direct windows layout missing %q in %q", want, got)
+			}
+		}
+		return
+	}
 
 	for _, want := range []string{
 		`cwd "/tmp/ws"`,
@@ -229,13 +241,22 @@ func TestBuildLayoutUsesPowerShellLaunchOnWindowsShells(t *testing.T) {
 	got := buildLayout(ports.RuntimeConfig{WorkspacePath: `C:\ws`, Argv: []string{"Write-Host", "ready"}, Env: map[string]string{
 		"AO_SESSION_ID": "sess-1",
 	}}, `C:\Program Files\PowerShell\7\pwsh.exe`)
+	if runtime.GOOS == "windows" {
+		for _, want := range []string{
+			`cwd "C:\\ws"`,
+			`pane command="Write-Host" name="agent" borderless=true`,
+			`args "ready"`,
+		} {
+			if !strings.Contains(got, want) {
+				t.Fatalf("direct windows layout missing %q in %q", want, got)
+			}
+		}
+		return
+	}
 
 	for _, want := range []string{
 		`pane command="C:\\Program Files\\PowerShell\\7\\pwsh.exe" name="agent" borderless=true`,
-		`args "-NoLogo" "-NoProfile" "-NoExit" "-Command"`,
-		"$env:AO_SESSION_ID = 'sess-1';",
-		"$env:PATH = ",
-		"& 'Write-Host' 'ready'",
+		`args "-NoLogo" "-NoProfile" "-NoExit" "-EncodedCommand"`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("powershell layout missing %q in %q", want, got)
@@ -253,6 +274,18 @@ func TestBuildLayoutUsesCmdLaunchOnCmdShells(t *testing.T) {
 	got := buildLayout(ports.RuntimeConfig{WorkspacePath: `C:\ws`, Argv: []string{"echo", "ready"}, Env: map[string]string{
 		"AO_SESSION_ID": "sess-1",
 	}}, `C:\Windows\System32\cmd.exe`)
+	if runtime.GOOS == "windows" {
+		for _, want := range []string{
+			`cwd "C:\\ws"`,
+			`pane command="echo" name="agent" borderless=true`,
+			`args "ready"`,
+		} {
+			if !strings.Contains(got, want) {
+				t.Fatalf("direct windows layout missing %q in %q", want, got)
+			}
+		}
+		return
+	}
 
 	for _, want := range []string{
 		`pane command="C:\\Windows\\System32\\cmd.exe" name="agent" borderless=true`,
@@ -589,6 +622,14 @@ func (f *fakeRunner) Run(_ context.Context, env []string, name string, args ...s
 		return out, f.err
 	}
 	return out, nil
+}
+
+func (f *fakeRunner) Start(env []string, name string, args ...string) error {
+	f.calls = append(f.calls, runnerCall{env: append([]string(nil), env...), name: name, args: append([]string(nil), args...)})
+	if len(f.outputs) > 0 {
+		f.outputs = f.outputs[1:]
+	}
+	return f.err
 }
 
 func TestCommandErrorUnwraps(t *testing.T) {

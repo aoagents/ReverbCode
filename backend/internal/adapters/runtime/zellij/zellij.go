@@ -18,6 +18,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/agentlaunch"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -45,12 +46,13 @@ var fileExists = func(path string) bool {
 // Options configures a zellij Runtime; every field has a sensible default
 // (see New), so the zero value is usable.
 type Options struct {
-	Binary    string
-	Timeout   time.Duration
-	Shell     string
-	SocketDir string
-	ConfigDir string
-	ChunkSize int
+	Binary         string
+	Timeout        time.Duration
+	Shell          string
+	SocketDir      string
+	ConfigDir      string
+	ChunkSize      int
+	LauncherBinary string
 }
 
 // Runtime runs agent sessions inside zellij sessions, driving them via the
@@ -62,6 +64,7 @@ type Runtime struct {
 	socketDir string
 	configDir string
 	chunkSize int
+	launcher  string
 	runner    runner
 }
 
@@ -82,6 +85,7 @@ func DefaultSocketDir() string {
 
 type runner interface {
 	Run(ctx context.Context, env []string, name string, args ...string) ([]byte, error)
+	Start(env []string, name string, args ...string) error
 }
 
 type execRunner struct{}
@@ -90,6 +94,10 @@ func (execRunner) Run(ctx context.Context, env []string, name string, args ...st
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Env = zellijCommandEnv(os.Environ(), env)
 	return cmd.CombinedOutput()
+}
+
+func (execRunner) Start(env []string, name string, args ...string) error {
+	return startBackgroundProcess(zellijCommandEnv(os.Environ(), env), name, args...)
 }
 
 // New builds a zellij Runtime, filling unset Options with defaults: binary
@@ -119,7 +127,24 @@ func New(opts Options) *Runtime {
 	if chunkSize <= 0 {
 		chunkSize = defaultChunkBytes
 	}
-	return &Runtime{binary: binary, timeout: timeout, shell: shellPath, socketDir: opts.SocketDir, configDir: opts.ConfigDir, chunkSize: chunkSize, runner: execRunner{}}
+	launcher := opts.LauncherBinary
+	if launcher == "" {
+		launcher = defaultLauncherBinary()
+	}
+	return &Runtime{binary: binary, timeout: timeout, shell: shellPath, socketDir: opts.SocketDir, configDir: opts.ConfigDir, chunkSize: chunkSize, launcher: launcher, runner: execRunner{}}
+}
+
+// defaultLauncherBinary returns the path used by the zellij Windows codepath
+// to invoke the `ao launch` trampoline. On Windows the agent's argv is
+// persisted to a temp spec file (see agentlaunch); zellij then runs this
+// binary with `launch` and it execs the real agent. Falls back to plain "ao"
+// if the daemon binary path cannot be resolved (PATH lookup at runtime).
+func defaultLauncherBinary() string {
+	path, err := os.Executable()
+	if err == nil && path != "" {
+		return path
+	}
+	return "ao"
 }
 
 func defaultCommandTimeout() time.Duration {
@@ -192,13 +217,13 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 		return ports.RuntimeHandle{}, err
 	}
 
-	layoutPath, err := r.writeLayout(cfg)
+	layoutPath, launchEnv, err := r.writeLayout(cfg)
 	if err != nil {
 		return ports.RuntimeHandle{}, err
 	}
 	defer func() { _ = os.Remove(layoutPath) }()
 
-	if _, err := r.run(ctx, createSessionArgs(id, layoutPath)...); err != nil {
+	if err := r.createSession(ctx, id, layoutPath, launchEnv); err != nil {
 		return ports.RuntimeHandle{}, fmt.Errorf("zellij runtime: create session %s: %w", id, err)
 	}
 	paneID, err := r.findAgentPane(ctx, id)
@@ -207,6 +232,18 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 		return ports.RuntimeHandle{}, err
 	}
 	return ports.RuntimeHandle{ID: handleIDValue(id, paneID)}, nil
+}
+
+// createSession runs `zellij attach --create-background`. On Windows we spawn
+// it via runner.Start (fire-and-forget) because the inherited daemon stdio
+// confuses zellij's own readiness probe; on Unix we keep the synchronous run.
+func (r *Runtime) createSession(ctx context.Context, id, layoutPath string, env map[string]string) error {
+	args := createSessionArgs(id, layoutPath)
+	if runtime.GOOS != "windows" {
+		_, err := r.run(ctx, args...)
+		return err
+	}
+	return r.startWithEnv(env, args...)
 }
 
 // Destroy kills the handle's zellij session and deletes its serialized state,
@@ -316,22 +353,62 @@ func (r *Runtime) ensureSupportedVersion(ctx context.Context) error {
 	return nil
 }
 
-func (r *Runtime) writeLayout(cfg ports.RuntimeConfig) (string, error) {
+func (r *Runtime) writeLayout(cfg ports.RuntimeConfig) (string, map[string]string, error) {
+	launchEnv := cfg.Env
+	if runtime.GOOS == "windows" {
+		specPath, err := agentlaunch.WriteTemp(agentlaunch.Spec{WorkspacePath: cfg.WorkspacePath, Argv: cfg.Argv})
+		if err != nil {
+			return "", nil, fmt.Errorf("zellij runtime: %w", err)
+		}
+		cfg.Argv = windowsLaunchArgv(r.launcher)
+		launchEnv = windowsLaunchEnv(cfg.Env, r.launcher, specPath)
+	}
+
 	file, err := os.CreateTemp(os.TempDir(), "ao-zellij-layout-*.kdl")
 	if err != nil {
-		return "", fmt.Errorf("zellij runtime: create layout temp file: %w", err)
+		return "", nil, fmt.Errorf("zellij runtime: create layout temp file: %w", err)
 	}
 	path := file.Name()
 	if _, err := file.WriteString(buildLayout(cfg, r.shell)); err != nil {
 		_ = file.Close()
 		_ = os.Remove(path)
-		return "", fmt.Errorf("zellij runtime: write layout temp file: %w", err)
+		return "", nil, fmt.Errorf("zellij runtime: write layout temp file: %w", err)
 	}
 	if err := file.Close(); err != nil {
 		_ = os.Remove(path)
-		return "", fmt.Errorf("zellij runtime: close layout temp file: %w", err)
+		return "", nil, fmt.Errorf("zellij runtime: close layout temp file: %w", err)
 	}
-	return path, nil
+	return path, launchEnv, nil
+}
+
+// windowsLaunchEnv augments cfg.Env with the AO_LAUNCH_SPEC pointer the `ao
+// launch` trampoline reads, and prepends the launcher's directory to PATH so
+// the trampoline (i.e. `ao` itself) is resolvable in the spawned environment.
+func windowsLaunchEnv(env map[string]string, launcherBinary, specPath string) map[string]string {
+	launchEnv := make(map[string]string, len(env)+2)
+	for k, v := range env {
+		launchEnv[k] = v
+	}
+	launchEnv[agentlaunch.EnvSpecPath] = specPath
+	if dir := launcherDir(launcherBinary); dir != "" {
+		base := launchEnv["PATH"]
+		if base == "" {
+			base = getenv("PATH")
+		}
+		if base == "" {
+			launchEnv["PATH"] = dir
+		} else {
+			launchEnv["PATH"] = dir + string(os.PathListSeparator) + base
+		}
+	}
+	return launchEnv
+}
+
+func launcherDir(launcherBinary string) string {
+	if launcherBinary == "" || !filepath.IsAbs(launcherBinary) {
+		return ""
+	}
+	return filepath.Dir(launcherBinary)
 }
 
 func (r *Runtime) findAgentPane(ctx context.Context, id string) (string, error) {
@@ -373,6 +450,17 @@ func (r *Runtime) run(ctx context.Context, args ...string) ([]byte, error) {
 	return out, nil
 }
 
+// startWithEnv fires zellij in the background with extra env vars merged onto
+// the runtime's base env. Used by the Windows createSession path so the daemon
+// is not blocked waiting on zellij's `--create-background` to settle.
+func (r *Runtime) startWithEnv(extra map[string]string, args ...string) error {
+	fullArgs := append(r.baseArgs(), args...)
+	if err := r.runner.Start(r.envWith(extra), r.binary, fullArgs...); err != nil {
+		return commandError{err: err}
+	}
+	return nil
+}
+
 func (r *Runtime) baseArgs() []string {
 	args := []string{}
 	if r.configDir != "" {
@@ -382,11 +470,23 @@ func (r *Runtime) baseArgs() []string {
 }
 
 func (r *Runtime) env() []string {
+	return r.envWith(nil)
+}
+
+func (r *Runtime) envWith(extra map[string]string) []string {
 	env := zellijColorEnv(nil)
 	if r.socketDir == "" {
-		return env
+		return appendRuntimeEnv(env, extra)
 	}
-	return append(env, "ZELLIJ_SOCKET_DIR="+r.socketDir)
+	env = append(env, "ZELLIJ_SOCKET_DIR="+r.socketDir)
+	return appendRuntimeEnv(env, extra)
+}
+
+func appendRuntimeEnv(env []string, extra map[string]string) []string {
+	for _, key := range sortedKeys(extra) {
+		env = append(env, key+"="+extra[key])
+	}
+	return env
 }
 
 func attachCommandWithEnv(binary, socketDir string, args ...string) ([]string, []string) {
