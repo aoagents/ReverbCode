@@ -1,7 +1,7 @@
 // Terminal Attachment (see CONTEXT.md): the live binding between a terminal
-// pane and a session's PTY over the mux. The hook owns the whole attachment
-// lifecycle — open ordering, auto-reattach with backoff, error surfacing, and
-// exit handling — so the pane component only renders.
+// pane and a session's PTY over the shell-owned mux. The hook owns the visible
+// attachment lifecycle — open/close ordering, xterm event listeners, error
+// surfacing, and exit handling — so the pane component only renders.
 //
 // Status rule: the frontend never writes a session's display status. On mux
 // `exited`/`error` it invalidates the workspaces query and lets the daemon's
@@ -9,8 +9,7 @@
 
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getApiBaseUrl } from "../lib/api-client";
-import { createTerminalMux, muxUrlFromApiBase, type TerminalMux } from "../lib/terminal-mux";
+import type { TerminalMux } from "../lib/terminal-mux";
 import type { WorkspaceSession } from "../types/workspace";
 import { workspaceQueryKey } from "./useWorkspaceQuery";
 
@@ -43,14 +42,10 @@ export type TerminalSessionState =
 	| "error"; // server reported a pane error; no automatic retry
 
 export type UseTerminalSessionOptions = {
-	/** Gates auto-reattach: when false, a dropped socket waits instead of retrying. */
-	daemonReady: boolean;
-	/** Test seam: build the mux client. Defaults to a fresh socket against the current API base. */
-	createMux?: () => TerminalMux;
+	/** Shell-lifetime mux transport. Browser preview passes null and renders a static pane. */
+	mux: TerminalMux | null;
 };
 
-const RETRY_BASE_MS = 500;
-const RETRY_MAX_MS = 8_000;
 // Trailing debounce on grid changes: a pane drag emits a burst of intermediate
 // sizes; the attached program should get one SIGWINCH when the drag settles,
 // not dozens (yyork's terminal-panel does the same at its socket layer).
@@ -65,11 +60,6 @@ const RESIZE_DEBOUNCE_MS = 100;
 // and re-report its grid; when everything is already in sync it's a no-op.
 const RESIZE_REASSERT_MS = 250;
 
-function defaultCreateMux(): TerminalMux {
-	// Resolved per connect, not per hook: a daemon restart can change the port.
-	return createTerminalMux(muxUrlFromApiBase(getApiBaseUrl()));
-}
-
 export function useTerminalSession(session: WorkspaceSession | undefined, options: UseTerminalSessionOptions) {
 	const queryClient = useQueryClient();
 	const [state, setState] = useState<TerminalSessionState>("idle");
@@ -80,16 +70,14 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 	const optionsRef = useRef(options);
 	optionsRef.current = options;
 	const stateRef = useRef<TerminalSessionState>(state);
-	const connectRef = useRef<() => void>(() => undefined);
+	const openVisibleRef = useRef<(clearBeforeOpen?: boolean) => void>(() => undefined);
 
 	const runtime = useRef({
 		terminal: null as AttachableTerminal | null,
 		mux: null as TerminalMux | null,
 		handle: null as string | null,
 		disposers: [] as Array<() => void>,
-		retryTimer: null as ReturnType<typeof setTimeout> | null,
 		resizeTimer: null as ReturnType<typeof setTimeout> | null,
-		attempts: 0,
 		firstAttach: true,
 		detached: true,
 	});
@@ -103,52 +91,48 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 	}, [queryClient]);
 
-	const teardownMux = useCallback(() => {
+	const detachVisible = useCallback(() => {
 		const r = runtime.current;
-		if (r.retryTimer) {
-			clearTimeout(r.retryTimer);
-			r.retryTimer = null;
-		}
 		if (r.resizeTimer) {
 			clearTimeout(r.resizeTimer);
 			r.resizeTimer = null;
 		}
+		const mux = r.mux;
+		const handle = r.handle;
 		r.disposers.forEach((dispose) => dispose());
 		r.disposers = [];
-		r.mux?.dispose();
+		if (mux && handle) {
+			mux.close(handle);
+		}
 		r.mux = null;
 	}, []);
 
-	const scheduleReattach = useCallback(() => {
-		const r = runtime.current;
-		if (r.detached || !r.terminal || !r.handle) return;
-		// A socket dropping after the PTY ended (or errored) changes nothing.
-		if (stateRef.current === "exited" || stateRef.current === "error") return;
-		transition("reattaching");
-		// Not ready → no timer; the daemonReady effect reconnects when it flips.
-		if (!optionsRef.current.daemonReady) return;
-		if (r.retryTimer) return;
-		const delay = Math.min(RETRY_BASE_MS * 2 ** r.attempts, RETRY_MAX_MS);
-		r.attempts += 1;
-		r.retryTimer = setTimeout(() => {
-			r.retryTimer = null;
-			connectRef.current();
-		}, delay);
-	}, [transition]);
+	const openVisible = useCallback(
+		(clearBeforeOpen = false) => {
+			const r = runtime.current;
+			const { terminal, handle, mux } = r;
+			if (!terminal || !handle || !mux || r.detached) return;
+			if (clearBeforeOpen || !r.firstAttach) {
+				terminal.clear();
+			}
+			r.firstAttach = false;
+			mux.open(handle, terminal.cols, terminal.rows);
+			mux.resize(handle, terminal.cols, terminal.rows);
+		},
+		[],
+	);
+	openVisibleRef.current = openVisible;
 
-	const connect = useCallback(() => {
+	const bindVisible = useCallback(() => {
 		const r = runtime.current;
 		const { terminal, handle } = r;
-		if (!terminal || !handle || r.detached) return;
-		teardownMux();
-
-		const mux = (optionsRef.current.createMux ?? defaultCreateMux)();
+		const mux = optionsRef.current.mux;
+		if (!terminal || !handle || !mux || r.detached) return;
 		r.mux = mux;
 
 		r.disposers.push(
 			mux.onData(handle, (bytes) => terminal.write(bytes)),
 			mux.onOpened(handle, () => {
-				r.attempts = 0;
 				setError(undefined);
 				transition("attached");
 			}),
@@ -164,7 +148,13 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 				invalidateWorkspaces();
 			}),
 			mux.onConnectionChange((connectionState) => {
-				if (connectionState === "closed") scheduleReattach();
+				if (connectionState === "closed") {
+					if (r.detached || !r.terminal || !r.handle) return;
+					if (stateRef.current === "exited" || stateRef.current === "error") return;
+					transition("reattaching");
+				} else {
+					openVisibleRef.current(true);
+				}
 			}),
 		);
 		const input = terminal.onData((data) => mux.sendInput(handle, data));
@@ -193,15 +183,8 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		// init handshake + a full repaint; clear the stale screen so the repaint
 		// lands on a blank grid. Screen-clear only, never reset(): RIS would drop
 		// zellij's mouse-tracking mode until the handshake lands.
-		if (!r.firstAttach) {
-			terminal.clear();
-		}
-		r.firstAttach = false;
-
-		mux.open(handle, terminal.cols, terminal.rows);
-		mux.resize(handle, terminal.cols, terminal.rows);
-	}, [invalidateWorkspaces, scheduleReattach, teardownMux, transition]);
-	connectRef.current = connect;
+		openVisible(false);
+	}, [invalidateWorkspaces, openVisible, transition]);
 
 	/**
 	 * Bind a terminal to the current session's PTY. Call once the terminal is
@@ -213,47 +196,54 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 			const handle = sessionRef.current?.terminalHandleId ?? null;
 			r.terminal = terminal;
 			r.handle = handle;
+			r.mux = null;
 			r.detached = false;
-			r.attempts = 0;
 			r.firstAttach = true;
 			setError(undefined);
-			if (handle) {
+			if (handle && optionsRef.current.mux) {
 				transition("connecting");
-				connect();
+				bindVisible();
+			} else if (handle) {
+				transition("reattaching");
 			} else {
 				transition("idle");
 			}
 			return () => {
 				r.detached = true;
-				teardownMux();
+				detachVisible();
 				r.terminal = null;
 				r.handle = null;
 				setError(undefined);
 				transition("idle");
 			};
 		},
-		[connect, teardownMux, transition],
+		[bindVisible, detachVisible, transition],
 	);
 
-	// Daemon came back while we were waiting: reconnect immediately, without
-	// backoff debt from attempts made against the dead daemon.
-	const daemonReady = options.daemonReady;
+	const mux = options.mux;
 	useEffect(() => {
 		const r = runtime.current;
-		if (!daemonReady || r.detached) return;
-		if (stateRef.current !== "reattaching" || r.retryTimer) return;
-		r.attempts = 0;
-		connect();
-	}, [daemonReady, connect]);
+		if (r.detached || r.mux === mux) return;
+		detachVisible();
+		r.mux = null;
+		if (!mux) {
+			if (r.handle) transition("reattaching");
+			return;
+		}
+		if (r.handle) {
+			transition("connecting");
+			bindVisible();
+		}
+	}, [bindVisible, detachVisible, mux, transition]);
 
 	// Belt-and-braces: never leak a socket past unmount, even if the owner
 	// forgot to call detach.
 	useEffect(
 		() => () => {
 			runtime.current.detached = true;
-			teardownMux();
+			detachVisible();
 		},
-		[teardownMux],
+		[detachVisible],
 	);
 
 	return { attach, state, error };

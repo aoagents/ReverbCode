@@ -1,6 +1,6 @@
 import { createFileRoute, Outlet, useNavigate } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
-import { type CSSProperties, useCallback, useEffect } from "react";
+import { type CSSProperties, useCallback, useEffect, useMemo } from "react";
 import { ShellTopbar } from "../components/ShellTopbar";
 import { Sidebar } from "../components/Sidebar";
 import { SidebarProvider } from "../components/ui/sidebar";
@@ -9,6 +9,7 @@ import { useDaemonStatus } from "../hooks/useDaemonStatus";
 import { useWorkspaceQuery, workspaceQueryKey, workspaceQueryOptions } from "../hooks/useWorkspaceQuery";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { ShellProvider } from "../lib/shell-context";
+import { createTerminalMuxTransport } from "../lib/terminal-mux-transport";
 import { readStoredTheme, type Theme, useUiStore } from "../stores/ui-store";
 import type { WorkspaceSummary } from "../types/workspace";
 
@@ -39,6 +40,7 @@ function ShellLayout() {
 	const workspaces = workspaceQuery.data ?? [];
 	const daemonStatus = useDaemonStatus(queryClient);
 	const { theme, setTheme, isSidebarOpen, toggleSidebar } = useUiStore();
+	const terminalMux = useMemo(() => (window.ao ? createTerminalMuxTransport() : null), []);
 
 	const updateWorkspaces = useCallback(
 		(updater: (workspaces: WorkspaceSummary[]) => WorkspaceSummary[]) => {
@@ -82,6 +84,12 @@ function ShellLayout() {
 		document.documentElement.style.colorScheme = theme;
 	}, [theme]);
 
+	useEffect(() => {
+		terminalMux?.setDaemonReady(daemonStatus.state === "ready");
+	}, [daemonStatus.state, terminalMux]);
+
+	useEffect(() => () => terminalMux?.dispose(), [terminalMux]);
+
 	// Follow OS appearance only until the user picks a theme explicitly.
 	useEffect(() => {
 		if (readStoredTheme()) return;
@@ -109,7 +117,7 @@ function ShellLayout() {
 	}, [navigate, workspaces]);
 
 	return (
-		<ShellProvider value={{ daemonStatus, createProject }}>
+		<ShellProvider value={{ daemonStatus, terminalMux, createProject }}>
 			{/* The topbar spans the full window width above the sidebar row (the
           macOS traffic lights + TitlebarNav cluster sit in its left inset),
           and the sidebar hangs below it — so the sidebar border stops at the

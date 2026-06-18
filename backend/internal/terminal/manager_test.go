@@ -112,6 +112,18 @@ func nextTerminal(t *testing.T, c *fakeConn) serverMsg {
 	}
 }
 
+func assertNoTerminalFrame(t *testing.T, c *fakeConn, typ string, d time.Duration) {
+	t.Helper()
+	select {
+	case m := <-c.out:
+		if m.Ch == chTerminal && m.Type == typ {
+			t.Fatalf("received unexpected terminal/%s frame", typ)
+		}
+		t.Fatalf("received unexpected frame %s/%s", m.Ch, m.Type)
+	case <-time.After(d):
+	}
+}
+
 // Opening a pane whose runtime is already dead must (1) send opened before
 // exited (the dead pane is reported, not errored) and (2) clear the conn's
 // entry, so a later open for the same id on this connection is still served
@@ -168,6 +180,149 @@ func TestServeExitAfterOpenClearsEntryAllowingReopen(t *testing.T) {
 
 	conn.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgOpen}
 	recv(t, conn, chTerminal, msgOpened, 2*time.Second)
+}
+
+func TestServeSameSocketSwitchesTerminalByCloseThenOpen(t *testing.T) {
+	src := &fakeSource{alive: true}
+	p1, p2 := newFakePTY(), newFakePTY()
+	sp := &fakeSpawner{ptys: []*fakePTY{p1, p2}}
+	mgr := NewManager(src, nil, testLogger(), WithSpawn(sp.spawn), WithHeartbeat(0))
+	defer mgr.Close()
+
+	conn := newFakeConn()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go mgr.Serve(ctx, conn)
+
+	conn.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgOpen}
+	recv(t, conn, chTerminal, msgOpened, time.Second)
+	eventually(t, time.Second, func() bool { return sp.calls() == 1 })
+
+	conn.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgClose}
+	eventually(t, time.Second, func() bool {
+		select {
+		case <-p1.closed:
+			return true
+		default:
+			return false
+		}
+	})
+	assertNoTerminalFrame(t, conn, msgExited, 50*time.Millisecond)
+
+	conn.in <- clientMsg{Ch: chTerminal, ID: "t2", Type: msgOpen}
+	msg := recv(t, conn, chTerminal, msgOpened, time.Second)
+	if msg.ID != "t2" {
+		t.Fatalf("opened id = %q, want t2", msg.ID)
+	}
+	eventually(t, time.Second, func() bool { return sp.calls() == 2 })
+	select {
+	case <-p2.closed:
+		t.Fatal("opening t2 on the same socket must not immediately close t2")
+	default:
+	}
+}
+
+func TestServeConnectionCleanupClosesAllOpenAttachments(t *testing.T) {
+	src := &fakeSource{alive: true}
+	p1, p2 := newFakePTY(), newFakePTY()
+	sp := &fakeSpawner{ptys: []*fakePTY{p1, p2}}
+	mgr := NewManager(src, nil, testLogger(), WithSpawn(sp.spawn), WithHeartbeat(0))
+	defer mgr.Close()
+
+	conn := newFakeConn()
+	ctx, cancel := context.WithCancel(context.Background())
+	go mgr.Serve(ctx, conn)
+
+	conn.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgOpen}
+	recv(t, conn, chTerminal, msgOpened, time.Second)
+	conn.in <- clientMsg{Ch: chTerminal, ID: "t2", Type: msgOpen}
+	recv(t, conn, chTerminal, msgOpened, time.Second)
+	eventually(t, time.Second, func() bool { return sp.calls() == 2 })
+
+	cancel()
+	eventually(t, time.Second, func() bool {
+		select {
+		case <-p1.closed:
+		default:
+			return false
+		}
+		select {
+		case <-p2.closed:
+			return true
+		default:
+			return false
+		}
+	})
+}
+
+type latePTY struct {
+	out      chan []byte
+	done     chan struct{}
+	doneOnce sync.Once
+}
+
+func newLatePTY() *latePTY {
+	return &latePTY{out: make(chan []byte, 4), done: make(chan struct{})}
+}
+
+func (p *latePTY) push(b []byte) { p.out <- b }
+
+func (p *latePTY) finish() { p.doneOnce.Do(func() { close(p.done) }) }
+
+func (p *latePTY) Read(b []byte) (int, error) {
+	select {
+	case chunk := <-p.out:
+		return copy(b, chunk), nil
+	case <-p.done:
+		return 0, context.Canceled
+	}
+}
+
+func (p *latePTY) Write(b []byte) (int, error) { return len(b), nil }
+
+func (p *latePTY) Resize(uint16, uint16) error { return nil }
+
+func (p *latePTY) Close() error { return nil }
+
+func TestServeDropsLateDataFromSupersededAttachment(t *testing.T) {
+	src := &fakeSource{alive: true}
+	oldPTY := newLatePTY()
+	newPTY := newFakePTY()
+	var mu sync.Mutex
+	ptys := []ptyProcess{oldPTY, newPTY}
+	calls := 0
+	spawn := func(context.Context, []string, uint16, uint16) (ptyProcess, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		p := ptys[calls]
+		calls++
+		return p, nil
+	}
+	spawnCalls := func() int {
+		mu.Lock()
+		defer mu.Unlock()
+		return calls
+	}
+	mgr := NewManager(src, nil, testLogger(), WithSpawn(spawn), WithHeartbeat(0))
+	defer mgr.Close()
+	defer oldPTY.finish()
+
+	conn := newFakeConn()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go mgr.Serve(ctx, conn)
+
+	conn.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgOpen}
+	recv(t, conn, chTerminal, msgOpened, time.Second)
+	eventually(t, time.Second, func() bool { return spawnCalls() == 1 })
+
+	conn.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgClose}
+	conn.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgOpen}
+	recv(t, conn, chTerminal, msgOpened, time.Second)
+	eventually(t, time.Second, func() bool { return spawnCalls() == 2 })
+
+	oldPTY.push([]byte("stale output"))
+	assertNoTerminalFrame(t, conn, msgData, 50*time.Millisecond)
 }
 
 // An attachment that exits the moment it is opened (dead runtime) fires onExit

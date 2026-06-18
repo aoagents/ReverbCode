@@ -28,9 +28,10 @@ type SessionViewProps = {
 // shell-owned ShellTopbar. Rendered by both the project-scoped and
 // cross-project session routes. The terminal lives here (not in the shell) —
 // switching sessions only changes route params, so TanStack Router keeps this
-// component mounted and the terminal re-points its mux without remounting
-// (useTerminalSession). Leaving for the board unmounts it; a fresh server-side
-// zellij attach repaints the pane on return.
+// component mounted and the terminal switches visible handles over the
+// shell-owned mux without remounting (useTerminalSession). Leaving for the
+// board unmounts the visible attachment and sends close(handle), while the
+// shell keeps the /mux websocket alive.
 //
 // The split is shadcn's resizable (react-resizable-panels v4) with a fully
 // collapsible inspector: the panel is `collapsible` and driven to 0% via the

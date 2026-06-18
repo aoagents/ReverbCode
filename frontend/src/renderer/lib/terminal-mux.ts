@@ -120,7 +120,7 @@ function subscribeById<T>(map: Map<string, Set<T>>, id: string, listener: T): ()
  * Create a mux client over a single WebSocket. Frames sent before the socket is
  * OPEN are queued and flushed on connect. There is no auto-reconnect at this
  * layer: a dropped socket is reported through onConnectionChange("closed") and
- * the owner (useTerminalSession) decides whether to build a fresh client.
+ * the shell-lifetime transport decides whether to build a fresh client.
  */
 export function createTerminalMux(url: string, WebSocketImpl: typeof WebSocket = WebSocket): TerminalMux {
 	const socket = new WebSocketImpl(url);
