@@ -120,7 +120,8 @@ export function workerDisplayStatus(session: WorkspaceSession): WorkerDisplaySta
 }
 
 export function isOrchestratorSession(session: WorkspaceSession): boolean {
-	return session.kind === "orchestrator" || session.id.endsWith("-orchestrator");
+	if (session.kind) return session.kind === "orchestrator";
+	return session.id.endsWith("-orchestrator");
 }
 
 /**

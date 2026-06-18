@@ -3,7 +3,6 @@ import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
 import {
 	ChevronRight,
 	GitPullRequest,
-	LayoutDashboard,
 	Moon,
 	MoreVertical,
 	Plus,
@@ -52,8 +51,9 @@ import {
 	useSidebar,
 } from "./ui/sidebar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
-import { OrchestratorIcon } from "./icons";
 import aoLogo from "../assets/ao-logo.png";
+import dashboardLogo from "../assets/dashboard-logo.png";
+import orchestratorLogo from "../assets/orchestrator-logo.png";
 import { cn } from "../lib/utils";
 import { useUiStore } from "../stores/ui-store";
 
@@ -492,7 +492,7 @@ function ProjectItem({
 							onClick={() => selection.goProject(workspace.id)}
 							type="button"
 						>
-							<LayoutDashboard aria-hidden="true" />
+							<img src={dashboardLogo} alt="" aria-hidden="true" className="h-[15px] w-[15px] rounded-[3px]" />
 						</button>
 					</TooltipTrigger>
 					<TooltipContent>Dashboard</TooltipContent>
@@ -506,7 +506,7 @@ function ProjectItem({
 							onClick={() => void openOrchestrator()}
 							type="button"
 						>
-							<OrchestratorIcon aria-hidden="true" />
+							<img src={orchestratorLogo} alt="" aria-hidden="true" className="h-[15px] w-[15px] rounded-[3px]" />
 						</button>
 					</TooltipTrigger>
 					<TooltipContent>

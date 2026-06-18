@@ -1,10 +1,9 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
-import { GitBranch, LayoutDashboard, PanelRightClose, PanelRightOpen, Square } from "lucide-react";
+import { GitBranch, PanelRightClose, PanelRightOpen, Square } from "lucide-react";
 import { useState } from "react";
 import {
 	findProjectOrchestrator,
-	isOrchestratorSession,
 	sessionIsActive,
 	workerDisplayStatus,
 	type WorkerDisplayStatus,
@@ -14,7 +13,8 @@ import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { useUiStore } from "../stores/ui-store";
-import { OrchestratorIcon } from "./icons";
+import dashboardLogo from "../assets/dashboard-logo.png";
+import orchestratorLogo from "../assets/orchestrator-logo.png";
 import { cn } from "../lib/utils";
 
 const isMac = typeof navigator !== "undefined" && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent);
@@ -57,7 +57,7 @@ export function ShellTopbar() {
 		? all.flatMap((workspace) => workspace.sessions).find((s) => s.id === params.sessionId)
 		: undefined;
 	const isSessionRoute = Boolean(params.sessionId);
-	const isOrchestrator = session ? isOrchestratorSession(session) : false;
+	const isOrchestrator = session?.kind === "orchestrator";
 	// Project in scope: the session's workspace wins over the route param so the
 	// cross-project /sessions/$sessionId route still resolves a crumb. A
 	// projectId that no longer resolves (stale route after the project was
@@ -106,7 +106,7 @@ export function ShellTopbar() {
 								·
 							</span>
 							<span className="session-detail-mode-badge session-detail-mode-badge--neutral">
-								<OrchestratorIcon className="size-3 shrink-0" aria-hidden="true" />
+								<img src={orchestratorLogo} alt="" aria-hidden="true" className="size-3 shrink-0 rounded-[3px]" />
 								Orchestrator
 							</span>
 						</div>
@@ -139,20 +139,20 @@ export function ShellTopbar() {
 								style={noDragStyle}
 								type="button"
 							>
-								<LayoutDashboard className="h-3.5 w-3.5" aria-hidden="true" />
+								<img src={dashboardLogo} alt="" aria-hidden="true" className="h-3.5 w-3.5 rounded-[3px]" />
 								Open Kanban
 							</button>
 						) : (
 							<button
-								aria-label="Open orchestrator"
+								aria-label="Open Orchestrator"
 								className="dashboard-app-header__primary-btn"
 								disabled={isSpawning}
 								onClick={() => void openOrchestrator()}
 								style={noDragStyle}
 								type="button"
 							>
-								<OrchestratorIcon className="h-3.5 w-3.5" aria-hidden="true" />
-								{isSpawning ? "Spawning…" : "Open orchestrator"}
+								<img src={orchestratorLogo} alt="" aria-hidden="true" className="h-3.5 w-3.5 rounded-[3px]" />
+								{isSpawning ? "Spawning…" : "Open Orchestrator"}
 							</button>
 						)}
 						{/* Kill control sits beside the orchestrator link for active workers —
@@ -191,7 +191,7 @@ export function ShellTopbar() {
 							style={noDragStyle}
 							type="button"
 						>
-							<OrchestratorIcon className="h-3.5 w-3.5" aria-hidden="true" />
+							<img src={orchestratorLogo} alt="" aria-hidden="true" className="h-3.5 w-3.5 rounded-[3px]" />
 							Orchestrator
 						</button>
 					) : (
@@ -203,7 +203,7 @@ export function ShellTopbar() {
 							style={noDragStyle}
 							type="button"
 						>
-							<OrchestratorIcon className="h-3.5 w-3.5" aria-hidden="true" />
+							<img src={orchestratorLogo} alt="" aria-hidden="true" className="h-3.5 w-3.5 rounded-[3px]" />
 							{isSpawning ? "Spawning…" : "Spawn Orchestrator"}
 						</button>
 					)
