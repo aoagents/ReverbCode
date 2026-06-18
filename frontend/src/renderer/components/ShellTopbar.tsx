@@ -11,6 +11,7 @@ import {
 } from "../types/workspace";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
+import { captureRendererEvent, captureRendererException } from "../lib/telemetry";
 import { useUiStore } from "../stores/ui-store";
 import { cn } from "../lib/utils";
 
@@ -70,6 +71,7 @@ export function ShellTopbar() {
 
 	const openOrchestrator = async () => {
 		if (!projectId) return;
+		void captureRendererEvent("ao.renderer.orchestrator_open_requested", { project_id: projectId });
 		if (orchestrator) {
 			void navigate({
 				to: "/projects/$projectId/sessions/$sessionId",
@@ -86,6 +88,7 @@ export function ShellTopbar() {
 				params: { projectId, sessionId },
 			});
 		} catch (error) {
+			void captureRendererException(error, { source: "orchestrator-open", project_id: projectId });
 			console.error("Failed to spawn orchestrator:", error);
 		} finally {
 			setIsSpawning(false);

@@ -9,6 +9,7 @@ import { pathToFileURL } from "node:url";
 import { resolveDaemonLaunch } from "./shared/daemon-launch";
 import { createListenPortScanner, defaultRunFilePath, parseRunFile } from "./shared/daemon-discovery";
 import type { DaemonStatus } from "./shared/daemon-status";
+import { buildTelemetryBootstrap } from "./shared/telemetry";
 
 // Globals injected at compile time by @electron-forge/plugin-vite.
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
@@ -308,6 +309,7 @@ ipcMain.handle("daemon:getStatus", () => daemonStatus);
 ipcMain.handle("daemon:start", () => startDaemon());
 ipcMain.handle("daemon:stop", () => stopDaemon());
 ipcMain.handle("app:getVersion", () => app.getVersion());
+ipcMain.handle("telemetry:getBootstrap", () => buildTelemetryBootstrap(process.env, app.getVersion(), process.platform));
 ipcMain.handle("app:chooseDirectory", async () => {
 	const options: OpenDialogOptions = {
 		properties: ["openDirectory"],

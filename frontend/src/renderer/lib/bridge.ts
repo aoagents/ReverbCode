@@ -16,4 +16,7 @@ export const aoBridge: AoBridge =
 			stop: async () => ({ state: "stopped" }),
 			onStatus: () => () => undefined,
 		},
+		telemetry: {
+			getBootstrap: async () => null,
+		},
 	} satisfies AoBridge);

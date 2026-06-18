@@ -61,4 +61,7 @@ window.ao = {
 		stop: async () => ({ state: "stopped" }),
 		onStatus: () => () => undefined,
 	},
+	telemetry: {
+		getBootstrap: async () => null,
+	},
 };
