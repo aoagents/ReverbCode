@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
 	attentionZone,
 	findProjectOrchestrator,
+	isOrchestratorSession,
 	sessionIsActive,
 	sessionNeedsAttention,
 	toAgentProvider,
@@ -43,6 +44,18 @@ describe("toSessionStatus", () => {
 
 	it("falls back to working when status is undefined", () => {
 		expect(toSessionStatus(undefined)).toBe("working");
+	});
+});
+
+describe("isOrchestratorSession", () => {
+	it("lets explicit worker kind override an orchestrator-looking id", () => {
+		const worker = sessionWith({ id: "project-orchestrator", kind: "worker" });
+		expect(isOrchestratorSession(worker)).toBe(false);
+	});
+
+	it("keeps the id suffix fallback for legacy sessions without kind", () => {
+		const orchestrator = sessionWith({ id: "project-orchestrator", kind: undefined });
+		expect(isOrchestratorSession(orchestrator)).toBe(true);
 	});
 });
 
