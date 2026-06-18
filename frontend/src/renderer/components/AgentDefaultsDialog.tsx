@@ -8,6 +8,8 @@ import { Button } from "./ui/button";
 import { Label } from "./ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 
+const AGENT_SELECT_PLACEHOLDER = "__select_agent__";
+
 type AgentDefaultsDialogProps = {
 	daemonReady: boolean;
 	open: boolean;
@@ -123,11 +125,19 @@ export function AgentDefaultsDialog({ daemonReady, open, onOpenChange }: AgentDe
 
 function AgentSelect({ id, value, onChange }: { id: string; value: string; onChange: (value: string) => void }) {
 	return (
-		<Select value={value || undefined} onValueChange={onChange}>
+		<Select
+			value={value || AGENT_SELECT_PLACEHOLDER}
+			onValueChange={(next) => {
+				if (next !== AGENT_SELECT_PLACEHOLDER) onChange(next);
+			}}
+		>
 			<SelectTrigger id={id} className="h-8 w-full text-[13px]">
-				<SelectValue placeholder="Select agent" />
+				<SelectValue />
 			</SelectTrigger>
 			<SelectContent>
+				<SelectItem value={AGENT_SELECT_PLACEHOLDER} disabled>
+					Select agent
+				</SelectItem>
 				{AGENT_OPTIONS.map((agent) => (
 					<SelectItem key={agent} value={agent}>
 						{agent}
