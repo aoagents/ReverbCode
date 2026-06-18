@@ -3,6 +3,7 @@ package review
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,6 +15,11 @@ import (
 type fakeStore struct {
 	review *domain.Review
 	runs   []domain.ReviewRun
+	// insertErr, when set, makes the next InsertReviewRun model a concurrent
+	// writer that already recorded a run for this commit: it records that
+	// winner (so a follow-up GetReviewRunBySessionAndSHA finds it) and returns
+	// insertErr instead of recording the caller's run.
+	insertErr error
 }
 
 func (f *fakeStore) UpsertReview(_ context.Context, r domain.Review) error {
@@ -28,6 +34,12 @@ func (f *fakeStore) GetReviewBySession(_ context.Context, _ domain.SessionID) (d
 	return *f.review, true, nil
 }
 func (f *fakeStore) InsertReviewRun(_ context.Context, r domain.ReviewRun) error {
+	if f.insertErr != nil {
+		winner := r
+		winner.ID = "winner-" + r.ID
+		f.runs = append(f.runs, winner)
+		return f.insertErr
+	}
 	f.runs = append(f.runs, r)
 	return nil
 }
@@ -87,18 +99,20 @@ func (f fakeProjects) GetProject(_ context.Context, id string) (domain.ProjectRe
 }
 
 type fakeLauncher struct {
-	handle    string
-	alive     bool
-	spawnErr  error
-	notifyErr error
-	spawned   bool
-	notified  bool
-	gotSpec   LaunchSpec
-	gotHandle string
+	handle     string
+	alive      bool
+	spawnErr   error
+	notifyErr  error
+	spawned    bool
+	spawnCount int
+	notified   bool
+	gotSpec    LaunchSpec
+	gotHandle  string
 }
 
 func (f *fakeLauncher) Spawn(_ context.Context, spec LaunchSpec) (string, error) {
 	f.spawned = true
+	f.spawnCount++
 	f.gotSpec = spec
 	if f.spawnErr != nil {
 		return "", f.spawnErr
@@ -160,6 +174,67 @@ func TestTriggerSpawnsNewReviewerAndRecordsRunAfterLaunch(t *testing.T) {
 	}
 	if len(store.runs) != 1 || store.review == nil || store.review.ReviewerHandleID != "review-mer-1" {
 		t.Fatalf("persisted review=%+v runs=%+v", store.review, store.runs)
+	}
+}
+
+func TestTriggerConcurrentSameWorkerSpawnsOnce(t *testing.T) {
+	store := &fakeStore{}
+	launcher := &fakeLauncher{handle: "review-mer-1"}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
+
+	const n = 8
+	var wg sync.WaitGroup
+	results := make([]TriggerResult, n)
+	errs := make([]error, n)
+	wg.Add(n)
+	for i := 0; i < n; i++ {
+		go func(i int) {
+			defer wg.Done()
+			results[i], errs[i] = eng.Trigger(context.Background(), "mer-1")
+		}(i)
+	}
+	wg.Wait()
+
+	created := 0
+	for i := 0; i < n; i++ {
+		if errs[i] != nil {
+			t.Fatalf("Trigger[%d]: %v", i, errs[i])
+		}
+		if results[i].Created {
+			created++
+		}
+	}
+	// Exactly one trigger does the work; the rest reuse its run.
+	if created != 1 {
+		t.Errorf("Created=true count = %d, want exactly 1", created)
+	}
+	if launcher.spawnCount != 1 {
+		t.Errorf("reviewer spawn count = %d, want 1", launcher.spawnCount)
+	}
+	if len(store.runs) != 1 {
+		t.Errorf("recorded review runs = %d, want 1", len(store.runs))
+	}
+}
+
+func TestTriggerFallsBackToExistingRunOnUniqueConflict(t *testing.T) {
+	// The idempotency check passes (no run yet), the reviewer launches, but the
+	// insert loses to a concurrent writer the unique index already accepted.
+	store := &fakeStore{insertErr: domain.ErrDuplicateReviewRun}
+	launcher := &fakeLauncher{handle: "review-mer-1"}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
+
+	res, err := eng.Trigger(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatalf("Trigger: %v", err)
+	}
+	if res.Created {
+		t.Fatalf("expected Created=false on unique conflict: %+v", res)
+	}
+	if res.Run.TargetSHA != "sha1" || res.Run.ID != "winner-id-1" {
+		t.Fatalf("expected the recorded winner run, got %+v", res.Run)
+	}
+	if launcher.spawnCount != 1 {
+		t.Fatalf("reviewer should still have launched once: %+v", launcher)
 	}
 }
 

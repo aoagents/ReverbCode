@@ -88,7 +88,7 @@ func (c *SessionsController) list(w http.ResponseWriter, r *http.Request) {
 		envelope.WriteError(w, r, err)
 		return
 	}
-	envelope.WriteJSON(w, http.StatusOK, ListSessionsResponse{Sessions: sessions})
+	envelope.WriteJSON(w, http.StatusOK, ListSessionsResponse{Sessions: sessionViews(sessions)})
 }
 
 func (c *SessionsController) spawn(w http.ResponseWriter, r *http.Request) {
@@ -117,7 +117,7 @@ func (c *SessionsController) spawn(w http.ResponseWriter, r *http.Request) {
 		envelope.WriteError(w, r, err)
 		return
 	}
-	envelope.WriteJSON(w, http.StatusCreated, SessionResponse{Session: sess})
+	envelope.WriteJSON(w, http.StatusCreated, SessionResponse{Session: sessionView(sess)})
 }
 
 func (c *SessionsController) get(w http.ResponseWriter, r *http.Request) {
@@ -130,7 +130,7 @@ func (c *SessionsController) get(w http.ResponseWriter, r *http.Request) {
 		envelope.WriteError(w, r, err)
 		return
 	}
-	envelope.WriteJSON(w, http.StatusOK, SessionResponse{Session: sess})
+	envelope.WriteJSON(w, http.StatusOK, SessionResponse{Session: sessionView(sess)})
 }
 
 func (c *SessionsController) listPRs(w http.ResponseWriter, r *http.Request) {
@@ -204,7 +204,7 @@ func (c *SessionsController) restore(w http.ResponseWriter, r *http.Request) {
 		envelope.WriteError(w, r, err)
 		return
 	}
-	envelope.WriteJSON(w, http.StatusOK, RestoreSessionResponse{OK: true, SessionID: sessionID(r), Session: sess})
+	envelope.WriteJSON(w, http.StatusOK, RestoreSessionResponse{OK: true, SessionID: sessionID(r), Session: sessionView(sess)})
 }
 
 func (c *SessionsController) kill(w http.ResponseWriter, r *http.Request) {
@@ -348,7 +348,7 @@ func (c *SessionsController) listOrchestrators(w http.ResponseWriter, r *http.Re
 		envelope.WriteError(w, r, err)
 		return
 	}
-	envelope.WriteJSON(w, http.StatusOK, ListSessionsResponse{Sessions: sessions})
+	envelope.WriteJSON(w, http.StatusOK, ListSessionsResponse{Sessions: sessionViews(sessions)})
 }
 
 func (c *SessionsController) getOrchestrator(w http.ResponseWriter, r *http.Request) {
@@ -365,7 +365,7 @@ func (c *SessionsController) getOrchestrator(w http.ResponseWriter, r *http.Requ
 		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "SESSION_NOT_FOUND", "Unknown session", nil)
 		return
 	}
-	envelope.WriteJSON(w, http.StatusOK, SessionResponse{Session: sess})
+	envelope.WriteJSON(w, http.StatusOK, SessionResponse{Session: sessionView(sess)})
 }
 
 func sessionID(r *http.Request) domain.SessionID {
@@ -434,6 +434,18 @@ func writeSessionPRError(w http.ResponseWriter, r *http.Request, err error) {
 	default:
 		envelope.WriteError(w, r, err)
 	}
+}
+
+func sessionView(s domain.Session) SessionView {
+	return SessionView{Session: s, PRs: sessionPRFacts(s.PRs)}
+}
+
+func sessionViews(sessions []domain.Session) []SessionView {
+	out := make([]SessionView, 0, len(sessions))
+	for _, s := range sessions {
+		out = append(out, sessionView(s))
+	}
+	return out
 }
 
 func sessionPRFacts(prs []domain.PRFacts) []SessionPRFacts {

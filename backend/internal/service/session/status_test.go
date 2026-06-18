@@ -27,13 +27,13 @@ func silentRec(age time.Duration) domain.SessionRecord {
 	}
 }
 
-func statusPR(facts domain.PRFacts) *domain.PRFacts { return &facts }
+func statusPR(facts domain.PRFacts) []domain.PRFacts { return []domain.PRFacts{facts} }
 
 func TestServiceDerivesStatusFromSessionFactsAndPR(t *testing.T) {
 	tests := []struct {
 		name string
 		rec  domain.SessionRecord
-		pr   *domain.PRFacts
+		pr   []domain.PRFacts
 		// hookless marks a harness with no activity pipeline (signalCapable
 		// false): silence is its permanent normal state, never no_signal.
 		hookless bool
@@ -73,6 +73,50 @@ func TestServiceDerivesStatusFromSessionFactsAndPR(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := deriveStatus(tt.rec, tt.pr, statusNow, !tt.hookless); got != tt.want {
+				t.Fatalf("got %q want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// A blocked stacked child cannot merge until its parent does, so its readiness
+// signals are suppressed, but its problem signals (failing CI, draft,
+// requested-changes/unresolved-comments) must still surface for the session.
+func TestAggregateStackedChildSignals(t *testing.T) {
+	parent := domain.PRFacts{URL: "parent", SourceBranch: "feat", Mergeability: domain.MergeMergeable}
+	child := func(f domain.PRFacts) domain.PRFacts {
+		f.URL = "child"
+		f.SourceBranch = "feat/child"
+		f.TargetBranch = "feat"
+		return f
+	}
+	tests := []struct {
+		name string
+		prs  []domain.PRFacts
+		want domain.SessionStatus
+	}{
+		{"blocked-child-ci-failing-surfaces", []domain.PRFacts{parent, child(domain.PRFacts{CI: domain.CIFailing})}, domain.StatusCIFailed},
+		{"blocked-child-draft-surfaces", []domain.PRFacts{parent, child(domain.PRFacts{Draft: true})}, domain.StatusDraft},
+		{"blocked-child-changes-requested-surfaces", []domain.PRFacts{parent, child(domain.PRFacts{Review: domain.ReviewChangesRequest})}, domain.StatusChangesRequested},
+		{"blocked-child-unresolved-comments-surfaces", []domain.PRFacts{parent, child(domain.PRFacts{ReviewComments: true})}, domain.StatusChangesRequested},
+		// A blocked child's readiness signals stay hidden: only the parent's
+		// mergeable state drives the session.
+		{"blocked-child-mergeable-suppressed", []domain.PRFacts{parent, child(domain.PRFacts{Mergeability: domain.MergeMergeable})}, domain.StatusMergeable},
+		{"blocked-child-approved-suppressed", []domain.PRFacts{parent, child(domain.PRFacts{Review: domain.ReviewApproved})}, domain.StatusMergeable},
+		// Degenerate set where every open PR is blocked and none is actionable:
+		// fall back to the raw aggregate so the session never goes dark.
+		{
+			"all-blocked-no-actionable-falls-back",
+			[]domain.PRFacts{
+				{URL: "a", SourceBranch: "feat/a", TargetBranch: "feat/b", Mergeability: domain.MergeMergeable},
+				{URL: "b", SourceBranch: "feat/b", TargetBranch: "feat/a", Mergeability: domain.MergeMergeable},
+			},
+			domain.StatusMergeable,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := deriveStatus(statusRec(domain.ActivityIdle, false), tt.prs, statusNow, true); got != tt.want {
 				t.Fatalf("got %q want %q", got, tt.want)
 			}
 		})

@@ -24,6 +24,34 @@ func (s *Store) GetDisplayPRFactsForSession(ctx context.Context, id domain.Sessi
 	return prFactsFromGen(r), true, nil
 }
 
+// ListPRFactsForSession returns the PR snapshot for every PR a session owns
+// (open, merged, and closed), newest first. The status aggregator filters and
+// builds stacks from these; an empty slice means the session has no PRs.
+func (s *Store) ListPRFactsForSession(ctx context.Context, id domain.SessionID) ([]domain.PRFacts, error) {
+	rows, err := s.qr.ListPRFactsBySession(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("list pr facts for %s: %w", id, err)
+	}
+	out := make([]domain.PRFacts, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, domain.PRFacts{
+			URL:            r.URL,
+			Number:         int(r.Number),
+			Draft:          r.PRState == domain.PRStateDraft,
+			Merged:         r.PRState == domain.PRStateMerged,
+			Closed:         r.PRState == domain.PRStateClosed,
+			CI:             r.CIState,
+			Review:         r.ReviewDecision,
+			Mergeability:   r.Mergeability,
+			ReviewComments: r.ReviewComments,
+			SourceBranch:   r.SourceBranch,
+			TargetBranch:   r.TargetBranch,
+			UpdatedAt:      r.UpdatedAt,
+		})
+	}
+	return out, nil
+}
+
 func prFactsFromGen(r gen.GetDisplayPRFactsBySessionRow) domain.PRFacts {
 	state := r.PRState
 	return domain.PRFacts{
