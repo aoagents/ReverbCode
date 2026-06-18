@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { SessionInspector } from "./SessionInspector";
 import type { PRState, PullRequestFacts, WorkspaceSession } from "../types/workspace";
@@ -66,5 +66,19 @@ describe("SessionInspector PR section", () => {
 			"https://example.com/pr/41",
 			"https://example.com/pr/42",
 		]);
+	});
+});
+
+describe("SessionInspector tabs", () => {
+	it("exposes Summary, Reviews, and Browser as the three inspector tabs", () => {
+		render(<SessionInspector session={session([pr(1, "open")])} />);
+		const tabs = screen.getAllByRole("tab").map((el) => el.textContent?.trim());
+		expect(tabs).toEqual(["Summary", "Reviews", "Browser"]);
+	});
+
+	it("switches to the Reviews tab and shows the empty placeholder", () => {
+		render(<SessionInspector session={session([pr(1, "open")])} />);
+		fireEvent.click(screen.getByRole("tab", { name: /Reviews/ }));
+		expect(screen.getByText("No reviews yet.")).toBeInTheDocument();
 	});
 });

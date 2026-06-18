@@ -1,13 +1,12 @@
 import { useState, type ReactNode } from "react";
-import { GitBranch, GitCommitHorizontal, GitPullRequest, Plus, Square, Trash2 } from "lucide-react";
+import { GitPullRequest } from "lucide-react";
 import { formatTimeCompact } from "../lib/format-time";
 import type { PRState, PullRequestFacts, SessionStatus, WorkspaceSession } from "../types/workspace";
 import { sortedPRs, workerDisplayStatus } from "../types/workspace";
 import { Badge } from "./ui/badge";
-import { Button } from "./ui/button";
 import { cn } from "../lib/utils";
 
-type InspectorView = "summary" | "changes" | "browser";
+type InspectorView = "summary" | "reviews" | "browser";
 
 const VIEWS: { id: InspectorView; label: string; icon: ReactNode }[] = [
 	{
@@ -25,15 +24,11 @@ const VIEWS: { id: InspectorView; label: string; icon: ReactNode }[] = [
 		),
 	},
 	{
-		id: "changes",
-		label: "Changes",
+		id: "reviews",
+		label: "Reviews",
 		icon: (
 			<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
-				<path d="M12 3v6" />
-				<path d="M9 6h6" />
-				<path d="M11 18H7a2 2 0 0 1-2-2V6" />
-				<path d="M13 15h4" />
-				<path d="M19 9v7a2 2 0 0 1-2 2h-2" />
+				<path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
 			</svg>
 		),
 	},
@@ -58,8 +53,7 @@ const prStateTone: Record<PRState, string> = {
 };
 
 /**
- * Tabbed inspector rail beside the terminal — cloned from agent-orchestrator
- * SessionInspector (Summary · Changes · Browser).
+ * Tabbed inspector rail beside the terminal (Summary · Reviews · Browser).
  */
 export function SessionInspector({ session }: { session?: WorkspaceSession }) {
 	const [view, setView] = useState<InspectorView>("summary");
@@ -94,7 +88,7 @@ export function SessionInspector({ session }: { session?: WorkspaceSession }) {
 
 			<div className="session-inspector__body">
 				{view === "summary" ? <SummaryView session={session} /> : null}
-				{view === "changes" ? <ChangesView session={session} /> : null}
+				{view === "reviews" ? <ReviewsView /> : null}
 				{view === "browser" ? <BrowserView /> : null}
 			</div>
 		</aside>
@@ -278,67 +272,15 @@ function InspectorStatusPill({ session }: { session: WorkspaceSession }) {
 	);
 }
 
-function ChangesView({ session }: { session: WorkspaceSession }) {
-	const files = session.changedFiles ?? [];
-
+function ReviewsView() {
 	return (
-		<div role="tabpanel" className="flex min-h-0 flex-1 flex-col">
-			<div className="inspector-changes__head">
-				<span className="inspector-changes__title">Changed</span>
-				<span className="inspector-changes__count">{files.length}</span>
-			</div>
-
-			<div className="inspector-changes__actions">
-				<button className="inspector-changes__action" type="button">
-					All files
-				</button>
-				<button className="inspector-changes__action inspector-changes__action--danger" type="button">
-					<Trash2 aria-hidden="true" />
-					Discard all
-				</button>
-				<button className="inspector-changes__action inspector-changes__action--end" type="button">
-					<Plus aria-hidden="true" />
-					Stage all
-				</button>
-			</div>
-
-			<div className="inspector-changes__list">
-				{files.length === 0 ? (
-					<p className="inspector-empty inspector-empty--center">No changes yet.</p>
-				) : (
-					files.map((file) => (
-						<div className="inspector-changes__file" key={file.path}>
-							<span className="inspector-changes__path">{file.path}</span>
-							<span className="inspector-changes__add">+{file.additions}</span>
-							<span className="inspector-changes__del">−{file.deletions}</span>
-							<Square className={cn("inspector-changes__stage", file.staged && "is-staged")} aria-hidden="true" />
-						</div>
-					))
-				)}
-			</div>
-
-			<div className="inspector-changes__commit">
-				<input
-					className="inspector-changes__input"
-					defaultValue={session.commitMessage ?? ""}
-					key={session.id}
-					placeholder="Commit message"
-				/>
-				<textarea className="inspector-changes__textarea" placeholder="Description" rows={2} />
-				<Button className="w-full" disabled={files.length === 0} variant="primary">
-					<GitCommitHorizontal aria-hidden="true" />
-					Commit &amp; Push
-				</Button>
-			</div>
-
-			<div className="inspector-changes__footer">
-				<GitBranch aria-hidden="true" />
-				<span className="inspector-changes__branch">{session.branch || "—"}</span>
-				<button className="inspector-changes__pr" type="button">
-					<Plus aria-hidden="true" />
-					<GitPullRequest aria-hidden="true" />
-					Create PR
-				</button>
+		<div role="tabpanel">
+			<div className="inspector-empty inspector-empty--browser">
+				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+					<path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
+				</svg>
+				<p>No reviews yet.</p>
+				<span>Reviews from this session's PRs will appear here.</span>
 			</div>
 		</div>
 	);
