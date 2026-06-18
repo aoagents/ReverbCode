@@ -433,6 +433,45 @@ func TestServeClosesConnOnReadEnd(t *testing.T) {
 	}
 }
 
+type cancelAwarePTY struct {
+	cancelled <-chan struct{}
+	sawCancel bool
+}
+
+func (p *cancelAwarePTY) Read([]byte) (int, error) { return 0, context.Canceled }
+
+func (p *cancelAwarePTY) Write(b []byte) (int, error) { return len(b), nil }
+
+func (p *cancelAwarePTY) Resize(uint16, uint16) error { return nil }
+
+func (p *cancelAwarePTY) Close() error {
+	select {
+	case <-p.cancelled:
+		p.sawCancel = true
+	default:
+	}
+	return nil
+}
+
+func TestCleanupCancelsConnectionBeforeClosingAttachments(t *testing.T) {
+	cancelled := make(chan struct{})
+	pty := &cancelAwarePTY{cancelled: cancelled}
+	c := &connState{
+		cancel: func() { close(cancelled) },
+		conn:   newFakeConn(),
+		out:    make(chan serverMsg, defaultWriteBuffer),
+		terms: map[string]*attachment{
+			"t1": {id: "t1", pty: pty},
+		},
+	}
+
+	c.cleanup()
+
+	if !pty.sawCancel {
+		t.Fatal("cleanup closed attachment PTY before cancelling the connection context")
+	}
+}
+
 // Each connection opening the same pane gets its OWN attach PTY — that is the
 // per-client model: zellij replays its init handshake + full repaint to every
 // fresh attach, so no client depends on bytes another client consumed. Output

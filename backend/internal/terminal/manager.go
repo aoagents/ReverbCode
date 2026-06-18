@@ -372,6 +372,7 @@ func (c *connState) cleanup() {
 		return
 	}
 	c.closed = true
+	c.cancel()
 	attachments := make([]*attachment, 0, len(c.terms))
 	for _, a := range c.terms {
 		attachments = append(attachments, a)
