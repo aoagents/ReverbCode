@@ -30,10 +30,9 @@ export function ImportOffer() {
 						Import projects and orchestrator from your earlier AO?
 					</p>
 					<p className="mt-1 text-[12px] leading-[1.5] text-muted-foreground">
-						We found an existing install at{" "}
-						<span className="font-mono text-[11px] text-passive">{legacyRoot}</span>. Importing brings in your
-						projects and revives the orchestrator. Your old files are never modified, and you can do this later
-						instead.
+						We found an existing install at <span className="font-mono text-[11px] text-passive">{legacyRoot}</span>.
+						Importing brings in your projects and revives the orchestrator. Your old files are never modified, and you
+						can do this later instead.
 					</p>
 					{error && <p className="mt-2 text-[12px] text-error">Import failed: {error}</p>}
 				</div>
