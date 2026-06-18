@@ -27,31 +27,62 @@ type transcriptCopyPlan struct {
 
 // planTranscriptCopy computes the source + destination transcript paths.
 //
-// The source slug realpath-resolves the legacy worktree (it exists on disk).
-// The destination slug uses the LITERAL orchestrator-worktree path the rewrite
-// will materialise on first resume —
-// {dataDir}/worktrees/{projectID}/orchestrator/{prefix}-orchestrator — with NO
-// realpath, because that directory does not exist yet and ~/.ao/data is not a
-// symlink, so the literal-path slug matches what Claude will compute from the
-// resumed orchestrator's cwd (gitworktree managedPath, kind orchestrator).
+// Claude Code buckets a transcript under ~/.claude/projects/<slug>/ where the
+// slug is derived from the REALPATH of the session's cwd. Both slugs are
+// therefore computed from symlink-resolved paths:
+//
+//   - source: the legacy worktree the orchestrator last ran in (exists on disk).
+//   - destination: the orchestrator worktree the rewrite materialises on first
+//     resume — {dataDir}/worktrees/{projectID}/orchestrator/{prefix}-orchestrator.
+//     The daemon resolves that path through physicalAbs before cd-ing into it
+//     (gitworktree New + validateManagedPath), so we resolve it the same way; a
+//     literal-path slug would miss the resume bucket whenever any component of
+//     dataDir (e.g. a custom AO_DATA_DIR, or macOS /tmp → /private/tmp) is a
+//     symlink. The leaf does not exist yet, so resolvePhysical resolves the
+//     longest existing ancestor and appends the literal tail — exactly what the
+//     daemon's physicalAbs does.
 func planTranscriptCopy(dataDir, projectID, prefix, worktree, uuid, claudeProjectsDir string) transcriptCopyPlan {
 	if claudeProjectsDir == "" {
 		claudeProjectsDir = defaultClaudeProjectsDir()
 	}
-	source := worktree
-	if resolved, err := filepath.EvalSymlinks(worktree); err == nil {
-		source = resolved
-	}
-	sourceSlug := claudeSlug(source)
+	sourceSlug := claudeSlug(resolvePhysical(worktree))
 
 	destTemplate := filepath.Join(dataDir, "worktrees", projectID, "orchestrator", prefix+"-orchestrator")
-	destSlug := claudeSlug(destTemplate)
+	destSlug := claudeSlug(resolvePhysical(destTemplate))
 
 	return transcriptCopyPlan{
 		uuid:       uuid,
 		sourcePath: filepath.Join(claudeProjectsDir, sourceSlug, uuid+".jsonl"),
 		destPath:   filepath.Join(claudeProjectsDir, destSlug, uuid+".jsonl"),
 	}
+}
+
+// resolvePhysical resolves path to an absolute, symlink-free path, mirroring the
+// daemon's gitworktree.physicalAbs so the transcript destination slug matches the
+// cwd the resumed orchestrator actually runs in. When the leaf does not exist
+// yet it resolves the longest existing ancestor and appends the literal tail.
+func resolvePhysical(path string) string {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return filepath.Clean(path)
+	}
+	abs = filepath.Clean(abs)
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		return filepath.Clean(resolved)
+	}
+	parent := filepath.Dir(abs)
+	base := filepath.Base(abs)
+	for parent != "." && parent != string(os.PathSeparator) {
+		if resolved, err := filepath.EvalSymlinks(parent); err == nil {
+			return filepath.Join(resolved, base)
+		}
+		base = filepath.Join(filepath.Base(parent), base)
+		parent = filepath.Dir(parent)
+	}
+	if resolved, err := filepath.EvalSymlinks(parent); err == nil {
+		return filepath.Join(resolved, base)
+	}
+	return abs
 }
 
 // transcriptOutcome reports what relocateTranscript did.

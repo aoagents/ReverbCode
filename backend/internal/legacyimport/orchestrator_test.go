@@ -92,6 +92,21 @@ func TestMapOrchestrator_StatePayloadFallback(t *testing.T) {
 	}
 }
 
+func TestMapOrchestrator_StatePayloadFallbackNumericVersion(t *testing.T) {
+	// stateVersion as a JSON number (decodes to float64) must still trigger the
+	// statePayload fallback.
+	raw := map[string]any{
+		"agent":             "opencode",
+		"stateVersion":      float64(2),
+		"statePayload":      map[string]any{"session": map[string]any{"state": "needs_input"}},
+		"opencodeSessionId": "oc-2",
+	}
+	m := mapOrchestratorRecord(raw, "p", "p", mtime())
+	if m.status != orchMapped || m.record.Activity.State != domain.ActivityWaitingInput {
+		t.Fatalf("mapping = %+v", m)
+	}
+}
+
 func TestMapOrchestrator_SkipTerminal(t *testing.T) {
 	for _, st := range []string{"done", "terminated"} {
 		raw := map[string]any{

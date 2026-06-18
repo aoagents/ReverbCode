@@ -75,6 +75,19 @@ func asString(v any) string {
 	return ""
 }
 
+// isStateVersion2 reports whether a legacy stateVersion marks a V2 record. It
+// accepts both the string "2" the legacy writer emits and a numeric 2, since
+// JSON numbers decode to float64 through the untyped map.
+func isStateVersion2(v any) bool {
+	switch t := v.(type) {
+	case string:
+		return t == "2"
+	case float64:
+		return t == 2
+	}
+	return false
+}
+
 // legacyLifecycle is the decoded session/runtime halves of the V2 lifecycle.
 type legacyLifecycle struct {
 	session map[string]any
@@ -86,7 +99,7 @@ type legacyLifecycle struct {
 // when stateVersion == "2" (mirrors parseLifecycleField).
 func extractLifecycle(raw map[string]any) (legacyLifecycle, bool) {
 	lc := asObject(raw["lifecycle"])
-	if lc == nil && asString(raw["stateVersion"]) == "2" {
+	if lc == nil && isStateVersion2(raw["stateVersion"]) {
 		lc = asObject(raw["statePayload"])
 	}
 	if lc == nil {
@@ -195,14 +208,16 @@ func mapOrchestratorRecord(raw map[string]any, projectID, prefix string, fileMti
 	base.record = rec
 
 	// Note resume metadata the single agent_session_id column cannot hold.
+	var dropped []string
 	if agent == "codex" {
 		if m := asString(raw["codexModel"]); m != "" {
-			base.note = "codexModel " + quote(m) + " dropped (no rewrite column; codex resumes by thread id)"
+			dropped = append(dropped, "codexModel "+quote(m)+" dropped (no rewrite column; codex resumes by thread id)")
 		}
 	}
 	if r := asString(raw["restoreFallbackReason"]); r != "" {
-		base.note = strings.TrimSpace(base.note + " restoreFallbackReason dropped (forensic only)")
+		dropped = append(dropped, "restoreFallbackReason dropped (forensic only)")
 	}
+	base.note = strings.Join(dropped, "; ")
 
 	// claude-code orchestrators carry a transcript to relocate (needs both a
 	// uuid and a worktree to compute source + destination slugs).

@@ -62,6 +62,28 @@ func TestRelocateTranscript_CopiesAndIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestPlanTranscriptCopy_DestResolvesSymlinkedDataDir(t *testing.T) {
+	// The daemon resolves the orchestrator worktree through physicalAbs before
+	// cd-ing into it, so the dest slug must use the symlink-resolved data dir —
+	// not the literal one — or `claude --resume` misses the bucket.
+	realData := t.TempDir()
+	linkDir := filepath.Join(t.TempDir(), "data-link")
+	if err := os.Symlink(realData, linkDir); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	plan := planTranscriptCopy(linkDir, "proj", "pre", "/legacy/wt", "uuid-1", "/claude")
+
+	resolvedReal, err := filepath.EvalSymlinks(realData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantSlug := claudeSlug(filepath.Join(resolvedReal, "worktrees", "proj", "orchestrator", "pre-orchestrator"))
+	wantDest := filepath.Join("/claude", wantSlug, "uuid-1.jsonl")
+	if plan.destPath != wantDest {
+		t.Fatalf("destPath = %q,\n want %q (resolved, not the symlinked %q)", plan.destPath, wantDest, linkDir)
+	}
+}
+
 func TestRelocateTranscript_SourceMissing(t *testing.T) {
 	plan := planTranscriptCopy(t.TempDir(), "proj", "pre", "/nope/wt", "uuid-x", filepath.Join(t.TempDir(), "claude"))
 	if out, err := relocateTranscript(plan); err != nil || out != transcriptSourceMissing {
