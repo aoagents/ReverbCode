@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import Image from "next/image";
 import { DocsLayout } from "fumadocs-ui/layouts/docs";
 import { RootProvider } from "fumadocs-ui/provider";
 import type { LinkItemType } from "fumadocs-ui/layouts/shared";
@@ -82,10 +83,10 @@ export default function Layout({ children }: { children: ReactNode }) {
 				nav={{
 					title: (
 						<span className="flex items-center gap-2 font-semibold">
-							<img
+							<Image
 								src="/ao-logo.png"
 								alt=""
-								aria-hidden="true"
+								aria-hidden
 								width={22}
 								height={22}
 								className="h-[22px] w-[22px] rounded-[5px] object-cover"
