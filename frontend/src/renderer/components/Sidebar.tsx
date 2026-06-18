@@ -1,16 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
-import {
-	ChevronRight,
-	GitPullRequest,
-	Moon,
-	MoreVertical,
-	Plus,
-	Search,
-	Settings,
-	Sun,
-	Trash2,
-} from "lucide-react";
+import { ChevronRight, GitPullRequest, Moon, MoreVertical, Plus, Search, Settings, Sun, Trash2 } from "lucide-react";
 import { useState } from "react";
 import {
 	attentionZone,
