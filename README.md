@@ -64,15 +64,15 @@ The backend is organized around inbound/outbound port contracts
 (`backend/internal/ports/`) with swappable adapters under
 `backend/internal/adapters/`:
 
-| Port      | Implemented adapters                              |
-| --------- | ------------------------------------------------- |
-| Agent     | 23 harnesses (see above)                          |
-| Runtime   | `zellij`                                          |
-| Workspace | `git worktree`                                    |
-| SCM       | GitHub                                            |
-| Tracker   | GitHub (adapter present; no runtime loop yet)     |
-| Reviewer  | `claude-code`                                     |
-| Notifier  | port defined; no shipped adapter yet              |
+| Port      | Implemented adapters                          |
+| --------- | --------------------------------------------- |
+| Agent     | 23 harnesses (see above)                      |
+| Runtime   | `zellij`                                      |
+| Workspace | `git worktree`                                |
+| SCM       | GitHub                                        |
+| Tracker   | GitHub (adapter present; no runtime loop yet) |
+| Reviewer  | `claude-code`                                 |
+| Notifier  | port defined; no shipped adapter yet          |
 
 See [`docs/STATUS.md`](docs/STATUS.md) for which lanes are live at runtime.
 

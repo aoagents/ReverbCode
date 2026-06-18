@@ -5,7 +5,7 @@ Electron/React frontend both drive a live daemon over HTTP/SSE/WebSocket. The
 core GitHub flow works end-to-end: add project → spawn session/orchestrator →
 attach terminal → observe PR → merge.
 
-This file tracks progress. For what the product *is* and how to run it, see the
+This file tracks progress. For what the product _is_ and how to run it, see the
 top-level [`README.md`](../README.md); for the backend mental model see
 [`architecture.md`](architecture.md).
 
