@@ -63,6 +63,7 @@ export async function initTelemetry(): Promise<boolean> {
 			build_mode: import.meta.env.DEV ? "dev" : "packaged",
 		});
 		bindErrorHandlers();
+		posthog.capture("ao.app.active", { channel: "renderer" });
 		posthog.capture("ao.renderer.loaded");
 		return true;
 	})().catch(() => false);

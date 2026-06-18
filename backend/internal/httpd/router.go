@@ -145,6 +145,18 @@ func mountTelemetry(r chi.Router, sink ports.EventSink) {
 				"command_path": body.CommandPath,
 			},
 		})
+		sink.Emit(req.Context(), ports.TelemetryEvent{
+			Name:       "ao.app.active",
+			Source:     "cli",
+			OccurredAt: time.Now().UTC(),
+			Level:      ports.TelemetryLevelInfo,
+			RequestID:  middleware.GetReqID(req.Context()),
+			Payload: map[string]any{
+				"channel":      "cli",
+				"command":      body.Command,
+				"command_path": body.CommandPath,
+			},
+		})
 		w.WriteHeader(http.StatusAccepted)
 	})
 	r.Post("/internal/telemetry/cli-usage-error", func(w http.ResponseWriter, req *http.Request) {

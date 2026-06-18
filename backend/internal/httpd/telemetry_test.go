@@ -24,14 +24,20 @@ func TestCLIInvokedRouteEmitsTelemetry(t *testing.T) {
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, want 202", rec.Code)
 	}
-	if len(sink.events) != 1 {
-		t.Fatalf("events = %d, want 1", len(sink.events))
+	if len(sink.events) != 2 {
+		t.Fatalf("events = %d, want 2", len(sink.events))
 	}
 	if sink.events[0].Name != "ao.cli.invoked" {
 		t.Fatalf("event name = %q, want ao.cli.invoked", sink.events[0].Name)
 	}
 	if got := sink.events[0].Payload["command_path"]; got != "ao status" {
 		t.Fatalf("command_path = %#v, want ao status", got)
+	}
+	if sink.events[1].Name != "ao.app.active" {
+		t.Fatalf("second event name = %q, want ao.app.active", sink.events[1].Name)
+	}
+	if got := sink.events[1].Payload["channel"]; got != "cli" {
+		t.Fatalf("channel = %#v, want cli", got)
 	}
 }
 
