@@ -157,6 +157,9 @@ func (a *attachment) run(ctx context.Context) {
 		start := time.Now()
 		a.copyOut(p)
 		_ = p.Close()
+		if a.isClosed() || ctx.Err() != nil {
+			return
+		}
 
 		if time.Since(start) >= a.resetGrace {
 			failures = 0
@@ -168,6 +171,9 @@ func (a *attachment) run(ctx context.Context) {
 			return
 		}
 		if !a.backoff(ctx, failures) {
+			return
+		}
+		if a.isClosed() || ctx.Err() != nil {
 			return
 		}
 		a.log.Debug("terminal re-attaching", "id", a.id, "failures", failures)
