@@ -21,7 +21,8 @@ export function AgentDefaultsDialog({ daemonReady, open, onOpenChange }: AgentDe
 		queryFn: fetchAgentDefaults,
 		enabled: daemonReady,
 	});
-	const firstRunRequired = daemonReady && (query.isLoading || query.isError || (query.isSuccess && !query.data.configured));
+	const firstRunRequired =
+		daemonReady && (query.isLoading || query.isError || (query.isSuccess && !query.data.configured));
 	const visible = open || firstRunRequired;
 	const locked = firstRunRequired;
 	const [workerAgent, setWorkerAgent] = useState("");
@@ -51,7 +52,8 @@ export function AgentDefaultsDialog({ daemonReady, open, onOpenChange }: AgentDe
 		if (query.isLoading) return "Loading agent settings...";
 		if (!daemonReady) return "Daemon is not ready.";
 		if (query.isError) return query.error instanceof Error ? query.error.message : "Could not load agent settings";
-		if (mutation.isError) return mutation.error instanceof Error ? mutation.error.message : "Could not save agent settings";
+		if (mutation.isError)
+			return mutation.error instanceof Error ? mutation.error.message : "Could not save agent settings";
 		return null;
 	}, [daemonReady, mutation.error, mutation.isError, query.error, query.isError, query.isLoading]);
 
