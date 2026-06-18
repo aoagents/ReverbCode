@@ -7,7 +7,12 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { resolveDaemonLaunch } from "./shared/daemon-launch";
-import { createListenPortScanner, defaultRunFilePath, parseRunFile } from "./shared/daemon-discovery";
+import {
+	createListenPortScanner,
+	defaultRunFilePath,
+	parseRunFile,
+	shouldAdoptDiscoveredPort,
+} from "./shared/daemon-discovery";
 import type { DaemonStatus } from "./shared/daemon-status";
 
 // Globals injected at compile time by @electron-forge/plugin-vite.
@@ -137,6 +142,10 @@ function createWindow(): void {
 // a best-effort fallback.
 const PORT_DISCOVERY_TIMEOUT_MS = 15_000;
 const RUN_FILE_POLL_MS = 300;
+// Cadence for discovering a daemon this app did NOT spawn (see
+// startExternalDaemonDiscovery). Slower than the spawn-path poll: this is a
+// background watch, not a startup handshake.
+const EXTERNAL_DISCOVERY_POLL_MS = 1_000;
 // Accept run-files stamped slightly before our spawn timestamp: the daemon's
 // clock reading and ours race within normal scheduling jitter.
 const RUN_FILE_FRESHNESS_SKEW_MS = 2_000;
@@ -144,6 +153,41 @@ const RUN_FILE_FRESHNESS_SKEW_MS = 2_000;
 function runFilePath(): string | null {
 	if (process.env.AO_RUN_FILE) return process.env.AO_RUN_FILE;
 	return defaultRunFilePath(process.platform, process.env, os.homedir());
+}
+
+let externalDiscoveryTimer: ReturnType<typeof setInterval> | undefined;
+
+// Discover a daemon this app did NOT spawn — e.g. a developer who ran `ao start`
+// in a terminal — from its running.json handshake. Without this the renderer
+// would stay pinned to its compiled default base URL and never learn the real
+// bound port; worse, that default resolves localhost to IPv6 and can land on an
+// unrelated server. running.json carries the real port and we target
+// 127.0.0.1, sidestepping the collision.
+//
+// It stays passive whenever we own the daemon process: the spawn path already
+// runs freshness-checked discovery there, so this never races it or trusts a
+// stale handshake mid-spawn.
+function discoverExternalDaemonOnce(): void {
+	if (daemonProcess !== null) return;
+	const handshakePath = runFilePath();
+	if (!handshakePath) return;
+	readFile(handshakePath, "utf8")
+		.then((contents) => {
+			if (daemonProcess !== null) return; // a spawn started while we read
+			const info = parseRunFile(contents);
+			if (info && shouldAdoptDiscoveredPort(daemonStatus, info.port)) {
+				setDaemonStatus({ state: "ready", port: info.port });
+			}
+		})
+		.catch(() => undefined); // absent until a daemon binds; keep polling
+}
+
+// Always-on discovery, started once on app ready and independent of whether we
+// spawned the daemon. Reads running.json immediately, then polls.
+function startExternalDaemonDiscovery(): void {
+	if (externalDiscoveryTimer) return;
+	discoverExternalDaemonOnce();
+	externalDiscoveryTimer = setInterval(discoverExternalDaemonOnce, EXTERNAL_DISCOVERY_POLL_MS);
 }
 
 function startDaemon(): DaemonStatus {
@@ -332,6 +376,7 @@ app.whenReady().then(() => {
 	registerRendererProtocol();
 	createWindow();
 	startDaemon();
+	startExternalDaemonDiscovery();
 	initAutoUpdates();
 
 	app.on("activate", () => {
@@ -342,6 +387,10 @@ app.whenReady().then(() => {
 });
 
 app.on("before-quit", () => {
+	if (externalDiscoveryTimer) {
+		clearInterval(externalDiscoveryTimer);
+		externalDiscoveryTimer = undefined;
+	}
 	if (daemonProcess) {
 		killDaemon(daemonProcess);
 	}

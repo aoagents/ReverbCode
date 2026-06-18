@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import { createListenPortScanner, defaultRunFilePath, parseDaemonListenPort, parseRunFile } from "./daemon-discovery";
+import {
+	createListenPortScanner,
+	defaultRunFilePath,
+	parseDaemonListenPort,
+	parseRunFile,
+	shouldAdoptDiscoveredPort,
+} from "./daemon-discovery";
 
 // Real shape emitted by slog's TextHandler in backend/internal/httpd/server.go.
 const LISTEN_LINE = 'time=2026-06-10T09:15:04.221-07:00 level=INFO msg="daemon listening" addr=127.0.0.1:3001 pid=4242';
@@ -87,6 +93,23 @@ describe("parseRunFile", () => {
 	it("treats a missing or unparseable startedAt as epoch zero", () => {
 		expect(parseRunFile(JSON.stringify({ pid: 1, port: 3001 }))?.startedAtMs).toBe(0);
 		expect(parseRunFile(JSON.stringify({ pid: 1, port: 3001, startedAt: "not-a-date" }))?.startedAtMs).toBe(0);
+	});
+});
+
+describe("shouldAdoptDiscoveredPort", () => {
+	it("adopts a discovered port when not yet ready (the externally-started daemon case)", () => {
+		expect(shouldAdoptDiscoveredPort({ state: "stopped" }, 3000)).toBe(true);
+		expect(shouldAdoptDiscoveredPort({ state: "starting" }, 3000)).toBe(true);
+		expect(shouldAdoptDiscoveredPort({ state: "error", message: "x" }, 3000)).toBe(true);
+	});
+
+	it("adopts when ready on a different port (daemon rebound elsewhere)", () => {
+		expect(shouldAdoptDiscoveredPort({ state: "ready", port: 3001 }, 3000)).toBe(true);
+		expect(shouldAdoptDiscoveredPort({ state: "ready", port: undefined }, 3000)).toBe(true);
+	});
+
+	it("stays a no-op once already pointed at that exact port", () => {
+		expect(shouldAdoptDiscoveredPort({ state: "ready", port: 3000 }, 3000)).toBe(false);
 	});
 });
 

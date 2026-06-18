@@ -9,10 +9,25 @@
 // so tests can exercise them directly; the Electron main process owns the
 // streams, fs polling, and timers.
 
+import type { DaemonStatus } from "./daemon-status";
+
 // Minimal join: "/" works for fs access on every platform Node supports,
 // including Windows paths that already contain backslashes (e.g. %APPDATA%).
 function joinPath(...segments: string[]): string {
 	return segments.map((segment) => segment.replace(/[/\\]+$/, "")).join("/");
+}
+
+/**
+ * Decide whether to adopt a port discovered from running.json, given the
+ * supervisor's current status. Adopt unless we already report that exact port
+ * as ready — so an externally-started daemon (one this app did not spawn, e.g.
+ * a developer running `ao start` in a terminal) gets discovered, while a steady
+ * state stays a no-op and never churns the status. The caller separately gates
+ * this on "we did not spawn the daemon ourselves", so it never races the spawn
+ * path's own freshness-checked discovery.
+ */
+export function shouldAdoptDiscoveredPort(current: DaemonStatus, discoveredPort: number): boolean {
+	return current.state !== "ready" || current.port !== discoveredPort;
 }
 
 /**
