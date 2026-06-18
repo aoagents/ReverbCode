@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"runtime"
 	"strconv"
@@ -22,18 +23,24 @@ import (
 )
 
 const (
-	defaultTimeout     = 5 * time.Second
-	defaultZellijTerm  = "xterm-256color"
-	defaultZellijColor = "truecolor"
-	minMajor           = 0
-	minMinor           = 44
-	minPatch           = 3
+	defaultTimeout        = 5 * time.Second
+	defaultWindowsTimeout = 30 * time.Second
+	defaultZellijTerm     = "xterm-256color"
+	defaultZellijColor    = "truecolor"
+	minMajor              = 0
+	minMinor              = 44
+	minPatch              = 3
 )
 
 var sessionIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 var paneIDPattern = regexp.MustCompile(`^terminal_\d+$`)
 
 var getenv = os.Getenv
+var lookPath = exec.LookPath
+var fileExists = func(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
+}
 
 // Options configures a zellij Runtime; every field has a sensible default
 // (see New), so the zero value is usable.
@@ -91,11 +98,11 @@ func (execRunner) Run(ctx context.Context, env []string, name string, args ...st
 func New(opts Options) *Runtime {
 	binary := opts.Binary
 	if binary == "" {
-		binary = "zellij"
+		binary = defaultBinary()
 	}
 	timeout := opts.Timeout
 	if timeout == 0 {
-		timeout = defaultTimeout
+		timeout = defaultCommandTimeout()
 	}
 	shellPath := opts.Shell
 	if shellPath == "" {
@@ -113,6 +120,49 @@ func New(opts Options) *Runtime {
 		chunkSize = defaultChunkBytes
 	}
 	return &Runtime{binary: binary, timeout: timeout, shell: shellPath, socketDir: opts.SocketDir, configDir: opts.ConfigDir, chunkSize: chunkSize, runner: execRunner{}}
+}
+
+func defaultCommandTimeout() time.Duration {
+	if runtime.GOOS == "windows" {
+		return defaultWindowsTimeout
+	}
+	return defaultTimeout
+}
+
+func defaultBinary() string {
+	names := []string{"zellij"}
+	if runtime.GOOS == "windows" {
+		names = []string{"zellij.exe", "zellij"}
+	}
+	for _, name := range names {
+		if path, err := lookPath(name); err == nil && path != "" {
+			return path
+		}
+	}
+	if runtime.GOOS == "windows" {
+		for _, candidate := range windowsZellijCandidates() {
+			if fileExists(candidate) {
+				return candidate
+			}
+		}
+	}
+	return "zellij"
+}
+
+func windowsZellijCandidates() []string {
+	candidates := []string{}
+	if localAppData := getenv("LOCALAPPDATA"); localAppData != "" {
+		candidates = append(candidates, filepath.Join(localAppData, "Programs", "zellij", "zellij.exe"))
+	}
+	for _, key := range []string{"ProgramFiles", "ProgramFiles(x86)"} {
+		if dir := getenv(key); dir != "" {
+			candidates = append(candidates,
+				filepath.Join(dir, "zellij", "zellij.exe"),
+				filepath.Join(dir, "Zellij", "zellij.exe"),
+			)
+		}
+	}
+	return candidates
 }
 
 // Create starts a new zellij session in the workspace, running the agent's
