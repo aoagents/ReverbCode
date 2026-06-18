@@ -156,7 +156,14 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		};
 
 		const raf = requestAnimationFrame(fitTerminal);
-		const settleTimers = [window.setTimeout(fitTerminal, 50), window.setTimeout(fitTerminal, 250)];
+		// 50/250ms catch the common settle; 600/1200ms are a session-bounded
+		// backstop. By 600ms the WebGL atlas and font metrics are unambiguously
+		// warm, so even if the convergence loop below detached at a briefly-stable
+		// wrong measurement, this re-measures the real cell box and corrects —
+		// which fires the PTY resize that makes zellij repaint cleanly (clearing
+		// any ghost frame). fit() is idempotent: a no-op when the grid is already
+		// right, so a correct terminal never reflows.
+		const settleTimers = [50, 250, 600, 1200].map((ms) => window.setTimeout(fitTerminal, ms));
 		if (document.fonts?.ready) {
 			void document.fonts.ready.then(fitTerminal);
 		}
@@ -165,40 +172,53 @@ export function XtermTerminal(props: XtermTerminalProps) {
 
 		// Recovery re-fit that does NOT depend on the host box changing size.
 		//
-		// FitAddon derives the row count by dividing the pane height by the
-		// renderer's measured cell box. That box is measured asynchronously: the
-		// WebGL renderer loads after open() and the monospace font's real metrics
+		// FitAddon derives the grid by dividing the pane box by the renderer's
+		// measured cell box. That box is measured asynchronously: the WebGL
+		// renderer loads after open() and the monospace font's real metrics
 		// resolve a frame or more later, so the early fits above can divide by a
-		// too-tall cell height, under-count rows, and clip the grid to the top of
-		// the pane. The fixed settle window (rAF, timeouts, fonts.ready) may all
-		// run before the cell box is final, and the ResizeObserver never fires to
+		// not-yet-final cell box, mis-count cols/rows, and clip the grid inside the
+		// pane. The fixed settle window (rAF, timeouts, fonts.ready) may all run
+		// before the cell box is final, and the ResizeObserver never fires to
 		// correct it because the host's pixel box is a stable height:100%, so a
-		// short grid would otherwise freeze for the whole session.
+		// wrong grid would otherwise freeze for the whole session.
 		//
 		// onRender fires on every renderer repaint, including the repaint after
 		// the metrics settle. Each fire re-proposes dimensions from the *current*
-		// measured cell box and re-fits when they differ, converging the grid to
-		// the true row count once the cell height is real. proposeDimensions
-		// returns undefined until the cell box is non-zero, so a fit is never
-		// accepted from an unmeasured cell. Once the proposal holds for a few
-		// frames (or a hard re-fit cap is hit) the listener detaches, so
-		// steady-state content renders cost nothing.
+		// measured cell box. Crucially we never re-fit straight off a single
+		// frame's proposal: the WebGL atlas warm-up can emit a one-frame transient
+		// cell box (e.g. a doubled box on a HiDPI display) that halves the grid,
+		// and committing it would lock the terminal at half size and detach (the
+		// #313 ghost). So a differing proposal must REPEAT identically across two
+		// consecutive renders — proving the measurement settled — before we apply
+		// it. proposeDimensions returns undefined until the cell box is non-zero,
+		// so a fit is never accepted from an unmeasured cell. Once the proposal
+		// holds at the live grid for a few frames (or a hard re-fit cap is hit) the
+		// listener detaches, so steady-state content renders cost nothing.
 		const STABLE_FRAMES_TARGET = 3;
 		const MAX_REFITS = 20;
 		let stableFrames = 0;
 		let refits = 0;
+		let pending: { cols: number; rows: number } | null = null;
 		const stabilizer = term.onRender(() => {
 			const proposed = fit.proposeDimensions();
 			if (!proposed || !proposed.cols || !proposed.rows) return;
 			if (proposed.cols !== term.cols || proposed.rows !== term.rows) {
-				if (refits++ >= MAX_REFITS) {
-					stabilizer.dispose();
+				stableFrames = 0;
+				// Only act once the same differing proposal repeats — a single-frame
+				// transient never gets committed, it just updates `pending`.
+				if (pending && pending.cols === proposed.cols && pending.rows === proposed.rows) {
+					pending = null;
+					if (refits++ >= MAX_REFITS) {
+						stabilizer.dispose();
+						return;
+					}
+					fitTerminal();
 					return;
 				}
-				stableFrames = 0;
-				fitTerminal();
+				pending = { cols: proposed.cols, rows: proposed.rows };
 				return;
 			}
+			pending = null;
 			if (++stableFrames >= STABLE_FRAMES_TARGET) stabilizer.dispose();
 		});
 
