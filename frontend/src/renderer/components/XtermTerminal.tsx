@@ -71,6 +71,43 @@ const terminalThemes = buildTerminalThemes();
 // events stop reaching zellij. The clear only wipes pixels; modes stay up.
 const CLEAR_SEQUENCE = "\x1b[3J\x1b[2J\x1b[H";
 
+// xterm's selection is an internal model rendered to canvas/WebGL, not a DOM
+// selection, so the OS/Electron "Copy" command can never see it — we must
+// intercept Cmd/Ctrl+C ourselves. When nothing is selected, Ctrl+C must keep
+// reaching the PTY (it's SIGINT), so we only swallow the event when there's a
+// selection to copy. Cmd/Ctrl+V is wired explicitly too: relying on xterm's
+// native DOM 'paste' event is not reliable across platforms under Electron.
+function isCopyShortcut(event: KeyboardEvent): boolean {
+	const modifier = event.metaKey || event.ctrlKey;
+	return modifier && event.key.toLowerCase() === "c";
+}
+
+function isPasteShortcut(event: KeyboardEvent): boolean {
+	const modifier = event.metaKey || event.ctrlKey;
+	return modifier && event.key.toLowerCase() === "v";
+}
+
+function attachClipboardHandling(term: Terminal): void {
+	term.attachCustomKeyEventHandler((event) => {
+		if (event.type !== "keydown") return true;
+
+		if (isCopyShortcut(event)) {
+			if (!term.hasSelection()) return true;
+			void navigator.clipboard.writeText(term.getSelection());
+			return false;
+		}
+
+		if (isPasteShortcut(event)) {
+			void navigator.clipboard.readText().then((text) => {
+				if (text) term.paste(text);
+			});
+			return false;
+		}
+
+		return true;
+	});
+}
+
 export function XtermTerminal(props: XtermTerminalProps) {
 	const hostRef = useRef<HTMLDivElement | null>(null);
 	const termRef = useRef<Terminal | null>(null);
@@ -142,6 +179,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 
 		term.open(host);
 		loadRenderer(term);
+		attachClipboardHandling(term);
 
 		const fitTerminal = () => {
 			try {
