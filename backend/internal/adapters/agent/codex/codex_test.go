@@ -60,8 +60,11 @@ func TestGetLaunchCommandBuildsCrossPlatformArgv(t *testing.T) {
 		"--dangerously-bypass-approvals-and-sandbox",
 	}
 	want = append(want, sessionHookFlags()...)
+	if runtime.GOOS == "windows" {
+		want = append(want, "--no-alt-screen")
+	}
 	want = append(want,
-		"-c", `projects={"`+workspace+`"={trust_level="trusted"}}`,
+		"-c", `projects={`+codexTOMLConfigString(workspace)+`={trust_level="trusted"}}`,
 		"-c", "model_instructions_file="+filepath.Join("tmp", "prompt with spaces.md"),
 		"--", "-fix this",
 	)
@@ -415,8 +418,11 @@ func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 		"-c", `approvals_reviewer="auto_review"`,
 	}
 	want = append(want, sessionHookFlags()...)
+	if runtime.GOOS == "windows" {
+		want = append(want, "--no-alt-screen")
+	}
 	want = append(want,
-		"-c", `projects={"`+workspace+`"={trust_level="trusted"}}`,
+		"-c", `projects={`+codexTOMLConfigString(workspace)+`={trust_level="trusted"}}`,
 		"thread-123",
 	)
 	if !reflect.DeepEqual(cmd, want) {
@@ -566,7 +572,7 @@ func TestDoctorLaunchProbesMirrorLaunchFlags(t *testing.T) {
 	for _, want := range []string{
 		"hooks.SessionStart=", "hooks.UserPromptSubmit=", "hooks.PermissionRequest=", "hooks.Stop=",
 		"notice.hide_rate_limit_model_nudge=true",
-		`projects={"`,
+		`projects={`,
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("override probe missing %q in %s", want, joined)
