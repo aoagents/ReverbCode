@@ -210,12 +210,13 @@ func importOrchestrator(ctx context.Context, store Store, mapping orchestratorMa
 		}
 		return nil
 	}
-	outcome, err := relocateTranscript(plan)
-	if err != nil {
-		rep.Notes = append(rep.Notes, mapping.projectID+": transcript relocation failed: "+err.Error())
-		return nil // non-fatal: the orchestrator still resumes, just without prior context
-	}
-	if outcome == transcriptCopied {
+	// Relocation is best-effort: a failure is noted, not fatal — the orchestrator
+	// still resumes, just without prior context.
+	outcome, relocErr := relocateTranscript(plan)
+	switch {
+	case relocErr != nil:
+		rep.Notes = append(rep.Notes, mapping.projectID+": transcript relocation failed: "+relocErr.Error())
+	case outcome == transcriptCopied:
 		rep.TranscriptsRelocated++
 	}
 	return nil

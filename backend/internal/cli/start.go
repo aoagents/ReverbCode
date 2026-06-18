@@ -142,19 +142,19 @@ func (c *commandContext) maybeFirstBootImport(ctx context.Context, cfg config.Co
 
 	out := c.deps.Out
 	if !stdinIsInteractive(c.deps.In) {
-		fmt.Fprintf(out, "Found existing AO projects at %s. Run `ao import` to bring them in.\n", root)
+		_, _ = fmt.Fprintf(out, "Found existing AO projects at %s. Run `ao import` to bring them in.\n", root)
 		return
 	}
 
 	ok, err := confirm(c.deps.In, out, "Found existing AO projects and sessions. Import them now?", true)
 	if err != nil || !ok {
-		fmt.Fprintln(out, "Continuing fresh. Run `ao import` later to bring in your existing data.")
+		_, _ = fmt.Fprintln(out, "Continuing fresh. Run `ao import` later to bring in your existing data.")
 		return
 	}
 
 	rep, err := legacyimport.Run(ctx, store, legacyimport.Options{Root: root, DataDir: cfg.DataDir})
 	if err != nil {
-		fmt.Fprintf(out, "Import failed: %v\nContinuing fresh; legacy data is untouched. Retry with `ao import`.\n", err)
+		_, _ = fmt.Fprintf(out, "Import failed: %v\nContinuing fresh; legacy data is untouched. Retry with `ao import`.\n", err)
 		return
 	}
 	_ = writeImportSummary(out, rep)

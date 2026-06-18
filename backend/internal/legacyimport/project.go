@@ -12,7 +12,7 @@ import (
 // mapPermission maps a legacy AgentPermissionMode to the rewrite PermissionMode
 // (issue #247 §3). ok=false means "unset" (no permission to carry); lossy=true
 // flags a remap that drops a distinction the rewrite cannot represent.
-func mapPermission(legacy string) (mode domain.PermissionMode, ok bool, lossy bool) {
+func mapPermission(legacy string) (mode domain.PermissionMode, ok, lossy bool) {
 	switch legacy {
 	case "":
 		return "", false, false

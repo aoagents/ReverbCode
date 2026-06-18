@@ -68,10 +68,10 @@ const (
 // (source-missing). Only "copied" counts as a relocation. The legacy source is
 // never modified.
 func relocateTranscript(plan transcriptCopyPlan) (transcriptOutcome, error) {
-	if _, err := os.Stat(plan.destPath); err == nil {
+	if pathExists(plan.destPath) {
 		return transcriptAlreadyPresent, nil
 	}
-	if _, err := os.Stat(plan.sourcePath); err != nil {
+	if !pathExists(plan.sourcePath) {
 		return transcriptSourceMissing, nil
 	}
 	if err := os.MkdirAll(filepath.Dir(plan.destPath), 0o750); err != nil {
@@ -81,6 +81,11 @@ func relocateTranscript(plan transcriptCopyPlan) (transcriptOutcome, error) {
 		return "", err
 	}
 	return transcriptCopied, nil
+}
+
+func pathExists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
 }
 
 func copyFile(src, dst string) error {
