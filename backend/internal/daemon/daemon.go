@@ -18,6 +18,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/runfile"
 	notificationsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/notification"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
+	settingssvc "github.com/aoagents/agent-orchestrator/backend/internal/service/settings"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 	"github.com/aoagents/agent-orchestrator/backend/internal/terminal"
 )
@@ -94,9 +95,8 @@ func Run() error {
 	lcStack.scmDone = startSCMObserver(ctx, store, lcStack.LCM, log)
 
 	// Wire the controller-facing session service over the same store + LCM, the
-	// zellij runtime, a gitworktree workspace, the per-session agent resolver
-	// (AO_AGENT default, validated here), and the agent messenger, then mount it
-	// on the API.
+	// zellij runtime, a gitworktree workspace, the per-session agent resolver,
+	// and the agent messenger, then mount it on the API.
 	sessionSvc, reviewSvc, err := startSession(cfg, runtimeAdapter, store, lcStack.LCM, messenger, log)
 	if err != nil {
 		stop()
@@ -111,6 +111,7 @@ func Run() error {
 		Projects:           projectsvc.NewWithDeps(projectsvc.Deps{Store: store, Sessions: sessionSvc}),
 		Sessions:           sessionSvc,
 		Reviews:            reviewSvc,
+		Settings:           settingssvc.New(store),
 		Notifications:      notifier,
 		NotificationStream: notificationHub,
 		CDC:                store,

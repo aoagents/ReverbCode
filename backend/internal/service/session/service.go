@@ -158,7 +158,7 @@ func (s *Service) requireProject(ctx context.Context, id domain.ProjectID) error
 // true it first tears down any active orchestrator(s) for that project so the new
 // one is the only live coordinator — a business rule that belongs here, not in the
 // HTTP controller.
-func (s *Service) SpawnOrchestrator(ctx context.Context, projectID domain.ProjectID, clean bool) (domain.Session, error) {
+func (s *Service) SpawnOrchestrator(ctx context.Context, projectID domain.ProjectID, clean bool, harness domain.AgentHarness) (domain.Session, error) {
 	if err := s.requireProject(ctx, projectID); err != nil {
 		return domain.Session{}, err
 	}
@@ -174,7 +174,7 @@ func (s *Service) SpawnOrchestrator(ctx context.Context, projectID domain.Projec
 			}
 		}
 	}
-	return s.Spawn(ctx, ports.SpawnConfig{ProjectID: projectID, Kind: domain.KindOrchestrator})
+	return s.Spawn(ctx, ports.SpawnConfig{ProjectID: projectID, Kind: domain.KindOrchestrator, Harness: harness})
 }
 
 // Restore relaunches a terminated session and returns the API-facing read model.
@@ -341,6 +341,8 @@ func toAPIError(err error) error {
 		return apierr.Invalid("PROJECT_NOT_RESOLVABLE", "Project is not registered or has no repo — register it with `ao project add`", nil)
 	case errors.Is(err, sessionmanager.ErrUnknownHarness):
 		return apierr.Invalid("UNKNOWN_HARNESS", err.Error(), nil)
+	case errors.Is(err, sessionmanager.ErrDefaultAgentRequired):
+		return apierr.Invalid("DEFAULT_AGENT_REQUIRED", "Choose default agents in Settings before spawning sessions", nil)
 	case errors.Is(err, ports.ErrWorkspaceBranchCheckedOutElsewhere):
 		return apierr.Conflict("BRANCH_CHECKED_OUT_ELSEWHERE", err.Error(), nil)
 	case errors.Is(err, ports.ErrWorkspaceBranchNotFetched):

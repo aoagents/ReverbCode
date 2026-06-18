@@ -1149,6 +1149,67 @@ paths:
       summary: Clean up terminated session workspaces
       tags:
       - sessions
+  /api/v1/settings/agents:
+    get:
+      operationId: getAgentDefaults
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentDefaultsResponse'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Get app-wide default agents
+      tags:
+      - settings
+    put:
+      operationId: setAgentDefaults
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgentDefaultsRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentDefaultsResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Set app-wide default agents
+      tags:
+      - settings
 components:
   schemas:
     APIError:
@@ -1194,6 +1255,120 @@ components:
           type: string
         permissions:
           type: string
+      type: object
+    AgentDefaultsRequest:
+      properties:
+        defaultOrchestratorAgent:
+          enum:
+          - claude-code
+          - codex
+          - aider
+          - opencode
+          - grok
+          - droid
+          - amp
+          - agy
+          - crush
+          - cursor
+          - qwen
+          - copilot
+          - goose
+          - auggie
+          - continue
+          - devin
+          - cline
+          - kimi
+          - kiro
+          - kilocode
+          - vibe
+          - pi
+          - autohand
+          type: string
+        defaultWorkerAgent:
+          enum:
+          - claude-code
+          - codex
+          - aider
+          - opencode
+          - grok
+          - droid
+          - amp
+          - agy
+          - crush
+          - cursor
+          - qwen
+          - copilot
+          - goose
+          - auggie
+          - continue
+          - devin
+          - cline
+          - kimi
+          - kiro
+          - kilocode
+          - vibe
+          - pi
+          - autohand
+          type: string
+      type: object
+    AgentDefaultsResponse:
+      properties:
+        configured:
+          type: boolean
+        defaultOrchestratorAgent:
+          enum:
+          - claude-code
+          - codex
+          - aider
+          - opencode
+          - grok
+          - droid
+          - amp
+          - agy
+          - crush
+          - cursor
+          - qwen
+          - copilot
+          - goose
+          - auggie
+          - continue
+          - devin
+          - cline
+          - kimi
+          - kiro
+          - kilocode
+          - vibe
+          - pi
+          - autohand
+          type: string
+        defaultWorkerAgent:
+          enum:
+          - claude-code
+          - codex
+          - aider
+          - opencode
+          - grok
+          - droid
+          - amp
+          - agy
+          - crush
+          - cursor
+          - qwen
+          - copilot
+          - goose
+          - auggie
+          - continue
+          - devin
+          - cline
+          - kimi
+          - kiro
+          - kilocode
+          - vibe
+          - pi
+          - autohand
+          type: string
+      required:
+      - configured
       type: object
     ClaimPRRequest:
       properties:
@@ -1808,6 +1983,32 @@ components:
       properties:
         clean:
           type: boolean
+        harness:
+          enum:
+          - claude-code
+          - codex
+          - aider
+          - opencode
+          - grok
+          - droid
+          - amp
+          - agy
+          - crush
+          - cursor
+          - qwen
+          - copilot
+          - goose
+          - auggie
+          - continue
+          - devin
+          - cline
+          - kimi
+          - kiro
+          - kilocode
+          - vibe
+          - pi
+          - autohand
+          type: string
         projectId:
           type: string
       required:
@@ -1903,6 +2104,8 @@ tags:
   name: prs
 - description: Code-review runs and findings
   name: reviews
+- description: App-wide user settings
+  name: settings
 - description: Durable dashboard notifications
   name: notifications
 - description: Server-sent CDC event stream with durable replay

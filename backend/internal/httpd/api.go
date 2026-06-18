@@ -23,6 +23,7 @@ type APIDeps struct {
 	Activity           controllers.ActivityRecorder
 	PRs                prsvc.ActionManager
 	Reviews            reviewsvc.Manager
+	Settings           controllers.SettingsService
 	Notifications      controllers.NotificationService
 	NotificationStream controllers.NotificationStream
 	CDC                cdc.Source
@@ -37,6 +38,7 @@ type API struct {
 	sessions      *controllers.SessionsController
 	prs           *controllers.PRsController
 	reviews       *controllers.ReviewsController
+	settings      *controllers.SettingsController
 	notifications *controllers.NotificationsController
 	events        *EventsController
 }
@@ -56,6 +58,7 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 		},
 		prs:           &controllers.PRsController{Svc: deps.PRs},
 		reviews:       &controllers.ReviewsController{Svc: deps.Reviews},
+		settings:      &controllers.SettingsController{Svc: deps.Settings},
 		notifications: &controllers.NotificationsController{Svc: deps.Notifications, Stream: deps.NotificationStream},
 		events:        &EventsController{Source: deps.CDC, Live: deps.Events},
 	}
@@ -79,6 +82,7 @@ func (a *API) Register(root chi.Router) {
 			a.sessions.Register(r)
 			a.prs.Register(r)
 			a.reviews.Register(r)
+			a.settings.Register(r)
 			a.notifications.Register(r)
 			// Sibling REST controllers plug in here.
 		})

@@ -85,6 +85,23 @@ func (f *fakeStore) GetDisplayPRFactsForSession(_ context.Context, id domain.Ses
 	return domain.PRFacts{}, false, nil
 }
 
+type fakeAgentDefaults struct {
+	defaults domain.AgentDefaults
+	ok       bool
+	err      error
+}
+
+func (f fakeAgentDefaults) GetAgentDefaults(context.Context) (domain.AgentDefaults, bool, error) {
+	return f.defaults, f.ok, f.err
+}
+
+func testAgentDefaults() fakeAgentDefaults {
+	return fakeAgentDefaults{ok: true, defaults: domain.AgentDefaults{
+		DefaultWorkerAgent:       domain.HarnessClaudeCode,
+		DefaultOrchestratorAgent: domain.HarnessClaudeCode,
+	}}
+}
+
 type fakeLCM struct {
 	store     *fakeStore
 	completed int
@@ -228,7 +245,11 @@ func newManager() (*Manager, *fakeStore, *fakeRuntime, *fakeWorkspace) {
 	// Stub lookPath so the pre-launch agent-binary check passes; the fakeAgent
 	// returns argv ["launch"] which is not a real binary on PATH.
 	lookPath := func(string) (string, error) { return "/bin/true", nil }
-	m := New(Deps{Runtime: rt, Agents: fakeAgents{}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+	m := New(Deps{
+		Runtime: rt, Agents: fakeAgents{}, Workspace: ws, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath,
+		AgentDefaults: testAgentDefaults(),
+	})
 	return m, st, rt, ws
 }
 func seedTerminal(st *fakeStore, id domain.SessionID, meta domain.SessionMetadata) {
@@ -251,7 +272,7 @@ func TestSpawn_ResolvesProjectConfig(t *testing.T) {
 	rt := &fakeRuntime{}
 	ws := &fakeWorkspace{}
 	lookPath := func(string) (string, error) { return "/bin/true", nil }
-	m := New(Deps{Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+	m := New(Deps{Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath, AgentDefaults: testAgentDefaults()})
 
 	rec, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
 	if err != nil {
@@ -284,24 +305,27 @@ func TestSpawn_ResolvesProjectConfig(t *testing.T) {
 	}
 }
 
-// TestSpawn_PersistsResolvedDefaultHarness locks the fix for the mislabelled
-// agent: a spawn that names no harness must persist the daemon's default agent
-// (so the API/UI report what actually runs), while an explicit harness wins.
-func TestSpawn_PersistsResolvedDefaultHarness(t *testing.T) {
+// TestSpawn_PersistsResolvedAppDefaultHarness locks the default resolution
+// order: a spawn that names no harness persists the stored app default, while
+// an explicit harness wins.
+func TestSpawn_PersistsResolvedAppDefaultHarness(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
 	m := New(Deps{
 		Runtime: &fakeRuntime{}, Agents: fakeAgents{}, Workspace: &fakeWorkspace{}, Store: st,
 		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
-		LookPath:       func(string) (string, error) { return "/bin/true", nil },
-		DefaultHarness: domain.HarnessClaudeCode,
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+		AgentDefaults: fakeAgentDefaults{ok: true, defaults: domain.AgentDefaults{
+			DefaultWorkerAgent:       domain.HarnessCodex,
+			DefaultOrchestratorAgent: domain.HarnessClaudeCode,
+		}},
 	})
 
 	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
 		t.Fatal(err)
 	}
-	if got := st.sessions["mer-1"].Harness; got != domain.HarnessClaudeCode {
-		t.Fatalf("unspecified harness = %q, want resolved default %q", got, domain.HarnessClaudeCode)
+	if got := st.sessions["mer-1"].Harness; got != domain.HarnessCodex {
+		t.Fatalf("unspecified harness = %q, want resolved default %q", got, domain.HarnessCodex)
 	}
 
 	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessCodex}); err != nil {
@@ -309,6 +333,24 @@ func TestSpawn_PersistsResolvedDefaultHarness(t *testing.T) {
 	}
 	if got := st.sessions["mer-2"].Harness; got != domain.HarnessCodex {
 		t.Fatalf("explicit harness = %q, want %q", got, domain.HarnessCodex)
+	}
+}
+
+func TestSpawn_UnspecifiedHarnessRequiresConfiguredDefault(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	m := New(Deps{
+		Runtime: &fakeRuntime{}, Agents: fakeAgents{}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if !errors.Is(err, ErrDefaultAgentRequired) {
+		t.Fatalf("err = %v, want ErrDefaultAgentRequired", err)
+	}
+	if len(st.sessions) != 0 {
+		t.Fatalf("spawn without defaults must not create a session row: %+v", st.sessions)
 	}
 }
 
@@ -471,7 +513,7 @@ func TestRestore_AppliesProjectAgentConfig(t *testing.T) {
 	seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "b", AgentSessionID: "agent-x"})
 	agent := &recordingAgent{}
 	lookPath := func(string) (string, error) { return "/bin/true", nil }
-	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath, AgentDefaults: testAgentDefaults()})
 
 	if _, err := m.Restore(ctx, "mer-1"); err != nil {
 		t.Fatal(err)
@@ -565,7 +607,7 @@ func TestSpawn_ForwardsResolvedAgentConfigPermissions(t *testing.T) {
 	}}
 	agent := &recordingAgent{}
 	lookPath := func(string) (string, error) { return "/bin/true", nil }
-	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath, AgentDefaults: testAgentDefaults()})
 
 	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
 	if err != nil {
@@ -616,7 +658,7 @@ func TestSpawnWorker_AppendsActiveOrchestratorContact(t *testing.T) {
 	rt := &fakeRuntime{}
 	ws := &fakeWorkspace{}
 	lookPath := func(string) (string, error) { return "/bin/true", nil }
-	m := New(Deps{Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+	m := New(Deps{Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath, AgentDefaults: testAgentDefaults()})
 
 	s, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Prompt: "do it"})
 	if err != nil {
@@ -652,7 +694,7 @@ func TestSpawnWorker_SkipsTerminatedOrchestratorContact(t *testing.T) {
 	rt := &fakeRuntime{}
 	ws := &fakeWorkspace{}
 	lookPath := func(string) (string, error) { return "/bin/true", nil }
-	m := New(Deps{Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+	m := New(Deps{Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath, AgentDefaults: testAgentDefaults()})
 
 	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Prompt: "do it"})
 	if err != nil {
@@ -670,7 +712,7 @@ func TestSpawnOrchestrator_UsesCoordinatorPrompt(t *testing.T) {
 	rt := &fakeRuntime{}
 	ws := &fakeWorkspace{}
 	lookPath := func(string) (string, error) { return "/bin/true", nil }
-	m := New(Deps{Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+	m := New(Deps{Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath, AgentDefaults: testAgentDefaults()})
 
 	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindOrchestrator})
 	if err != nil {
@@ -843,7 +885,7 @@ func TestSpawn_RejectsMissingAgentBinary(t *testing.T) {
 	notFound := func(name string) (string, error) {
 		return "", fmt.Errorf("exec: %q: not found", name)
 	}
-	m := New(Deps{Runtime: rt, Agents: fakeAgents{}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: notFound})
+	m := New(Deps{Runtime: rt, Agents: fakeAgents{}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: notFound, AgentDefaults: testAgentDefaults()})
 
 	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
 	if !errors.Is(err, ports.ErrAgentBinaryNotFound) {
@@ -894,7 +936,8 @@ func pathPinManager(executable func() (string, error)) (*Manager, *fakeStore, *f
 		Runtime: rt, Agents: fakeAgents{}, Workspace: &fakeWorkspace{}, Store: st,
 		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
 		LookPath: lookPath, Executable: executable,
-		Logger: slog.New(slog.NewTextHandler(logBuf, nil)),
+		AgentDefaults: testAgentDefaults(),
+		Logger:        slog.New(slog.NewTextHandler(logBuf, nil)),
 	})
 	return m, st, rt, logBuf
 }

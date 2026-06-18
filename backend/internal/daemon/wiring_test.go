@@ -77,12 +77,11 @@ func TestWiring_WriteFlowsToBroadcaster(t *testing.T) {
 }
 
 // TestWiring_AgentResolverResolvesRealAdapters asserts buildAgentResolver wires a
-// real registry-backed per-session resolver: each harness resolves to the
-// matching registered adapter, an empty harness falls back to the AO_AGENT
-// default, and an unknown harness misses.
+// real registry-backed per-session resolver: each concrete harness resolves to
+// the matching registered adapter, while empty/unknown harnesses miss.
 func TestWiring_AgentResolverResolvesRealAdapters(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	resolver, err := buildAgentResolver("", log) // empty default → claude-code
+	resolver, err := buildAgentResolver(log)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +112,6 @@ func TestWiring_AgentResolverResolvesRealAdapters(t *testing.T) {
 		{domain.HarnessVibe, "vibe"},
 		{domain.HarnessPi, "pi"},
 		{domain.HarnessAutohand, "autohand"},
-		{"", config.DefaultAgent}, // empty harness falls back to the AO_AGENT default
 	} {
 		agent, ok := resolver.Agent(tc.harness)
 		if !ok {
@@ -129,6 +127,9 @@ func TestWiring_AgentResolverResolvesRealAdapters(t *testing.T) {
 	}
 	if _, ok := resolver.Agent("definitely-not-an-agent"); ok {
 		t.Fatal("unknown harness resolved to an agent; want a miss")
+	}
+	if _, ok := resolver.Agent(""); ok {
+		t.Fatal("empty harness resolved to an agent; want a miss")
 	}
 }
 

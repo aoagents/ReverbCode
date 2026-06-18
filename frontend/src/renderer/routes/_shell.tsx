@@ -1,6 +1,7 @@
 import { createFileRoute, Outlet, useNavigate } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
-import { type CSSProperties, useCallback, useEffect, useMemo } from "react";
+import { type CSSProperties, useCallback, useEffect, useMemo, useState } from "react";
+import { AgentDefaultsDialog } from "../components/AgentDefaultsDialog";
 import { ShellTopbar } from "../components/ShellTopbar";
 import { Sidebar } from "../components/Sidebar";
 import { SidebarProvider } from "../components/ui/sidebar";
@@ -41,6 +42,7 @@ function ShellLayout() {
 	const daemonStatus = useDaemonStatus(queryClient);
 	const { theme, setTheme, isSidebarOpen, toggleSidebar } = useUiStore();
 	const terminalMux = useMemo(() => (window.ao ? createTerminalMuxTransport() : null), []);
+	const [agentDefaultsOpen, setAgentDefaultsOpen] = useState(false);
 
 	const updateWorkspaces = useCallback(
 		(updater: (workspaces: WorkspaceSummary[]) => WorkspaceSummary[]) => {
@@ -137,6 +139,7 @@ function ShellLayout() {
 				>
 					<Sidebar
 						daemonStatus={daemonStatus}
+						onOpenAgentDefaults={() => setAgentDefaultsOpen(true)}
 						onCreateProject={createProject}
 						onRemoveProject={removeProject}
 						workspaceError={workspaceQuery.isError ? errorMessage(workspaceQuery.error) : undefined}
@@ -157,6 +160,11 @@ function ShellLayout() {
               by window-drag even though DOM hit-testing looks correct. */}
 					<TitlebarNav />
 				</SidebarProvider>
+				<AgentDefaultsDialog
+					daemonReady={daemonStatus.state === "ready"}
+					open={agentDefaultsOpen}
+					onOpenChange={setAgentDefaultsOpen}
+				/>
 			</div>
 		</ShellProvider>
 	);

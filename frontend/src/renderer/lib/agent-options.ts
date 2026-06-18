@@ -1,0 +1,27 @@
+export const AGENT_OPTIONS = [
+	"claude-code",
+	"codex",
+	"aider",
+	"opencode",
+	"grok",
+	"droid",
+	"amp",
+	"agy",
+	"crush",
+	"cursor",
+	"qwen",
+	"copilot",
+	"goose",
+	"auggie",
+	"continue",
+	"devin",
+	"cline",
+	"kimi",
+	"kiro",
+	"kilocode",
+	"vibe",
+	"pi",
+	"autohand",
+] as const;
+
+export type AgentOption = (typeof AGENT_OPTIONS)[number];
