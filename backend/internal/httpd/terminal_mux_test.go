@@ -28,9 +28,9 @@ type stubSource struct {
 	attached atomic.Bool
 }
 
-func (s *stubSource) AttachCommand(ports.RuntimeHandle) ([]string, error) {
+func (s *stubSource) AttachCommand(ports.RuntimeHandle) ([]string, []string, error) {
 	s.attached.Store(true)
-	return s.argv, nil
+	return s.argv, nil, nil
 }
 
 func (s *stubSource) IsAlive(context.Context, ports.RuntimeHandle) (bool, error) {

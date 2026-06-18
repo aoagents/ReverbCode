@@ -3,10 +3,12 @@
 package httpd
 
 import (
+	"encoding/json"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -14,6 +16,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/daemonmeta"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/terminal"
 )
 
@@ -30,10 +33,10 @@ type ControlDeps struct {
 //
 // Middleware order (outermost first):
 //
-//	Recoverer      → turn a handler panic into 500 instead of crashing the daemon
 //	RequestID      → attach a request id for correlation
-//	requestLogger  → slog-backed access log, stderr, carries the request id
 //	RealIP         → normalise client IP (loopback proxy from the dev server)
+//	requestLogger  → slog-backed access log + 5xx telemetry, carries the request id
+//	recoverer      → turn a handler panic into 500 instead of crashing the daemon
 //	cors           → CORS allowlist for the Electron renderer / dev origins
 //
 // The per-request timeout is deliberately not global: it wraps only bounded
@@ -42,10 +45,10 @@ func NewRouterWithControl(cfg config.Config, log *slog.Logger, termMgr *terminal
 	log = loggerOrDefault(log)
 	r := chi.NewRouter()
 
-	r.Use(middleware.Recoverer)
 	r.Use(middleware.RequestID)
-	r.Use(requestLogger(log))
 	r.Use(middleware.RealIP)
+	r.Use(requestLogger(log, deps.Telemetry))
+	r.Use(recoverTelemetry(log, deps.Telemetry))
 	r.Use(corsMiddleware(cfg.AllowedOrigins))
 
 	// JSON envelopes for unmatched routes / methods — chi's defaults are
@@ -57,6 +60,7 @@ func NewRouterWithControl(cfg config.Config, log *slog.Logger, termMgr *terminal
 	mountHealth(r)
 	mountTerminalMux(r, termMgr, log)
 	mountControl(r, control)
+	mountTelemetry(r, deps.Telemetry)
 	NewAPI(cfg, deps).Register(r)
 
 	return r
@@ -91,6 +95,104 @@ func mountControl(r chi.Router, deps ControlDeps) {
 			"pid":     os.Getpid(),
 		})
 		deps.RequestShutdown()
+	})
+}
+
+type cliInvokedRequest struct {
+	Command     string `json:"command"`
+	CommandPath string `json:"commandPath"`
+}
+
+type cliUsageErrorRequest struct {
+	Command     string `json:"command"`
+	CommandPath string `json:"commandPath"`
+	Error       string `json:"error"`
+}
+
+func mountTelemetry(r chi.Router, sink ports.EventSink) {
+	if sink == nil {
+		return
+	}
+	r.Post("/internal/telemetry/cli-invoked", func(w http.ResponseWriter, req *http.Request) {
+		if !localControlRequest(req) {
+			envelope.WriteJSON(w, http.StatusForbidden, map[string]any{
+				"status":  "forbidden",
+				"service": daemonmeta.ServiceName,
+			})
+			return
+		}
+
+		var body cliInvokedRequest
+		dec := json.NewDecoder(req.Body)
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&body); err != nil {
+			envelope.WriteAPIError(w, req, http.StatusBadRequest, "bad_request", "INVALID_JSON", "request body must be valid JSON", nil)
+			return
+		}
+		if body.CommandPath == "" {
+			envelope.WriteAPIError(w, req, http.StatusBadRequest, "bad_request", "COMMAND_PATH_REQUIRED", "commandPath is required", nil)
+			return
+		}
+
+		sink.Emit(req.Context(), ports.TelemetryEvent{
+			Name:       "ao.cli.invoked",
+			Source:     "cli",
+			OccurredAt: time.Now().UTC(),
+			Level:      ports.TelemetryLevelInfo,
+			RequestID:  middleware.GetReqID(req.Context()),
+			Payload: map[string]any{
+				"command":      body.Command,
+				"command_path": body.CommandPath,
+			},
+		})
+		sink.Emit(req.Context(), ports.TelemetryEvent{
+			Name:       "ao.app.active",
+			Source:     "cli",
+			OccurredAt: time.Now().UTC(),
+			Level:      ports.TelemetryLevelInfo,
+			RequestID:  middleware.GetReqID(req.Context()),
+			Payload: map[string]any{
+				"channel":      "cli",
+				"command":      body.Command,
+				"command_path": body.CommandPath,
+			},
+		})
+		w.WriteHeader(http.StatusAccepted)
+	})
+	r.Post("/internal/telemetry/cli-usage-error", func(w http.ResponseWriter, req *http.Request) {
+		if !localControlRequest(req) {
+			envelope.WriteJSON(w, http.StatusForbidden, map[string]any{
+				"status":  "forbidden",
+				"service": daemonmeta.ServiceName,
+			})
+			return
+		}
+
+		var body cliUsageErrorRequest
+		dec := json.NewDecoder(req.Body)
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&body); err != nil {
+			envelope.WriteAPIError(w, req, http.StatusBadRequest, "bad_request", "INVALID_JSON", "request body must be valid JSON", nil)
+			return
+		}
+		if body.CommandPath == "" {
+			envelope.WriteAPIError(w, req, http.StatusBadRequest, "bad_request", "COMMAND_PATH_REQUIRED", "commandPath is required", nil)
+			return
+		}
+
+		sink.Emit(req.Context(), ports.TelemetryEvent{
+			Name:       "ao.cli.usage_errors",
+			Source:     "cli",
+			OccurredAt: time.Now().UTC(),
+			Level:      ports.TelemetryLevelWarn,
+			RequestID:  middleware.GetReqID(req.Context()),
+			Payload: map[string]any{
+				"command":      body.Command,
+				"command_path": body.CommandPath,
+				"error_kind":   "usage",
+			},
+		})
+		w.WriteHeader(http.StatusAccepted)
 	})
 }
 

@@ -14,6 +14,8 @@ import {
 	shouldAdoptDiscoveredPort,
 } from "./shared/daemon-discovery";
 import type { DaemonStatus } from "./shared/daemon-status";
+import { DEFAULT_POSTHOG_HOST, DEFAULT_POSTHOG_PROJECT_KEY } from "./shared/posthog-config";
+import { buildTelemetryBootstrap } from "./shared/telemetry";
 
 // Globals injected at compile time by @electron-forge/plugin-vite.
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
@@ -157,8 +159,8 @@ function runFilePath(): string | null {
 
 let externalDiscoveryTimer: ReturnType<typeof setInterval> | undefined;
 
-// Discover a daemon this app did NOT spawn — e.g. a developer who ran `ao start`
-// in a terminal — from its running.json handshake. Without this the renderer
+// Discover a daemon this app did NOT spawn (e.g. a developer who ran `ao start`
+// in a terminal) from its running.json handshake. Without this the renderer
 // would stay pinned to its compiled default base URL and never learn the real
 // bound port; worse, that default resolves localhost to IPv6 and can land on an
 // unrelated server. running.json carries the real port and we target
@@ -188,6 +190,16 @@ function startExternalDaemonDiscovery(): void {
 	if (externalDiscoveryTimer) return;
 	discoverExternalDaemonOnce();
 	externalDiscoveryTimer = setInterval(discoverExternalDaemonOnce, EXTERNAL_DISCOVERY_POLL_MS);
+}
+
+function daemonEnv(): NodeJS.ProcessEnv {
+	return {
+		...process.env,
+		AO_TELEMETRY_EVENTS: process.env.AO_TELEMETRY_EVENTS ?? "on",
+		AO_TELEMETRY_REMOTE: process.env.AO_TELEMETRY_REMOTE ?? "posthog",
+		AO_TELEMETRY_POSTHOG_KEY: process.env.AO_TELEMETRY_POSTHOG_KEY ?? DEFAULT_POSTHOG_PROJECT_KEY,
+		AO_TELEMETRY_POSTHOG_HOST: process.env.AO_TELEMETRY_POSTHOG_HOST ?? DEFAULT_POSTHOG_HOST,
+	};
 }
 
 function startDaemon(): DaemonStatus {
@@ -230,7 +242,7 @@ function startDaemon(): DaemonStatus {
 	// the whole group via killDaemon() reaches the daemon and any PTY children.
 	const child = spawn(launch.command, launch.args, {
 		cwd: launch.cwd,
-		env: process.env,
+		env: daemonEnv(),
 		shell: launch.shell,
 		detached: true,
 	});
@@ -352,6 +364,7 @@ ipcMain.handle("daemon:getStatus", () => daemonStatus);
 ipcMain.handle("daemon:start", () => startDaemon());
 ipcMain.handle("daemon:stop", () => stopDaemon());
 ipcMain.handle("app:getVersion", () => app.getVersion());
+ipcMain.handle("telemetry:getBootstrap", () => buildTelemetryBootstrap(process.env, app.getVersion(), process.platform));
 ipcMain.handle("app:chooseDirectory", async () => {
 	const options: OpenDialogOptions = {
 		properties: ["openDirectory"],

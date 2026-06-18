@@ -178,6 +178,18 @@ type SessionWorktree struct {
 	State        string
 }
 
+type TelemetryEvent struct {
+	ID          string
+	OccurredAt  time.Time
+	Name        string
+	Source      string
+	Level       string
+	ProjectID   sql.NullString
+	SessionID   sql.NullString
+	RequestID   string
+	PayloadJson string
+}
+
 type WorkspaceRepo struct {
 	ProjectID     domain.ProjectID
 	Name          string
