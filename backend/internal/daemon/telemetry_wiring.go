@@ -10,7 +10,7 @@ import (
 )
 
 func newTelemetrySink(cfg config.Config, store *sqlite.Store, log *slog.Logger) ports.EventSink {
-	if !cfg.Telemetry.Events && !cfg.Telemetry.Metrics {
+	if !cfg.Telemetry.Events {
 		return telemetryadapter.NoopSink{}
 	}
 	local := telemetryadapter.NewLocalSQLiteSink(store, log)

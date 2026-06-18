@@ -227,19 +227,44 @@ func (s *Service) emitSpawnFailed(cfg ports.SpawnConfig, err error, durationMs i
 		return
 	}
 	projectID := cfg.ProjectID
+	apiErr := toAPIError(err)
+	errorKind := "internal"
+	errorCode := ""
+	var typedErr *apierr.Error
+	if errors.As(apiErr, &typedErr) {
+		errorKind = telemetryErrorKind(typedErr.Kind)
+		errorCode = typedErr.Code
+	}
+	payload := map[string]any{
+		"kind":        string(cfg.Kind),
+		"harness":     string(cfg.Harness),
+		"duration_ms": durationMs,
+		"error_kind":  errorKind,
+	}
+	if errorCode != "" {
+		payload["error_code"] = errorCode
+	}
 	s.telemetry.Emit(context.Background(), ports.TelemetryEvent{
 		Name:       "ao.session.spawn_failed",
 		Source:     "session_service",
 		OccurredAt: s.now(),
 		Level:      ports.TelemetryLevelError,
 		ProjectID:  &projectID,
-		Payload: map[string]any{
-			"kind":        string(cfg.Kind),
-			"harness":     string(cfg.Harness),
-			"error":       err.Error(),
-			"duration_ms": durationMs,
-		},
+		Payload:    payload,
 	})
+}
+
+func telemetryErrorKind(kind apierr.Kind) string {
+	switch kind {
+	case apierr.KindInvalid:
+		return "invalid"
+	case apierr.KindNotFound:
+		return "not_found"
+	case apierr.KindConflict:
+		return "conflict"
+	default:
+		return "internal"
+	}
 }
 
 // SpawnOrchestrator spawns an orchestrator session for a project. When clean is

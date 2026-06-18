@@ -16,6 +16,13 @@ func TestNewTelemetrySink_DefaultsToNoopWhenDisabled(t *testing.T) {
 	}
 }
 
+func TestNewTelemetrySink_MetricsOnlyDoesNotEnableEvents(t *testing.T) {
+	sink := newTelemetrySink(config.Config{Telemetry: config.TelemetryConfig{Metrics: true}}, nil, slog.Default())
+	if _, ok := sink.(telemetryadapter.NoopSink); !ok {
+		t.Fatalf("sink type = %T, want telemetry.NoopSink when only metrics are enabled", sink)
+	}
+}
+
 func TestNewTelemetrySink_UsesLocalSQLiteWhenEnabled(t *testing.T) {
 	dataDir := t.TempDir()
 	store, err := sqlite.Open(dataDir)

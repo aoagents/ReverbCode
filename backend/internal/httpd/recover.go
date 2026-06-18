@@ -36,10 +36,9 @@ func recoverTelemetry(log *slog.Logger, sink ports.EventSink) func(http.Handler)
 							Level:      ports.TelemetryLevelError,
 							RequestID:  middleware.GetReqID(r.Context()),
 							Payload: map[string]any{
-								"method": r.Method,
-								"path":   r.URL.Path,
-								"panic":  fmt.Sprint(rec),
-								"stack":  stack,
+								"method":     r.Method,
+								"path":       r.URL.Path,
+								"panic_kind": telemetryPanicKind(rec),
 							},
 						})
 					}
@@ -48,6 +47,17 @@ func recoverTelemetry(log *slog.Logger, sink ports.EventSink) func(http.Handler)
 			}()
 			next.ServeHTTP(w, r)
 		})
+	}
+}
+
+func telemetryPanicKind(rec any) string {
+	switch rec.(type) {
+	case error:
+		return "error"
+	case string:
+		return "string"
+	default:
+		return "other"
 	}
 }
 

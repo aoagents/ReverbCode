@@ -189,7 +189,7 @@ func mountTelemetry(r chi.Router, sink ports.EventSink) {
 			Payload: map[string]any{
 				"command":      body.Command,
 				"command_path": body.CommandPath,
-				"error":        body.Error,
+				"error_kind":   "usage",
 			},
 		})
 		w.WriteHeader(http.StatusAccepted)

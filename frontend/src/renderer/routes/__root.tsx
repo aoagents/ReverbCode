@@ -2,7 +2,7 @@ import { createRootRouteWithContext, Outlet, useRouterState } from "@tanstack/re
 import { useEffect } from "react";
 import { TooltipProvider } from "../components/ui/tooltip";
 import type { QueryClient } from "@tanstack/react-query";
-import { captureRendererEvent } from "../lib/telemetry";
+import { captureRendererEvent, routeSurface } from "../lib/telemetry";
 
 export const Route = createRootRouteWithContext<{
 	queryClient: QueryClient;
@@ -15,11 +15,9 @@ function RootComponent() {
 
 	useEffect(() => {
 		void captureRendererEvent("ao.renderer.route_viewed", {
-			pathname: location.pathname,
-			search: location.searchStr,
-			hash: window.location.hash,
+			surface: routeSurface(location.pathname),
 		});
-	}, [location.pathname, location.searchStr]);
+	}, [location.pathname]);
 
 	return (
 		<TooltipProvider>

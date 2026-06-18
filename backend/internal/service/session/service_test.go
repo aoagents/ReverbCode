@@ -326,6 +326,9 @@ func TestSpawnFailedEmitsDuration(t *testing.T) {
 	if got := sink.events[0].Payload["duration_ms"]; got != int64(1500) {
 		t.Fatalf("spawn_failed duration_ms = %#v, want 1500", got)
 	}
+	if got := sink.events[0].Payload["error_kind"]; got != "internal" {
+		t.Fatalf("spawn_failed error_kind = %#v, want internal", got)
+	}
 }
 
 func TestSpawnEmitsTelemetryOnSuccess(t *testing.T) {
@@ -380,6 +383,12 @@ func TestSpawnEmitsTelemetryOnFailure(t *testing.T) {
 	}
 	if ev.ProjectID == nil || *ev.ProjectID != "mer" || ev.SessionID != nil {
 		t.Fatalf("event ids = %+v", ev)
+	}
+	if got := ev.Payload["error_kind"]; got != "internal" {
+		t.Fatalf("event payload error_kind = %#v, want internal", got)
+	}
+	if _, ok := ev.Payload["error"]; ok {
+		t.Fatalf("event payload leaked raw error: %+v", ev.Payload)
 	}
 }
 

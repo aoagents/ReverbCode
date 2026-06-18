@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -22,6 +23,73 @@ import (
 )
 
 const postHogBufferSize = 128
+
+var remotePayloadAllowlist = map[string]map[string]struct{}{
+	"ao.app.active": {
+		"channel":      {},
+		"command":      {},
+		"command_path": {},
+	},
+	"ao.cli.invoked": {
+		"command":      {},
+		"command_path": {},
+	},
+	"ao.cli.usage_errors": {
+		"command":      {},
+		"command_path": {},
+		"error_kind":   {},
+	},
+	"ao.daemon.panic": {
+		"method":     {},
+		"path":       {},
+		"panic_kind": {},
+	},
+	"ao.daemon.started": {
+		"agent": {},
+		"port":  {},
+	},
+	"ao.http.5xx": {
+		"duration":   {},
+		"error_code": {},
+		"error_kind": {},
+		"method":     {},
+		"path":       {},
+		"status":     {},
+	},
+	"ao.onboarding.first_project_added": {
+		"has_git_remote": {},
+		"kind":           {},
+	},
+	"ao.onboarding.first_session_spawned": {
+		"harness":                {},
+		"kind":                   {},
+		"since_first_project_ms": {},
+	},
+	"ao.projects.created": {
+		"has_git_remote": {},
+		"kind":           {},
+	},
+	"ao.session.spawn_failed": {
+		"duration_ms": {},
+		"error_code":  {},
+		"error_kind":  {},
+		"harness":     {},
+		"kind":        {},
+	},
+	"ao.session.spawned": {
+		"duration_ms": {},
+		"harness":     {},
+		"kind":        {},
+	},
+	"ao.session.waiting_input_entered": {
+		"state": {},
+	},
+	"ao.session.waiting_input_exited": {
+		"dwell_ms":  {},
+		"exited_to": {},
+		"state":     {},
+	},
+}
 
 type postHogClient interface {
 	Do(req *http.Request) (*http.Response, error)
@@ -145,10 +213,70 @@ func (s *PostHogSink) properties(ev ports.TelemetryEvent) map[string]any {
 	if ev.SessionID != nil {
 		props["session_id_hash"] = sha256String(string(*ev.SessionID))
 	}
-	for k, v := range ev.Payload {
+	for k, v := range sanitizeRemotePayload(ev.Name, ev.Payload) {
 		props[k] = v
 	}
 	return props
+}
+
+func sanitizeRemotePayload(name string, payload map[string]any) map[string]any {
+	allowed := remotePayloadAllowlist[name]
+	if len(allowed) == 0 || len(payload) == 0 {
+		return nil
+	}
+	sanitized := make(map[string]any, len(allowed))
+	for key := range allowed {
+		value, ok := payload[key]
+		if !ok {
+			continue
+		}
+		if safe, ok := sanitizeRemoteValue(value); ok {
+			sanitized[key] = safe
+		}
+	}
+	return sanitized
+}
+
+func sanitizeRemoteValue(v any) (any, bool) {
+	switch value := v.(type) {
+	case string:
+		value = strings.TrimSpace(value)
+		return value, value != ""
+	case bool:
+		return value, true
+	case int:
+		return int64(value), true
+	case int8:
+		return int64(value), true
+	case int16:
+		return int64(value), true
+	case int32:
+		return int64(value), true
+	case int64:
+		return value, true
+	case uint:
+		return uint64(value), true
+	case uint8:
+		return uint64(value), true
+	case uint16:
+		return uint64(value), true
+	case uint32:
+		return uint64(value), true
+	case uint64:
+		return value, true
+	case float32:
+		if math.IsNaN(float64(value)) || math.IsInf(float64(value), 0) {
+			return nil, false
+		}
+		return float64(value), true
+	case float64:
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return nil, false
+		}
+		return value, true
+	default:
+		return nil, false
+	}
 }
 
 func loadOrCreateInstallID(dataDir string) (string, error) {

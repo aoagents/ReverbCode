@@ -19,8 +19,8 @@ export class TelemetryBoundary extends React.Component<Props, State> {
 	componentDidCatch(error: Error, info: React.ErrorInfo) {
 		void captureRendererException(error, {
 			source: "react-error-boundary",
-			component_stack: info.componentStack,
 		});
+		void info;
 	}
 
 	render() {
