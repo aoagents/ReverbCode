@@ -22,7 +22,7 @@ import (
 // environment (mirrors exec.Cmd.Env semantics). ctx cancellation kills the
 // process. Windows uses a stub (see pty_windows.go) until a ConPTY path is
 // added.
-func defaultSpawn(ctx context.Context, argv []string, env []string, rows, cols uint16) (ptyProcess, error) {
+func defaultSpawn(ctx context.Context, argv, env []string, rows, cols uint16) (ptyProcess, error) {
 	if len(argv) == 0 {
 		return nil, errors.New("terminal: empty attach command")
 	}

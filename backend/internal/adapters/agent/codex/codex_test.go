@@ -161,7 +161,7 @@ func TestAppendWorkspaceTrustFlagCoversLiteralAndResolvedPaths(t *testing.T) {
 	appendWorkspaceTrustFlag(&cmd, link)
 	want := []string{
 		"-c",
-		`projects={"` + link + `"={trust_level="trusted"},"` + target + `"={trust_level="trusted"}}`,
+		`projects={'` + link + `'={trust_level="trusted"},'` + target + `'={trust_level="trusted"}}`,
 	}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("trust flag\nwant: %#v\n got: %#v", want, cmd)
@@ -169,7 +169,7 @@ func TestAppendWorkspaceTrustFlagCoversLiteralAndResolvedPaths(t *testing.T) {
 
 	cmd = nil
 	appendWorkspaceTrustFlag(&cmd, target)
-	want = []string{"-c", `projects={"` + target + `"={trust_level="trusted"}}`}
+	want = []string{"-c", `projects={'` + target + `'={trust_level="trusted"}}`}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("canonical-path trust flag\nwant: %#v\n got: %#v", want, cmd)
 	}
