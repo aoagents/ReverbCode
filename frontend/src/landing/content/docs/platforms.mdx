@@ -80,13 +80,13 @@ defaults:
 
 What to know:
 
-| Capability                  | Status                                                      |
-| --------------------------- | ----------------------------------------------------------- |
-| zellij-backed worker sessions | Supported                                                 |
-| Browser dashboard terminal  | Supported                                                   |
-| iTerm2 attach/open helpers  | Not available                                               |
-| Desktop notifications       | Supported when `notify-send` is installed                   |
-| Remote dashboard access     | Supported through port forwarding, Tailscale, or your proxy |
+| Capability                    | Status                                                      |
+| ----------------------------- | ----------------------------------------------------------- |
+| zellij-backed worker sessions | Supported                                                   |
+| Browser dashboard terminal    | Supported                                                   |
+| iTerm2 attach/open helpers    | Not available                                               |
+| Desktop notifications         | Supported when `notify-send` is installed                   |
+| Remote dashboard access       | Supported through port forwarding, Tailscale, or your proxy |
 
 If you are running AO on a headless Linux host, prefer Slack, Discord, or webhook notifications over desktop notifications.
 
@@ -118,12 +118,12 @@ What works:
 
 What is limited:
 
-| Capability                  | Status                 | Use instead                                    |
-| --------------------------- | ---------------------- | ---------------------------------------------- |
-| `runtime: process`          | Not currently wired    | Install zellij 0.44.3+ on `PATH`               |
-| iTerm2 terminal integration | Not available          | Browser dashboard terminal                     |
-| Desktop notifier            | No-op on Windows       | Slack, Discord, webhook, Composio, or OpenClaw |
-| tmux attach commands        | Not available          | Dashboard terminal and AO session commands     |
+| Capability                  | Status              | Use instead                                    |
+| --------------------------- | ------------------- | ---------------------------------------------- |
+| `runtime: process`          | Not currently wired | Install zellij 0.44.3+ on `PATH`               |
+| iTerm2 terminal integration | Not available       | Browser dashboard terminal                     |
+| Desktop notifier            | No-op on Windows    | Slack, Discord, webhook, Composio, or OpenClaw |
+| tmux attach commands        | Not available       | Dashboard terminal and AO session commands     |
 
 Use PowerShell or Git Bash for normal CLI commands. If a command behaves differently because of shell quoting, put longer instructions in a file and send them with `ao send --file`.
 
@@ -149,8 +149,8 @@ Operational notes:
 
 ## Choosing A Runtime
 
-| Runtime  | Best for                                         | Tradeoff                                      |
-| -------- | ------------------------------------------------ | --------------------------------------------- |
+| Runtime  | Best for                                        | Tradeoff                                        |
+| -------- | ----------------------------------------------- | ----------------------------------------------- |
 | `zellij` | Current Go rewrite on macOS, Linux, and Windows | Requires zellij 0.44.3+ to be installed on PATH |
 
 Start with the recommended runtime for your OS. Change it only when the default runtime does not match where AO is running.

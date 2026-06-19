@@ -1,9 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-	routeSurface,
-	sanitizeRendererExceptionProperties,
-	sanitizeRendererProperties,
-} from "./telemetry";
+import { routeSurface, sanitizeRendererExceptionProperties, sanitizeRendererProperties } from "./telemetry";
 
 describe("telemetry sanitizers", () => {
 	it("categorizes routes without exporting raw paths", () => {

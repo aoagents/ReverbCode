@@ -31,13 +31,13 @@ This page gets your machine ready to run Agent Orchestrator. By the end, the `ao
 
 Install these before running AO:
 
-| Tool            | Required               | Why AO needs it                                                                      |
-| --------------- | ---------------------- | ------------------------------------------------------------------------------------ |
-| Node.js 20+     | Yes                    | Runs the AO CLI, dashboard, and plugins.                                             |
-| Git             | Yes                    | Creates worktrees, branches, commits, and cleanup operations.                        |
-| GitHub CLI `gh` | For GitHub projects    | Reads issues, PRs, reviews, and CI status as your user.                              |
-| Zellij 0.44.3+  | Yes                    | Current Go runtime for long-running agent sessions. Must be on `PATH`.               |
-| An agent CLI    | Yes                    | The worker that writes code, such as Claude Code, Codex, Cursor, Aider, or OpenCode. |
+| Tool            | Required            | Why AO needs it                                                                      |
+| --------------- | ------------------- | ------------------------------------------------------------------------------------ |
+| Node.js 20+     | Yes                 | Runs the AO CLI, dashboard, and plugins.                                             |
+| Git             | Yes                 | Creates worktrees, branches, commits, and cleanup operations.                        |
+| GitHub CLI `gh` | For GitHub projects | Reads issues, PRs, reviews, and CI status as your user.                              |
+| Zellij 0.44.3+  | Yes                 | Current Go runtime for long-running agent sessions. Must be on `PATH`.               |
+| An agent CLI    | Yes                 | The worker that writes code, such as Claude Code, Codex, Cursor, Aider, or OpenCode. |
 
 If you plan to use GitLab or Linear, install and authenticate their CLIs or credentials as described on the related plugin pages. A GitHub-only setup only needs `gh`.
 
@@ -147,7 +147,8 @@ Use Slack, Discord, webhook, or another network notifier for alerts. Desktop not
 		authenticated.
 	</Accordion>
 	<Accordion title="zellij is missing">
-		Install `zellij` 0.44.3 or newer and make sure it is on `PATH`. The current Go rewrite does not wire `runtime: process`.
+		Install `zellij` 0.44.3 or newer and make sure it is on `PATH`. The current Go rewrite does not wire `runtime:
+		process`.
 	</Accordion>
 	<Accordion title="No agent runtime is detected">
 		Install one supported agent CLI and run it once outside AO so it can complete its own sign-in flow.
