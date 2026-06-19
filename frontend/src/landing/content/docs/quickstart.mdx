@@ -145,7 +145,7 @@ ao session cleanup
 | `ao spawn` warns that AO is not running | Start AO with `ao start` before spawning.                                     |
 | GitHub issue or PR data is missing      | Run `gh auth status` and check the `repo` field in `agent-orchestrator.yaml`. |
 | Agent started but does nothing          | Open the session terminal and send a clear instruction with `ao send`.        |
-| Windows spawn fails with tmux errors    | Set `defaults.runtime: process` in `agent-orchestrator.yaml`.                 |
+| Runtime startup fails with missing zellij | Install `zellij` 0.44.3+ and make sure it is on `PATH`.                     |
 
 ## Next
 

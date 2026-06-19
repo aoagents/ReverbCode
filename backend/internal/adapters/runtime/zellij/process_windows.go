@@ -11,8 +11,7 @@ import (
 )
 
 func startBackgroundProcess(env []string, name string, args ...string) error {
-	script := "Start-Process -FilePath " + psQuote(name) + " -ArgumentList " + psQuote(windowsCommandLine(args)) + " -WindowStyle Hidden"
-	cmd := exec.Command("powershell.exe", "-NoLogo", "-NoProfile", "-EncodedCommand", powerShellEncodedCommand(script))
+	cmd := exec.Command(name, args...)
 	cmd.Env = env
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		CreationFlags: windows.CREATE_NEW_CONSOLE,

@@ -238,6 +238,7 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 	}()
 
 	if err := r.createSession(ctx, id, layoutPath, launchEnv); err != nil {
+		_ = r.Destroy(context.Background(), ports.RuntimeHandle{ID: id})
 		return ports.RuntimeHandle{}, fmt.Errorf("zellij runtime: create session %s: %w", id, err)
 	}
 	paneID, err := r.findAgentPane(ctx, id)
@@ -263,9 +264,10 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 	return handle, nil
 }
 
-// createSession runs `zellij attach --create-background`. On Windows we spawn
-// it via runner.Start (fire-and-forget) because the inherited daemon stdio
-// confuses zellij's own readiness probe; on Unix we keep the synchronous run.
+// createSession runs `zellij attach --create-background`. Windows cannot use
+// CombinedOutput here: zellij may keep stdout/stderr open after creating the
+// background session, so we start it detached and let pane polling observe
+// readiness. Non-Windows keeps the synchronous command path.
 func (r *Runtime) createSession(ctx context.Context, id, layoutPath string, env map[string]string) error {
 	args := createSessionArgs(id, layoutPath)
 	if runtime.GOOS != "windows" {
@@ -530,9 +532,9 @@ func (r *Runtime) run(ctx context.Context, args ...string) ([]byte, error) {
 	return out, nil
 }
 
-// startWithEnv fires zellij in the background with extra env vars merged onto
+// startWithEnv starts zellij in the background with extra env vars merged onto
 // the runtime's base env. Used by the Windows createSession path so the daemon
-// is not blocked waiting on zellij's `--create-background` to settle.
+// is not blocked waiting on zellij's `--create-background` stdio handles.
 func (r *Runtime) startWithEnv(extra map[string]string, args ...string) error {
 	fullArgs := append(r.baseArgs(), args...)
 	if err := r.runner.Start(r.envWith(extra), r.binary, fullArgs...); err != nil {

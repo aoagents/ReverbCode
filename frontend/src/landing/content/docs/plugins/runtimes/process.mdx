@@ -1,6 +1,6 @@
 ---
 title: process
-description: Cross-platform child-process runtime. Required on Windows.
+description: Legacy child-process runtime; not currently wired in the Go rewrite.
 ---
 
 <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", margin: "0.5rem 0 1.25rem" }}>
@@ -10,32 +10,12 @@ description: Cross-platform child-process runtime. Required on Windows.
 	</span>
 </div>
 
-Spawns agents as plain child processes — no tmux involved. Use this on Windows (where tmux isn't available) and in any environment where you'd rather not depend on tmux.
+The legacy TypeScript implementation documented a plain child-process runtime for Windows and containers. The current Go rewrite does not wire that runtime yet.
 
-<PlatformSupport macos="full" linux="full" windows="full" />
-
-## Use
+Use the current Zellij runtime instead:
 
 ```yaml title="agent-orchestrator.yaml"
-runtime: process
+runtime: zellij
 ```
 
-No plugin-level config.
-
-## How it works
-
-- AO spawns the agent via Node's `child_process.spawn` with `shell: true`.
-- Stdout + stderr are captured in a rolling 1000-line buffer.
-- The dashboard reads from that buffer over the same WebSocket the tmux runtime uses — you won't notice a difference in the UI.
-- `isProcessRunning` uses a PID-based signal-0 check.
-
-## What you lose vs tmux
-
-- **No tmux attach.** `ao session attach` doesn't work. Use the dashboard terminal instead.
-- **No reconnecting to the agent's TTY.** If you `ao stop` the orchestrator, the child process goes with it. The agent's own session-resume features (Claude `--resume`, Codex `resume`, etc.) still work — that's a different layer.
-
-## When to pick it
-
-- **Windows** — this is the only runtime that works.
-- **Docker / CI-like environments** — fewer moving parts, no tmux install.
-- **You never attach interactively** — the dashboard terminal covers all your attach needs anyway.
+Install `zellij` 0.44.3 or newer and make sure it is on `PATH` before spawning sessions.

@@ -350,7 +350,7 @@ func TestSpawn_StampsUTCTimestamps(t *testing.T) {
 	}
 }
 
-func TestSpawn_RollsBackOnRuntimeFailure(t *testing.T) {
+func TestSpawn_DeletesSeedRowOnRuntimeFailure(t *testing.T) {
 	m, st, _, ws := newManager()
 	m.runtime = &fakeRuntime{createErr: errors.New("boom")}
 	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer"}); err == nil {
@@ -359,8 +359,23 @@ func TestSpawn_RollsBackOnRuntimeFailure(t *testing.T) {
 	if ws.destroyed != 1 {
 		t.Fatal("workspace should roll back")
 	}
+	if rec, present := st.sessions["mer-1"]; present {
+		t.Fatalf("spawn row without runtime handle must be deleted, got %+v", rec)
+	}
+}
+
+func TestSpawn_ParksRowTerminatedWhenRuntimeFailureDeleteFails(t *testing.T) {
+	m, st, _, ws := newManager()
+	m.runtime = &fakeRuntime{createErr: errors.New("boom")}
+	st.deleteErr = errors.New("db locked")
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer"}); err == nil {
+		t.Fatal("expected failure")
+	}
+	if ws.destroyed != 1 {
+		t.Fatal("workspace should roll back")
+	}
 	if !st.sessions["mer-1"].IsTerminated {
-		t.Fatal("orphaned spawn should be terminated")
+		t.Fatal("row must fall back to terminated when delete fails")
 	}
 }
 
@@ -855,8 +870,8 @@ func TestSpawn_RejectsMissingAgentBinary(t *testing.T) {
 	if ws.destroyed != 1 {
 		t.Fatal("workspace must be torn down when the pre-launch binary check fails")
 	}
-	if !st.sessions["mer-1"].IsTerminated {
-		t.Fatal("the orphan row should be marked terminated after the failed spawn")
+	if rec, present := st.sessions["mer-1"]; present {
+		t.Fatalf("spawn row without runtime handle must be deleted, got %+v", rec)
 	}
 }
 
