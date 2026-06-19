@@ -48,6 +48,27 @@ async function hashedTelemetryID(value: unknown): Promise<string | undefined> {
 	return sha256Hex(trimmed);
 }
 
+async function sanitizeRendererContextProperties(properties?: TelemetryProperties): Promise<TelemetryProperties> {
+	const safe: TelemetryProperties = {};
+	if (typeof properties?.source === "string" && properties.source.trim() !== "") {
+		safe.source = properties.source;
+	}
+	if (typeof properties?.operation === "string" && properties.operation.trim() !== "") {
+		safe.operation = properties.operation;
+	}
+	if (typeof properties?.surface === "string" && properties.surface.trim() !== "") {
+		safe.surface = properties.surface;
+	}
+	if (typeof properties?.unhandled === "boolean") {
+		safe.unhandled = properties.unhandled;
+	}
+	const projectIDHash = await hashedTelemetryID(properties?.project_id);
+	if (projectIDHash) {
+		safe.project_id_hash = projectIDHash;
+	}
+	return safe;
+}
+
 export async function sanitizeRendererProperties(
 	event: string,
 	properties?: TelemetryProperties,
@@ -89,17 +110,7 @@ export async function sanitizeRendererExceptionProperties(
 	const safe: TelemetryProperties = {
 		error_name: exceptionName(error),
 	};
-	if (typeof properties?.source === "string" && properties.source.trim() !== "") {
-		safe.source = properties.source;
-	}
-	if (typeof properties?.unhandled === "boolean") {
-		safe.unhandled = properties.unhandled;
-	}
-	const projectIDHash = await hashedTelemetryID(properties?.project_id);
-	if (projectIDHash) {
-		safe.project_id_hash = projectIDHash;
-	}
-	return safe;
+	return { ...safe, ...(await sanitizeRendererContextProperties(properties)) };
 }
 
 function bindErrorHandlers() {
@@ -163,7 +174,13 @@ export async function captureRendererException(
 ): Promise<void> {
 	if (!(await initTelemetry())) return;
 	const safeProperties = await sanitizeRendererExceptionProperties(error, properties);
-	posthog.capture("ao.renderer.exception", safeProperties);
+	posthog.captureException(normalizeException(error), safeProperties);
+}
+
+export async function addRendererExceptionStep(message: string, properties?: Record<string, unknown>): Promise<void> {
+	if (!(await initTelemetry())) return;
+	const safeProperties = await sanitizeRendererContextProperties(properties);
+	posthog.addExceptionStep(message, safeProperties);
 }
 
 export { routeSurface };

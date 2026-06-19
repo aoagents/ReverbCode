@@ -30,6 +30,7 @@ describe("telemetry sanitizers", () => {
 	it("strips exception details down to coarse metadata", async () => {
 		const props = await sanitizeRendererExceptionProperties(new TypeError("local path /tmp/private"), {
 			source: "window-error",
+			operation: "project_add",
 			unhandled: true,
 			project_id: "demo-project",
 			component_stack: "App > Shell",
@@ -37,10 +38,26 @@ describe("telemetry sanitizers", () => {
 		expect(props).toMatchObject({
 			error_name: "TypeError",
 			source: "window-error",
+			operation: "project_add",
 			unhandled: true,
 		});
 		expect(props).toHaveProperty("project_id_hash");
 		expect(props).not.toHaveProperty("project_id");
 		expect(props).not.toHaveProperty("component_stack");
+	});
+
+	it("sanitizes exception step context", async () => {
+		const props = await sanitizeRendererExceptionProperties(new Error("boom"), {
+			source: "orchestrator-open",
+			operation: "open_orchestrator",
+			surface: "session_detail",
+			project_id: "demo-project",
+		});
+		expect(props).toMatchObject({
+			source: "orchestrator-open",
+			operation: "open_orchestrator",
+			surface: "session_detail",
+		});
+		expect(props).toHaveProperty("project_id_hash");
 	});
 });
