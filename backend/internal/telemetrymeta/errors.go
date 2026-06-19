@@ -13,6 +13,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 )
 
+// ErrorKindAndCode extracts a telemetry-safe error category and optional code.
 func ErrorKindAndCode(err error) (kind string, code string) {
 	kind = "internal"
 	var apiErr *apierr.Error
@@ -22,6 +23,7 @@ func ErrorKindAndCode(err error) (kind string, code string) {
 	return kind, ""
 }
 
+// ErrorKind maps API error kinds to coarse telemetry-safe categories.
 func ErrorKind(kind apierr.Kind) string {
 	switch kind {
 	case apierr.KindInvalid:
@@ -35,6 +37,7 @@ func ErrorKind(kind apierr.Kind) string {
 	}
 }
 
+// PanicKind classifies panic payloads without exporting their raw contents.
 func PanicKind(rec any) string {
 	switch rec.(type) {
 	case error:
@@ -46,6 +49,7 @@ func PanicKind(rec any) string {
 	}
 }
 
+// StatusFamily returns a telemetry-friendly HTTP status bucket like 5xx.
 func StatusFamily(status int) string {
 	if status < 100 || status > 999 {
 		return "unknown"
@@ -53,6 +57,7 @@ func StatusFamily(status int) string {
 	return fmt.Sprintf("%dxx", status/100)
 }
 
+// RoutePattern returns the chi route template when available, else the URL path.
 func RoutePattern(r *http.Request) string {
 	if r == nil {
 		return ""
@@ -68,6 +73,7 @@ func RoutePattern(r *http.Request) string {
 	return r.URL.Path
 }
 
+// Fingerprint returns a short stable digest for grouping similar failures.
 func Fingerprint(parts ...string) string {
 	h := sha256.New()
 	for _, part := range parts {
