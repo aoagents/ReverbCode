@@ -225,12 +225,6 @@ func (c *connState) openTerminal(id string, rows, cols uint16) {
 	var a *attachment
 	a = newAttachment(id, ports.RuntimeHandle{ID: id}, c.mgr.src, c.mgr.spawn,
 		func(data []byte) {
-			c.mu.Lock()
-			current := c.terms[id]
-			c.mu.Unlock()
-			if current != a {
-				return
-			}
 			c.enqueue(serverMsg{
 				Ch:   chTerminal,
 				ID:   id,
@@ -372,7 +366,6 @@ func (c *connState) cleanup() {
 		return
 	}
 	c.closed = true
-	c.cancel()
 	attachments := make([]*attachment, 0, len(c.terms))
 	for _, a := range c.terms {
 		attachments = append(attachments, a)

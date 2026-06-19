@@ -44,8 +44,7 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 		Use:   "spawn",
 		Short: "Spawn a worker agent session in a registered project",
 		Long: "Spawn a worker agent session in a registered project.\n\n" +
-			"The session runs the chosen agent, the project's role override, or the\n" +
-			"app-wide default agent configured in Settings. It uses a\n" +
+			"The session runs the chosen agent (default: the daemon's AO_AGENT) in a\n" +
 			"fresh git worktree. Register the project first with `ao project add`.",
 		Args: noArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -121,7 +120,7 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 		return pflag.NormalizedName(name)
 	})
 	f.StringVar(&opts.project, "project", "", "Project id to spawn the session in (required)")
-	f.StringVar(&opts.harness, "harness", "", "Agent harness / --agent: claude-code, codex, aider, opencode, grok, droid, amp, agy, crush, cursor, qwen, copilot, goose, auggie, continue, devin, cline, kimi, kiro, kilocode, vibe, pi, autohand (default: app setting)")
+	f.StringVar(&opts.harness, "harness", "", "Agent harness / --agent: claude-code, codex, aider, opencode, grok, droid, amp, agy, crush, cursor, qwen, copilot, goose, auggie, continue, devin, cline, kimi, kiro, kilocode, vibe, pi, autohand (default: the daemon's AO_AGENT)")
 	f.StringVar(&opts.branch, "branch", "", "Branch for the session worktree (default: ao/<session-id>/root)")
 	f.StringVar(&opts.prompt, "prompt", "", "Initial prompt for the agent")
 	f.StringVar(&opts.issue, "issue", "", "Issue id to associate with the session")

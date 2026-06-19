@@ -63,8 +63,6 @@ func Build() ([]byte, error) {
 			"Pull-request actions (SCM lane)"),
 		*(&openapi31.Tag{Name: "reviews"}).WithDescription(
 			"Code-review runs and findings"),
-		*(&openapi31.Tag{Name: "settings"}).WithDescription(
-			"App-wide user settings"),
 		*(&openapi31.Tag{Name: "notifications"}).WithDescription(
 			"Durable dashboard notifications"),
 		*(&openapi31.Tag{Name: "events"}).WithDescription(
@@ -131,7 +129,6 @@ var schemaNames = map[string]string{
 	"DomainProjectConfig": "ProjectConfig",
 	"DomainAgentConfig":   "AgentConfig",
 	"DomainRoleOverride":  "RoleOverride",
-	"DomainAgentDefaults": "AgentDefaults",
 	// httpd/controllers (wire envelopes)
 	"ControllersListProjectsResponse":       "ListProjectsResponse",
 	"ControllersProjectResponse":            "ProjectResponse",
@@ -160,8 +157,6 @@ var schemaNames = map[string]string{
 	"ControllersSpawnOrchestratorRequest":   "SpawnOrchestratorRequest",
 	"ControllersSpawnOrchestratorResponse":  "SpawnOrchestratorResponse",
 	"ControllersOrchestratorResponse":       "OrchestratorResponse",
-	"ControllersAgentDefaultsRequest":       "AgentDefaultsRequest",
-	"ControllersAgentDefaultsResponse":      "AgentDefaultsResponse",
 	"ControllersListNotificationsQuery":     "ListNotificationsQuery",
 	"ControllersNotificationStreamQuery":    "NotificationStreamQuery",
 	"ControllersNotificationTarget":         "NotificationTarget",
@@ -263,34 +258,8 @@ func operations() []operation {
 	ops = append(ops, sessionOperations()...)
 	ops = append(ops, prOperations()...)
 	ops = append(ops, reviewOperations()...)
-	ops = append(ops, settingsOperations()...)
 	ops = append(ops, notificationOperations()...)
 	return ops
-}
-
-func settingsOperations() []operation {
-	return []operation{
-		{
-			method: http.MethodGet, path: "/api/v1/settings/agents", id: "getAgentDefaults", tag: "settings",
-			summary: "Get app-wide default agents",
-			resps: []respUnit{
-				{http.StatusOK, controllers.AgentDefaultsResponse{}},
-				{http.StatusInternalServerError, envelope.APIError{}},
-				{http.StatusNotImplemented, envelope.APIError{}},
-			},
-		},
-		{
-			method: http.MethodPut, path: "/api/v1/settings/agents", id: "setAgentDefaults", tag: "settings",
-			summary: "Set app-wide default agents",
-			reqBody: controllers.AgentDefaultsRequest{},
-			resps: []respUnit{
-				{http.StatusOK, controllers.AgentDefaultsResponse{}},
-				{http.StatusBadRequest, envelope.APIError{}},
-				{http.StatusInternalServerError, envelope.APIError{}},
-				{http.StatusNotImplemented, envelope.APIError{}},
-			},
-		},
-	}
 }
 
 func notificationOperations() []operation {

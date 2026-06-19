@@ -21,8 +21,7 @@ progress (what's shipped vs. in flight) see [`docs/STATUS.md`](docs/STATUS.md).
   `opencode`, `aider`, `amp`, `goose`, `copilot`, `grok`, `qwen`, `kimi`,
   `crush`, `cline`, `droid`, `devin`, `auggie`, `continue`, `kiro`, `kilocode`,
   and more), registered through a shared registry with common
-  activity-dispatch / hook utilities. App-wide worker and orchestrator defaults
-  are stored in daemon-backed settings.
+  activity-dispatch / hook utilities. The default is set by `AO_AGENT`.
 - **Isolated workspaces.** Worker and orchestrator sessions spawn into their own
   `git worktree` (`backend/internal/adapters/workspace/gitworktree/`), launched
   inside a `zellij` runtime adapter (`backend/internal/adapters/runtime/`) so
@@ -95,7 +94,7 @@ go build -o /tmp/ao ./cmd/ao
 # base of --path; pass --id explicitly when the directory name doesn't match.
 /tmp/ao project add --path /path/to/your/repo --id your-repo --name your-repo
 
-# Spawn a worker session running the configured default agent.
+# Spawn a worker session running the default agent.
 /tmp/ao spawn --project your-repo --prompt "Refactor the auth module"
 
 # Inspect what's running.
@@ -168,6 +167,7 @@ exposing it beyond loopback would be a security regression.
 | `AO_SHUTDOWN_TIMEOUT` | `10s`                                             | Graceful-shutdown hard cap.                                                 |
 | `AO_RUN_FILE`         | `<UserConfigDir>/agent-orchestrator/running.json` | PID + port handshake path.                                                  |
 | `AO_DATA_DIR`         | `<UserConfigDir>/agent-orchestrator/data`         | SQLite DB, WAL files, managed state.                                        |
+| `AO_AGENT`            | `claude-code`                                     | Default agent adapter id used by `ao spawn`.                                |
 | `AO_SESSION_ID`       | _(unset)_                                         | Set inside spawned sessions; read by `ao send` and `ao hooks`.              |
 | `GITHUB_TOKEN`        | _(unset)_                                         | Used by the GitHub SCM and tracker adapters. Falls back to `gh auth token`. |
 

@@ -229,56 +229,14 @@ func (w *Workspace) existingWorktree(ctx context.Context, repo, path string, cfg
 	if err != nil {
 		return ports.WorkspaceInfo{}, false, err
 	}
-	rec, ok := findWorktree(records, path)
-	if !ok {
-		return ports.WorkspaceInfo{}, false, nil
-	}
-	usable, err := registeredWorktreeUsable(rec)
-	if err != nil {
-		return ports.WorkspaceInfo{}, false, err
-	}
-	if !usable {
-		if _, err := w.run(ctx, w.binary, worktreePruneArgs(repo)...); err != nil {
-			return ports.WorkspaceInfo{}, false, fmt.Errorf("gitworktree: worktree prune stale %q: %w", path, err)
+	if rec, ok := findWorktree(records, path); ok {
+		branch := rec.Branch
+		if branch == "" {
+			branch = cfg.Branch
 		}
-		records, err = w.listRecords(ctx, repo)
-		if err != nil {
-			return ports.WorkspaceInfo{}, false, err
-		}
-		rec, ok = findWorktree(records, path)
-		if !ok {
-			return ports.WorkspaceInfo{}, false, nil
-		}
-		usable, err = registeredWorktreeUsable(rec)
-		if err != nil {
-			return ports.WorkspaceInfo{}, false, err
-		}
-		if !usable {
-			return ports.WorkspaceInfo{}, false, fmt.Errorf("gitworktree: refusing to reuse stale registered worktree %q after prune", path)
-		}
+		return ports.WorkspaceInfo{Path: path, Branch: branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID}, true, nil
 	}
-	branch := rec.Branch
-	if branch == "" {
-		branch = cfg.Branch
-	}
-	return ports.WorkspaceInfo{Path: path, Branch: branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID}, true, nil
-}
-
-func registeredWorktreeUsable(rec worktreeRecord) (bool, error) {
-	if rec.Prunable {
-		return false, nil
-	}
-	stat, err := os.Stat(rec.Path)
-	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("gitworktree: stat registered worktree %q: %w", rec.Path, err)
-	}
-	if !stat.IsDir() {
-		return false, fmt.Errorf("gitworktree: registered worktree %q is not a directory", rec.Path)
-	}
-	return true, nil
+	return ports.WorkspaceInfo{}, false, nil
 }
 
 func (w *Workspace) addWorktree(ctx context.Context, repo, path, branch, baseBranch string) error {

@@ -92,18 +92,12 @@ func newStack(t *testing.T) *stack {
 	if err := store.UpsertProject(ctx, domain.ProjectRecord{ID: "mer", Path: "/repo/mer", RegisteredAt: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SetAgentDefaults(ctx, domain.AgentDefaults{
-		DefaultWorkerAgent:       domain.HarnessClaudeCode,
-		DefaultOrchestratorAgent: domain.HarnessClaudeCode,
-	}); err != nil {
-		t.Fatal(err)
-	}
 	msg := &captureMessenger{}
 	lcm := lifecycle.New(store, msg)
 	prm := prsvc.New(prsvc.Deps{Writer: store, Lifecycle: lcm})
 	rt := &stubRuntime{}
 	ws := &stubWorkspace{}
-	mgr := sessionmanager.New(sessionmanager.Deps{Runtime: rt, Agents: stubAgents{}, Workspace: ws, Store: store, Messenger: msg, Lifecycle: lcm, LookPath: func(string) (string, error) { return "/usr/bin/true", nil }, AgentDefaults: store})
+	mgr := sessionmanager.New(sessionmanager.Deps{Runtime: rt, Agents: stubAgents{}, Workspace: ws, Store: store, Messenger: msg, Lifecycle: lcm, LookPath: func(string) (string, error) { return "/usr/bin/true", nil }})
 	sm := sessionsvc.New(mgr, store)
 	return &stack{store: store, sm: sm, lcm: lcm, prm: prm, rt: rt, ws: ws, msg: msg}
 }

@@ -1,13 +1,11 @@
 import { createContext, useContext } from "react";
 import type { useDaemonStatus } from "../hooks/useDaemonStatus";
-import type { TerminalMuxTransport } from "./terminal-mux-transport";
 
 // Shared state the persistent _shell layout owns and route content reads. The
 // daemon status effect (IPC poll + event transport) must run exactly once, so
 // it lives in the shell and is handed down here rather than re-run per route.
 export type ShellContextValue = {
 	daemonStatus: ReturnType<typeof useDaemonStatus>;
-	terminalMux: TerminalMuxTransport | null;
 	createProject: (input: { path: string }) => Promise<void>;
 };
 

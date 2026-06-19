@@ -1,9 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import type { components } from "../../api/schema";
-import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
-import { AGENT_OPTIONS } from "../lib/agent-options";
+import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { DashboardSubhead } from "./DashboardSubhead";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
@@ -12,6 +11,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 
 type Project = components["schemas"]["Project"];
 type ProjectConfig = components["schemas"]["ProjectConfig"];
+
+// Agents the daemon registers. Empty = "use the daemon default".
+const AGENT_OPTIONS = ["claude-code", "codex", "opencode", "amp", "goose", "kiro"] as const;
 
 const PERMISSION_MODE_OPTIONS = [
 	{ value: "default", label: "Default" },
@@ -249,14 +251,14 @@ function PermissionModeSelect({
 }
 
 function AgentSelect({ id, value, onChange }: { id: string; value: string; onChange: (value: string) => void }) {
-	// "" sentinel → app default; Select can't hold an empty value, so map it.
+	// "" sentinel → daemon default; Select can't hold an empty value, so map it.
 	return (
 		<Select value={value || "__default__"} onValueChange={(v) => onChange(v === "__default__" ? "" : v)}>
 			<SelectTrigger id={id} className="h-8 w-full text-[13px]">
 				<SelectValue />
 			</SelectTrigger>
 			<SelectContent>
-				<SelectItem value="__default__">App default</SelectItem>
+				<SelectItem value="__default__">Daemon default</SelectItem>
 				{AGENT_OPTIONS.map((agent) => (
 					<SelectItem key={agent} value={agent}>
 						{agent}

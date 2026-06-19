@@ -255,9 +255,8 @@ type OrchestratorIDParam struct {
 
 // SpawnOrchestratorRequest is the body of POST /api/v1/orchestrators.
 type SpawnOrchestratorRequest struct {
-	ProjectID domain.ProjectID    `json:"projectId"`
-	Clean     bool                `json:"clean,omitempty"`
-	Harness   domain.AgentHarness `json:"harness,omitempty" enum:"claude-code,codex,aider,opencode,grok,droid,amp,agy,crush,cursor,qwen,copilot,goose,auggie,continue,devin,cline,kimi,kiro,kilocode,vibe,pi,autohand"`
+	ProjectID domain.ProjectID `json:"projectId"`
+	Clean     bool             `json:"clean,omitempty"`
 }
 
 // SpawnOrchestratorResponse is the body of POST /api/v1/orchestrators.
@@ -270,17 +269,6 @@ type OrchestratorResponse struct {
 	ID          domain.SessionID `json:"id"`
 	ProjectID   domain.ProjectID `json:"projectId"`
 	ProjectName string           `json:"projectName,omitempty"`
-}
-
-// AgentDefaultsRequest is the body of PUT /api/v1/settings/agents.
-type AgentDefaultsRequest struct {
-	domain.AgentDefaults
-}
-
-// AgentDefaultsResponse is the body of GET/PUT /api/v1/settings/agents.
-type AgentDefaultsResponse struct {
-	domain.AgentDefaults
-	Configured bool `json:"configured"`
 }
 
 // ListNotificationsQuery is the query string accepted by GET /api/v1/notifications.

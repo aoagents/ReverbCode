@@ -29,6 +29,9 @@ const (
 	// DefaultShutdownTimeout is the hard cap on graceful shutdown. After this
 	// the process exits even if connections are still draining.
 	DefaultShutdownTimeout = 10 * time.Second
+	// DefaultAgent is the agent adapter id the daemon wires when AO_AGENT is
+	// unset. It matches the claude-code adapter's manifest id.
+	DefaultAgent = "claude-code"
 )
 
 // DefaultAllowedOrigins are the browser origins the daemon's CORS boundary
@@ -60,6 +63,10 @@ type Config struct {
 	// DataDir is the directory holding durable SQLite state: DB and WAL files.
 	// It is created on first use by the storage layer.
 	DataDir string
+	// Agent is the id of the agent adapter the daemon wires into the Session
+	// Manager (see DefaultAgent). Selected by AO_AGENT; startSession fails fast
+	// if no adapter with this id is registered.
+	Agent string
 	// AllowedOrigins are the browser origins granted CORS read access (see
 	// DefaultAllowedOrigins). Overridden by AO_ALLOWED_ORIGINS.
 	AllowedOrigins []string
@@ -82,6 +89,7 @@ func (c Config) Addr() string {
 //	AO_SHUTDOWN_TIMEOUT  shutdown deadline   (Go duration > 0, default 10s)
 //	AO_RUN_FILE          running.json path   (default ~/.ao/running.json)
 //	AO_DATA_DIR          durable state dir   (default ~/.ao/data)
+//	AO_AGENT             agent adapter id    (default claude-code)
 //	AO_ALLOWED_ORIGINS   CORS origins, comma-separated (default DefaultAllowedOrigins)
 //
 // The bind host is not configurable: the daemon is loopback-only by design.
@@ -91,6 +99,7 @@ func Load() (Config, error) {
 		Port:            DefaultPort,
 		RequestTimeout:  DefaultRequestTimeout,
 		ShutdownTimeout: DefaultShutdownTimeout,
+		Agent:           DefaultAgent,
 		AllowedOrigins:  DefaultAllowedOrigins,
 	}
 
@@ -119,6 +128,10 @@ func Load() (Config, error) {
 			return Config{}, err
 		}
 		cfg.ShutdownTimeout = d
+	}
+
+	if raw := os.Getenv("AO_AGENT"); raw != "" {
+		cfg.Agent = raw
 	}
 
 	if raw, ok := os.LookupEnv("AO_ALLOWED_ORIGINS"); ok && raw != "" {

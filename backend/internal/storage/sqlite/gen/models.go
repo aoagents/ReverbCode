@@ -12,12 +12,6 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
-type AppSetting struct {
-	ID                       int64
-	DefaultWorkerAgent       domain.AgentHarness
-	DefaultOrchestratorAgent domain.AgentHarness
-}
-
 type ChangeLog struct {
 	Seq       int64
 	ProjectID domain.ProjectID

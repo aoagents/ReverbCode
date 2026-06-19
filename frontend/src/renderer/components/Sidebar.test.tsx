@@ -26,7 +26,7 @@ const workspace: WorkspaceSummary = {
 	sessions: [],
 };
 
-function renderSidebar(onRemoveProject = vi.fn().mockResolvedValue(undefined), onOpenAgentDefaults = vi.fn()) {
+function renderSidebar(onRemoveProject = vi.fn().mockResolvedValue(undefined)) {
 	const queryClient = new QueryClient({
 		defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
 	});
@@ -36,7 +36,6 @@ function renderSidebar(onRemoveProject = vi.fn().mockResolvedValue(undefined), o
 				<Sidebar
 					daemonStatus={{ state: "running" }}
 					onCreateProject={vi.fn()}
-					onOpenAgentDefaults={onOpenAgentDefaults}
 					onRemoveProject={onRemoveProject}
 					workspaces={[workspace]}
 				/>
@@ -96,17 +95,6 @@ describe("Sidebar", () => {
 		await user.click(screen.getByLabelText("Open Project One dashboard"));
 
 		expect(navigateMock).toHaveBeenCalledWith({ to: "/projects/$projectId", params: { projectId: "proj-1" } });
-	});
-
-	it("opens app-wide default agent settings from the settings menu", async () => {
-		const user = userEvent.setup();
-		const onOpenAgentDefaults = vi.fn();
-		renderSidebar(undefined, onOpenAgentDefaults);
-
-		await user.click(screen.getAllByRole("button", { name: "Settings" })[0]);
-		await user.click(await screen.findByRole("menuitem", { name: "Default agents" }));
-
-		expect(onOpenAgentDefaults).toHaveBeenCalledTimes(1);
 	});
 
 	it("hides the worker count in every state that reveals project actions", () => {

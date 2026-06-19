@@ -59,15 +59,6 @@ func TestBaseRefCandidates(t *testing.T) {
 	}
 }
 
-func containsJoined(values []string, want string) bool {
-	for _, value := range values {
-		if strings.Contains(value, want) {
-			return true
-		}
-	}
-	return false
-}
-
 func TestParseWorktreePorcelain(t *testing.T) {
 	input := strings.Join([]string{
 		"worktree /repo",
@@ -191,9 +182,6 @@ func TestCreateReusesRegisteredWorktreeAtExpectedPath(t *testing.T) {
 		t.Fatalf("new: %v", err)
 	}
 	path := filepath.Join(ws.managedRoot, "proj", "orchestrator", "proj-orchestrator")
-	if err := os.MkdirAll(path, 0o750); err != nil {
-		t.Fatalf("mkdir path: %v", err)
-	}
 	cfg := ports.WorkspaceConfig{
 		ProjectID:     "proj",
 		SessionID:     "proj-1",
@@ -220,63 +208,6 @@ func TestCreateReusesRegisteredWorktreeAtExpectedPath(t *testing.T) {
 	}
 	if info.Path != path || info.Branch != "ao/proj-orchestrator" {
 		t.Fatalf("info = %#v, want path %q branch ao/proj-orchestrator", info, path)
-	}
-}
-
-func TestCreatePrunesStaleRegisteredWorktreeBeforeAdd(t *testing.T) {
-	root := t.TempDir()
-	repo := t.TempDir()
-	ws, err := New(Options{ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
-	if err != nil {
-		t.Fatalf("new: %v", err)
-	}
-	path := filepath.Join(ws.managedRoot, "proj", "orchestrator", "proj-orchestrator")
-	cfg := ports.WorkspaceConfig{
-		ProjectID:     "proj",
-		SessionID:     "proj-1",
-		Kind:          domain.KindOrchestrator,
-		SessionPrefix: "proj",
-		Branch:        "ao/proj-orchestrator",
-	}
-
-	listCalls := 0
-	var calls []string
-	ws.run = func(_ context.Context, _ string, args ...string) ([]byte, error) {
-		joined := strings.Join(args, " ")
-		calls = append(calls, joined)
-		switch {
-		case strings.Contains(joined, "check-ref-format"):
-			return nil, nil
-		case strings.Contains(joined, "worktree list --porcelain"):
-			listCalls++
-			if listCalls == 1 {
-				return []byte("worktree " + path + "\nHEAD abc123\nbranch refs/heads/ao/proj-orchestrator\nprunable gitdir file points to non-existent location\n"), nil
-			}
-			return []byte("worktree " + repo + "\nHEAD root123\nbranch refs/heads/main\n"), nil
-		case strings.Contains(joined, "worktree prune"):
-			return nil, nil
-		case strings.Contains(joined, "rev-parse --verify --quiet refs/heads/ao/proj-orchestrator"):
-			return []byte("abc123\n"), nil
-		case strings.Contains(joined, "worktree add"):
-			return nil, nil
-		default:
-			t.Fatalf("unexpected git invocation: %v", args)
-			return nil, nil
-		}
-	}
-
-	info, err := ws.Create(context.Background(), cfg)
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
-	if info.Path != path || info.Branch != "ao/proj-orchestrator" {
-		t.Fatalf("info = %#v, want path %q branch ao/proj-orchestrator", info, path)
-	}
-	if !containsJoined(calls, "worktree prune") {
-		t.Fatalf("calls missing prune: %#v", calls)
-	}
-	if !containsJoined(calls, "worktree add "+path+" ao/proj-orchestrator") {
-		t.Fatalf("calls missing worktree add: %#v", calls)
 	}
 }
 

@@ -3,7 +3,6 @@ import type { TerminalTarget } from "../types/terminal";
 import type { WorkspaceSession } from "../types/workspace";
 import type { Theme } from "../stores/ui-store";
 import { useTerminalSession, type AttachableTerminal, type TerminalSessionState } from "../hooks/useTerminalSession";
-import { useShell } from "../lib/shell-context";
 import { XtermTerminal } from "./XtermTerminal";
 
 type TerminalPaneProps = {
@@ -39,8 +38,7 @@ function bannerText(state: TerminalSessionState, error?: string): string | undef
 	return undefined;
 }
 
-function AttachedTerminal({ session, theme, terminalTarget }: TerminalPaneProps) {
-	const { terminalMux } = useShell();
+function AttachedTerminal({ session, theme, daemonReady, terminalTarget }: TerminalPaneProps) {
 	const attachSession =
 		session && terminalTarget?.kind === "reviewer"
 			? { ...session, terminalHandleId: terminalTarget.handleId }
@@ -51,7 +49,7 @@ function AttachedTerminal({ session, theme, terminalTarget }: TerminalPaneProps)
 	// renderer mid-switch and lose the warm GPU surface.
 	const [terminal, setTerminal] = useState<AttachableTerminal | null>(null);
 	const [initFailed, setInitFailed] = useState(false);
-	const { attach, state, error } = useTerminalSession(attachSession, { mux: terminalMux });
+	const { attach, state, error } = useTerminalSession(attachSession, { daemonReady });
 	const handleId = attachSession?.terminalHandleId;
 	const hadAttachmentRef = useRef(false);
 

@@ -125,11 +125,6 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 	if cfg.WorkspacePath == "" {
 		return ports.RuntimeHandle{}, errors.New("zellij runtime: workspace path is required")
 	}
-	if stat, err := os.Stat(cfg.WorkspacePath); err != nil {
-		return ports.RuntimeHandle{}, fmt.Errorf("zellij runtime: workspace path %q: %w", cfg.WorkspacePath, err)
-	} else if !stat.IsDir() {
-		return ports.RuntimeHandle{}, fmt.Errorf("zellij runtime: workspace path %q is not a directory", cfg.WorkspacePath)
-	}
 	if len(cfg.Argv) == 0 {
 		return ports.RuntimeHandle{}, errors.New("zellij runtime: launch command is required")
 	}

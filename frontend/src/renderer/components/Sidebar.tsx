@@ -1,7 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
 import {
-	Bot,
 	ChevronRight,
 	GitPullRequest,
 	LayoutDashboard,
@@ -76,7 +75,6 @@ type SidebarProps = {
 	workspaceError?: string;
 	workspaces: WorkspaceSummary[];
 	onCreateProject: (input: { path: string }) => Promise<void>;
-	onOpenAgentDefaults: () => void;
 	onRemoveProject: (projectId: string) => Promise<void>;
 };
 
@@ -119,14 +117,7 @@ function SessionDot({ session }: { session: WorkspaceSession }) {
 // _shell owns open state (synced to the ui-store) and `collapsible="icon"`
 // replaces the old hand-rolled CollapsedRail — the same tree restyles itself
 // via group-data-[collapsible=icon] into the 48px letter rail.
-export function Sidebar({
-	daemonStatus,
-	workspaceError,
-	workspaces,
-	onCreateProject,
-	onOpenAgentDefaults,
-	onRemoveProject,
-}: SidebarProps) {
+export function Sidebar({ daemonStatus, workspaceError, workspaces, onCreateProject, onRemoveProject }: SidebarProps) {
 	const selection = useSelection();
 	const eventsConnection = useEventsConnection();
 	const { state } = useSidebar();
@@ -274,10 +265,6 @@ export function Sidebar({
 								<GitPullRequest aria-hidden="true" />
 								Pull requests
 							</DropdownMenuItem>
-							<DropdownMenuItem onSelect={onOpenAgentDefaults}>
-								<Bot aria-hidden="true" />
-								Default agents
-							</DropdownMenuItem>
 							<DropdownMenuItem disabled>
 								<Search aria-hidden="true" />
 								Search
@@ -335,10 +322,6 @@ export function Sidebar({
 							<DropdownMenuItem onSelect={selection.goPrs}>
 								<GitPullRequest aria-hidden="true" />
 								Pull requests
-							</DropdownMenuItem>
-							<DropdownMenuItem onSelect={onOpenAgentDefaults}>
-								<Bot aria-hidden="true" />
-								Default agents
 							</DropdownMenuItem>
 							<DropdownMenuItem disabled>
 								<Search aria-hidden="true" />

@@ -142,31 +142,6 @@ func TestAttachmentSkipsReattachOnCleanExit(t *testing.T) {
 	}
 }
 
-func TestAttachmentCloseStopsWithoutReattachBackoff(t *testing.T) {
-	src := &fakeSource{alive: true}
-	pty := newFakePTY()
-	sp := &fakeSpawner{ptys: []*fakePTY{pty}}
-	a := newTestAttachment(src, sp.spawn, nil, nil)
-
-	done := make(chan struct{})
-	go func() {
-		a.run(context.Background())
-		close(done)
-	}()
-	eventually(t, time.Second, func() bool { return sp.calls() == 1 })
-
-	a.close()
-
-	select {
-	case <-done:
-	case <-time.After(100 * time.Millisecond):
-		t.Fatal("attachment close waited for reattach backoff instead of stopping immediately")
-	}
-	if got := sp.calls(); got != 1 {
-		t.Fatalf("closed attachment reattached, got %d spawns", got)
-	}
-}
-
 // TestAttachmentNeverAttachesToDeadRuntime covers the resurrection bug: `zellij
 // attach` on a killed-but-cached session resurrects it, re-running the agent
 // command. An attachment whose runtime probes definitively dead must therefore

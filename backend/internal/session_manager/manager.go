@@ -32,9 +32,6 @@ var (
 	// adapter. The API maps it to a 400 so a typo'd `--harness` is a validation
 	// error, not an opaque 500.
 	ErrUnknownHarness = errors.New("session: unknown agent harness")
-	// ErrDefaultAgentRequired means a spawn named no harness, the project had no
-	// role override, and the app-wide default for that role has not been set.
-	ErrDefaultAgentRequired = errors.New("session: default agent required")
 )
 
 // Env vars a spawned process reads to learn who it is.
@@ -79,12 +76,6 @@ type Store interface {
 	DeleteSession(ctx context.Context, id domain.SessionID) (bool, error)
 }
 
-// AgentDefaults is the app-wide settings surface needed to resolve a spawn that
-// does not carry an explicit or project-level harness.
-type AgentDefaults interface {
-	GetAgentDefaults(ctx context.Context) (domain.AgentDefaults, bool, error)
-}
-
 // Manager coordinates internal session spawn, restore, kill, and cleanup over
 // the outbound ports. User-facing read-model assembly lives in the service package.
 type Manager struct {
@@ -95,10 +86,11 @@ type Manager struct {
 	messenger ports.AgentMessenger
 	lcm       lifecycleRecorder
 	dataDir   string
-	// agentDefaults supplies app-wide defaults when a spawn names no harness and
-	// the project has no role override.
-	agentDefaults AgentDefaults
-	clock         func() time.Time
+	// defaultHarness is the daemon's configured default agent (AO_AGENT). A spawn
+	// that names no harness resolves to it before the seed row is written, so the
+	// stored/returned harness matches the agent the resolver actually launches.
+	defaultHarness domain.AgentHarness
+	clock          func() time.Time
 	// lookPath is exec.LookPath in production; tests substitute a stub so
 	// they don't need real binaries on PATH. Returns ports.ErrAgentBinaryNotFound
 	// when the binary is missing so the sentinel propagates through toAPIError.
@@ -121,10 +113,12 @@ type Deps struct {
 	// DataDir is exported to spawned agents as AO_DATA_DIR so their hook
 	// commands can open the same store.
 	DataDir string
-	// AgentDefaults stores app-wide defaults used when a spawn names no harness
-	// and the project has no role override.
-	AgentDefaults AgentDefaults
-	Clock         func() time.Time
+	// DefaultHarness is the daemon's configured default agent (AO_AGENT), used to
+	// resolve a spawn that names no harness. Wiring passes config.DefaultAgent;
+	// left empty, an unspecified harness stays empty (the resolver still defaults
+	// it at launch, but the record won't reflect the real agent).
+	DefaultHarness domain.AgentHarness
+	Clock          func() time.Time
 	// LookPath overrides exec.LookPath for the pre-launch agent-binary check.
 	// Production wiring leaves this nil and the manager defaults to
 	// exec.LookPath; tests inject a stub so they need not seed real binaries.
@@ -142,18 +136,18 @@ type Deps struct {
 // time.Now when Deps.Clock is nil.
 func New(d Deps) *Manager {
 	m := &Manager{
-		runtime:       d.Runtime,
-		agents:        d.Agents,
-		workspace:     d.Workspace,
-		store:         d.Store,
-		messenger:     d.Messenger,
-		lcm:           d.Lifecycle,
-		dataDir:       d.DataDir,
-		agentDefaults: d.AgentDefaults,
-		clock:         d.Clock,
-		lookPath:      d.LookPath,
-		executable:    d.Executable,
-		logger:        d.Logger,
+		runtime:        d.Runtime,
+		agents:         d.Agents,
+		workspace:      d.Workspace,
+		store:          d.Store,
+		messenger:      d.Messenger,
+		lcm:            d.Lifecycle,
+		dataDir:        d.DataDir,
+		defaultHarness: d.DefaultHarness,
+		clock:          d.Clock,
+		lookPath:       d.LookPath,
+		executable:     d.Executable,
+		logger:         d.Logger,
 	}
 	if m.clock == nil {
 		// UTC so spawn-stamped CreatedAt/UpdatedAt match every other session
@@ -173,27 +167,6 @@ func New(d Deps) *Manager {
 	return m
 }
 
-func (m *Manager) defaultHarnessForKind(ctx context.Context, kind domain.SessionKind) (domain.AgentHarness, error) {
-	if m.agentDefaults == nil {
-		return "", ErrDefaultAgentRequired
-	}
-	defaults, ok, err := m.agentDefaults.GetAgentDefaults(ctx)
-	if err != nil {
-		return "", fmt.Errorf("agent defaults: %w", err)
-	}
-	if !ok {
-		return "", ErrDefaultAgentRequired
-	}
-	harness := defaults.HarnessFor(kind)
-	if harness == "" {
-		return "", ErrDefaultAgentRequired
-	}
-	if !harness.IsKnown() {
-		return "", fmt.Errorf("%w: %q", ErrUnknownHarness, harness)
-	}
-	return harness, nil
-}
-
 // Spawn creates the session row (which assigns the "{project}-{n}" id), then the
 // workspace and runtime, then reports completion to the LCM. If workspace
 // materialization fails the still-seed row is deleted outright; a later failure
@@ -206,12 +179,12 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	// A per-project role override picks the harness when the spawn names none,
 	// so a project can default workers to one agent and orchestrators to another.
 	cfg.Harness = effectiveHarness(cfg.Harness, cfg.Kind, project.Config)
+	// Resolve an unspecified harness to the daemon default BEFORE the seed row is
+	// written, so the stored/returned harness matches the agent the resolver
+	// launches (otherwise a default-agent session persists an empty harness and
+	// the UI can't tell which agent is running).
 	if cfg.Harness == "" {
-		harness, err := m.defaultHarnessForKind(ctx, cfg.Kind)
-		if err != nil {
-			return domain.SessionRecord{}, fmt.Errorf("spawn: %w", err)
-		}
-		cfg.Harness = harness
+		cfg.Harness = m.defaultHarness
 	}
 
 	// Reject an unknown harness before any durable state is created. Doing this
@@ -335,7 +308,7 @@ func (m *Manager) loadProject(ctx context.Context, projectID domain.ProjectID) (
 
 // effectiveHarness resolves the harness for a spawn: an explicit harness wins;
 // otherwise the project's role override for the session kind applies; otherwise
-// it stays empty so the app-wide default can be read from settings.
+// it stays empty so the daemon's global default (AO_AGENT) is used downstream.
 func effectiveHarness(explicit domain.AgentHarness, kind domain.SessionKind, cfg domain.ProjectConfig) domain.AgentHarness {
 	if explicit != "" {
 		return explicit

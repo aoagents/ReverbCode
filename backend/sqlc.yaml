@@ -80,14 +80,6 @@ sql:
             go_type:
               import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
               type: "ProjectID"
-          - column: "app_settings.default_worker_agent"
-            go_type:
-              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
-              type: "AgentHarness"
-          - column: "app_settings.default_orchestrator_agent"
-            go_type:
-              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
-              type: "AgentHarness"
           - column: "session_worktrees.session_id"
             go_type:
               import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
