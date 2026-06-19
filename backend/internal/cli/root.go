@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -19,7 +20,18 @@ import (
 
 // Execute runs the ao CLI with process stdio.
 func Execute() error {
-	return NewRootCommand(DefaultDeps()).Execute()
+	return executeWithDeps(DefaultDeps(), os.Args[1:])
+}
+
+func executeWithDeps(deps Deps, args []string) error {
+	deps = deps.withDefaults()
+	cmd := NewRootCommand(deps)
+	cmd.SetArgs(args)
+	err := cmd.Execute()
+	if err != nil && ExitCode(err) == 2 {
+		(&commandContext{deps: deps}).emitCLIUsageError(context.Background(), args, err)
+	}
+	return err
 }
 
 // usageError marks a command-line misuse (bad flag, wrong arg count). It lets
@@ -149,6 +161,12 @@ func NewRootCommand(deps Deps) *cobra.Command {
 		Version:       VersionString(),
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+			if shouldEmitCLIInvocation(cmd) {
+				ctx.emitCLIInvoked(cmd.Context(), cmd)
+			}
+			return nil
+		},
 	}
 	root.SetIn(deps.In)
 	root.SetOut(deps.Out)
@@ -168,6 +186,8 @@ func NewRootCommand(deps Deps) *cobra.Command {
 	root.AddCommand(newSpawnCommand(ctx))
 	root.AddCommand(newSendCommand(ctx))
 	root.AddCommand(newHooksCommand(ctx))
+	root.AddCommand(newLaunchCommand(ctx))
+	root.AddCommand(newImportCommand(ctx))
 	root.AddCommand(newProjectCommand(ctx))
 	root.AddCommand(newSessionCommand(ctx))
 	root.AddCommand(newOrchestratorCommand(ctx))
@@ -180,6 +200,51 @@ func NewRootCommand(deps Deps) *cobra.Command {
 
 type commandContext struct {
 	deps Deps
+}
+
+func shouldEmitCLIInvocation(cmd *cobra.Command) bool {
+	switch strings.TrimSpace(cmd.CommandPath()) {
+	case "ao daemon", "ao start", "ao completion", "ao help":
+		return false
+	default:
+		return true
+	}
+}
+
+func (c *commandContext) emitCLIInvoked(ctx context.Context, cmd *cobra.Command) {
+	reqCtx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
+	_ = c.postLoopbackJSON(reqCtx, "/internal/telemetry/cli-invoked", map[string]string{
+		"command":     cmd.Name(),
+		"commandPath": cmd.CommandPath(),
+	})
+}
+
+func (c *commandContext) emitCLIUsageError(ctx context.Context, args []string, err error) {
+	command, commandPath := usageErrorCommand(args)
+	reqCtx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
+	_ = c.postLoopbackJSON(reqCtx, "/internal/telemetry/cli-usage-error", map[string]string{
+		"command":     command,
+		"commandPath": commandPath,
+		"error":       err.Error(),
+	})
+}
+
+func usageErrorCommand(args []string) (string, string) {
+	tokens := []string{"ao"}
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "-") {
+			break
+		}
+		tokens = append(tokens, arg)
+	}
+	commandPath := strings.Join(tokens, " ")
+	command := "ao"
+	if len(tokens) > 1 {
+		command = tokens[len(tokens)-1]
+	}
+	return command, commandPath
 }
 
 func noArgs(cmd *cobra.Command, args []string) error {

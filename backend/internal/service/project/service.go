@@ -14,6 +14,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 // Manager is the controller-facing contract for the /api/v1/projects surface.
@@ -45,12 +46,15 @@ type SessionTeardowner interface {
 
 // Service implements project registration and lookup use-cases for controllers.
 type Service struct {
-	store    Store
-	sessions SessionTeardowner
+
 	// defaultHarness is the daemon's configured default agent. Project detail
 	// responses expose it so clients can compare an explicit empty override
 	// against the real effective default.
 	defaultHarness domain.AgentHarness
+	store     Store
+	sessions  SessionTeardowner
+	clock     func() time.Time
+	telemetry ports.EventSink
 	// addMu serialises the whole body of Add. Workspace registration performs
 	// filesystem mutations (git init, .gitignore writes, commits) that are not
 	// covered by the store's own writeMu, so path/id conflict checks plus the
@@ -62,11 +66,14 @@ var _ Manager = (*Service)(nil)
 
 // Deps captures optional collaborators for project use-cases.
 type Deps struct {
-	Store    Store
-	Sessions SessionTeardowner
+
 	// DefaultHarness is the daemon's configured default agent (AO_AGENT).
 	// When empty, the service falls back to config.DefaultAgent.
 	DefaultHarness domain.AgentHarness
+	Store     Store
+	Sessions  SessionTeardowner
+	Clock     func() time.Time
+	Telemetry ports.EventSink
 }
 
 // New returns a project service backed by the given durable store.
@@ -76,12 +83,23 @@ func New(store Store) *Service {
 
 // NewWithDeps returns a project service with optional teardown dependencies.
 func NewWithDeps(d Deps) *Service {
-	defaultHarness := d.DefaultHarness
-	if defaultHarness == "" {
-		defaultHarness = domain.AgentHarness(config.DefaultAgent)
-	}
-	return &Service{store: d.Store, sessions: d.Sessions, defaultHarness: defaultHarness}
-}
+        defaultHarness := d.DefaultHarness
+        if defaultHarness == "" {
+                defaultHarness = domain.AgentHarness(config.DefaultAgent)
+        }
+
+        s := &Service{
+                store:          d.Store,
+                sessions:       d.Sessions,
+                clock:          d.Clock,
+                telemetry:      d.Telemetry,
+                defaultHarness: defaultHarness,
+        }
+        if s.clock == nil {
+                s.clock = time.Now
+        }
+        return s
+  }
 
 // List returns every active registered project.
 func (m *Service) List(ctx context.Context) ([]Summary, error) {
@@ -147,6 +165,11 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 	m.addMu.Lock()
 	defer m.addMu.Unlock()
 
+	projectCountBefore, err := m.activeProjectCount(ctx)
+	if err != nil {
+		return Project{}, apierr.Internal("PROJECT_LOAD_FAILED", "Failed to load project")
+	}
+
 	name := string(id)
 	if in.Name != nil {
 		name = strings.TrimSpace(*in.Name)
@@ -199,9 +222,10 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 		if err := m.store.UpsertWorkspaceProject(ctx, row, repos); err != nil {
 			return Project{}, apierr.Internal("PROJECT_ADD_FAILED", "Failed to register workspace project")
 		}
-		p := m.projectFromRow(row)
-		p.WorkspaceRepos = workspaceReposFromRecords(repos)
-		return p, nil
+	 m.emitProjectAdded(row, projectCountBefore == 0)
+   p := m.projectFromRow(row)
+   p.WorkspaceRepos = workspaceReposFromRecords(repos)
+   return p, nil
 	}
 	if !isGitRepo(path) {
 		return Project{}, apierr.Invalid("NOT_A_GIT_REPO", "Repository path must point to a git repository", nil)
@@ -220,7 +244,47 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 	if err := m.store.UpsertProject(ctx, row); err != nil {
 		return Project{}, apierr.Internal("PROJECT_ADD_FAILED", "Failed to register project")
 	}
-	return m.projectFromRow(row), nil
+  m.emitProjectAdded(row, projectCountBefore == 0)
+  return m.projectFromRow(row), nil
+}
+
+func (m *Service) activeProjectCount(ctx context.Context) (int, error) {
+	projects, err := m.store.ListProjects(ctx)
+	if err != nil {
+		return 0, err
+	}
+	return len(projects), nil
+}
+
+func (m *Service) emitProjectAdded(row domain.ProjectRecord, firstProject bool) {
+	if m.telemetry == nil {
+		return
+	}
+	projectID := domain.ProjectID(row.ID)
+	at := m.clock().UTC()
+	payload := map[string]any{
+		"kind":           string(row.Kind.WithDefault()),
+		"has_git_remote": row.RepoOriginURL != "",
+	}
+	m.telemetry.Emit(context.Background(), ports.TelemetryEvent{
+		Name:       "ao.projects.created",
+		Source:     "project_service",
+		OccurredAt: at,
+		Level:      ports.TelemetryLevelInfo,
+		ProjectID:  &projectID,
+		Payload:    payload,
+	})
+	if !firstProject {
+		return
+	}
+	m.telemetry.Emit(context.Background(), ports.TelemetryEvent{
+		Name:       "ao.onboarding.first_project_added",
+		Source:     "project_service",
+		OccurredAt: at,
+		Level:      ports.TelemetryLevelInfo,
+		ProjectID:  &projectID,
+		Payload:    payload,
+	})
 }
 
 // SetConfig replaces the project's stored config. The typed config is validated

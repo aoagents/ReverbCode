@@ -3,7 +3,7 @@ import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
 import {
 	ChevronRight,
 	GitPullRequest,
-	LayoutGrid,
+	LayoutDashboard,
 	Moon,
 	MoreVertical,
 	Plus,
@@ -11,7 +11,6 @@ import {
 	Settings,
 	Sun,
 	Trash2,
-	Waypoints,
 } from "lucide-react";
 import { useState } from "react";
 import {
@@ -53,6 +52,8 @@ import {
 	useSidebar,
 } from "./ui/sidebar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
+import { OrchestratorIcon } from "./icons";
+import aoLogo from "../assets/ao-logo.png";
 import { cn } from "../lib/utils";
 import { useUiStore } from "../stores/ui-store";
 
@@ -158,8 +159,8 @@ export function Sidebar({ daemonStatus, workspaceError, workspaces, onCreateProj
 							<button
 								aria-label="Orchestrator board"
 								className={cn(
-									"grid h-[22px] w-[22px] shrink-0 place-items-center rounded-[6px] bg-accent text-accent-foreground",
-									"group-data-[collapsible=icon]:size-9 group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:bg-transparent group-data-[collapsible=icon]:text-current",
+									"grid h-[22px] w-[22px] shrink-0 place-items-center",
+									"group-data-[collapsible=icon]:size-9 group-data-[collapsible=icon]:rounded-lg",
 									selection.isHome
 										? "group-data-[collapsible=icon]:bg-interactive-active"
 										: "group-data-[collapsible=icon]:hover:bg-interactive-hover",
@@ -167,9 +168,7 @@ export function Sidebar({ daemonStatus, workspaceError, workspaces, onCreateProj
 								onClick={selection.goHome}
 								type="button"
 							>
-								<span className="contents group-data-[collapsible=icon]:grid group-data-[collapsible=icon]:h-[22px] group-data-[collapsible=icon]:w-[22px] group-data-[collapsible=icon]:place-items-center group-data-[collapsible=icon]:rounded-[6px] group-data-[collapsible=icon]:bg-accent group-data-[collapsible=icon]:text-accent-foreground">
-									<Waypoints className="h-3.5 w-3.5" aria-hidden="true" />
-								</span>
+								<img src={aoLogo} alt="" aria-hidden="true" className="h-[22px] w-[22px] rounded-[6px] object-cover" />
 							</button>
 						</TooltipTrigger>
 						<TooltipContent side="right" hidden={state !== "collapsed"}>
@@ -493,7 +492,7 @@ function ProjectItem({
 							onClick={() => selection.goProject(workspace.id)}
 							type="button"
 						>
-							<LayoutGrid aria-hidden="true" />
+							<LayoutDashboard aria-hidden="true" />
 						</button>
 					</TooltipTrigger>
 					<TooltipContent>Dashboard</TooltipContent>
@@ -507,7 +506,7 @@ function ProjectItem({
 							onClick={() => void openOrchestrator()}
 							type="button"
 						>
-							<Waypoints aria-hidden="true" />
+							<OrchestratorIcon aria-hidden="true" />
 						</button>
 					</TooltipTrigger>
 					<TooltipContent>

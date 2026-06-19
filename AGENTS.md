@@ -46,7 +46,7 @@ npm run build
 - `README.md` — current run/config/test quickstart.
 - `docs/README.md` — docs index.
 - `docs/architecture.md` — backend mental model, package layout, lifecycle/session/service boundaries, and load-bearing rules.
-- `docs/status.md` — what is shipped on `main` today and what is still in flight.
+- `docs/STATUS.md` — what is shipped on `main` today and what is still in flight.
 - `docs/cli/README.md` — intended CLI shape: thin Cobra client over daemon HTTP, never direct storage/runtime access.
 - `docs/agent/README.md` — agent adapter contract and hook behavior.
 - `CLAUDE.md` — compatibility pointer for Claude Code; it directs agents back to `AGENTS.md`.

@@ -485,6 +485,38 @@ func TestPoll_DiscoversStackedChildByBranchPrefix(t *testing.T) {
 	}
 }
 
+func TestPoll_DiscoversSiblingUnderRootSessionNamespace(t *testing.T) {
+	store := testStoreWithSession()
+	store.sessions[0].Metadata.Branch = "ao/p-1/root"
+	prObs := testObs(1)
+	prObs.PR.SourceBranch = "ao/p-1/fix"
+	prObs.PR.TargetBranch = "main"
+	provider := &fakeProvider{
+		repoGuards: map[string]ports.SCMGuardResult{prKey(testRepo, 0): {ETag: "v2"}},
+		openPRs: map[string][]ports.SCMPRObservation{prKey(testRepo, 0): {
+			{URL: "https://github.com/o/r/pull/1", Number: 1, SourceBranch: "ao/p-1/fix", HeadRepo: "o/r", TargetBranch: "main", HeadSHA: "sha1"},
+		}},
+		observations: map[string]ports.SCMObservation{prKey(testRepo, 1): prObs},
+	}
+	lc := &fakeLifecycle{}
+	obs := newTestObserver(store, provider, lc, time.Unix(1, 0).UTC())
+	if err := obs.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.writes) == 0 {
+		t.Fatal("expected discovered PR write")
+	}
+	if got := store.writes[0].pr.SourceBranch; got != "ao/p-1/fix" {
+		t.Fatalf("source branch = %q, want ao/p-1/fix", got)
+	}
+	if got := store.writes[0].pr.SessionID; got != "p-1" {
+		t.Fatalf("session id = %q, want p-1", got)
+	}
+	if len(lc.observed) != 1 {
+		t.Fatalf("lifecycle observations = %d, want 1", len(lc.observed))
+	}
+}
+
 // A PR whose head branch matches a session branch but lives in a fork (its head
 // repo differs from the project repo) must not be auto-attributed: its commits
 // are not the session's work. It is neither fetched nor persisted.

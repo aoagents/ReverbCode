@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
-import { GitBranch, LayoutGrid, PanelRightClose, PanelRightOpen, Square, Waypoints } from "lucide-react";
+import { GitBranch, LayoutDashboard, PanelRightClose, PanelRightOpen, Square } from "lucide-react";
 import { useState } from "react";
 import {
 	findProjectOrchestrator,
@@ -13,7 +13,9 @@ import {
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
+import { captureRendererEvent, captureRendererException } from "../lib/telemetry";
 import { useUiStore } from "../stores/ui-store";
+import { OrchestratorIcon } from "./icons";
 import { cn } from "../lib/utils";
 
 const isMac = typeof navigator !== "undefined" && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent);
@@ -72,6 +74,7 @@ export function ShellTopbar() {
 
 	const openOrchestrator = async () => {
 		if (!projectId) return;
+		void captureRendererEvent("ao.renderer.orchestrator_open_requested", { project_id: projectId });
 		if (orchestrator) {
 			void navigate({
 				to: "/projects/$projectId/sessions/$sessionId",
@@ -88,6 +91,7 @@ export function ShellTopbar() {
 				params: { projectId, sessionId },
 			});
 		} catch (error) {
+			void captureRendererException(error, { source: "orchestrator-open", project_id: projectId });
 			console.error("Failed to spawn orchestrator:", error);
 		} finally {
 			setIsSpawning(false);
@@ -105,7 +109,7 @@ export function ShellTopbar() {
 								·
 							</span>
 							<span className="session-detail-mode-badge session-detail-mode-badge--neutral">
-								<Waypoints className="size-3 shrink-0" aria-hidden="true" />
+								<OrchestratorIcon className="size-3 shrink-0" aria-hidden="true" />
 								Orchestrator
 							</span>
 						</div>
@@ -138,7 +142,7 @@ export function ShellTopbar() {
 								style={noDragStyle}
 								type="button"
 							>
-								<LayoutGrid className="h-3.5 w-3.5" aria-hidden="true" />
+								<LayoutDashboard className="h-3.5 w-3.5" aria-hidden="true" />
 								Open Kanban
 							</button>
 						) : (
@@ -150,7 +154,7 @@ export function ShellTopbar() {
 								style={noDragStyle}
 								type="button"
 							>
-								<Waypoints className="h-3.5 w-3.5" aria-hidden="true" />
+								<OrchestratorIcon className="h-3.5 w-3.5" aria-hidden="true" />
 								{isSpawning ? "Spawning…" : "Open orchestrator"}
 							</button>
 						)}
@@ -190,7 +194,7 @@ export function ShellTopbar() {
 							style={noDragStyle}
 							type="button"
 						>
-							<Waypoints className="h-3.5 w-3.5" aria-hidden="true" />
+							<OrchestratorIcon className="h-3.5 w-3.5" aria-hidden="true" />
 							Orchestrator
 						</button>
 					) : (
@@ -202,7 +206,7 @@ export function ShellTopbar() {
 							style={noDragStyle}
 							type="button"
 						>
-							<Waypoints className="h-3.5 w-3.5" aria-hidden="true" />
+							<OrchestratorIcon className="h-3.5 w-3.5" aria-hidden="true" />
 							{isSpawning ? "Spawning…" : "Spawn Orchestrator"}
 						</button>
 					)

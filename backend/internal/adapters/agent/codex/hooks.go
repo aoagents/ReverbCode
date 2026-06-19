@@ -105,9 +105,20 @@ func appendWorkspaceTrustFlag(cmd *[]string, workspacePath string) {
 	}
 	entries := make([]string, 0, len(keys))
 	for _, key := range keys {
-		entries = append(entries, codexTOMLBasicString(key)+`={trust_level="trusted"}`)
+		entries = append(entries, codexTOMLConfigString(key)+`={trust_level="trusted"}`)
 	}
 	*cmd = append(*cmd, "-c", "projects={"+strings.Join(entries, ",")+"}")
+}
+
+func codexTOMLConfigString(s string) string {
+	if !containsTOMLControl(s) && !strings.Contains(s, "'") {
+		return codexTOMLLiteralString(s)
+	}
+	return codexTOMLBasicString(s)
+}
+
+func codexTOMLLiteralString(s string) string {
+	return "'" + s + "'"
 }
 
 // codexTOMLBasicString renders s as a TOML basic string, escaping backslashes
@@ -130,6 +141,15 @@ func codexTOMLBasicString(s string) string {
 	}
 	b.WriteByte('"')
 	return b.String()
+}
+
+func containsTOMLControl(s string) bool {
+	for _, r := range s {
+		if r < 0x20 || r == 0x7f {
+			return true
+		}
+	}
+	return false
 }
 
 // GetAgentHooks no longer installs workspace files — Codex never loads them

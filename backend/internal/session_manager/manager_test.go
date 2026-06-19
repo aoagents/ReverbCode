@@ -664,9 +664,10 @@ func TestSpawn_DefaultsBranchFromSessionID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// An empty SpawnConfig.Branch defaults to a unique per-session branch.
-	if got := st.sessions[s.ID].Metadata.Branch; got != "ao/mer-1" {
-		t.Fatalf("default branch = %q, want ao/mer-1", got)
+	// An empty SpawnConfig.Branch defaults to a unique per-session root branch
+	// under a namespace that can also hold sibling PR branches.
+	if got := st.sessions[s.ID].Metadata.Branch; got != "ao/mer-1/root" {
+		t.Fatalf("default branch = %q, want ao/mer-1/root", got)
 	}
 }
 
