@@ -136,6 +136,13 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				// Required for the Unicode 11 width addon below.
 				allowProposedApi: true,
 				cursorBlink: true,
+				// zellij's SGR mouse tracking otherwise eats every drag as a mouse
+				// report. xterm.js only overrides this for local selection on Shift+drag
+				// on Windows/Linux — on macOS the override key is Option/Alt, and it's
+				// gated behind this option (default false). Without it, Mac users have
+				// no way to select text at all, so hasSelection() is always false and
+				// copy silently no-ops.
+				macOptionClickForcesSelection: true,
 				// Resolve the Nerd Font stack from --font-mono (styles.css) at
 				// construction so terminal glyphs follow the app's font tokens. The
 				// box-drawing grid is rasterized by the WebGL/canvas renderer itself,
