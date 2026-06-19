@@ -14,7 +14,7 @@ import (
 )
 
 // ErrorKindAndCode extracts a telemetry-safe error category and optional code.
-func ErrorKindAndCode(err error) (kind string, code string) {
+func ErrorKindAndCode(err error) (kind, code string) {
 	kind = "internal"
 	var apiErr *apierr.Error
 	if errors.As(err, &apiErr) {
