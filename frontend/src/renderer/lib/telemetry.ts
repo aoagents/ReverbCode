@@ -5,6 +5,8 @@ import { DEFAULT_POSTHOG_HOST, DEFAULT_POSTHOG_PROJECT_KEY } from "../../shared/
 const POSTHOG_KEY = import.meta.env.VITE_AO_POSTHOG_KEY?.trim() || DEFAULT_POSTHOG_PROJECT_KEY;
 const POSTHOG_HOST = import.meta.env.VITE_AO_POSTHOG_HOST?.trim() || DEFAULT_POSTHOG_HOST;
 const RELEASE_TAG = "2026-01-30";
+const REDACTED_LOCAL_URL = "[redacted-local-url]";
+const REDACTED_LOCAL_PATH = "[redacted-local-path]";
 
 let initPromise: Promise<boolean> | null = null;
 let errorHandlersBound = false;
@@ -46,6 +48,62 @@ async function hashedTelemetryID(value: unknown): Promise<string | undefined> {
 	const trimmed = value.trim();
 	if (!trimmed) return undefined;
 	return sha256Hex(trimmed);
+}
+
+function isLocalURL(value: string): boolean {
+	try {
+		const url = new URL(value);
+		return (
+			url.protocol === "file:" ||
+			(url.protocol === "app:" && url.host === "renderer") ||
+			url.hostname === "localhost" ||
+			url.hostname === "127.0.0.1" ||
+			url.hostname === "::1"
+		);
+	} catch {
+		return false;
+	}
+}
+
+function redactEmbeddedLocalURLs(value: string): string {
+	return value.replace(/\bfile:\/\/\/\S+/gi, REDACTED_LOCAL_URL);
+}
+
+function redactEmbeddedAbsolutePaths(value: string): string {
+	return value
+		.replace(/(?:\/Users\/|\/home\/|\/tmp\/|\/private\/var\/|\/var\/folders\/)\S+/g, REDACTED_LOCAL_PATH)
+		.replace(/\b[A-Za-z]:\\[^\s)]+/g, REDACTED_LOCAL_PATH);
+}
+
+function sanitizeSensitiveString(value: string): string {
+	const trimmed = value.trim();
+	if (!trimmed) return trimmed;
+	if (isLocalURL(trimmed)) return REDACTED_LOCAL_URL;
+	return redactEmbeddedAbsolutePaths(redactEmbeddedLocalURLs(trimmed));
+}
+
+function sanitizePostHogValue(value: unknown): unknown {
+	if (typeof value === "string") return sanitizeSensitiveString(value);
+	if (Array.isArray(value)) return value.map((item) => sanitizePostHogValue(item));
+	if (value && typeof value === "object") {
+		return Object.fromEntries(
+			Object.entries(value).map(([key, nested]) => [key, sanitizePostHogValue(nested)]),
+		);
+	}
+	return value;
+}
+
+export function sanitizePostHogEvent(event: Record<string, unknown>): Record<string, unknown> {
+	return sanitizePostHogValue(event) as Record<string, unknown>;
+}
+
+export function sanitizeReplayRequestName(name: string): string {
+	const withoutQuery = name.split("?")[0] ?? name;
+	return sanitizeSensitiveString(withoutQuery);
+}
+
+function sanitizePostHogCaptureResult<T>(event: T): T {
+	return sanitizePostHogEvent(event as unknown as Record<string, unknown>) as unknown as T;
 }
 
 async function sanitizeRendererContextProperties(properties?: TelemetryProperties): Promise<TelemetryProperties> {
@@ -141,7 +199,17 @@ export async function initTelemetry(): Promise<boolean> {
 			defaults: RELEASE_TAG,
 			autocapture: false,
 			capture_pageview: false,
+			capture_exceptions: false,
 			persistence: "localStorage",
+			before_send: (event) => (event ? sanitizePostHogCaptureResult(event) : event),
+			session_recording: {
+				maskCapturedNetworkRequestFn: (request) => {
+					if (request.name) {
+						request.name = sanitizeReplayRequestName(request.name);
+					}
+					return request;
+				},
+			},
 		});
 		posthog.identify(bootstrap.distinctId, {
 			app_version: bootstrap.appVersion,

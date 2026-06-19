@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
 	routeSurface,
+	sanitizePostHogEvent,
+	sanitizeReplayRequestName,
 	sanitizeRendererExceptionProperties,
 	sanitizeRendererProperties,
 } from "./telemetry";
@@ -59,5 +61,43 @@ describe("telemetry sanitizers", () => {
 			surface: "session_detail",
 		});
 		expect(props).toHaveProperty("project_id_hash");
+	});
+
+	it("redacts local urls and filesystem paths from outgoing PostHog payloads", () => {
+		const event = sanitizePostHogEvent({
+			event: "$exception",
+			properties: {
+				$current_url: "app://renderer/index.html?token=secret",
+				$initial_current_url: "file:///Users/alice/private/index.html",
+				message: "open /Users/alice/reverb/file.txt failed",
+				$exception_list: [
+					{
+						type: "TypeError",
+						value: "failed to load /home/alice/.config/reverb/settings.json",
+						stacktrace: {
+							frames: [{ filename: "file:///Users/alice/reverb/dist/main.js" }],
+						},
+					},
+				],
+			},
+		});
+		const props = event.properties as Record<string, unknown>;
+		expect(props.$current_url).toBe("[redacted-local-url]");
+		expect(props.$initial_current_url).toBe("[redacted-local-url]");
+		expect(props.message).toBe("open [redacted-local-path] failed");
+		const exceptionList = props.$exception_list as Array<Record<string, unknown>>;
+		expect(exceptionList[0].value).toBe("failed to load [redacted-local-path]");
+		expect(((exceptionList[0].stacktrace as { frames: Array<{ filename: string }> }).frames[0]).filename).toBe(
+			"[redacted-local-url]",
+		);
+	});
+
+	it("redacts replay request names before they leave the renderer", () => {
+		expect(sanitizeReplayRequestName("file:///Users/alice/private/index.html?token=secret")).toBe(
+			"[redacted-local-url]",
+		);
+		expect(sanitizeReplayRequestName("https://api.example.com/endpoint?token=secret")).toBe(
+			"https://api.example.com/endpoint",
+		);
 	});
 });
