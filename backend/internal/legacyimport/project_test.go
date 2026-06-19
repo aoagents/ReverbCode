@@ -4,8 +4,16 @@ import (
 	"testing"
 	"time"
 
+	yaml "gopkg.in/yaml.v3"
+
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
+
+// nonNilNode returns a populated *yaml.Node, standing in for a captured legacy
+// config block (e.g. tracker) the rewrite has no home for.
+func nonNilNode() *yaml.Node {
+	return &yaml.Node{Kind: yaml.ScalarNode, Value: "x"}
+}
 
 func TestMapPermission(t *testing.T) {
 	cases := []struct {

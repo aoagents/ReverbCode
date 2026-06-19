@@ -7,7 +7,11 @@ import { buildTelemetryBootstrap, defaultDataDir, loadOrCreateTelemetryInstallId
 const tempDirs: string[] = [];
 
 afterEach(async () => {
-	await Promise.all(tempDirs.splice(0).map((dir) => import("node:fs/promises").then(({ rm }) => rm(dir, { recursive: true, force: true }))));
+	await Promise.all(
+		tempDirs
+			.splice(0)
+			.map((dir) => import("node:fs/promises").then(({ rm }) => rm(dir, { recursive: true, force: true }))),
+	);
 });
 
 test("defaultDataDir prefers AO_DATA_DIR", () => {

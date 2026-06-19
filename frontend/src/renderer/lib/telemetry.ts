@@ -70,7 +70,7 @@ export async function sanitizeRendererProperties(
 		case "ao.renderer.orchestrator_open_requested": {
 			const projectIDHash = await hashedTelemetryID(properties?.project_id);
 			if (projectIDHash) safe.project_id_hash = projectIDHash;
-			break
+			break;
 		}
 	}
 	return safe;
@@ -157,10 +157,7 @@ export async function captureRendererEvent(event: string, properties?: Record<st
 	posthog.capture(event, safeProperties);
 }
 
-export async function captureRendererException(
-	error: unknown,
-	properties?: Record<string, unknown>,
-): Promise<void> {
+export async function captureRendererException(error: unknown, properties?: Record<string, unknown>): Promise<void> {
 	if (!(await initTelemetry())) return;
 	const safeProperties = await sanitizeRendererExceptionProperties(error, properties);
 	posthog.capture("ao.renderer.exception", safeProperties);

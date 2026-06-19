@@ -2,6 +2,7 @@ package legacyimport
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 
@@ -22,7 +23,6 @@ type legacyConfig struct {
 type legacyProjectConfig struct {
 	Path          string             `yaml:"path"`
 	Name          string             `yaml:"name"`
-	Repo          string             `yaml:"repo"`
 	DefaultBranch string             `yaml:"defaultBranch"`
 	SessionPrefix string             `yaml:"sessionPrefix"`
 	Env           map[string]string  `yaml:"env"`
@@ -31,6 +31,13 @@ type legacyProjectConfig struct {
 	AgentConfig   *legacyAgentConfig `yaml:"agentConfig"`
 	Worker        *legacyRole        `yaml:"worker"`
 	Orchestrator  *legacyRole        `yaml:"orchestrator"`
+
+	// repo is a structured block ({owner, name, platform, originUrl}) in the
+	// real legacy config, never the bare string it was first typed as. That
+	// mismatch made yaml.v3 raise a TypeError that dropped the whole registry.
+	// It is captured as a raw node (never consumed): the rewrite re-resolves the
+	// git origin from the repo path, so nothing here is imported.
+	Repo *yaml.Node `yaml:"repo"`
 
 	// Captured only to surface as dropped in the report (no rewrite home).
 	Tracker          *yaml.Node `yaml:"tracker"`
@@ -65,7 +72,16 @@ func loadLegacyConfig(root string) (legacyConfig, error) {
 	}
 	var cfg legacyConfig
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return legacyConfig{}, fmt.Errorf("parse legacy config.yaml: %w", err)
+		// A *yaml.TypeError means individual fields didn't match their Go types
+		// (a legacy schema field the rewrite doesn't model, or one that drifted
+		// shape). yaml.v3 still decodes every field it could before returning it,
+		// so keep the partial result rather than dropping the whole registry:
+		// the importer only reads the fields it maps, and unmappable ones are
+		// surfaced or ignored downstream. Only a real read/syntax error is fatal.
+		var typeErr *yaml.TypeError
+		if !errors.As(err, &typeErr) {
+			return legacyConfig{}, fmt.Errorf("parse legacy config.yaml: %w", err)
+		}
 	}
 	return cfg, nil
 }

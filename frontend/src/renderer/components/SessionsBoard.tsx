@@ -10,6 +10,7 @@ import {
 } from "../types/workspace";
 import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
 import { DashboardSubhead } from "./DashboardSubhead";
+import { ImportOffer } from "./ImportOffer";
 import { cn } from "../lib/utils";
 
 type SessionsBoardProps = {
@@ -97,6 +98,11 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	return (
 		<div className="flex h-full min-h-0 flex-col bg-background text-foreground">
 			<DashboardSubhead title="Board" subtitle="Live agent sessions flowing from work → review → merge." />
+
+			{/* First-run legacy-AO import opt-in. Renders only when the daemon
+			    reports an importable install (and only on the top-level board, not
+			    a project-scoped view). */}
+			{!projectId && <ImportOffer />}
 
 			<div className="min-h-0 flex-1 overflow-hidden p-[18px]">
 				{workspaceQuery.isError ? (
