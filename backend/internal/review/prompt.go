@@ -29,7 +29,7 @@ Do these steps in order:
     JSON
 
    - Substitute the PR's owner/repo/number. Add one object to "comments" per inline finding; omit the field for a review with no inline comments.
-   - To approve, use "event": "APPROVE". GitHub does not let you approve a PR you opened — if that fails because you are the author, retry with "event": "COMMENT" and a body stating it is an approval.
+   - Use "event": "REQUEST_CHANGES" when changes are needed. To approve, use "event": "COMMENT" with a body stating it is an approval — reviews are always posted from the PR author's own account, and GitHub rejects APPROVE on your own PR.
    - The printed number is the review id. If the call fails on the provider, leave the id empty.
 2. Record the result with AO, passing your full review on stdin with --body - so nothing is ever written into the worktree (a file there could be committed onto the worker's branch):
 
