@@ -61,7 +61,7 @@ func Derive(agent, event string, payload []byte) (domain.ActivityState, bool) {
 // SupportsHarness reports whether a harness has an activity pipeline at all:
 // a registered deriver here means its adapter installs `ao hooks <harness>`
 // callbacks that can reach the daemon. Status derivation uses this to decide
-// whether prolonged silence is suspicious (no_signal) or simply all a hook-less
+// whether prolonged silence is suspicious (a broken-pipeline stall) or simply all a hook-less
 // harness can ever report (idle). Harness names and `ao hooks` agent tokens are
 // the same strings by convention.
 func SupportsHarness(h domain.AgentHarness) bool {

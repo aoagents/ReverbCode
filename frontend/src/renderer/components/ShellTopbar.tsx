@@ -6,8 +6,7 @@ import {
 	findProjectOrchestrator,
 	isOrchestratorSession,
 	sessionIsActive,
-	workerDisplayStatus,
-	type WorkerDisplayStatus,
+	STATUS_META,
 	type WorkspaceSession,
 } from "../types/workspace";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
@@ -22,17 +21,6 @@ import { cn } from "../lib/utils";
 const isMac = typeof navigator !== "undefined" && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent);
 const dragStyle = isMac ? ({ WebkitAppRegion: "drag" } as React.CSSProperties) : undefined;
 const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined;
-
-// Session status → pill tone, mirroring agent-orchestrator's StatusBadge
-// (working=orange & breathing, input=amber, fail=red, ready=green, done=neutral).
-// Tones are theme vars so the pill tracks the light/dark status palettes.
-const STATUS_PILL: Record<WorkerDisplayStatus, { label: string; tone: string; breathe: boolean }> = {
-	working: { label: "Working", tone: "var(--orange)", breathe: true },
-	needs_you: { label: "Needs input", tone: "var(--amber)", breathe: false },
-	ci_failed: { label: "CI failed", tone: "var(--red)", breathe: false },
-	mergeable: { label: "Ready", tone: "var(--green)", breathe: false },
-	done: { label: "Done", tone: "var(--fg-muted)", breathe: false },
-};
 
 // The one app topbar (.dashboard-app-header), rendered by the shell layout
 // across the full window width — above both the sidebar and the route outlet —
@@ -313,7 +301,7 @@ export function TopbarKillButton({ session }: { session: WorkspaceSession }) {
 // StatusBadge --pill: tinted bordered pill (inset 25%-tone hairline + 7%-tone
 // fill) with a 6px dot that breathes while the agent is working.
 function SessionStatusPill({ session }: { session: WorkspaceSession }) {
-	const { label, tone, breathe } = STATUS_PILL[workerDisplayStatus(session)];
+	const { label, tone, breathe } = STATUS_META[session.status];
 	return (
 		<span
 			className="inline-flex shrink-0 items-center gap-[7px] whitespace-nowrap rounded-[7px] px-[11px] py-[5px] text-[11.5px] font-semibold leading-none"

@@ -92,7 +92,7 @@ func (f *fakeSessionService) Restore(_ context.Context, id domain.SessionID) (do
 func (f *fakeSessionService) Kill(_ context.Context, id domain.SessionID) (bool, error) {
 	s := f.sessions[id]
 	s.IsTerminated = true
-	s.Status = domain.StatusTerminated
+	s.Status = domain.StatusIdle
 	f.sessions[id] = s
 	return true, nil
 }

@@ -6,7 +6,7 @@ import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { formatTimeCompact } from "../lib/format-time";
 import type { PRState, PullRequestFacts, SessionStatus, WorkspaceSession } from "../types/workspace";
-import { sortedPRs, workerDisplayStatus } from "../types/workspace";
+import { sortedPRs, STATUS_META } from "../types/workspace";
 import { Badge } from "./ui/badge";
 import { cn } from "../lib/utils";
 
@@ -247,28 +247,17 @@ function activityDetail(status: SessionStatus): string | null {
 			return "Session idle";
 		case "needs_input":
 			return "Waiting for your input";
-		case "working":
-			return null;
+		case "ready":
+			return "Clean PR waiting on you";
+		case "stalled":
+			return "Not making progress; get it moving";
 		default:
 			return null;
 	}
 }
 
-const STATUS_PILL: Record<
-	ReturnType<typeof workerDisplayStatus> | "idle",
-	{ label: string; tone: string; breathe: boolean }
-> = {
-	working: { label: "Working", tone: "var(--orange)", breathe: true },
-	needs_you: { label: "Input needed", tone: "var(--amber)", breathe: false },
-	ci_failed: { label: "CI failed", tone: "var(--red)", breathe: false },
-	mergeable: { label: "Ready", tone: "var(--green)", breathe: false },
-	done: { label: "Done", tone: "var(--fg-muted)", breathe: false },
-	idle: { label: "Idle", tone: "var(--fg-muted)", breathe: false },
-};
-
 function InspectorStatusPill({ session }: { session: WorkspaceSession }) {
-	const key = session.status === "idle" ? "idle" : workerDisplayStatus(session);
-	const { label, tone, breathe } = STATUS_PILL[key];
+	const { label, tone, breathe } = STATUS_META[session.status];
 	return (
 		<span
 			className="inline-flex shrink-0 items-center gap-[7px] whitespace-nowrap rounded-[7px] px-[11px] py-[5px] text-[11.5px] font-semibold"

@@ -107,8 +107,8 @@ func startSession(cfg config.Config, runtime *zellij.Runtime, store *sqlite.Stor
 		PRClaimer: store,
 		SCM:       scmProvider,
 		Telemetry: telemetry,
-		// no_signal only makes sense for harnesses whose adapters install
-		// activity hooks; the deriver registry is the source of truth for that.
+		// The broken-pipeline stall only makes sense for harnesses whose adapters
+		// install activity hooks; the deriver registry is the source of truth.
 		SignalCapable: activitydispatch.SupportsHarness,
 	})
 	// Triggering a review spawns a reviewer over the worker's worktree, resolved

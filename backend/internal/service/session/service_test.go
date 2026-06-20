@@ -104,14 +104,16 @@ func (f *fakeStore) GetProject(_ context.Context, id string) (domain.ProjectReco
 
 func TestSessionListDerivesStatusFromPRFacts(t *testing.T) {
 	st := newFakeStore()
-	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Activity: domain.Activity{State: domain.ActivityActive}}
+	// Stopped agent on a failing-CI PR: it had the move and quit, so the
+	// session reads Stalled (PR facts drive the status, not the activity).
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Activity: domain.Activity{State: domain.ActivityIdle}}
 	st.pr["mer-1"] = domain.PRFacts{URL: "pr1", CI: domain.CIFailing}
 
 	list, err := (&Service{store: st}).List(context.Background(), ListFilter{ProjectID: "mer"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(list) != 1 || list[0].Status != domain.StatusCIFailed {
+	if len(list) != 1 || list[0].Status != domain.StatusStalled {
 		t.Fatalf("got %+v", list)
 	}
 }
