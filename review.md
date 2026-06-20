@@ -37,6 +37,6 @@ Please update the prompt to use an `--input` JSON body (or otherwise a form `gh 
 
 ## Non-blocking notes
 
-- **Submit error after DB commit.** If `messenger.Send` fails, `Submit` returns an error *after* `UpdateReviewRunResult` has already persisted the verdict as `complete`. A retried `ao review submit` then fails with "review run is not running" (the update is gated on `status='running'`), so a transient pane-send failure leaves the run recorded but the worker un-nudged with no clean retry. This is explicitly called out as deferred (resiliency / double-submit idempotency) in the PR description, so it's acceptable for this scope — flagging only so it's tracked.
+- **Submit error after DB commit.** If `messenger.Send` fails, `Submit` returns an error _after_ `UpdateReviewRunResult` has already persisted the verdict as `complete`. A retried `ao review submit` then fails with "review run is not running" (the update is gated on `status='running'`), so a transient pane-send failure leaves the run recorded but the worker un-nudged with no clean retry. This is explicitly called out as deferred (resiliency / double-submit idempotency) in the PR description, so it's acceptable for this scope — flagging only so it's tracked.
 
 Everything else looks good to merge once the `gh api` command is corrected.
