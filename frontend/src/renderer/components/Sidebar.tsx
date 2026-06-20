@@ -468,7 +468,7 @@ function ProjectItem({
 					// Make room for the hover actions (dashboard, orchestrator, kebab)
 					// when the row is hovered, focused, or its menu is open (the
 					// absolutely-positioned cluster replaces the count).
-					"group-hover/menu-item:pr-[78px] group-focus-within/menu-item:pr-[78px] group-has-data-[state=open]/menu-item:pr-[78px]",
+					"group-hover/menu-item:pr-[84px] group-focus-within/menu-item:pr-[84px] group-has-data-[state=open]/menu-item:pr-[84px]",
 					// Icon rail: the old 36px letter tile.
 					"group-data-[collapsible=icon]:size-9! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:p-0! group-data-[collapsible=icon]:font-semibold",
 				)}
@@ -483,7 +483,7 @@ function ProjectItem({
 				/>
 				<span className="hidden group-data-[collapsible=icon]:block">{workspace.name.charAt(0).toUpperCase()}</span>
 				<span className="min-w-0 flex-1 truncate group-data-[collapsible=icon]:hidden">{workspace.name}</span>
-				<span className="grid h-4 min-w-4 shrink-0 place-items-center rounded bg-interactive-hover px-1 font-mono text-[10px] leading-none text-passive group-hover/menu-item:opacity-0 group-focus-within/menu-item:opacity-0 group-has-data-[state=open]/menu-item:opacity-0 group-data-[collapsible=icon]:hidden">
+				<span className="grid h-4 min-w-4 shrink-0 place-items-center rounded bg-interactive-hover px-1 font-mono text-[10px] leading-none text-passive group-hover/menu-item:pointer-events-none group-hover/menu-item:opacity-0 group-focus-within/menu-item:opacity-0 group-focus-within/menu-item:pointer-events-none group-has-data-[state=open]/menu-item:opacity-0 group-has-data-[state=open]/menu-item:pointer-events-none group-data-[collapsible=icon]:hidden">
 					{sessions.length}
 				</span>
 			</SidebarMenuButton>
@@ -492,7 +492,7 @@ function ProjectItem({
           open), replacing the session count, and stays hidden in the icon rail. */}
 			<div
 				className={cn(
-					"absolute top-0 right-1 flex h-9 items-center gap-px",
+					"absolute top-0 right-1 z-10 flex h-9 items-center gap-px",
 					"opacity-0 transition-opacity",
 					"group-hover/menu-item:opacity-100 group-focus-within/menu-item:opacity-100 group-has-data-[state=open]/menu-item:opacity-100",
 					"group-data-[collapsible=icon]:hidden",
