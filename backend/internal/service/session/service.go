@@ -84,8 +84,8 @@ type Service struct {
 	telemetry ports.EventSink
 	// signalCapable reports whether a harness has a hook pipeline that can
 	// deliver activity signals at all. Only capable harnesses are eligible for
-	// the no_signal downgrade — a hook-less harness staying silent forever is
-	// normal, not a broken pipeline. nil means "unknown": never downgrade.
+	// the never-booted stall downgrade: a hook-less harness staying silent
+	// forever is normal, not a broken pipeline. nil means "unknown": never stall.
 	signalCapable func(domain.AgentHarness) bool
 }
 
@@ -104,9 +104,9 @@ type Deps struct {
 	SCM       scmProvider
 	Clock     func() time.Time
 	Telemetry ports.EventSink
-	// SignalCapable gates the no_signal status downgrade per harness; daemon
+	// SignalCapable gates the never-booted stall downgrade per harness; daemon
 	// wiring passes activitydispatch.SupportsHarness. Left nil, no session is
-	// ever downgraded to no_signal.
+	// ever stalled for silence.
 	SignalCapable func(domain.AgentHarness) bool
 }
 
@@ -484,7 +484,7 @@ func (s *Service) now() time.Time {
 
 // harnessSignals tolerates a zero-value Service the same way now does. Without
 // an injected capability predicate the service cannot tell a broken pipeline
-// from a hook-less harness, so it never claims no_signal.
+// from a hook-less harness, so it never stalls a session for silence.
 func (s *Service) harnessSignals(h domain.AgentHarness) bool {
 	if s.signalCapable == nil {
 		return false

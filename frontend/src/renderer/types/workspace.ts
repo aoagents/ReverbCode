@@ -1,7 +1,7 @@
 /**
  * The five display states the dashboard renders, derived server-side and sent
  * verbatim. Each maps to one distinct move a human makes when scanning a wall
- * of agents — see {@link STATUS_META}. Finer PR detail lives in the inspector,
+ * of agents (see {@link STATUS_META}). Finer PR detail lives in the inspector,
  * not in the glanceable status.
  */
 export type SessionStatus = "working" | "needs_input" | "ready" | "stalled" | "idle";
@@ -98,7 +98,7 @@ export type WorkspaceSession = {
 	/** Whether the session is torn down. Drives liveness, not the display status
 	 * (a terminated session reads {@link SessionStatus} `idle`). */
 	isTerminated?: boolean;
-	/** ISO timestamp from the daemon — used for relative time in the inspector. */
+	/** ISO timestamp from the daemon; used for relative time in the inspector. */
 	createdAt?: string;
 	/** ISO timestamp from the daemon. */
 	updatedAt: string;
@@ -143,9 +143,9 @@ export function isOrchestratorSession(session: WorkspaceSession): boolean {
 /**
  * The project's LIVE orchestrator, if any. Terminated orchestrator rows stay in
  * the session list (the daemon returns all sessions, ordered by spawn number),
- * so an earlier dead orchestrator must not shadow a live one — its zellij
+ * so an earlier dead orchestrator must not shadow a live one: its zellij
  * session is deleted and attaching to it dead-ends in an instant
- * "[process exited]". No live orchestrator → undefined, so the topbar offers
+ * "[process exited]". No live orchestrator means undefined, so the topbar offers
  * Spawn instead of navigating to a dead session.
  */
 export function findProjectOrchestrator(

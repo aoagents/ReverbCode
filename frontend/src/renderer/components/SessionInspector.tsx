@@ -250,7 +250,7 @@ function activityDetail(status: SessionStatus): string | null {
 		case "ready":
 			return "Clean PR waiting on you";
 		case "stalled":
-			return "Not making progress — get it moving";
+			return "Not making progress; get it moving";
 		default:
 			return null;
 	}

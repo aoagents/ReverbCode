@@ -136,7 +136,7 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	act := domain.Activity{State: s.State, LastActivityAt: timeOr(s.Timestamp, now)}
 	// A same-state repeat is still a write when it is the FIRST signal for
 	// this spawn: the receipt itself is a durable fact (it clears the
-	// no_signal display status). Hook deliveries are best-effort, so the
+	// never-booted stalled status). Hook deliveries are best-effort, so the
 	// first to ARRIVE may match the seeded state — e.g. a turn's "active"
 	// POST is lost and its Stop hook lands idle on the idle-seeded row.
 	if sameActivity(rec.Activity, act) && !rec.FirstSignalAt.IsZero() {
@@ -243,8 +243,8 @@ func (m *Manager) MarkSpawned(ctx context.Context, id domain.SessionID, metadata
 	rec.IsTerminated = false
 	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}
 	// Each spawn/restore must re-prove its hook pipeline: clear the receipt so
-	// a relaunch with broken hooks degrades to no_signal instead of inheriting
-	// a stale "signals worked once" fact.
+	// a relaunch with broken hooks degrades to a never-booted stall instead of
+	// inheriting a stale "signals worked once" fact.
 	rec.FirstSignalAt = time.Time{}
 	rec.Metadata = mergeMetadata(rec.Metadata, metadata)
 	rec.UpdatedAt = now

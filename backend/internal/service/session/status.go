@@ -85,6 +85,12 @@ func openPRs(prs []domain.PRFacts) []domain.PRFacts {
 // PR is work the agent left undone. A blocked stacked child cannot merge until
 // its parent does, so its clean signal is suppressed, but its unfinished signal
 // still surfaces so a broken child is not hidden behind the stack.
+//
+// A pathological all-blocked-clean stack (a cycle of mergeable PRs each targeting
+// the next's branch, with no root) yields neither move and reads Idle. The old
+// model force-aggregated such a set to avoid "going dark"; the new model treats
+// genuinely no-actionable-move PRs as Idle, which is honest, and the cycle cannot
+// arise from a real branch topology.
 func prMoves(open []domain.PRFacts) (hasClean, hasUnfinished bool) {
 	stacks := buildStacks(open)
 	for _, p := range open {
