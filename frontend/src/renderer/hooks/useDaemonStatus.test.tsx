@@ -137,9 +137,11 @@ describe("useDaemonStatus", () => {
 	it("ignores stale refresh responses that complete after a newer refresh", async () => {
 		let resolveFirst: (status: DaemonStatus) => void = () => undefined;
 		getStatusMock
-			.mockReturnValueOnce(new Promise<DaemonStatus>((resolve) => {
-				resolveFirst = resolve;
-			}))
+			.mockReturnValueOnce(
+				new Promise<DaemonStatus>((resolve) => {
+					resolveFirst = resolve;
+				}),
+			)
 			.mockResolvedValueOnce({ state: "ready", port: 4777 });
 		const queryClient = fakeQueryClient();
 
