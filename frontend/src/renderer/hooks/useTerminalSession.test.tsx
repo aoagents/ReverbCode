@@ -252,13 +252,12 @@ describe("useTerminalSession", () => {
 
 	it("waits for daemon readiness instead of retrying, then reconnects when it flips", () => {
 		const { view, muxes } = setup({ daemonReady: false });
-		act(() => muxes[0].emitConnection("closed"));
 		expect(view.result.current.state).toBe("reattaching");
 		act(() => void vi.advanceTimersByTime(60_000));
-		expect(muxes).toHaveLength(1); // no retries against a dead daemon
+		expect(muxes).toHaveLength(0); // no initial attach or retries against a dead daemon
 		view.rerender({ daemonReady: true });
-		expect(muxes).toHaveLength(2); // reconnects immediately, without backoff debt
-		act(() => muxes[1].emitOpened("handle-1"));
+		expect(muxes).toHaveLength(1); // connects immediately, without backoff debt
+		act(() => muxes[0].emitOpened("handle-1"));
 		expect(view.result.current.state).toBe("attached");
 	});
 

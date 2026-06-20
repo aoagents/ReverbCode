@@ -218,8 +218,12 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 			r.firstAttach = true;
 			setError(undefined);
 			if (handle) {
-				transition("connecting");
-				connect();
+				if (optionsRef.current.daemonReady) {
+					transition("connecting");
+					connect();
+				} else {
+					transition("reattaching");
+				}
 			} else {
 				transition("idle");
 			}

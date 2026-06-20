@@ -6,7 +6,7 @@ import { readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { resolveDaemonLaunch } from "./shared/daemon-launch";
+import { type DaemonLaunchSpec, resolveDaemonLaunch } from "./shared/daemon-launch";
 import { createListenPortScanner, defaultRunFilePath, parseRunFile } from "./shared/daemon-discovery";
 import type { DaemonStatus } from "./shared/daemon-status";
 import { DEFAULT_POSTHOG_HOST, DEFAULT_POSTHOG_PROJECT_KEY } from "./shared/posthog-config";
@@ -153,6 +153,16 @@ const RUN_FILE_POLL_MS = 300;
 // Accept run-files stamped slightly before our spawn timestamp: the daemon's
 // clock reading and ours race within normal scheduling jitter.
 const RUN_FILE_FRESHNESS_SKEW_MS = 2_000;
+const DAEMON_PROBE_TIMEOUT_MS = 2_000;
+const DAEMON_SERVICE_NAME = "agent-orchestrator-daemon";
+
+type DaemonProbe = {
+	status: string;
+	service: string;
+	pid: number;
+	executablePath?: string;
+	workingDirectory?: string;
+};
 
 function runFilePath(): string | null {
 	if (process.env.AO_RUN_FILE) return process.env.AO_RUN_FILE;
@@ -169,7 +179,147 @@ function daemonEnv(): NodeJS.ProcessEnv {
 	};
 }
 
-function startDaemon(): DaemonStatus {
+function pathKey(value: string): string {
+	const resolved = path.resolve(value);
+	return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+}
+
+function samePath(a: string, b: string): boolean {
+	return pathKey(a) === pathKey(b);
+}
+
+function pathInside(child: string, parent: string): boolean {
+	const childKey = pathKey(child);
+	const parentKey = pathKey(parent);
+	return childKey === parentKey || childKey.startsWith(parentKey + path.sep);
+}
+
+function processAlive(pid: number): boolean {
+	if (!pid) return false;
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+async function readDaemonProbe(port: number, endpoint: "healthz" | "readyz"): Promise<DaemonProbe | null> {
+	const controller = new AbortController();
+	const timer = setTimeout(() => controller.abort(), DAEMON_PROBE_TIMEOUT_MS);
+	try {
+		const response = await net.fetch(`http://127.0.0.1:${port}/${endpoint}`, { signal: controller.signal });
+		if (!response.ok) return null;
+		const body = (await response.json()) as Partial<DaemonProbe>;
+		if (body.status !== (endpoint === "healthz" ? "ok" : "ready")) return null;
+		if (body.service !== DAEMON_SERVICE_NAME) return null;
+		if (typeof body.pid !== "number" || !Number.isInteger(body.pid)) return null;
+		return {
+			status: body.status,
+			service: body.service,
+			pid: body.pid,
+			executablePath: typeof body.executablePath === "string" ? body.executablePath : undefined,
+			workingDirectory: typeof body.workingDirectory === "string" ? body.workingDirectory : undefined,
+		};
+	} catch {
+		return null;
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
+function daemonIdentityError(launch: DaemonLaunchSpec, probe: DaemonProbe): string | null {
+	if (launch.source === "dev") {
+		const cwdMatches = probe.workingDirectory ? samePath(probe.workingDirectory, launch.cwd) : false;
+		const executableMatches = probe.executablePath ? pathInside(probe.executablePath, launch.cwd) : false;
+		if (!probe.workingDirectory && !probe.executablePath) {
+			return "An older AO daemon is already running, but it does not report its checkout identity. Stop it and restart this app.";
+		}
+		if (!cwdMatches && !executableMatches) {
+			const actual = probe.workingDirectory ?? probe.executablePath ?? "an unknown location";
+			return `Another AO daemon is already running from ${actual}; expected this checkout at ${launch.cwd}. Stop the other daemon before using this checkout.`;
+		}
+		return null;
+	}
+
+	if (launch.source === "bundled") {
+		if (!probe.executablePath) {
+			return "An older AO daemon is already running, but it does not report its binary path. Stop it and restart this app.";
+		}
+		if (!samePath(probe.executablePath, launch.command)) {
+			return `Another AO daemon is already running from ${probe.executablePath}; expected ${launch.command}. Stop the other daemon before using this app.`;
+		}
+	}
+	return null;
+}
+
+async function inspectExistingDaemon(launch: DaemonLaunchSpec): Promise<DaemonStatus | null> {
+	const handshakePath = runFilePath();
+	if (!handshakePath) return null;
+	let contents: string;
+	try {
+		contents = await readFile(handshakePath, "utf8");
+	} catch {
+		return null;
+	}
+	const info = parseRunFile(contents);
+	if (!info || !processAlive(info.pid)) return null;
+
+	const health = await readDaemonProbe(info.port, "healthz");
+	if (!health || health.pid !== info.pid) return null;
+	const ready = await readDaemonProbe(info.port, "readyz");
+	if (!ready || ready.pid !== info.pid) {
+		return {
+			state: "error",
+			port: info.port,
+			pid: info.pid,
+			executablePath: health.executablePath,
+			workingDirectory: health.workingDirectory,
+			message: "An AO daemon is already running, but it is not ready yet.",
+		};
+	}
+
+	const identityError = daemonIdentityError(launch, ready);
+	if (identityError) {
+		return {
+			state: "error",
+			port: info.port,
+			pid: info.pid,
+			executablePath: ready.executablePath,
+			workingDirectory: ready.workingDirectory,
+			message: identityError,
+		};
+	}
+
+	return {
+		state: "ready",
+		port: info.port,
+		pid: info.pid,
+		executablePath: ready.executablePath,
+		workingDirectory: ready.workingDirectory,
+	};
+}
+
+async function refreshDaemonStatus(): Promise<DaemonStatus> {
+	if (daemonProcess || daemonStatus.state === "ready") {
+		return daemonStatus;
+	}
+	const launch = resolveDaemonLaunch(
+		process.env,
+		app.isPackaged,
+		process.resourcesPath,
+		app.getAppPath(),
+		process.platform,
+	);
+	if (!launch) return daemonStatus;
+	const existing = await inspectExistingDaemon(launch);
+	if (existing) {
+		setDaemonStatus(existing);
+	}
+	return daemonStatus;
+}
+
+async function startDaemon(): Promise<DaemonStatus> {
 	if (daemonProcess) {
 		return daemonStatus;
 	}
@@ -186,6 +336,12 @@ function startDaemon(): DaemonStatus {
 			state: "stopped",
 			message: "AO_DAEMON_COMMAND is not configured; renderer uses loopback REST when available.",
 		});
+		return daemonStatus;
+	}
+
+	const existing = await inspectExistingDaemon(launch);
+	if (existing) {
+		setDaemonStatus(existing);
 		return daemonStatus;
 	}
 
@@ -327,7 +483,7 @@ function stopDaemon(): DaemonStatus {
 	return daemonStatus;
 }
 
-ipcMain.handle("daemon:getStatus", () => daemonStatus);
+ipcMain.handle("daemon:getStatus", () => refreshDaemonStatus());
 ipcMain.handle("daemon:start", () => startDaemon());
 ipcMain.handle("daemon:stop", () => stopDaemon());
 ipcMain.handle("app:getVersion", () => app.getVersion());
@@ -357,7 +513,7 @@ function initAutoUpdates(): void {
 app.whenReady().then(() => {
 	registerRendererProtocol();
 	createWindow();
-	startDaemon();
+	void startDaemon();
 	initAutoUpdates();
 
 	app.on("activate", () => {
