@@ -69,7 +69,7 @@ func newReviewSubmitCommand(ctx *commandContext) *cobra.Command {
 	cmd.Flags().StringVar(&opts.runID, "run", "", "Review run id (required)")
 	cmd.Flags().StringVar(&opts.verdict, "verdict", "", "Review verdict: approved or changes_requested (required)")
 	cmd.Flags().StringVar(&opts.body, "body", "", "Path to a Markdown file with the review body")
-	cmd.Flags().StringVar(&opts.reviewID, "review-id", "", "Id of the GitHub PR review just posted (gh api .../pulls/{n}/reviews --jq '.[-1].id')")
+	cmd.Flags().StringVar(&opts.reviewID, "review-id", "", "Id of the GitHub PR review just posted (gh api .../pulls/{n}/reviews --jq 'map(.id) | max // empty')")
 	return cmd
 }
 
