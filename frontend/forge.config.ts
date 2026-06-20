@@ -8,7 +8,11 @@ const config: ForgeConfig = {
 		name: "Agent Orchestrator",
 		executableName: "agent-orchestrator",
 		appCategoryType: "public.app-category.developer-tools",
-		extraResource: "daemon",
+		// App icon. electron-packager appends the per-platform extension
+		// (.icns on macOS, .ico on Windows); Linux menu icons come from the
+		// deb/rpm makers below, and the runtime window icon from src/main.ts.
+		icon: "assets/icon",
+		extraResource: ["daemon", "assets/icon.png"],
 		// macOS signing + notarization — set CSC_LINK/CSC_KEY_PASSWORD and
 		// APPLE_ID/APPLE_APP_SPECIFIC_PASSWORD/APPLE_TEAM_ID in CI.
 		// See frontend/docs/desktop-release.md.
@@ -23,10 +27,38 @@ const config: ForgeConfig = {
 	},
 	rebuildConfig: {},
 	makers: [
-		{ name: "@electron-forge/maker-squirrel", config: { name: "AgentOrchestrator" } },
+		{
+			name: "@electron-forge/maker-squirrel",
+			config: {
+				name: "AgentOrchestrator",
+				// NuGet requires a non-empty <authors>; without it `nuget pack`
+				// exits 1 and the Squirrel maker fails. Mirror package.json.author.
+				authors: "Agent Orchestrator",
+				setupIcon: "assets/icon.ico",
+			},
+		},
 		{ name: "@electron-forge/maker-zip", platforms: ["darwin"], config: {} },
-		{ name: "@electron-forge/maker-deb", config: {} },
-		{ name: "@electron-forge/maker-rpm", config: {} },
+		{
+			name: "@electron-forge/maker-deb",
+			config: {
+				options: {
+					icon: "assets/icon.png",
+					maintainer: "Agent Orchestrator",
+					homepage: "https://github.com/aoagents/agent-orchestrator",
+				},
+			},
+		},
+		{
+			name: "@electron-forge/maker-rpm",
+			config: {
+				options: {
+					icon: "assets/icon.png",
+					// rpmbuild rejects a spec with an empty License field.
+					license: "MIT",
+					homepage: "https://github.com/aoagents/agent-orchestrator",
+				},
+			},
+		},
 	],
 	publishers: [
 		{

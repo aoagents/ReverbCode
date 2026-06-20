@@ -4,6 +4,9 @@
 	"version": "0.0.0",
 	"private": true,
 	"description": "Electron + TypeScript frontend for the agent-orchestrator rewrite",
+	"author": "Agent Orchestrator",
+	"license": "MIT",
+	"homepage": "https://github.com/aoagents/agent-orchestrator",
 	"main": ".vite/build/main.js",
 	"repository": {
 		"type": "git",
@@ -75,5 +78,9 @@
 		"tailwind-merge": "^3.6.0",
 		"update-electron-app": "^3.0.0",
 		"zustand": "^5.0.14"
+	},
+	"optionalDependencies": {
+		"electron-installer-debian": "^3.2.0",
+		"electron-installer-redhat": "^3.4.0"
 	}
 }

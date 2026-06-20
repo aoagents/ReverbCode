@@ -78,6 +78,16 @@ function preloadPath(): string {
 	return path.join(__dirname, "preload.js");
 }
 
+// Runtime window/taskbar icon for Linux and Windows. macOS ignores this and
+// uses the .app bundle's .icns instead. Packaged: shipped via extraResource to
+// resources/icon.png; dev: the source asset under frontend/assets.
+function windowIconPath(): string | undefined {
+	const candidate = app.isPackaged
+		? path.join(process.resourcesPath, "icon.png")
+		: path.join(__dirname, "../../assets/icon.png");
+	return existsSync(candidate) ? candidate : undefined;
+}
+
 function setDaemonStatus(nextStatus: DaemonStatus): void {
 	daemonStatus = nextStatus;
 	mainWindow?.webContents.send("daemon:status", daemonStatus);
@@ -90,6 +100,7 @@ function createWindow(): void {
 		minWidth: 960,
 		minHeight: 640,
 		title: "Agent Orchestrator",
+		icon: windowIconPath(),
 		backgroundColor: "#0f1014",
 		titleBarStyle: "hiddenInset",
 		// Lights visually centered at y=28 — the 56px topbar/.titlebar-nav center
