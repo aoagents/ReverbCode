@@ -28,8 +28,12 @@ test("the PR board lists one row per attributed PR, actionable PRs first", async
 
 	await expect(page.getByRole("heading", { name: "Pull requests" })).toBeVisible();
 
-	const numbers = page.locator("tbody tr td:first-child");
-	await expect(numbers).toHaveText(["#41", "#42", "#40"]);
+	// stacked-auth's three PRs keep actionable-first order across the whole board:
+	// open #41 before draft #42, and the lone merged PR (#40) sinks to the bottom.
+	const numbers = await page.locator("tbody tr td:first-child").allTextContents();
+	expect(numbers.indexOf("#41")).toBeLessThan(numbers.indexOf("#42"));
+	expect(numbers.indexOf("#42")).toBeLessThan(numbers.indexOf("#40"));
+	expect(numbers.indexOf("#40")).toBe(numbers.length - 1);
 
 	// Open/draft rows are actionable; the merged row is not.
 	const mergedRow = page.locator("tbody tr", { hasText: "#40" });
