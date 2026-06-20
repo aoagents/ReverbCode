@@ -34,7 +34,7 @@ func (q *Queries) GetReviewBySession(ctx context.Context, sessionID domain.Sessi
 }
 
 const getReviewRun = `-- name: GetReviewRun :one
-SELECT id, review_id, session_id, harness, pr_url, target_sha, status, verdict, body, created_at
+SELECT id, review_id, session_id, harness, pr_url, target_sha, status, verdict, body, created_at, github_review_id
 FROM review_run WHERE id = ?
 `
 
@@ -52,12 +52,13 @@ func (q *Queries) GetReviewRun(ctx context.Context, id string) (ReviewRun, error
 		&i.Verdict,
 		&i.Body,
 		&i.CreatedAt,
+		&i.GithubReviewID,
 	)
 	return i, err
 }
 
 const getReviewRunBySessionAndSHA = `-- name: GetReviewRunBySessionAndSHA :one
-SELECT id, review_id, session_id, harness, pr_url, target_sha, status, verdict, body, created_at
+SELECT id, review_id, session_id, harness, pr_url, target_sha, status, verdict, body, created_at, github_review_id
 FROM review_run WHERE session_id = ? AND target_sha = ? ORDER BY created_at DESC LIMIT 1
 `
 
@@ -80,26 +81,28 @@ func (q *Queries) GetReviewRunBySessionAndSHA(ctx context.Context, arg GetReview
 		&i.Verdict,
 		&i.Body,
 		&i.CreatedAt,
+		&i.GithubReviewID,
 	)
 	return i, err
 }
 
 const insertReviewRun = `-- name: InsertReviewRun :exec
-INSERT INTO review_run (id, review_id, session_id, harness, pr_url, target_sha, status, verdict, body, created_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO review_run (id, review_id, session_id, harness, pr_url, target_sha, status, verdict, body, github_review_id, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertReviewRunParams struct {
-	ID        string
-	ReviewID  string
-	SessionID domain.SessionID
-	Harness   domain.ReviewerHarness
-	PRURL     string
-	TargetSha string
-	Status    domain.ReviewRunStatus
-	Verdict   domain.ReviewVerdict
-	Body      string
-	CreatedAt time.Time
+	ID             string
+	ReviewID       string
+	SessionID      domain.SessionID
+	Harness        domain.ReviewerHarness
+	PRURL          string
+	TargetSha      string
+	Status         domain.ReviewRunStatus
+	Verdict        domain.ReviewVerdict
+	Body           string
+	GithubReviewID string
+	CreatedAt      time.Time
 }
 
 func (q *Queries) InsertReviewRun(ctx context.Context, arg InsertReviewRunParams) error {
@@ -113,13 +116,14 @@ func (q *Queries) InsertReviewRun(ctx context.Context, arg InsertReviewRunParams
 		arg.Status,
 		arg.Verdict,
 		arg.Body,
+		arg.GithubReviewID,
 		arg.CreatedAt,
 	)
 	return err
 }
 
 const listReviewRunsBySession = `-- name: ListReviewRunsBySession :many
-SELECT id, review_id, session_id, harness, pr_url, target_sha, status, verdict, body, created_at
+SELECT id, review_id, session_id, harness, pr_url, target_sha, status, verdict, body, created_at, github_review_id
 FROM review_run WHERE session_id = ? ORDER BY created_at DESC
 `
 
@@ -143,6 +147,7 @@ func (q *Queries) ListReviewRunsBySession(ctx context.Context, sessionID domain.
 			&i.Verdict,
 			&i.Body,
 			&i.CreatedAt,
+			&i.GithubReviewID,
 		); err != nil {
 			return nil, err
 		}
@@ -158,14 +163,15 @@ func (q *Queries) ListReviewRunsBySession(ctx context.Context, sessionID domain.
 }
 
 const updateReviewRunResult = `-- name: UpdateReviewRunResult :execrows
-UPDATE review_run SET status = ?, verdict = ?, body = ? WHERE id = ? AND status = 'running'
+UPDATE review_run SET status = ?, verdict = ?, body = ?, github_review_id = ? WHERE id = ? AND status = 'running'
 `
 
 type UpdateReviewRunResultParams struct {
-	Status  domain.ReviewRunStatus
-	Verdict domain.ReviewVerdict
-	Body    string
-	ID      string
+	Status         domain.ReviewRunStatus
+	Verdict        domain.ReviewVerdict
+	Body           string
+	GithubReviewID string
+	ID             string
 }
 
 func (q *Queries) UpdateReviewRunResult(ctx context.Context, arg UpdateReviewRunResultParams) (int64, error) {
@@ -173,6 +179,7 @@ func (q *Queries) UpdateReviewRunResult(ctx context.Context, arg UpdateReviewRun
 		arg.Status,
 		arg.Verdict,
 		arg.Body,
+		arg.GithubReviewID,
 		arg.ID,
 	)
 	if err != nil {

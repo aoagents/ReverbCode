@@ -135,16 +135,17 @@ type Review struct {
 }
 
 type ReviewRun struct {
-	ID        string
-	ReviewID  string
-	SessionID domain.SessionID
-	Harness   domain.ReviewerHarness
-	PRURL     string
-	TargetSha string
-	Status    domain.ReviewRunStatus
-	Verdict   domain.ReviewVerdict
-	Body      string
-	CreatedAt time.Time
+	ID             string
+	ReviewID       string
+	SessionID      domain.SessionID
+	Harness        domain.ReviewerHarness
+	PRURL          string
+	TargetSha      string
+	Status         domain.ReviewRunStatus
+	Verdict        domain.ReviewVerdict
+	Body           string
+	CreatedAt      time.Time
+	GithubReviewID string
 }
 
 type Session struct {

@@ -24,11 +24,16 @@ Do these steps in order:
 1. Post your review on the pull request with `+"`gh`"+`, with inline comments for specific findings:
    - If changes are needed, request changes.
    - If it is ready, approve it. GitHub does not let you approve a PR you opened — if the approval is rejected because you are the PR author, post the same review as a regular comment instead (a COMMENT-event review whose body states it is an approval).
-2. Write your full review to review.md and record the result with AO by running exactly:
+2. Capture the id of the review you just posted so AO can tell the worker exactly which review to address. `+"`gh pr review`"+` prints no id, so read it back with:
 
-    ao review submit --session %s --run %s --verdict <approved|changes_requested> --body review.md
+    gh api repos/{owner}/{repo}/pulls/{number}/reviews --jq '.[-1].id'
 
-Only if step 1 genuinely fails on the provider, still run step 2 so the result is recorded.`,
+   substituting the PR's owner/repo/number. If this fails, leave the id empty.
+3. Write your full review to review.md and record the result with AO by running exactly:
+
+    ao review submit --session %s --run %s --verdict <approved|changes_requested> --body review.md --review-id <id-from-step-2>
+
+Only if step 1 genuinely fails on the provider, still run step 3 (without --review-id) so the result is recorded.`,
 		spec.PRURL, spec.TargetSHA, spec.WorkerID, spec.RunID)
 	return prompt, systemPrompt
 }

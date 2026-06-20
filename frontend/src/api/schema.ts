@@ -595,6 +595,7 @@ export interface components {
             body: string;
             /** Format: date-time */
             createdAt: string;
+            githubReviewId: string;
             harness: string;
             id: string;
             prUrl: string;
@@ -676,6 +677,8 @@ export interface components {
         SubmitReviewInput: {
             /** @description Review body recorded by AO. Required for changes_requested. */
             body: string;
+            /** @description Id of the GitHub PR review the reviewer posted, if any. */
+            githubReviewId: string;
             /** @description Review run id being completed. */
             runId: string;
             /** @description Review verdict: approved or changes_requested. */

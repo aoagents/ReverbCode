@@ -46,7 +46,7 @@ func (f *fakeStore) InsertReviewRun(_ context.Context, r domain.ReviewRun) error
 	f.runs = append(f.runs, r)
 	return nil
 }
-func (f *fakeStore) UpdateReviewRunResult(_ context.Context, id string, status domain.ReviewRunStatus, verdict domain.ReviewVerdict, body string) (bool, error) {
+func (f *fakeStore) UpdateReviewRunResult(_ context.Context, id string, status domain.ReviewRunStatus, verdict domain.ReviewVerdict, body, githubReviewID string) (bool, error) {
 	for i := range f.runs {
 		if f.runs[i].ID == id {
 			if f.runs[i].Status != domain.ReviewRunRunning {
@@ -55,6 +55,7 @@ func (f *fakeStore) UpdateReviewRunResult(_ context.Context, id string, status d
 			f.runs[i].Status = status
 			f.runs[i].Verdict = verdict
 			f.runs[i].Body = body
+			f.runs[i].GithubReviewID = githubReviewID
 			return true, nil
 		}
 	}
@@ -129,6 +130,20 @@ func (f *fakeLauncher) Notify(_ context.Context, handleID string, spec LaunchSpe
 	return f.notifyErr
 }
 func (f *fakeLauncher) Alive(_ context.Context, _ string) (bool, error) { return f.alive, nil }
+
+type fakeMessenger struct {
+	sends   int
+	gotID   domain.SessionID
+	gotMsg  string
+	sendErr error
+}
+
+func (f *fakeMessenger) Send(_ context.Context, id domain.SessionID, msg string) error {
+	f.sends++
+	f.gotID = id
+	f.gotMsg = msg
+	return f.sendErr
+}
 
 func liveWorker() domain.SessionRecord {
 	return domain.SessionRecord{
@@ -377,7 +392,7 @@ func TestSubmitRecordsVerdictAndBody(t *testing.T) {
 	store := &fakeStore{runs: []domain.ReviewRun{{ID: "run-1", SessionID: "mer-1", Status: domain.ReviewRunRunning}}}
 	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, &fakeLauncher{})
 
-	run, err := eng.Submit(context.Background(), "mer-1", "run-1", domain.VerdictChangesRequested, "please fix")
+	run, err := eng.Submit(context.Background(), "mer-1", "run-1", domain.VerdictChangesRequested, "please fix", "")
 	if err != nil {
 		t.Fatalf("Submit: %v", err)
 	}
@@ -386,20 +401,89 @@ func TestSubmitRecordsVerdictAndBody(t *testing.T) {
 	}
 }
 
+func newEngineWithMessenger(store Store, messenger ports.AgentMessenger) *Engine {
+	ids := 0
+	return New(Deps{
+		Store: store, Sessions: fakeSessions{rec: liveWorker(), ok: true}, PRs: prAt("sha1"),
+		Projects: fakeProjects{}, Launcher: &fakeLauncher{}, Messenger: messenger,
+		Clock: func() time.Time { return time.Unix(0, 0).UTC() },
+		NewID: func() string { ids++; return "id-" + string(rune('0'+ids)) },
+	})
+}
+
+func TestSubmitChangesRequestedMessagesWorker(t *testing.T) {
+	store := &fakeStore{runs: []domain.ReviewRun{{ID: "run-1", SessionID: "mer-1", Status: domain.ReviewRunRunning}}}
+	msgr := &fakeMessenger{}
+	eng := newEngineWithMessenger(store, msgr)
+
+	run, err := eng.Submit(context.Background(), "mer-1", "run-1", domain.VerdictChangesRequested, "fix the bug", "98765")
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	if run.GithubReviewID != "98765" || store.runs[0].GithubReviewID != "98765" {
+		t.Fatalf("review id not persisted: run=%+v stored=%+v", run, store.runs[0])
+	}
+	if msgr.sends != 1 || msgr.gotID != "mer-1" {
+		t.Fatalf("expected one message to worker mer-1, got %+v", msgr)
+	}
+	if !strings.Contains(msgr.gotMsg, "fix the bug") || !strings.Contains(msgr.gotMsg, "98765") {
+		t.Fatalf("message missing body or review id: %q", msgr.gotMsg)
+	}
+}
+
+func TestSubmitApprovedDoesNotMessageWorker(t *testing.T) {
+	store := &fakeStore{runs: []domain.ReviewRun{{ID: "run-1", SessionID: "mer-1", Status: domain.ReviewRunRunning}}}
+	msgr := &fakeMessenger{}
+	eng := newEngineWithMessenger(store, msgr)
+
+	if _, err := eng.Submit(context.Background(), "mer-1", "run-1", domain.VerdictApproved, "", "98765"); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	if msgr.sends != 0 {
+		t.Fatalf("approved review should not message the worker: %+v", msgr)
+	}
+}
+
+func TestSubmitChangesRequestedOmitsReviewIDWhenAbsent(t *testing.T) {
+	store := &fakeStore{runs: []domain.ReviewRun{{ID: "run-1", SessionID: "mer-1", Status: domain.ReviewRunRunning}}}
+	msgr := &fakeMessenger{}
+	eng := newEngineWithMessenger(store, msgr)
+
+	if _, err := eng.Submit(context.Background(), "mer-1", "run-1", domain.VerdictChangesRequested, "fix it", ""); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	if msgr.sends != 1 || !strings.Contains(msgr.gotMsg, "fix it") {
+		t.Fatalf("expected message with body: %+v", msgr)
+	}
+	if strings.Contains(msgr.gotMsg, "GitHub review") {
+		t.Fatalf("message should not reference a review id when none was supplied: %q", msgr.gotMsg)
+	}
+}
+
+func TestSubmitPropagatesMessengerError(t *testing.T) {
+	store := &fakeStore{runs: []domain.ReviewRun{{ID: "run-1", SessionID: "mer-1", Status: domain.ReviewRunRunning}}}
+	msgr := &fakeMessenger{sendErr: fmt.Errorf("dead pane")}
+	eng := newEngineWithMessenger(store, msgr)
+
+	if _, err := eng.Submit(context.Background(), "mer-1", "run-1", domain.VerdictChangesRequested, "fix it", "1"); err == nil {
+		t.Fatal("expected Submit to surface the messenger error")
+	}
+}
+
 func TestSubmitValidationAndOwnership(t *testing.T) {
 	store := &fakeStore{runs: []domain.ReviewRun{{ID: "run-1", SessionID: "other", Status: domain.ReviewRunRunning}}}
 	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, &fakeLauncher{})
 
-	if _, err := eng.Submit(context.Background(), "mer-1", "", domain.VerdictApproved, ""); !errors.Is(err, ErrInvalid) {
+	if _, err := eng.Submit(context.Background(), "mer-1", "", domain.VerdictApproved, "", ""); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("missing run id err = %v", err)
 	}
-	if _, err := eng.Submit(context.Background(), "mer-1", "run-1", "garbage", "b"); !errors.Is(err, ErrInvalid) {
+	if _, err := eng.Submit(context.Background(), "mer-1", "run-1", "garbage", "b", ""); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("bad verdict err = %v", err)
 	}
-	if _, err := eng.Submit(context.Background(), "mer-1", "missing", domain.VerdictApproved, ""); !errors.Is(err, ErrNotFound) {
+	if _, err := eng.Submit(context.Background(), "mer-1", "missing", domain.VerdictApproved, "", ""); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("unknown run err = %v", err)
 	}
-	if _, err := eng.Submit(context.Background(), "mer-1", "run-1", domain.VerdictApproved, ""); !errors.Is(err, ErrInvalid) {
+	if _, err := eng.Submit(context.Background(), "mer-1", "run-1", domain.VerdictApproved, "", ""); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("ownership err = %v", err)
 	}
 }
