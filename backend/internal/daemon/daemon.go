@@ -116,7 +116,7 @@ func Run() error {
 
 	// Wire the controller-facing session service over the same store + LCM, the
 	// zellij runtime, a gitworktree workspace, the per-session agent resolver
-	// (AO_AGENT default, validated here), and the agent messenger, then mount it
+	// (AO_AGENT validated here for compatibility), and the agent messenger, then mount it
 	// on the API.
 	sessionSvc, reviewSvc, err := startSession(cfg, runtimeAdapter, store, lcStack.LCM, messenger, telemetrySink, log)
 	if err != nil {

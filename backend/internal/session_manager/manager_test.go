@@ -223,6 +223,7 @@ func (m *fakeMessenger) Send(_ context.Context, _ domain.SessionID, msg string) 
 
 func newManager() (*Manager, *fakeStore, *fakeRuntime, *fakeWorkspace) {
 	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
 	rt := &fakeRuntime{}
 	ws := &fakeWorkspace{}
 	// Stub lookPath so the pre-launch agent-binary check passes; the fakeAgent
@@ -230,6 +231,12 @@ func newManager() (*Manager, *fakeStore, *fakeRuntime, *fakeWorkspace) {
 	lookPath := func(string) (string, error) { return "/bin/true", nil }
 	m := New(Deps{Runtime: rt, Agents: fakeAgents{}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
 	return m, st, rt, ws
+}
+func testRoleAgents() domain.ProjectConfig {
+	return domain.ProjectConfig{
+		Worker:       domain.RoleOverride{Harness: domain.HarnessClaudeCode},
+		Orchestrator: domain.RoleOverride{Harness: domain.HarnessClaudeCode},
+	}
 }
 func seedTerminal(st *fakeStore, id domain.SessionID, meta domain.SessionMetadata) {
 	st.sessions[id] = domain.SessionRecord{ID: id, ProjectID: "mer", Metadata: meta, IsTerminated: true, Activity: domain.Activity{State: domain.ActivityExited}}
@@ -273,10 +280,11 @@ func TestSpawn_ResolvesProjectConfig(t *testing.T) {
 		t.Fatal("runtime env missing AO_SESSION_ID")
 	}
 
-	// A project with no stored config yields a zero AgentConfig (adapter defaults).
+	// A project with no stored config yields a zero AgentConfig (adapter defaults)
+	// when the spawn explicitly names its agent.
 	st.projects["bare"] = domain.ProjectRecord{ID: "bare"}
 	agent.lastConfig = ports.AgentConfig{Model: "stale"}
-	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "bare", Kind: domain.KindWorker}); err != nil {
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "bare", Kind: domain.KindWorker, Harness: domain.HarnessCodex}); err != nil {
 		t.Fatal(err)
 	}
 	if !agent.lastConfig.IsZero() {
@@ -284,30 +292,38 @@ func TestSpawn_ResolvesProjectConfig(t *testing.T) {
 	}
 }
 
-// TestSpawn_PersistsResolvedDefaultHarness locks the fix for the mislabelled
-// agent: a spawn that names no harness must persist the daemon's default agent
-// (so the API/UI report what actually runs), while an explicit harness wins.
-func TestSpawn_PersistsResolvedDefaultHarness(t *testing.T) {
+func TestSpawn_RejectsMissingRoleHarness(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
 	m := New(Deps{
 		Runtime: &fakeRuntime{}, Agents: fakeAgents{}, Workspace: &fakeWorkspace{}, Store: st,
 		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
-		LookPath:       func(string) (string, error) { return "/bin/true", nil },
-		DefaultHarness: domain.HarnessClaudeCode,
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
 	})
 
-	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
-		t.Fatal(err)
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); !errors.Is(err, ErrMissingHarness) {
+		t.Fatalf("worker err = %v, want ErrMissingHarness", err)
 	}
-	if got := st.sessions["mer-1"].Harness; got != domain.HarnessClaudeCode {
-		t.Fatalf("unspecified harness = %q, want resolved default %q", got, domain.HarnessClaudeCode)
+	if len(st.sessions) != 0 {
+		t.Fatalf("missing worker harness must not create a session row, got %d", len(st.sessions))
 	}
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindOrchestrator}); !errors.Is(err, ErrMissingHarness) {
+		t.Fatalf("orchestrator err = %v, want ErrMissingHarness", err)
+	}
+}
 
+func TestSpawn_ExplicitHarnessWinsWithoutProjectRoleHarness(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	m := New(Deps{
+		Runtime: &fakeRuntime{}, Agents: fakeAgents{}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
 	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessCodex}); err != nil {
 		t.Fatal(err)
 	}
-	if got := st.sessions["mer-2"].Harness; got != domain.HarnessCodex {
+	if got := st.sessions["mer-1"].Harness; got != domain.HarnessCodex {
 		t.Fatalf("explicit harness = %q, want %q", got, domain.HarnessCodex)
 	}
 }
@@ -561,7 +577,10 @@ func TestSpawn_ForwardsResolvedAgentConfigPermissions(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
 		AgentConfig: domain.AgentConfig{Permissions: domain.PermissionModeAuto},
-		Worker:      domain.RoleOverride{AgentConfig: domain.AgentConfig{Permissions: domain.PermissionModeBypassPermissions}},
+		Worker: domain.RoleOverride{
+			Harness:     domain.HarnessClaudeCode,
+			AgentConfig: domain.AgentConfig{Permissions: domain.PermissionModeBypassPermissions},
+		},
 	}}
 	agent := &recordingAgent{}
 	lookPath := func(string) (string, error) { return "/bin/true", nil }
@@ -610,6 +629,7 @@ func TestRestore_ForwardsResolvedAgentConfigPermissions(t *testing.T) {
 
 func TestSpawnWorker_AppendsActiveOrchestratorContact(t *testing.T) {
 	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
 	st.num = 1
 	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindOrchestrator}
 	agent := &recordingAgent{}
@@ -646,6 +666,7 @@ func TestSpawnWorker_AppendsActiveOrchestratorContact(t *testing.T) {
 
 func TestSpawnWorker_SkipsTerminatedOrchestratorContact(t *testing.T) {
 	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
 	st.num = 1
 	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindOrchestrator, IsTerminated: true}
 	agent := &recordingAgent{}
@@ -666,6 +687,7 @@ func TestSpawnWorker_SkipsTerminatedOrchestratorContact(t *testing.T) {
 
 func TestSpawnOrchestrator_UsesCoordinatorPrompt(t *testing.T) {
 	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
 	agent := &recordingAgent{}
 	rt := &fakeRuntime{}
 	ws := &fakeWorkspace{}
@@ -878,6 +900,7 @@ func TestRollbackSpawn_FallsBackToKillForLiveRow(t *testing.T) {
 // reaper later mistakes for a live session.
 func TestSpawn_RejectsMissingAgentBinary(t *testing.T) {
 	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
 	rt := &fakeRuntime{}
 	ws := &fakeWorkspace{}
 	notFound := func(name string) (string, error) {
@@ -927,6 +950,7 @@ func TestSpawn_RejectsUnknownHarness(t *testing.T) {
 // buffer capturing its log output, for the hook PATH pin tests.
 func pathPinManager(executable func() (string, error)) (*Manager, *fakeStore, *fakeRuntime, *bytes.Buffer) {
 	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
 	rt := &fakeRuntime{}
 	logBuf := &bytes.Buffer{}
 	lookPath := func(string) (string, error) { return "/bin/true", nil }
@@ -1018,7 +1042,8 @@ func TestSpawn_ProjectPATHIsPinBase(t *testing.T) {
 	daemonExe := filepath.Join(t.TempDir(), "ao")
 	m, st, rt, _ := pathPinManager(func() (string, error) { return daemonExe, nil })
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
-		Env: map[string]string{"PATH": "/proj/bin"},
+		Env:    map[string]string{"PATH": "/proj/bin"},
+		Worker: domain.RoleOverride{Harness: domain.HarnessClaudeCode},
 	}}
 	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
 		t.Fatal(err)

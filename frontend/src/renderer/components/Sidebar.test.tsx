@@ -26,7 +26,16 @@ const workspace: WorkspaceSummary = {
 	sessions: [],
 };
 
-function renderSidebar(onRemoveProject = vi.fn().mockResolvedValue(undefined)) {
+type CreateProjectHandler = (input: { path: string; workerAgent: string; orchestratorAgent: string }) => Promise<void>;
+type RemoveProjectHandler = (projectId: string) => Promise<void>;
+
+function renderSidebar({
+	onCreateProject = vi.fn().mockResolvedValue(undefined) as CreateProjectHandler,
+	onRemoveProject = vi.fn().mockResolvedValue(undefined) as RemoveProjectHandler,
+}: {
+	onCreateProject?: CreateProjectHandler;
+	onRemoveProject?: RemoveProjectHandler;
+} = {}) {
 	const queryClient = new QueryClient({
 		defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
 	});
@@ -35,7 +44,7 @@ function renderSidebar(onRemoveProject = vi.fn().mockResolvedValue(undefined)) {
 			<SidebarProvider>
 				<Sidebar
 					daemonStatus={{ state: "running" }}
-					onCreateProject={vi.fn()}
+					onCreateProject={onCreateProject}
 					onRemoveProject={onRemoveProject}
 					workspaces={[workspace]}
 				/>
@@ -43,6 +52,11 @@ function renderSidebar(onRemoveProject = vi.fn().mockResolvedValue(undefined)) {
 		</QueryClientProvider>,
 	);
 	return onRemoveProject;
+}
+
+async function chooseOption(trigger: HTMLElement, optionName: string) {
+	await userEvent.click(trigger);
+	await userEvent.click(await screen.findByRole("option", { name: optionName }));
 }
 
 beforeEach(() => {
@@ -95,6 +109,28 @@ describe("Sidebar", () => {
 		await user.click(screen.getByLabelText("Open Project One dashboard"));
 
 		expect(navigateMock).toHaveBeenCalledWith({ to: "/projects/$projectId", params: { projectId: "proj-1" } });
+	});
+
+	it("requires explicit worker and orchestrator agents when creating a project", async () => {
+		const user = userEvent.setup();
+		const onCreateProject = vi.fn().mockResolvedValue(undefined) as CreateProjectHandler;
+		window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue("/repo/new-project");
+		renderSidebar({ onCreateProject });
+
+		await user.click(screen.getByLabelText("New project"));
+
+		expect(await screen.findByText("/repo/new-project")).toBeInTheDocument();
+		await chooseOption(screen.getByRole("combobox", { name: "Worker agent" }), "codex");
+		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "claude-code");
+		await user.click(screen.getByRole("button", { name: "Create and start" }));
+
+		await waitFor(() =>
+			expect(onCreateProject).toHaveBeenCalledWith({
+				path: "/repo/new-project",
+				workerAgent: "codex",
+				orchestratorAgent: "claude-code",
+			}),
+		);
 	});
 
 	it("always shows action icons and reserves padding for them", () => {

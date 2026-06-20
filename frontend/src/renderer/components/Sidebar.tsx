@@ -12,7 +12,7 @@ import {
 	Sun,
 	Trash2,
 } from "lucide-react";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import {
 	attentionZone,
 	isOrchestratorSession,
@@ -55,6 +55,7 @@ import { OrchestratorIcon } from "./icons";
 import aoLogo from "../assets/ao-logo.png";
 import { cn } from "../lib/utils";
 import { useUiStore } from "../stores/ui-store";
+import { CreateProjectAgentSheet, type CreateProjectAgentSelection } from "./CreateProjectAgentSheet";
 
 // The macOS hiddenInset traffic lights and the fixed TitlebarNav overlay live
 // in the full-width topbar's left inset (_shell renders the bar above the
@@ -74,7 +75,7 @@ type SidebarProps = {
 	underTopbar?: boolean;
 	workspaceError?: string;
 	workspaces: WorkspaceSummary[];
-	onCreateProject: (input: { path: string }) => Promise<void>;
+	onCreateProject: (input: { path: string; workerAgent: string; orchestratorAgent: string }) => Promise<void>;
 	onRemoveProject: (projectId: string) => Promise<void>;
 };
 
@@ -591,15 +592,70 @@ function ProjectItem({
 }
 
 function CreateProjectButton({ onCreateProject }: Pick<SidebarProps, "onCreateProject">) {
+	return (
+		<CreateProjectFlow onCreateProject={onCreateProject}>
+			{({ disabled, choosePath, label }) => (
+				<Tooltip>
+					<TooltipTrigger asChild>
+						<button
+							aria-label="New project"
+							className="grid h-[18px] w-[18px] place-items-center rounded-[4px] text-passive transition-colors hover:bg-interactive-hover hover:text-muted-foreground"
+							disabled={disabled}
+							onClick={choosePath}
+							type="button"
+						>
+							<Plus className="h-[13px] w-[13px]" aria-hidden="true" />
+						</button>
+					</TooltipTrigger>
+					<TooltipContent>{label}</TooltipContent>
+				</Tooltip>
+			)}
+		</CreateProjectFlow>
+	);
+}
+
+function CreateProjectListItem({ onCreateProject }: Pick<SidebarProps, "onCreateProject">) {
+	return (
+		<CreateProjectFlow onCreateProject={onCreateProject}>
+			{({ disabled, choosePath, label }) => (
+				<SidebarMenuItem className="mb-px group-data-[collapsible=icon]:mb-0">
+					<Tooltip>
+						<TooltipTrigger asChild>
+							<button
+								aria-label="New project"
+								className="grid h-9 w-full place-items-center rounded-[5px] text-passive transition-colors hover:bg-interactive-hover hover:text-muted-foreground"
+								disabled={disabled}
+								onClick={choosePath}
+								type="button"
+							>
+								<Plus className="h-[13px] w-[13px]" aria-hidden="true" />
+							</button>
+						</TooltipTrigger>
+						<TooltipContent>{label}</TooltipContent>
+					</Tooltip>
+				</SidebarMenuItem>
+			)}
+		</CreateProjectFlow>
+	);
+}
+
+function CreateProjectFlow({
+	children,
+	onCreateProject,
+}: Pick<SidebarProps, "onCreateProject"> & {
+	children: (state: { choosePath: () => void; disabled: boolean; label: string }) => ReactNode;
+}) {
 	const [error, setError] = useState<string | null>(null);
+	const [selectedPath, setSelectedPath] = useState<string | null>(null);
 	const [isChoosingPath, setIsChoosingPath] = useState(false);
+	const [isCreating, setIsCreating] = useState(false);
 
 	const choosePath = async () => {
 		setError(null);
 		setIsChoosingPath(true);
 		try {
-			const selectedPath = await aoBridge.app.chooseDirectory();
-			if (selectedPath) await onCreateProject({ path: selectedPath });
+			const path = await aoBridge.app.chooseDirectory();
+			if (path) setSelectedPath(path);
 		} catch (err) {
 			setError(err instanceof Error ? err.message : "Could not add project");
 		} finally {
@@ -607,69 +663,43 @@ function CreateProjectButton({ onCreateProject }: Pick<SidebarProps, "onCreatePr
 		}
 	};
 
+	const createProject = async (selection: CreateProjectAgentSelection) => {
+		if (!selectedPath) return;
+		setError(null);
+		setIsCreating(true);
+		try {
+			await onCreateProject({ path: selectedPath, ...selection });
+			setSelectedPath(null);
+		} catch (err) {
+			setError(err instanceof Error ? err.message : "Could not add project");
+		} finally {
+			setIsCreating(false);
+		}
+	};
+
+	const label = isChoosingPath ? "Opening..." : isCreating ? "Creating..." : "New project";
+
 	return (
 		<>
-			<Tooltip>
-				<TooltipTrigger asChild>
-					<button
-						aria-label="New project"
-						className="grid h-[18px] w-[18px] place-items-center rounded-[4px] text-passive transition-colors hover:bg-interactive-hover hover:text-muted-foreground"
-						disabled={isChoosingPath}
-						onClick={choosePath}
-						type="button"
-					>
-						<Plus className="h-[13px] w-[13px]" aria-hidden="true" />
-					</button>
-				</TooltipTrigger>
-				<TooltipContent>{isChoosingPath ? "Opening…" : "New project"}</TooltipContent>
-			</Tooltip>
+			{children({ choosePath: () => void choosePath(), disabled: isChoosingPath || isCreating, label })}
+			<CreateProjectAgentSheet
+				error={error}
+				isCreating={isCreating}
+				onOpenChange={(open) => {
+					if (!open) {
+						setSelectedPath(null);
+						setError(null);
+					}
+				}}
+				onSubmit={createProject}
+				open={selectedPath !== null}
+				path={selectedPath}
+			/>
 			{error && (
 				<span className="sr-only" role="status">
 					{error}
 				</span>
 			)}
 		</>
-	);
-}
-
-function CreateProjectListItem({ onCreateProject }: Pick<SidebarProps, "onCreateProject">) {
-	const [error, setError] = useState<string | null>(null);
-	const [isChoosingPath, setIsChoosingPath] = useState(false);
-
-	const choosePath = async () => {
-		setError(null);
-		setIsChoosingPath(true);
-		try {
-			const selectedPath = await aoBridge.app.chooseDirectory();
-			if (selectedPath) await onCreateProject({ path: selectedPath });
-		} catch (err) {
-			setError(err instanceof Error ? err.message : "Could not add project");
-		} finally {
-			setIsChoosingPath(false);
-		}
-	};
-
-	return (
-		<SidebarMenuItem className="mb-px group-data-[collapsible=icon]:mb-0">
-			<Tooltip>
-				<TooltipTrigger asChild>
-					<button
-						aria-label="New project"
-						className="grid h-9 w-full place-items-center rounded-[5px] text-passive transition-colors hover:bg-interactive-hover hover:text-muted-foreground"
-						disabled={isChoosingPath}
-						onClick={choosePath}
-						type="button"
-					>
-						<Plus className="h-[13px] w-[13px]" aria-hidden="true" />
-					</button>
-				</TooltipTrigger>
-				<TooltipContent>{isChoosingPath ? "Opening…" : "New project"}</TooltipContent>
-			</Tooltip>
-			{error && (
-				<span className="sr-only" role="status">
-					{error}
-				</span>
-			)}
-		</SidebarMenuItem>
 	);
 }

@@ -107,7 +107,7 @@ func TestProjectGet_Success(t *testing.T) {
 	if capture.method != http.MethodGet || capture.path != "/api/v1/projects/demo" {
 		t.Fatalf("request = %s %s, want GET /api/v1/projects/demo", capture.method, capture.path)
 	}
-	for _, want := range []string{"Project demo (ok)", "name: Demo", "path: /repo/demo", "default branch: main", "default harness: codex"} {
+	for _, want := range []string{"Project demo (ok)", "name: Demo", "path: /repo/demo", "default branch: main", "agent: codex"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("output missing %q:\n%s", want, out)
 		}
