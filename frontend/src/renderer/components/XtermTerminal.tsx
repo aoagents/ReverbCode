@@ -2,9 +2,10 @@
 //
 // Design rules (the reason this component exists):
 //  - The mount effect is dependency-free: the terminal instance is created once
-//    per mount and NEVER torn down because a callback identity or session
-//    changed. Session switching is the owner's job (re-point the mux, clear the
-//    screen) — see TerminalPane.
+//    per mount and NEVER torn down because a callback identity changed.
+//    TerminalPane chooses the mount lifetime; it keys mounts by terminal handle
+//    so session switches get a clean surface, while same-handle reconnects reuse
+//    the mounted renderer.
 //  - Nothing writes into the buffer at mount. Status/empty-state belongs to DOM
 //    chrome around the terminal, not inside it. Writing before layout settles
 //    is what crashed xterm's Viewport (`dimensions` of a zero-sized renderer).
@@ -26,7 +27,8 @@ import { SearchAddon } from "@xterm/addon-search";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
-import type { AttachableTerminal } from "../hooks/useTerminalSession";
+import type { AttachableTerminal, TerminalUserInputSource } from "../hooks/useTerminalSession";
+import { logTerminalFlow } from "../lib/terminal-flow-log";
 import { buildTerminalThemes } from "../lib/terminal-themes";
 import type { Theme } from "../stores/ui-store";
 
@@ -74,6 +76,14 @@ const terminalThemes = buildTerminalThemes();
 // events stop reaching zellij. The clear only wipes pixels; modes stay up.
 const CLEAR_SEQUENCE = "\x1b[3J\x1b[2J\x1b[H";
 
+function preparePastedText(text: string): string {
+	return text.replace(/\r?\n/g, "\r");
+}
+
+function bracketPastedText(text: string, bracketedPasteMode: boolean): string {
+	return bracketedPasteMode ? `\x1b[200~${text}\x1b[201~` : text;
+}
+
 export function XtermTerminal(props: XtermTerminalProps) {
 	const hostRef = useRef<HTMLDivElement | null>(null);
 	const termRef = useRef<Terminal | null>(null);
@@ -95,6 +105,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 	useEffect(() => {
 		const host = hostRef.current;
 		if (!host) return undefined;
+		logTerminalFlow("xterm.mount", { theme: props.theme, hostReady: true });
 
 		let term: Terminal;
 		try {
@@ -129,11 +140,13 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				theme: props.theme === "dark" ? terminalThemes.dark : terminalThemes.light,
 			});
 		} catch (error) {
+			logTerminalFlow("xterm.construct.error", { error: error instanceof Error ? error.message : String(error) });
 			callbacksRef.current.onError?.(error);
 			return undefined;
 		}
 
 		termRef.current = term;
+		logTerminalFlow("xterm.constructed", { theme: props.theme });
 
 		const fit = new FitAddon();
 		term.loadAddon(fit);
@@ -145,6 +158,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 
 		term.open(host);
 		loadRenderer(term);
+		logTerminalFlow("xterm.opened", { cols: term.cols, rows: term.rows });
 
 		const fitTerminal = () => {
 			try {
@@ -227,6 +241,26 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		// misses them. Listen on window directly as a session-long recovery path.
 		window.addEventListener("resize", fitTerminal);
 
+		const userInputListeners = new Set<(data: string, source: TerminalUserInputSource) => void>();
+		const emitUserInput = (data: string, source: TerminalUserInputSource) => {
+			if (data.length === 0) return;
+			userInputListeners.forEach((listener) => listener(data, source));
+		};
+		const keyInput = term.onKey(({ key }) => emitUserInput(key, "keyboard"));
+		const pasteInput = (event: ClipboardEvent) => {
+			event.preventDefault();
+			event.stopPropagation();
+			const text = event.clipboardData?.getData("text/plain") ?? "";
+			const prepared = preparePastedText(text);
+			const bracketed = term.modes.bracketedPasteMode && term.options.ignoreBracketedPasteMode !== true;
+			emitUserInput(bracketPastedText(prepared, bracketed), "paste");
+		};
+		const compositionInput = (event: CompositionEvent) => {
+			emitUserInput(event.data, "composition");
+		};
+		host.addEventListener("paste", pasteInput, true);
+		host.addEventListener("compositionend", compositionInput, true);
+
 		// Live cols/rows getters: the owner reads the current grid at attach time,
 		// not a snapshot taken at ready time (the first fit may not have run yet).
 		const handle: AttachableTerminal = {
@@ -239,18 +273,27 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			write: (data) => term.write(data),
 			writeln: (line) => term.writeln(line),
 			clear: () => term.write(CLEAR_SEQUENCE),
-			onData: (listener) => term.onData(listener),
+			onUserInput: (listener) => {
+				userInputListeners.add(listener);
+				return { dispose: () => userInputListeners.delete(listener) };
+			},
 			onResize: (listener) => term.onResize(listener),
 		};
+		logTerminalFlow("xterm.ready", { cols: term.cols, rows: term.rows });
 		callbacksRef.current.onReady?.(handle);
 
 		return () => {
+			logTerminalFlow("xterm.dispose", { cols: term.cols, rows: term.rows });
 			termRef.current = null;
 			cancelAnimationFrame(raf);
 			for (const timer of settleTimers) window.clearTimeout(timer);
 			observer.disconnect();
 			stabilizer.dispose();
 			window.removeEventListener("resize", fitTerminal);
+			host.removeEventListener("paste", pasteInput, true);
+			host.removeEventListener("compositionend", compositionInput, true);
+			keyInput.dispose();
+			userInputListeners.clear();
 			try {
 				term.dispose();
 			} catch {

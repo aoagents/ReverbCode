@@ -30,7 +30,7 @@ func TestRuntimeIntegration(t *testing.T) {
 	h, err := r.Create(ctx, ports.RuntimeConfig{
 		SessionID:     "ao_itest_zj",
 		WorkspacePath: t.TempDir(),
-		Argv:          []string{"sh", "-c", "printf ready-$AO_SESSION_ID\\n"},
+		Argv:          []string{"sh", "-lc", "printf ready-$AO_SESSION_ID\\n; exec sh -i"},
 		Env:           map[string]string{"AO_SESSION_ID": id},
 	})
 	if err != nil {

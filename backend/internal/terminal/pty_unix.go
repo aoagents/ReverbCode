@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/terminaldiag"
 	"github.com/creack/pty"
 )
 
@@ -18,13 +19,23 @@ import (
 // birth when a size is known: `zellij attach` reads the tty size once at
 // startup, and a post-spawn TIOCSWINSZ depends on SIGWINCH delivery that can
 // race the client installing its handler — StartWithSize makes the first read
-// correct by construction. ctx cancellation kills the process. Windows uses a
-// stub (see pty_windows.go) until a ConPTY path is added.
+// correct by construction. ctx cancellation closes the PTY through the same
+// graceful detach path as an explicit client close. Windows uses a stub (see
+// pty_windows.go) until a ConPTY path is added.
 func defaultSpawn(ctx context.Context, argv []string, rows, cols uint16) (ptyProcess, error) {
 	if len(argv) == 0 {
 		return nil, errors.New("terminal: empty attach command")
 	}
-	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	terminaldiag.Log("backend", "pty.spawn.start", map[string]any{
+		"argv0": firstArg(argv),
+		"argc":  len(argv),
+		"cols":  cols,
+		"rows":  rows,
+	})
+	cmd := exec.Command(argv[0], argv[1:]...)
 	var f *os.File
 	var err error
 	if rows > 0 && cols > 0 {
@@ -33,9 +44,22 @@ func defaultSpawn(ctx context.Context, argv []string, rows, cols uint16) (ptyPro
 		f, err = pty.Start(cmd)
 	}
 	if err != nil {
+		terminaldiag.Log("backend", "pty.spawn.error", map[string]any{
+			"argv0": firstArg(argv),
+			"error": err.Error(),
+		})
 		return nil, err
 	}
-	return &creackPTY{f: f, cmd: cmd}, nil
+	terminaldiag.Log("backend", "pty.spawn.ok", map[string]any{
+		"argv0": firstArg(argv),
+		"pid":   cmd.Process.Pid,
+	})
+	proc := &creackPTY{f: f, cmd: cmd}
+	go func() {
+		<-ctx.Done()
+		_ = proc.Close()
+	}()
+	return proc, nil
 }
 
 type creackPTY struct {
@@ -86,6 +110,11 @@ const detachGrace = 250 * time.Millisecond
 // shutdown when a terminal is still attached.
 func (p *creackPTY) Close() error {
 	p.closeOnce.Do(func() {
+		pid := 0
+		if p.cmd.Process != nil {
+			pid = p.cmd.Process.Pid
+		}
+		terminaldiag.Log("backend", "pty.close.start", map[string]any{"pid": pid})
 		done := make(chan struct{})
 		go func() {
 			_ = p.cmd.Wait()
@@ -96,13 +125,21 @@ func (p *creackPTY) Close() error {
 		}
 		select {
 		case <-done:
+			terminaldiag.Log("backend", "pty.close.term_ok", map[string]any{"pid": pid})
 		case <-time.After(detachGrace):
 			if p.cmd.Process != nil {
 				_ = p.cmd.Process.Kill()
 			}
 			<-done
+			terminaldiag.Log("backend", "pty.close.kill", map[string]any{"pid": pid})
 		}
 		p.closeErr = p.f.Close()
+		if p.closeErr != nil {
+			terminaldiag.Log("backend", "pty.close.error", map[string]any{
+				"pid":   pid,
+				"error": p.closeErr.Error(),
+			})
+		}
 	})
 	return p.closeErr
 }

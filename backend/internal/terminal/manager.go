@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/base64"
 	"log/slog"
+	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/cdc"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	"github.com/aoagents/agent-orchestrator/backend/internal/terminaldiag"
 )
 
 // EventSource is the session-state feed the "sessions" channel forwards. The CDC
@@ -53,6 +56,7 @@ type Manager struct {
 	mu          sync.Mutex
 	attachments map[*attachment]struct{}
 	closed      bool
+	nextConnID  atomic.Uint64
 }
 
 // Option configures a Manager.
@@ -107,6 +111,7 @@ func (m *Manager) Close() {
 	for _, a := range attachments {
 		a.close()
 	}
+	terminaldiag.Log("backend", "manager.close", map[string]any{"attachments": len(attachments)})
 }
 
 // track registers a live attachment so Close can tear it down; it refuses new
@@ -134,9 +139,20 @@ func (m *Manager) Serve(ctx context.Context, conn wsConn) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	connID := "mux-" + strconv.FormatUint(m.nextConnID.Add(1), 10)
+	started := time.Now()
+	terminaldiag.Log("backend", "mux.serve.start", map[string]any{"connId": connID})
+	defer func() {
+		terminaldiag.Log("backend", "mux.serve.end", map[string]any{
+			"connId":     connID,
+			"durationMs": time.Since(started).Milliseconds(),
+		})
+	}()
+
 	c := &connState{
 		mgr:    m,
 		conn:   conn,
+		connID: connID,
 		cancel: cancel,
 		out:    make(chan serverMsg, defaultWriteBuffer),
 		terms:  map[string]*attachment{},
@@ -149,6 +165,10 @@ func (m *Manager) Serve(ctx context.Context, conn wsConn) {
 	for {
 		var msg clientMsg
 		if err := conn.ReadJSON(ctx, &msg); err != nil {
+			terminaldiag.Log("backend", "mux.read.end", map[string]any{
+				"connId": c.connID,
+				"error":  err.Error(),
+			})
 			return
 		}
 		if ctx.Err() != nil {
@@ -162,6 +182,7 @@ func (m *Manager) Serve(ctx context.Context, conn wsConn) {
 type connState struct {
 	mgr    *Manager
 	conn   wsConn
+	connID string
 	cancel context.CancelFunc
 	out    chan serverMsg
 
@@ -187,20 +208,46 @@ func (c *connState) handle(msg clientMsg) {
 func (c *connState) handleTerminal(msg clientMsg) {
 	switch msg.Type {
 	case msgOpen:
+		terminaldiag.Log("backend", "mux.frame.open", map[string]any{
+			"connId": c.connID,
+			"handle": msg.ID,
+			"cols":   msg.Cols,
+			"rows":   msg.Rows,
+		})
 		c.openTerminal(msg.ID, msg.Rows, msg.Cols)
 	case msgData:
 		raw, err := base64.StdEncoding.DecodeString(msg.Data)
 		if err != nil {
+			terminaldiag.Log("backend", "mux.frame.data.invalid", map[string]any{
+				"connId": c.connID,
+				"handle": msg.ID,
+				"error":  err.Error(),
+			})
 			return
 		}
+		terminaldiag.Log("backend", "mux.frame.data", map[string]any{
+			"connId": c.connID,
+			"handle": msg.ID,
+			"bytes":  len(raw),
+		})
 		if a := c.lookup(msg.ID); a != nil {
 			_ = a.write(raw)
 		}
 	case msgResize:
+		terminaldiag.Log("backend", "mux.frame.resize", map[string]any{
+			"connId": c.connID,
+			"handle": msg.ID,
+			"cols":   msg.Cols,
+			"rows":   msg.Rows,
+		})
 		if a := c.lookup(msg.ID); a != nil {
 			_ = a.resize(msg.Rows, msg.Cols)
 		}
 	case msgClose:
+		terminaldiag.Log("backend", "mux.frame.close", map[string]any{
+			"connId": c.connID,
+			"handle": msg.ID,
+		})
 		c.closeTerminal(msg.ID)
 	}
 }
@@ -210,20 +257,38 @@ func (c *connState) handleTerminal(msg clientMsg) {
 // (a resize that raced ahead of the attach would otherwise be lost).
 func (c *connState) openTerminal(id string, rows, cols uint16) {
 	if id == "" {
+		terminaldiag.Log("backend", "terminal.open.missing_id", map[string]any{"connId": c.connID})
 		c.enqueue(serverMsg{Ch: chTerminal, Type: msgError, Error: "missing terminal id"})
 		return
 	}
 	c.mu.Lock()
 	if _, ok := c.terms[id]; ok {
 		c.mu.Unlock()
+		terminaldiag.Log("backend", "terminal.open.duplicate", map[string]any{
+			"connId": c.connID,
+			"handle": id,
+		})
 		return // already open on this conn; avoid a duplicate attach
 	}
 	c.mu.Unlock()
+	terminaldiag.Log("backend", "terminal.open.start", map[string]any{
+		"connId": c.connID,
+		"handle": id,
+		"cols":   cols,
+		"rows":   rows,
+	})
 
 	// a is captured by onExit before assignment; safe because the attach loop —
 	// the only thing that fires onExit — starts after the registration below.
 	var a *attachment
 	a = newAttachment(id, ports.RuntimeHandle{ID: id}, c.mgr.src, c.mgr.spawn,
+		func() {
+			terminaldiag.Log("backend", "terminal.opened", map[string]any{
+				"connId": c.connID,
+				"handle": id,
+			})
+			c.enqueue(serverMsg{Ch: chTerminal, ID: id, Type: msgOpened})
+		},
 		func(data []byte) {
 			c.enqueue(serverMsg{
 				Ch:   chTerminal,
@@ -243,6 +308,10 @@ func (c *connState) openTerminal(id string, rows, cols uint16) {
 				delete(c.terms, id)
 			}
 			c.mu.Unlock()
+			terminaldiag.Log("backend", "terminal.exited", map[string]any{
+				"connId": c.connID,
+				"handle": id,
+			})
 			c.enqueue(serverMsg{Ch: chTerminal, ID: id, Type: msgExited})
 		},
 		c.mgr.log)
@@ -250,6 +319,11 @@ func (c *connState) openTerminal(id string, rows, cols uint16) {
 		_ = a.resize(rows, cols) // recorded now, applied when the PTY attaches
 	}
 	if err := c.mgr.track(a); err != nil {
+		terminaldiag.Log("backend", "terminal.open.track_error", map[string]any{
+			"connId": c.connID,
+			"handle": id,
+			"error":  err.Error(),
+		})
 		c.enqueue(serverMsg{Ch: chTerminal, ID: id, Type: msgError, Error: err.Error()})
 		return
 	}
@@ -257,14 +331,17 @@ func (c *connState) openTerminal(id string, rows, cols uint16) {
 	c.terms[id] = a
 	c.mu.Unlock()
 
-	// Ack before starting the attach loop so opened always precedes any
-	// data/exited frames (the single out channel preserves this order). A
-	// dead pane is reported as opened followed by exited.
-	c.enqueue(serverMsg{Ch: chTerminal, ID: id, Type: msgOpened})
-
 	go func() {
+		terminaldiag.Log("backend", "terminal.attachment.run.start", map[string]any{
+			"connId": c.connID,
+			"handle": id,
+		})
 		a.run(c.mgr.ctx)
 		c.mgr.forget(a)
+		terminaldiag.Log("backend", "terminal.attachment.run.end", map[string]any{
+			"connId": c.connID,
+			"handle": id,
+		})
 	}()
 }
 
@@ -273,6 +350,11 @@ func (c *connState) closeTerminal(id string) {
 	a := c.terms[id]
 	delete(c.terms, id)
 	c.mu.Unlock()
+	terminaldiag.Log("backend", "terminal.close", map[string]any{
+		"connId": c.connID,
+		"handle": id,
+		"found":  a != nil,
+	})
 	if a != nil {
 		a.close()
 	}
@@ -319,6 +401,12 @@ func (c *connState) enqueue(msg serverMsg) {
 	select {
 	case c.out <- msg:
 	default:
+		terminaldiag.Log("backend", "mux.enqueue.overflow", map[string]any{
+			"connId": c.connID,
+			"handle": msg.ID,
+			"type":   msg.Type,
+			"ch":     msg.Ch,
+		})
 		c.cancel()
 	}
 }
@@ -330,6 +418,13 @@ func (c *connState) writeLoop(ctx context.Context) {
 			return
 		case msg := <-c.out:
 			if err := c.conn.WriteJSON(ctx, msg); err != nil {
+				terminaldiag.Log("backend", "mux.write.error", map[string]any{
+					"connId": c.connID,
+					"handle": msg.ID,
+					"type":   msg.Type,
+					"ch":     msg.Ch,
+					"error":  err.Error(),
+				})
 				c.cancel()
 				return
 			}
@@ -352,6 +447,10 @@ func (c *connState) heartbeatLoop(ctx context.Context, interval time.Duration) {
 			err := c.conn.Ping(pctx)
 			cancel()
 			if err != nil {
+				terminaldiag.Log("backend", "mux.ping.error", map[string]any{
+					"connId": c.connID,
+					"error":  err.Error(),
+				})
 				c.cancel()
 				return
 			}
@@ -360,6 +459,13 @@ func (c *connState) heartbeatLoop(ctx context.Context, interval time.Duration) {
 }
 
 func (c *connState) cleanup() {
+	c.mu.Lock()
+	termCount := len(c.terms)
+	c.mu.Unlock()
+	terminaldiag.Log("backend", "mux.cleanup.start", map[string]any{
+		"connId":    c.connID,
+		"termCount": termCount,
+	})
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()

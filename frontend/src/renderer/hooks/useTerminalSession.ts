@@ -11,6 +11,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getApiBaseUrl } from "../lib/api-client";
 import { createTerminalMux, muxUrlFromApiBase, type TerminalMux } from "../lib/terminal-mux";
+import { logTerminalFlow } from "../lib/terminal-flow-log";
 import type { WorkspaceSession } from "../types/workspace";
 import { workspaceQueryKey } from "./useWorkspaceQuery";
 
@@ -18,6 +19,8 @@ import { workspaceQueryKey } from "./useWorkspaceQuery";
  * The slice of xterm's Terminal the attachment needs. Structural, so tests can
  * drive the hook with a tiny fake instead of a real xterm + DOM.
  */
+export type TerminalUserInputSource = "keyboard" | "paste" | "composition";
+
 export type AttachableTerminal = {
 	cols: number;
 	rows: number;
@@ -30,7 +33,7 @@ export type AttachableTerminal = {
 	 * with wheel scroll dead (see XtermTerminal's CLEAR_SEQUENCE).
 	 */
 	clear: () => void;
-	onData: (listener: (data: string) => void) => { dispose: () => void };
+	onUserInput: (listener: (data: string, source: TerminalUserInputSource) => void) => { dispose: () => void };
 	onResize: (listener: (size: { cols: number; rows: number }) => void) => { dispose: () => void };
 };
 
@@ -51,6 +54,7 @@ export type UseTerminalSessionOptions = {
 
 const RETRY_BASE_MS = 500;
 const RETRY_MAX_MS = 8_000;
+const OPEN_TIMEOUT_MS = 3_000;
 // Trailing debounce on grid changes: a pane drag emits a burst of intermediate
 // sizes; the attached program should get one SIGWINCH when the drag settles,
 // not dozens (yyork's terminal-panel does the same at its socket layer).
@@ -88,9 +92,12 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		handle: null as string | null,
 		disposers: [] as Array<() => void>,
 		retryTimer: null as ReturnType<typeof setTimeout> | null,
+		openTimer: null as ReturnType<typeof setTimeout> | null,
 		resizeTimer: null as ReturnType<typeof setTimeout> | null,
 		attempts: 0,
 		firstAttach: true,
+		generation: 0,
+		inputReady: false,
 		detached: true,
 	});
 
@@ -105,13 +112,27 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 
 	const teardownMux = useCallback(() => {
 		const r = runtime.current;
+		logTerminalFlow("terminal_hook.teardown_mux", {
+			handle: r.handle,
+			hasMux: Boolean(r.mux),
+			generation: r.generation,
+			state: stateRef.current,
+		});
 		if (r.retryTimer) {
 			clearTimeout(r.retryTimer);
 			r.retryTimer = null;
 		}
+		if (r.openTimer) {
+			clearTimeout(r.openTimer);
+			r.openTimer = null;
+		}
 		if (r.resizeTimer) {
 			clearTimeout(r.resizeTimer);
 			r.resizeTimer = null;
+		}
+		r.inputReady = false;
+		if (r.mux && r.handle) {
+			r.mux.close(r.handle);
 		}
 		r.disposers.forEach((dispose) => dispose());
 		r.disposers = [];
@@ -119,19 +140,57 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		r.mux = null;
 	}, []);
 
+	const isCurrentAttachment = useCallback((generation: number, handle: string, mux: TerminalMux) => {
+		const r = runtime.current;
+		return !r.detached && r.generation === generation && r.handle === handle && r.mux === mux;
+	}, []);
+
+	const clearOpenTimer = useCallback((generation: number) => {
+		const r = runtime.current;
+		if (r.generation !== generation || !r.openTimer) return;
+		clearTimeout(r.openTimer);
+		r.openTimer = null;
+	}, []);
+
 	const scheduleReattach = useCallback(() => {
 		const r = runtime.current;
-		if (r.detached || !r.terminal || !r.handle) return;
+		if (r.detached || !r.terminal || !r.handle) {
+			logTerminalFlow("terminal_hook.reattach.skipped", {
+				handle: r.handle,
+				detached: r.detached,
+				hasTerminal: Boolean(r.terminal),
+			});
+			return;
+		}
 		// A socket dropping after the PTY ended (or errored) changes nothing.
-		if (stateRef.current === "exited" || stateRef.current === "error") return;
+		if (stateRef.current === "exited" || stateRef.current === "error") {
+			logTerminalFlow("terminal_hook.reattach.skipped", {
+				handle: r.handle,
+				state: stateRef.current,
+				reason: "terminal_finished",
+			});
+			return;
+		}
 		transition("reattaching");
 		// Not ready → no timer; the daemonReady effect reconnects when it flips.
-		if (!optionsRef.current.daemonReady) return;
-		if (r.retryTimer) return;
+		if (!optionsRef.current.daemonReady) {
+			logTerminalFlow("terminal_hook.reattach.wait_daemon", { handle: r.handle });
+			return;
+		}
+		if (r.retryTimer) {
+			logTerminalFlow("terminal_hook.reattach.already_scheduled", { handle: r.handle });
+			return;
+		}
 		const delay = Math.min(RETRY_BASE_MS * 2 ** r.attempts, RETRY_MAX_MS);
 		r.attempts += 1;
+		logTerminalFlow("terminal_hook.reattach.scheduled", {
+			handle: r.handle,
+			delayMs: delay,
+			attempts: r.attempts,
+		});
 		r.retryTimer = setTimeout(() => {
 			r.retryTimer = null;
+			logTerminalFlow("terminal_hook.reattach.fire", { handle: r.handle });
 			connectRef.current();
 		}, delay);
 	}, [transition]);
@@ -139,45 +198,101 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 	const connect = useCallback(() => {
 		const r = runtime.current;
 		const { terminal, handle } = r;
-		if (!terminal || !handle || r.detached) return;
+		if (!terminal || !handle || r.detached) {
+			logTerminalFlow("terminal_hook.connect.skipped", {
+				handle,
+				detached: r.detached,
+				hasTerminal: Boolean(terminal),
+			});
+			return;
+		}
+		const generation = r.generation + 1;
+		r.generation = generation;
+		r.inputReady = false;
+		logTerminalFlow("terminal_hook.connect.start", {
+			handle,
+			generation,
+			cols: terminal.cols,
+			rows: terminal.rows,
+		});
 		teardownMux();
 
 		const mux = (optionsRef.current.createMux ?? defaultCreateMux)();
 		r.mux = mux;
 
 		r.disposers.push(
-			mux.onData(handle, (bytes) => terminal.write(bytes)),
+			mux.onData(handle, (bytes) => {
+				if (!isCurrentAttachment(generation, handle, mux)) return;
+				terminal.write(bytes);
+			}),
 			mux.onOpened(handle, () => {
+				if (!isCurrentAttachment(generation, handle, mux)) return;
+				logTerminalFlow("terminal_hook.opened", { handle, generation });
+				clearOpenTimer(generation);
+				r.inputReady = true;
 				r.attempts = 0;
 				setError(undefined);
 				transition("attached");
 			}),
 			mux.onExit(handle, () => {
+				if (!isCurrentAttachment(generation, handle, mux)) return;
+				logTerminalFlow("terminal_hook.exit", { handle, generation });
+				clearOpenTimer(generation);
+				r.inputReady = false;
 				terminal.writeln("\r\n\x1b[2m[process exited]\x1b[0m");
 				transition("exited");
 				invalidateWorkspaces();
 			}),
 			mux.onError(handle, (message) => {
+				if (!isCurrentAttachment(generation, handle, mux)) return;
+				logTerminalFlow("terminal_hook.error", { handle, generation, error: message });
+				clearOpenTimer(generation);
+				r.inputReady = false;
 				terminal.writeln(`\r\n\x1b[2m[terminal error] ${message}\x1b[0m`);
 				setError(message);
 				transition("error");
 				invalidateWorkspaces();
 			}),
 			mux.onConnectionChange((connectionState) => {
-				if (connectionState === "closed") scheduleReattach();
+				if (!isCurrentAttachment(generation, handle, mux)) return;
+				logTerminalFlow("terminal_hook.connection_change", { handle, generation, connectionState });
+				if (connectionState === "closed") {
+					clearOpenTimer(generation);
+					r.inputReady = false;
+					scheduleReattach();
+				}
 			}),
 		);
-		const input = terminal.onData((data) => mux.sendInput(handle, data));
+		const input = terminal.onUserInput((data, source) => {
+			if (!isCurrentAttachment(generation, handle, mux) || !r.inputReady) {
+				logTerminalFlow("terminal_hook.input.blocked", {
+					handle,
+					generation,
+					bytes: data.length,
+					source,
+					inputReady: r.inputReady,
+				});
+				return;
+			}
+			logTerminalFlow("terminal_hook.input.forward", { handle, generation, bytes: data.length, source });
+			mux.sendInput(handle, data);
+		});
 		// xterm only fires onResize when the grid actually changed; the debounce
 		// additionally collapses a drag's burst of changes into one PTY resize.
 		// Each settled resize is re-asserted once (see RESIZE_REASSERT_MS); both
 		// stages share resizeTimer so a new burst or teardown cancels either.
 		const resize = terminal.onResize(({ cols, rows }) => {
+			if (!isCurrentAttachment(generation, handle, mux)) return;
+			logTerminalFlow("terminal_hook.resize.observed", { handle, generation, cols, rows });
 			if (r.resizeTimer) clearTimeout(r.resizeTimer);
 			r.resizeTimer = setTimeout(() => {
+				if (!isCurrentAttachment(generation, handle, mux)) return;
+				logTerminalFlow("terminal_hook.resize.send", { handle, generation, cols, rows });
 				mux.resize(handle, cols, rows);
 				r.resizeTimer = setTimeout(() => {
 					r.resizeTimer = null;
+					if (!isCurrentAttachment(generation, handle, mux)) return;
+					logTerminalFlow("terminal_hook.resize.reassert", { handle, generation, cols, rows });
 					mux.resize(handle, cols, rows);
 				}, RESIZE_REASSERT_MS);
 			}, RESIZE_DEBOUNCE_MS);
@@ -200,7 +315,15 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 
 		mux.open(handle, terminal.cols, terminal.rows);
 		mux.resize(handle, terminal.cols, terminal.rows);
-	}, [invalidateWorkspaces, scheduleReattach, teardownMux, transition]);
+		r.openTimer = setTimeout(() => {
+			if (!isCurrentAttachment(generation, handle, mux)) return;
+			r.openTimer = null;
+			logTerminalFlow("terminal_hook.open_timeout", { handle, generation });
+			transition("reattaching");
+			teardownMux();
+			scheduleReattach();
+		}, OPEN_TIMEOUT_MS);
+	}, [clearOpenTimer, invalidateWorkspaces, isCurrentAttachment, scheduleReattach, teardownMux, transition]);
 	connectRef.current = connect;
 
 	/**
@@ -211,6 +334,13 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		(terminal: AttachableTerminal) => {
 			const r = runtime.current;
 			const handle = sessionRef.current?.terminalHandleId ?? null;
+			logTerminalFlow("terminal_hook.attach", {
+				sessionId: sessionRef.current?.id,
+				handle,
+				cols: terminal.cols,
+				rows: terminal.rows,
+				daemonReady: optionsRef.current.daemonReady,
+			});
 			r.terminal = terminal;
 			r.handle = handle;
 			r.detached = false;
@@ -221,13 +351,21 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 				transition("connecting");
 				connect();
 			} else {
+				logTerminalFlow("terminal_hook.attach.no_handle", { sessionId: sessionRef.current?.id });
 				transition("idle");
 			}
 			return () => {
+				logTerminalFlow("terminal_hook.detach", {
+					sessionId: sessionRef.current?.id,
+					handle: r.handle,
+					generation: r.generation,
+				});
+				r.generation += 1;
 				r.detached = true;
 				teardownMux();
 				r.terminal = null;
 				r.handle = null;
+				r.inputReady = false;
 				setError(undefined);
 				transition("idle");
 			};
@@ -243,6 +381,7 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		if (!daemonReady || r.detached) return;
 		if (stateRef.current !== "reattaching" || r.retryTimer) return;
 		r.attempts = 0;
+		logTerminalFlow("terminal_hook.daemon_ready_reconnect", { handle: r.handle });
 		connect();
 	}, [daemonReady, connect]);
 
@@ -250,7 +389,15 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 	// forgot to call detach.
 	useEffect(
 		() => () => {
-			runtime.current.detached = true;
+			const r = runtime.current;
+			logTerminalFlow("terminal_hook.unmount", {
+				handle: r.handle,
+				generation: r.generation,
+				state: stateRef.current,
+			});
+			r.generation += 1;
+			r.detached = true;
+			r.inputReady = false;
 			teardownMux();
 		},
 		[teardownMux],

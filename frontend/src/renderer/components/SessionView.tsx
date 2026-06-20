@@ -5,6 +5,7 @@ import { SessionInspector } from "./SessionInspector";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "./ui/resizable";
 import { useUiStore } from "../stores/ui-store";
 import { useShell } from "../lib/shell-context";
+import { logTerminalFlow } from "../lib/terminal-flow-log";
 import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
 import { isOrchestratorSession } from "../types/workspace";
 import type { TerminalTarget } from "../types/terminal";
@@ -52,7 +53,24 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const isOrchestrator = session ? isOrchestratorSession(session) : false;
 
 	useEffect(() => {
+		logTerminalFlow("session_view.effect.start", {
+			sessionId,
+			found: Boolean(session),
+			handle: session?.terminalHandleId,
+			kind: session?.kind ?? null,
+			daemonState: daemonStatus.state,
+		});
+		return () => {
+			logTerminalFlow("session_view.effect.cleanup", {
+				sessionId,
+				handle: session?.terminalHandleId,
+			});
+		};
+	}, [daemonStatus.state, session?.id, session?.kind, session?.terminalHandleId, sessionId]);
+
+	useEffect(() => {
 		setTerminalTarget({ kind: "worker" });
+		logTerminalFlow("session_view.target.reset", { sessionId });
 	}, [sessionId]);
 
 	// Orchestrator sessions are terminal-only; only worker sessions have the rail.

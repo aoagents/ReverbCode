@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	"github.com/aoagents/agent-orchestrator/backend/internal/terminaldiag"
 )
 
 // PTYSource is what a terminal needs from the runtime: the argv that attaches a
@@ -58,30 +59,36 @@ const (
 // without mouse reporting (wheel scroll dead). A fresh attach per client makes
 // Zellij re-send it, every time, by construction.
 //
-// onData must not block: the WS layer funnels frames onto its own buffered
-// writer. onExit fires at most once, when the attach loop gives up (runtime
-// dead, attach failure cap) — never on close().
+// onOpen fires once the attach PTY is actually ready to accept input. onData
+// must not block: the WS layer funnels frames onto its own buffered writer.
+// onExit fires at most once, when the attach loop gives up (runtime dead,
+// attach failure cap) — never on close().
 type attachment struct {
 	id     string
 	handle ports.RuntimeHandle
 	src    PTYSource
 	spawn  spawnFunc
 	log    *slog.Logger
+	onOpen func()
 	onData func(data []byte)
 	onExit func()
 
 	maxReattach int
 	resetGrace  time.Duration
 
-	mu     sync.Mutex
-	pty    ptyProcess
-	rows   uint16 // last size the client asked for; re-applied on every attach
-	cols   uint16
-	closed bool
-	exited bool
+	mu           sync.Mutex
+	pty          ptyProcess
+	cancel       context.CancelFunc
+	rows         uint16 // last size the client asked for; re-applied on every attach
+	cols         uint16
+	closed       bool
+	exited       bool
+	opened       bool
+	inputReady   bool
+	pendingInput [][]byte
 }
 
-func newAttachment(id string, handle ports.RuntimeHandle, src PTYSource, spawn spawnFunc, onData func([]byte), onExit func(), log *slog.Logger) *attachment {
+func newAttachment(id string, handle ports.RuntimeHandle, src PTYSource, spawn spawnFunc, onOpen func(), onData func([]byte), onExit func(), log *slog.Logger) *attachment {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -94,6 +101,7 @@ func newAttachment(id string, handle ports.RuntimeHandle, src PTYSource, spawn s
 		src:         src,
 		spawn:       spawn,
 		log:         log,
+		onOpen:      onOpen,
 		onData:      onData,
 		onExit:      onExit,
 		maxReattach: defaultMaxReattach,
@@ -104,9 +112,22 @@ func newAttachment(id string, handle ports.RuntimeHandle, src PTYSource, spawn s
 // run drives attach → read-loop → re-attach until the pane exits cleanly, the
 // attachment is closed, or ctx is cancelled. It is started once per attachment.
 func (a *attachment) run(ctx context.Context) {
+	ctx, cancel := context.WithCancel(ctx)
+	if !a.setRunCancel(cancel) {
+		cancel()
+		return
+	}
+	defer a.clearRunCancel(cancel)
+	terminaldiag.Log("backend", "attachment.run.start", map[string]any{"handle": a.id})
+	defer terminaldiag.Log("backend", "attachment.run.end", map[string]any{"handle": a.id})
+
 	failures := 0
 	for {
-		if a.isClosed() || ctx.Err() != nil {
+		if a.shouldStop(ctx) {
+			terminaldiag.Log("backend", "attachment.run.stop", map[string]any{
+				"handle":   a.id,
+				"failures": failures,
+			})
 			return
 		}
 
@@ -118,8 +139,16 @@ func (a *attachment) run(ctx context.Context) {
 		// not proof of death: it retries with backoff up to the same
 		// consecutive-failure cap as attach failures.
 		alive, err := a.src.IsAlive(ctx, a.handle)
+		if a.shouldStop(ctx) {
+			return
+		}
 		if err != nil {
 			failures++
+			terminaldiag.Log("backend", "attachment.liveness.error", map[string]any{
+				"handle":   a.id,
+				"failures": failures,
+				"error":    err.Error(),
+			})
 			if failures > a.maxReattach {
 				a.fail("liveness probe: " + err.Error())
 				return
@@ -130,19 +159,55 @@ func (a *attachment) run(ctx context.Context) {
 			continue
 		}
 		if !alive {
+			terminaldiag.Log("backend", "attachment.liveness.dead", map[string]any{
+				"handle":   a.id,
+				"failures": failures,
+			})
 			a.markExited()
 			return
 		}
+		terminaldiag.Log("backend", "attachment.liveness.alive", map[string]any{
+			"handle":   a.id,
+			"failures": failures,
+		})
 
 		argv, err := a.src.AttachCommand(a.handle)
+		if a.shouldStop(ctx) {
+			return
+		}
 		if err != nil {
+			terminaldiag.Log("backend", "attachment.command.error", map[string]any{
+				"handle": a.id,
+				"error":  err.Error(),
+			})
 			a.fail("attach command: " + err.Error())
 			return
 		}
 		rows, cols := a.size()
+		if a.shouldStop(ctx) {
+			return
+		}
+		terminaldiag.Log("backend", "attachment.spawn.start", map[string]any{
+			"handle": a.id,
+			"argv0":  firstArg(argv),
+			"argc":   len(argv),
+			"cols":   cols,
+			"rows":   rows,
+		})
 		p, err := a.spawn(ctx, argv, rows, cols)
+		if a.shouldStop(ctx) {
+			if p != nil {
+				_ = p.Close()
+			}
+			return
+		}
 		if err != nil {
 			failures++
+			terminaldiag.Log("backend", "attachment.spawn.error", map[string]any{
+				"handle":   a.id,
+				"failures": failures,
+				"error":    err.Error(),
+			})
 			if failures > a.maxReattach {
 				a.fail("spawn pty: " + err.Error())
 				return
@@ -153,10 +218,22 @@ func (a *attachment) run(ctx context.Context) {
 			continue
 		}
 
-		a.setPTY(p)
+		if !a.setPTY(p) {
+			terminaldiag.Log("backend", "attachment.set_pty.rejected", map[string]any{"handle": a.id})
+			_ = p.Close()
+			return
+		}
 		start := time.Now()
 		a.copyOut(p)
+		a.clearPTY(p)
 		_ = p.Close()
+		terminaldiag.Log("backend", "attachment.pty.closed", map[string]any{
+			"handle":     a.id,
+			"durationMs": time.Since(start).Milliseconds(),
+		})
+		if a.shouldStop(ctx) {
+			return
+		}
 
 		if time.Since(start) >= a.resetGrace {
 			failures = 0
@@ -171,20 +248,36 @@ func (a *attachment) run(ctx context.Context) {
 			return
 		}
 		a.log.Debug("terminal re-attaching", "id", a.id, "failures", failures)
+		terminaldiag.Log("backend", "attachment.reattach", map[string]any{
+			"handle":   a.id,
+			"failures": failures,
+		})
 	}
 }
 
 // copyOut pumps PTY output to the sink until the PTY closes or errors.
 func (a *attachment) copyOut(p ptyProcess) {
 	buf := make([]byte, 32*1024)
+	sawData := false
 	for {
 		n, err := p.Read(buf)
 		if n > 0 {
+			if !sawData {
+				sawData = true
+				terminaldiag.Log("backend", "attachment.output.first", map[string]any{
+					"handle": a.id,
+					"bytes":  n,
+				})
+			}
 			chunk := make([]byte, n)
 			copy(chunk, buf[:n])
 			a.onData(chunk)
 		}
 		if err != nil {
+			terminaldiag.Log("backend", "attachment.copy_out.end", map[string]any{
+				"handle": a.id,
+				"error":  err.Error(),
+			})
 			return
 		}
 	}
@@ -211,15 +304,41 @@ func reattachBackoff(failures int) time.Duration {
 	return d
 }
 
-// write sends client keystrokes to the PTY. It is a no-op if no PTY is attached.
+// write sends client keystrokes to the PTY. Input that arrives after open but
+// before the attach PTY is published is buffered and flushed as soon as setPTY
+// runs, so a fast user cannot type into the attach race and lose bytes.
 func (a *attachment) write(p []byte) error {
-	a.mu.Lock()
-	pty := a.pty
-	a.mu.Unlock()
-	if pty == nil {
-		return errors.New("terminal: no active pty")
+	if len(p) == 0 {
+		return nil
 	}
-	_, err := pty.Write(p)
+	chunk := append([]byte(nil), p...)
+
+	a.mu.Lock()
+	if a.closed || a.exited {
+		a.mu.Unlock()
+		terminaldiag.Log("backend", "attachment.input.rejected", map[string]any{
+			"handle": a.id,
+			"bytes":  len(chunk),
+			"reason": "closed",
+		})
+		return errors.New("terminal: attachment closed")
+	}
+	pty := a.pty
+	if pty == nil || !a.inputReady {
+		a.pendingInput = append(a.pendingInput, chunk)
+		a.mu.Unlock()
+		terminaldiag.Log("backend", "attachment.input.buffered", map[string]any{
+			"handle": a.id,
+			"bytes":  len(chunk),
+		})
+		return nil
+	}
+	a.mu.Unlock()
+	terminaldiag.Log("backend", "attachment.input.write", map[string]any{
+		"handle": a.id,
+		"bytes":  len(chunk),
+	})
+	_, err := pty.Write(chunk)
 	return err
 }
 
@@ -233,8 +352,18 @@ func (a *attachment) resize(rows, cols uint16) error {
 	pty := a.pty
 	a.mu.Unlock()
 	if pty == nil {
+		terminaldiag.Log("backend", "attachment.resize.recorded", map[string]any{
+			"handle": a.id,
+			"cols":   cols,
+			"rows":   rows,
+		})
 		return nil
 	}
+	terminaldiag.Log("backend", "attachment.resize.live", map[string]any{
+		"handle": a.id,
+		"cols":   cols,
+		"rows":   rows,
+	})
 	return pty.Resize(rows, cols)
 }
 
@@ -251,14 +380,64 @@ func (a *attachment) size() (rows, cols uint16) {
 // requested size onto it (see resize) — the spawn already started at the size
 // read in run, but a resize frame can land between that read and registration
 // here; the replay (Setsize + explicit WINCH) converges the late case.
-func (a *attachment) setPTY(p ptyProcess) {
+func (a *attachment) setPTY(p ptyProcess) bool {
 	a.mu.Lock()
+	if a.closed || a.exited {
+		a.mu.Unlock()
+		return false
+	}
 	a.pty = p
+	a.inputReady = false
 	rows, cols := a.rows, a.cols
+	shouldOpen := !a.opened
+	if shouldOpen {
+		a.opened = true
+	}
+	onOpen := a.onOpen
+	pendingLen := len(a.pendingInput)
 	a.mu.Unlock()
 	if rows > 0 && cols > 0 {
 		_ = p.Resize(rows, cols)
 	}
+	if shouldOpen && onOpen != nil {
+		onOpen()
+	}
+	terminaldiag.Log("backend", "attachment.pty.ready", map[string]any{
+		"handle":     a.id,
+		"cols":       cols,
+		"rows":       rows,
+		"firstOpen":  shouldOpen,
+		"pendingLen": pendingLen,
+	})
+
+	for {
+		a.mu.Lock()
+		pending := append([][]byte(nil), a.pendingInput...)
+		a.pendingInput = nil
+		if len(pending) == 0 {
+			a.inputReady = true
+			a.mu.Unlock()
+			terminaldiag.Log("backend", "attachment.input.ready", map[string]any{"handle": a.id})
+			return true
+		}
+		a.mu.Unlock()
+
+		for _, chunk := range pending {
+			if _, err := p.Write(chunk); err != nil {
+				a.fail("flush pending input: " + err.Error())
+				return false
+			}
+		}
+	}
+}
+
+func (a *attachment) clearPTY(p ptyProcess) {
+	a.mu.Lock()
+	if a.pty == p {
+		a.pty = nil
+		a.inputReady = false
+	}
+	a.mu.Unlock()
 }
 
 // close detaches this client: stop re-attaching and kill the attach PTY. It
@@ -273,16 +452,47 @@ func (a *attachment) close() {
 	a.closed = true
 	pty := a.pty
 	a.pty = nil
+	a.inputReady = false
+	a.pendingInput = nil
+	cancel := a.cancel
 	a.mu.Unlock()
 	if pty != nil {
 		_ = pty.Close()
 	}
+	if cancel != nil {
+		cancel()
+	}
+	terminaldiag.Log("backend", "attachment.close", map[string]any{
+		"handle": a.id,
+		"hadPTY": pty != nil,
+	})
+}
+
+func (a *attachment) setRunCancel(cancel context.CancelFunc) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.closed {
+		return false
+	}
+	a.cancel = cancel
+	return true
+}
+
+func (a *attachment) clearRunCancel(cancel context.CancelFunc) {
+	a.mu.Lock()
+	a.cancel = nil
+	a.mu.Unlock()
+	cancel()
 }
 
 func (a *attachment) isClosed() bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.closed
+}
+
+func (a *attachment) shouldStop(ctx context.Context) bool {
+	return ctx.Err() != nil || a.isClosed()
 }
 
 func (a *attachment) isExited() bool {
@@ -303,10 +513,22 @@ func (a *attachment) markExited() {
 	if a.onExit != nil {
 		a.onExit()
 	}
+	terminaldiag.Log("backend", "attachment.mark_exited", map[string]any{"handle": a.id})
 }
 
 // fail reports an unrecoverable attach error as an exit.
 func (a *attachment) fail(reason string) {
 	a.log.Warn("terminal attachment failed", "id", a.id, "reason", reason)
+	terminaldiag.Log("backend", "attachment.fail", map[string]any{
+		"handle": a.id,
+		"reason": reason,
+	})
 	a.markExited()
+}
+
+func firstArg(argv []string) string {
+	if len(argv) == 0 {
+		return ""
+	}
+	return argv[0]
 }

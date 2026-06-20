@@ -67,6 +67,7 @@ const BADGE: Record<WorkerDisplayStatus, { label: string; className: string }> =
 	working: { label: "Working", className: "text-working" },
 	needs_you: { label: "Needs input", className: "text-warning" },
 	ci_failed: { label: "CI failed", className: "text-error" },
+	no_signal: { label: "No signal", className: "text-passive" },
 	mergeable: { label: "Ready", className: "text-success" },
 	done: { label: "Done", className: "text-passive" },
 };

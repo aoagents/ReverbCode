@@ -19,15 +19,18 @@ func versionArgs() []string {
 }
 
 func createSessionArgs(id, layoutPath string) []string {
-	return []string{
+	args := []string{
 		"attach", "--create-background", id,
 		"options",
 		"--default-layout", layoutPath,
-		"--pane-frames", "false",
+	}
+	args = append(args, embeddedClientOptions()...)
+	args = append(args,
 		"--session-serialization", "false",
 		"--show-startup-tips", "false",
 		"--show-release-notes", "false",
-	}
+	)
+	return args
 }
 
 func listPanesArgs(id string) []string {
@@ -61,10 +64,23 @@ func deleteSessionArgs(id string) []string {
 }
 
 func attachArgs(id string) []string {
-	return []string{
+	args := []string{
 		"attach", id,
 		"options",
+	}
+	args = append(args, embeddedClientOptions()...)
+	return args
+}
+
+func embeddedClientOptions() []string {
+	return []string{
 		"--pane-frames", "false",
+		"--mouse-mode", "false",
+		"--advanced-mouse-actions", "false",
+		"--mouse-hover-effects", "false",
+		"--focus-follows-mouse", "false",
+		"--mouse-click-through", "false",
+		"--support-kitty-keyboard-protocol", "false",
 	}
 }
 
@@ -113,10 +129,10 @@ func shellLaunchCommand(cfg ports.RuntimeConfig, shellPath string, spec shellLau
 	if len(spec.args) > 0 && spec.args[0] == "/D" {
 		return wrapLaunchCommandCmd(cfg)
 	}
-	return wrapLaunchCommandUnix(cfg, shellPath)
+	return wrapLaunchCommandUnix(cfg)
 }
 
-func wrapLaunchCommandUnix(cfg ports.RuntimeConfig, shellPath string) string {
+func wrapLaunchCommandUnix(cfg ports.RuntimeConfig) string {
 	path := cfg.Env["PATH"]
 	if path == "" {
 		path = getenv("PATH")
@@ -139,9 +155,6 @@ func wrapLaunchCommandUnix(cfg ports.RuntimeConfig, shellPath string) string {
 		b.WriteString("; ")
 	}
 	b.WriteString(quoteArgvUnix(cfg.Argv))
-	b.WriteString("; exec ")
-	b.WriteString(shellQuote(shellPath))
-	b.WriteString(" -i")
 	return b.String()
 }
 

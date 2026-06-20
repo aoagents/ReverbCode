@@ -13,6 +13,8 @@
 // The renderer connects directly to the loopback daemon (same host/port as the
 // REST API, path `/mux`); it is not proxied through the Electron main process.
 
+import { logTerminalFlow } from "./terminal-flow-log";
+
 type ServerFrame = {
 	ch: string;
 	id?: string;
@@ -87,7 +89,7 @@ type ConnectionListener = (state: MuxConnectionState) => void;
 export type TerminalMux = {
 	/** Open a PTY pane for the given runtime/session id at an initial size. */
 	open: (id: string, cols: number, rows: number) => void;
-	/** Forward a keystroke string (xterm `onData`) to the pane. */
+	/** Forward user-originated keyboard/paste data to the pane. */
 	sendInput: (id: string, input: string) => void;
 	resize: (id: string, cols: number, rows: number) => void;
 	close: (id: string) => void;
@@ -108,6 +110,7 @@ export type TerminalMux = {
 };
 
 const PING_INTERVAL_MS = 20_000;
+let nextMuxId = 1;
 
 function subscribeById<T>(map: Map<string, Set<T>>, id: string, listener: T): () => void {
 	const set = map.get(id) ?? new Set<T>();
@@ -123,6 +126,8 @@ function subscribeById<T>(map: Map<string, Set<T>>, id: string, listener: T): ()
  * the owner (useTerminalSession) decides whether to build a fresh client.
  */
 export function createTerminalMux(url: string, WebSocketImpl: typeof WebSocket = WebSocket): TerminalMux {
+	const muxId = `mux-client-${nextMuxId++}`;
+	logTerminalFlow("mux.client.create", { muxId, url });
 	const socket = new WebSocketImpl(url);
 	const encoder = new TextEncoder();
 	const queue: string[] = [];
@@ -131,6 +136,7 @@ export function createTerminalMux(url: string, WebSocketImpl: typeof WebSocket =
 	const openedListeners = new Map<string, Set<OpenedListener>>();
 	const errorListeners = new Map<string, Set<ErrorListener>>();
 	const connectionListeners = new Set<ConnectionListener>();
+	const seenServerData = new Set<string>();
 	let connectionState: MuxConnectionState | undefined;
 	let pingTimer: ReturnType<typeof setInterval> | undefined;
 	let disposed = false;
@@ -144,6 +150,9 @@ export function createTerminalMux(url: string, WebSocketImpl: typeof WebSocket =
 	};
 
 	const flush = () => {
+		if (queue.length > 0) {
+			logTerminalFlow("mux.client.flush", { muxId, queued: queue.length });
+		}
 		while (queue.length > 0) {
 			const frame = queue.shift();
 			if (frame !== undefined) socket.send(frame);
@@ -156,18 +165,31 @@ export function createTerminalMux(url: string, WebSocketImpl: typeof WebSocket =
 			socket.send(frame);
 		} else {
 			queue.push(frame);
+			logTerminalFlow("mux.client.queue", { muxId, queued: queue.length });
 		}
 	};
 
 	socket.addEventListener("open", () => {
 		if (disposed) return;
+		logTerminalFlow("mux.socket.open", { muxId });
 		flush();
 		pingTimer = setInterval(() => send(pingFrame()), PING_INTERVAL_MS);
 		setConnectionState("open");
 	});
 
-	socket.addEventListener("close", () => setConnectionState("closed"));
-	socket.addEventListener("error", () => setConnectionState("closed"));
+	socket.addEventListener("close", (event) => {
+		logTerminalFlow("mux.socket.close", {
+			muxId,
+			code: event.code,
+			reason: event.reason,
+			wasClean: event.wasClean,
+		});
+		setConnectionState("closed");
+	});
+	socket.addEventListener("error", () => {
+		logTerminalFlow("mux.socket.error", { muxId });
+		setConnectionState("closed");
+	});
 
 	socket.addEventListener("message", (event: MessageEvent) => {
 		if (typeof event.data !== "string") return;
@@ -180,6 +202,7 @@ export function createTerminalMux(url: string, WebSocketImpl: typeof WebSocket =
 		if (frame.ch !== "terminal") return;
 		if (frame.type === "error") {
 			const message = frame.error ?? "unknown terminal error";
+			logTerminalFlow("mux.server.error", { muxId, handle: frame.id ?? null, error: message });
 			if (frame.id !== undefined) {
 				errorListeners.get(frame.id)?.forEach((listener) => listener(message));
 			} else {
@@ -189,10 +212,16 @@ export function createTerminalMux(url: string, WebSocketImpl: typeof WebSocket =
 		}
 		if (frame.id === undefined) return;
 		if (frame.type === "data" && frame.data) {
+			if (!seenServerData.has(frame.id)) {
+				seenServerData.add(frame.id);
+				logTerminalFlow("mux.server.data.first", { muxId, handle: frame.id, encodedBytes: frame.data.length });
+			}
 			dataListeners.get(frame.id)?.forEach((listener) => listener(base64ToBytes(frame.data as string)));
 		} else if (frame.type === "exited") {
+			logTerminalFlow("mux.server.exited", { muxId, handle: frame.id });
 			exitListeners.get(frame.id)?.forEach((listener) => listener());
 		} else if (frame.type === "opened") {
+			logTerminalFlow("mux.server.opened", { muxId, handle: frame.id });
 			openedListeners.get(frame.id)?.forEach((listener) => listener());
 		}
 	});
@@ -200,6 +229,7 @@ export function createTerminalMux(url: string, WebSocketImpl: typeof WebSocket =
 	const dispose = () => {
 		if (disposed) return;
 		disposed = true;
+		logTerminalFlow("mux.client.dispose", { muxId });
 		if (pingTimer) clearInterval(pingTimer);
 		dataListeners.clear();
 		exitListeners.clear();
@@ -214,10 +244,23 @@ export function createTerminalMux(url: string, WebSocketImpl: typeof WebSocket =
 	};
 
 	return {
-		open: (id, cols, rows) => send(openFrame(id, cols, rows)),
-		sendInput: (id, input) => send(dataFrame(id, encoder.encode(input))),
-		resize: (id, cols, rows) => send(resizeFrame(id, cols, rows)),
-		close: (id) => send(closeFrame(id)),
+		open: (id, cols, rows) => {
+			logTerminalFlow("mux.client.open", { muxId, handle: id, cols, rows });
+			send(openFrame(id, cols, rows));
+		},
+		sendInput: (id, input) => {
+			const bytes = encoder.encode(input);
+			logTerminalFlow("mux.client.input", { muxId, handle: id, bytes: bytes.length });
+			send(dataFrame(id, bytes));
+		},
+		resize: (id, cols, rows) => {
+			logTerminalFlow("mux.client.resize", { muxId, handle: id, cols, rows });
+			send(resizeFrame(id, cols, rows));
+		},
+		close: (id) => {
+			logTerminalFlow("mux.client.close", { muxId, handle: id });
+			send(closeFrame(id));
+		},
 		onData: (id, listener) => subscribeById(dataListeners, id, listener),
 		onExit: (id, listener) => subscribeById(exitListeners, id, listener),
 		onOpened: (id, listener) => subscribeById(openedListeners, id, listener),
