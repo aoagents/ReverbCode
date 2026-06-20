@@ -335,28 +335,23 @@ func (e *Engine) Submit(ctx context.Context, workerID domain.SessionID, runID st
 	return run, nil
 }
 
-// notifyWorkerChangesRequested injects the reviewer's feedback into the worker's
-// live agent pane via the same messenger lifecycle uses for SCM nudges.
+// notifyWorkerChangesRequested injects the AO reviewer's feedback into the
+// worker's live agent pane via the same messenger lifecycle uses for SCM nudges.
 //
-// The message marks this as an AO internal review, explicitly distinct from the
-// external GitHub-reviewer feedback the lifecycle SCM loop relays ("address it
-// and push"). For an AO review the worker is asked to do more: once it has
-// pushed its fix, reply on the review referencing its id with what it changed
-// and resolve the review comment threads it addressed, so the round-trip is
-// visible on the PR. The reviewer posts inline comments (per its prompt), so the
-// per-finding threads are resolvable via `gh api` GraphQL resolveReviewThread;
-// the top-level review object itself is not resolvable, hence the reply.
-//
-// The reply/resolve instruction is only added when the GitHub review id is
-// known. The body is reviewer-authored text pasted into a PTY, so it is
-// sanitized first (matching the lifecycle reaction path).
+// When the GitHub review id is known, the worker is asked to reply on that
+// review referencing its id with how it addressed the feedback and to resolve
+// the review comment threads it addressed. The reviewer posts inline comments
+// (per its prompt), so the per-finding threads are resolvable via `gh api`
+// GraphQL resolveReviewThread; the top-level review object itself is not
+// resolvable, hence the reply. The body is reviewer-authored text pasted into a
+// PTY, so it is sanitized first (matching the lifecycle reaction path).
 func (e *Engine) notifyWorkerChangesRequested(ctx context.Context, workerID domain.SessionID, body, githubReviewID string) error {
 	if e.messenger == nil {
 		return nil
 	}
-	msg := "An AO code reviewer (an internal review, not an external GitHub PR reviewer) requested changes on your PR. Address the feedback below and push your fix."
+	msg := "An AO code reviewer requested changes on your PR. Review the feedback below and address it."
 	if githubReviewID != "" {
-		msg += fmt.Sprintf(" This feedback is GitHub review %s. Once you have pushed the fix, reply on that review referencing id %s with what you changed, then resolve the review comment threads you addressed.", githubReviewID, githubReviewID)
+		msg += fmt.Sprintf(" This feedback is GitHub review %s. Once you have addressed it, reply on that review referencing id %s with how you addressed it, then resolve the review comment threads you addressed.", githubReviewID, githubReviewID)
 	}
 	if body != "" {
 		msg += "\n\n" + domain.SanitizeControlChars(body)
