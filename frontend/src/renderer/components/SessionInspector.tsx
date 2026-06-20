@@ -524,7 +524,7 @@ function activityDetail(status: SessionStatus): string | null {
 		case "idle":
 			return "Session idle";
 		case "needs_input":
-			return "Waiting for input";
+			return "Waiting for your input";
 		case "working":
 			return null;
 		default:
@@ -537,7 +537,7 @@ const STATUS_PILL: Record<
 	{ label: string; tone: string; breathe: boolean }
 > = {
 	working: { label: "Working", tone: "var(--orange)", breathe: true },
-	needs_you: { label: "Needs input", tone: "var(--amber)", breathe: false },
+	needs_you: { label: "Input needed", tone: "var(--amber)", breathe: false },
 	ci_failed: { label: "CI failed", tone: "var(--red)", breathe: false },
 	mergeable: { label: "Ready", tone: "var(--green)", breathe: false },
 	done: { label: "Done", tone: "var(--fg-muted)", breathe: false },

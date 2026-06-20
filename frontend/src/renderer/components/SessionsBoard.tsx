@@ -1,13 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import {
-	type AttentionZone,
-	type WorkerDisplayStatus,
-	type WorkspaceSession,
-	attentionZone,
-	workerDisplayStatus,
-	workerSessions,
-} from "../types/workspace";
+import { type AttentionZone, type WorkspaceSession, attentionZone, workerSessions } from "../types/workspace";
 import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
 import { DashboardSubhead } from "./DashboardSubhead";
 import { cn } from "../lib/utils";
@@ -62,14 +55,6 @@ const COLUMNS: Column[] = [
 		titleClass: "text-success",
 	},
 ];
-
-const BADGE: Record<WorkerDisplayStatus, { label: string; className: string }> = {
-	working: { label: "Working", className: "text-working" },
-	needs_you: { label: "Needs input", className: "text-warning" },
-	ci_failed: { label: "CI failed", className: "text-error" },
-	mergeable: { label: "Ready", className: "text-success" },
-	done: { label: "Done", className: "text-passive" },
-};
 
 export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const navigate = useNavigate();
@@ -195,8 +180,9 @@ function ZoneColumn({
 }
 
 function SessionCard({ session, onOpen }: { session: WorkspaceSession; onOpen: () => void }) {
-	const badge = BADGE[workerDisplayStatus(session)];
-	const branch = session.branch || `session/${session.id}`;
+	const badge = sessionBadge(session);
+	const branch = session.branch || "";
+	const showBranch = branch !== "" && !sameLabel(branch, session.title) && !sameLabel(branch, session.id);
 	return (
 		<button
 			className="w-full rounded-[7px] border border-border bg-surface text-left transition-colors hover:border-border-strong"
@@ -208,20 +194,70 @@ function SessionCard({ session, onOpen }: { session: WorkspaceSession; onOpen: (
 					<span className={cn("h-[7px] w-[7px] rounded-full bg-current")} />
 					{badge.label}
 				</span>
-				<span className="ml-auto shrink-0 font-mono text-[10.5px] tracking-[0.04em] text-passive">{session.id}</span>
+				<span className="ml-auto shrink-0 font-mono text-[10.5px] tracking-[0.04em] text-passive">
+					{agentLabel(session.provider)}
+				</span>
 			</div>
 			<div
 				className={cn(
-					"px-[13px] pb-2.5 text-[13px] font-medium leading-[1.42] tracking-[-0.01em] text-foreground",
+					"px-[13px] text-[13px] font-medium leading-[1.42] tracking-[-0.01em] text-foreground",
+					showBranch ? "pb-2" : "pb-3",
 					"line-clamp-2 overflow-hidden",
 				)}
 			>
 				{session.title}
 			</div>
-			<div className="px-[13px] pb-2.5 font-mono text-[10.5px] text-passive">{branch}</div>
+			{showBranch && <div className="px-[13px] pb-2.5 font-mono text-[10.5px] text-passive">{branch}</div>}
 			<div className="border-t border-border px-[13px] py-2 font-mono text-[10.5px] text-passive">
 				{session.pullRequest ? `PR #${session.pullRequest.number} · ${session.pullRequest.state}` : "no PR yet"}
 			</div>
 		</button>
 	);
+}
+
+function sameLabel(a: string, b: string): boolean {
+	const normalize = (value: string) =>
+		value
+			.toLowerCase()
+			.replace(/^(feat|fix|chore|refactor|session)\//, "")
+			.replace(/[^a-z0-9]+/g, "");
+	return normalize(a) === normalize(b);
+}
+
+function agentLabel(provider: WorkspaceSession["provider"]): string {
+	switch (provider) {
+		case "claude-code":
+			return "Claude";
+		case "opencode":
+			return "OpenCode";
+		default:
+			return provider;
+	}
+}
+
+function sessionBadge(session: WorkspaceSession): { label: string; className: string } {
+	switch (session.status) {
+		case "needs_input":
+			return { label: "Input needed", className: "text-warning" };
+		case "ci_failed":
+			return { label: "CI failed", className: "text-error" };
+		case "changes_requested":
+			return { label: "Changes requested", className: "text-warning" };
+		case "review_pending":
+			return { label: "Review pending", className: "text-muted-foreground" };
+		case "draft":
+			return { label: "Draft PR", className: "text-muted-foreground" };
+		case "pr_open":
+			return { label: "PR open", className: "text-muted-foreground" };
+		case "approved":
+			return { label: "Approved", className: "text-success" };
+		case "mergeable":
+			return { label: "Ready", className: "text-success" };
+		case "merged":
+			return { label: "Merged", className: "text-passive" };
+		case "terminated":
+			return { label: "Terminated", className: "text-passive" };
+		default:
+			return { label: "Working", className: "text-working" };
+	}
 }
