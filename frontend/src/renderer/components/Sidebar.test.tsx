@@ -120,6 +120,8 @@ describe("Sidebar", () => {
 		await user.click(screen.getByLabelText("New project"));
 
 		expect(await screen.findByText("/repo/new-project")).toBeInTheDocument();
+		const dialog = screen.getByRole("dialog", { name: "Project agents" });
+		expect(dialog).toHaveClass("left-1/2", "top-1/2", "-translate-x-1/2", "-translate-y-1/2");
 		await chooseOption(screen.getByRole("combobox", { name: "Worker agent" }), "codex");
 		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "claude-code");
 		await user.click(screen.getByRole("button", { name: "Create and start" }));

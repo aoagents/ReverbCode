@@ -1,9 +1,10 @@
+import * as Dialog from "@radix-ui/react-dialog";
+import { X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { AGENT_OPTIONS } from "../lib/agent-options";
 import { Button } from "./ui/button";
 import { Label } from "./ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
-import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "./ui/sheet";
 
 export type CreateProjectAgentSelection = {
 	workerAgent: string;
@@ -39,48 +40,71 @@ export function CreateProjectAgentSheet({
 	}, [open, path]);
 
 	return (
-		<Sheet open={open} onOpenChange={(next) => !isCreating && onOpenChange(next)}>
-			<SheetContent side="right" className="w-[360px] sm:max-w-[360px]">
-				<SheetHeader>
-					<SheetTitle className="text-[15px]">Project agents</SheetTitle>
-					<SheetDescription className="break-all text-[12px]">{path ?? ""}</SheetDescription>
-				</SheetHeader>
-				<form
-					className="flex min-h-0 flex-1 flex-col"
-					onSubmit={(event) => {
-						event.preventDefault();
-						if (!canSubmit) return;
-						void onSubmit({ workerAgent, orchestratorAgent });
-					}}
-				>
-					<div className="flex flex-1 flex-col gap-4 px-4">
-						<RequiredAgentField
-							id="newProjectWorkerAgent"
-							label="Worker agent"
-							placeholder="Select worker agent"
-							value={workerAgent}
-							onChange={setWorkerAgent}
-						/>
-						<RequiredAgentField
-							id="newProjectOrchestratorAgent"
-							label="Orchestrator agent"
-							placeholder="Select orchestrator agent"
-							value={orchestratorAgent}
-							onChange={setOrchestratorAgent}
-						/>
-						{error && <p className="text-[12px] leading-5 text-error">{error}</p>}
+		<Dialog.Root open={open} onOpenChange={(next) => !isCreating && onOpenChange(next)}>
+			<Dialog.Portal>
+				<Dialog.Overlay className="fixed inset-0 z-50 bg-black/55 data-[state=open]:animate-overlay-in" />
+				<Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[min(420px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-popover p-0 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in">
+					<div className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
+						<div className="min-w-0">
+							<Dialog.Title className="text-[15px] font-semibold text-foreground">Project agents</Dialog.Title>
+							<Dialog.Description className="mt-1 break-all text-[12px] text-muted-foreground">
+								{path ?? ""}
+							</Dialog.Description>
+						</div>
+						<Dialog.Close asChild>
+							<button
+								type="button"
+								className="grid size-7 shrink-0 place-items-center rounded-md text-muted-foreground transition hover:bg-surface hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+								aria-label="Close project agents dialog"
+								disabled={isCreating}
+							>
+								<X className="size-4" aria-hidden="true" />
+							</button>
+						</Dialog.Close>
 					</div>
-					<SheetFooter className="flex-row justify-end">
-						<Button type="button" variant="outline" disabled={isCreating} onClick={() => onOpenChange(false)}>
-							Cancel
-						</Button>
-						<Button type="submit" variant="primary" disabled={!canSubmit}>
-							{isCreating ? "Creating..." : "Create and start"}
-						</Button>
-					</SheetFooter>
-				</form>
-			</SheetContent>
-		</Sheet>
+					<form
+						className="space-y-4 px-5 py-4"
+						onSubmit={(event) => {
+							event.preventDefault();
+							if (!canSubmit) return;
+							void onSubmit({ workerAgent, orchestratorAgent });
+						}}
+					>
+						<div className="grid gap-3 sm:grid-cols-2">
+							<RequiredAgentField
+								id="newProjectWorkerAgent"
+								label="Worker agent"
+								placeholder="Select worker agent"
+								value={workerAgent}
+								onChange={setWorkerAgent}
+							/>
+							<RequiredAgentField
+								id="newProjectOrchestratorAgent"
+								label="Orchestrator agent"
+								placeholder="Select orchestrator agent"
+								value={orchestratorAgent}
+								onChange={setOrchestratorAgent}
+							/>
+						</div>
+
+						{error && (
+							<div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-[12px] leading-5 text-destructive">
+								{error}
+							</div>
+						)}
+
+						<div className="flex items-center justify-end gap-2 pt-1">
+							<Button type="button" variant="ghost" disabled={isCreating} onClick={() => onOpenChange(false)}>
+								Cancel
+							</Button>
+							<Button type="submit" variant="primary" disabled={!canSubmit}>
+								{isCreating ? "Creating..." : "Create and start"}
+							</Button>
+						</div>
+					</form>
+				</Dialog.Content>
+			</Dialog.Portal>
+		</Dialog.Root>
 	);
 }
 
