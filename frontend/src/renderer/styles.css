@@ -442,18 +442,19 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	align-items: center;
 	gap: 6px;
 	border-radius: 7px;
-	border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+	border: 1px solid var(--border);
 	padding: 0 15px;
 	font-size: 13px;
 	font-weight: 600;
 	line-height: 1;
-	background: var(--accent-weak);
-	color: var(--accent);
+	background: var(--raised);
+	color: var(--fg-muted);
 	transition: background 0.12s ease;
 }
 
 .dashboard-app-header__accent-btn:hover {
-	background: color-mix(in srgb, var(--accent-weak) 80%, transparent);
+	background: var(--surface);
+	color: var(--fg);
 }
 
 .session-topbar__lead {

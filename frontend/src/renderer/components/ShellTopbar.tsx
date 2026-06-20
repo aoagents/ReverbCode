@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
-import { GitBranch, LayoutDashboard, PanelRightClose, PanelRightOpen, Square } from "lucide-react";
+import { GitBranch, LayoutDashboard, PanelRightClose, PanelRightOpen, Plus, Square } from "lucide-react";
 import { useState } from "react";
 import {
 	findProjectOrchestrator,
@@ -16,6 +16,7 @@ import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { captureRendererEvent, captureRendererException } from "../lib/telemetry";
 import { useUiStore } from "../stores/ui-store";
 import { OrchestratorIcon } from "./icons";
+import { NewTaskDialog } from "./NewTaskDialog";
 import { cn } from "../lib/utils";
 
 const isMac = typeof navigator !== "undefined" && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent);
@@ -52,6 +53,7 @@ export function ShellTopbar() {
 	const isInspectorOpen = useUiStore((state) => state.isInspectorOpen);
 	const toggleInspector = useUiStore((state) => state.toggleInspector);
 	const [isSpawning, setIsSpawning] = useState(false);
+	const [isNewTaskOpen, setIsNewTaskOpen] = useState(false);
 	const all = useWorkspaceQuery().data ?? [];
 
 	const session = params.sessionId
@@ -71,6 +73,20 @@ export function ShellTopbar() {
 
 	const openBoard = () =>
 		projectId ? void navigate({ to: "/projects/$projectId", params: { projectId } }) : void navigate({ to: "/" });
+
+	const openNewTask = () => {
+		if (!projectId) return;
+		setIsNewTaskOpen(true);
+	};
+
+	const handleTaskCreated = async (sessionId: string) => {
+		if (!projectId) return;
+		await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+		void navigate({
+			to: "/projects/$projectId/sessions/$sessionId",
+			params: { projectId, sessionId },
+		});
+	};
 
 	const openOrchestrator = async () => {
 		if (!projectId) return;
@@ -135,16 +151,28 @@ export function ShellTopbar() {
 				{isSessionRoute ? (
 					<>
 						{isOrchestrator ? (
-							<button
-								aria-label="Open Kanban"
-								className="dashboard-app-header__primary-btn"
-								onClick={openBoard}
-								style={noDragStyle}
-								type="button"
-							>
-								<LayoutDashboard className="h-3.5 w-3.5" aria-hidden="true" />
-								Open Kanban
-							</button>
+							<>
+								<button
+									aria-label="New task"
+									className="dashboard-app-header__primary-btn"
+									onClick={openNewTask}
+									style={noDragStyle}
+									type="button"
+								>
+									<Plus className="h-3.5 w-3.5" aria-hidden="true" />
+									New task
+								</button>
+								<button
+									aria-label="Open Kanban"
+									className="dashboard-app-header__accent-btn"
+									onClick={openBoard}
+									style={noDragStyle}
+									type="button"
+								>
+									<LayoutDashboard className="h-3.5 w-3.5" aria-hidden="true" />
+									Kanban
+								</button>
+							</>
 						) : (
 							<button
 								aria-label="Open orchestrator"
@@ -181,37 +209,55 @@ export function ShellTopbar() {
 						)}
 					</>
 				) : projectId ? (
-					orchestrator ? (
+					<>
 						<button
-							aria-label="Orchestrator"
+							aria-label="New task"
 							className="dashboard-app-header__primary-btn"
-							onClick={() =>
-								void navigate({
-									to: "/projects/$projectId/sessions/$sessionId",
-									params: { projectId, sessionId: orchestrator.id },
-								})
-							}
+							onClick={openNewTask}
 							style={noDragStyle}
 							type="button"
 						>
-							<OrchestratorIcon className="h-3.5 w-3.5" aria-hidden="true" />
-							Orchestrator
+							<Plus className="h-3.5 w-3.5" aria-hidden="true" />
+							New task
 						</button>
-					) : (
-						<button
-							aria-label="Spawn Orchestrator"
-							className="dashboard-app-header__primary-btn"
-							disabled={isSpawning}
-							onClick={() => void openOrchestrator()}
-							style={noDragStyle}
-							type="button"
-						>
-							<OrchestratorIcon className="h-3.5 w-3.5" aria-hidden="true" />
-							{isSpawning ? "Spawning…" : "Spawn Orchestrator"}
-						</button>
-					)
+						{orchestrator ? (
+							<button
+								aria-label="Orchestrator"
+								className="dashboard-app-header__accent-btn"
+								onClick={() =>
+									void navigate({
+										to: "/projects/$projectId/sessions/$sessionId",
+										params: { projectId, sessionId: orchestrator.id },
+									})
+								}
+								style={noDragStyle}
+								type="button"
+							>
+								<OrchestratorIcon className="h-3.5 w-3.5" aria-hidden="true" />
+								Orchestrator
+							</button>
+						) : (
+							<button
+								aria-label="Spawn Orchestrator"
+								className="dashboard-app-header__accent-btn"
+								disabled={isSpawning}
+								onClick={() => void openOrchestrator()}
+								style={noDragStyle}
+								type="button"
+							>
+								<OrchestratorIcon className="h-3.5 w-3.5" aria-hidden="true" />
+								{isSpawning ? "Spawning…" : "Spawn Orchestrator"}
+							</button>
+						)}
+					</>
 				) : null}
 			</div>
+			<NewTaskDialog
+				open={isNewTaskOpen}
+				projectId={projectId}
+				onCreated={(sessionId) => void handleTaskCreated(sessionId)}
+				onOpenChange={setIsNewTaskOpen}
+			/>
 		</header>
 	);
 }
