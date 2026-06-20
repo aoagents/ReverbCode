@@ -8,12 +8,16 @@ function devApiBaseUrl(): string {
 const initialApiBaseUrl =
 	import.meta.env.VITE_AO_API_BASE_URL ?? (import.meta.env.DEV ? devApiBaseUrl() : "http://127.0.0.1:3001");
 
-let runtimeApiBaseUrl = initialApiBaseUrl;
+let runtimeApiBaseUrl: string | null = initialApiBaseUrl;
 
 const baseUrlListeners = new Set<() => void>();
 
 export function getApiBaseUrl(): string {
-	return runtimeApiBaseUrl;
+	return runtimeApiBaseUrl ?? "";
+}
+
+export function hasTrustedApiBaseUrl(): boolean {
+	return runtimeApiBaseUrl !== null;
 }
 
 /**
@@ -28,15 +32,21 @@ export function subscribeApiBaseUrl(listener: () => void): () => void {
 	};
 }
 
-export function setApiBaseUrl(nextBaseUrl: string): void {
-	const normalized = nextBaseUrl.replace(/\/+$/, "");
+export function setApiBaseUrl(nextBaseUrl: string | null): void {
+	const normalized = nextBaseUrl === null ? null : nextBaseUrl.replace(/\/+$/, "");
 	if (normalized === runtimeApiBaseUrl) return;
 	runtimeApiBaseUrl = normalized;
 	baseUrlListeners.forEach((listener) => listener());
 }
 
 async function runtimeFetch(input: Request): Promise<Response> {
-	const baseUrl = getApiBaseUrl();
+	const baseUrl = runtimeApiBaseUrl;
+	if (baseUrl === null) {
+		return new Response(JSON.stringify({ message: "AO daemon is not ready." }), {
+			status: 503,
+			headers: { "Content-Type": "application/json" },
+		});
+	}
 	if (!baseUrl) {
 		return fetch(input);
 	}

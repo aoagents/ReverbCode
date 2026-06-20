@@ -62,24 +62,24 @@ describe("useDaemonStatus", () => {
 		expect(queryClient.invalidateQueries).not.toHaveBeenCalled();
 	});
 
-	it("does not touch the base URL for statuses without a port", async () => {
+	it("quarantines the base URL for statuses without a port", async () => {
 		getStatusMock.mockResolvedValue({ state: "stopped", message: "daemon not configured" });
 		const queryClient = fakeQueryClient();
 
 		const { result } = renderHook(() => useDaemonStatus(queryClient));
 
 		await waitFor(() => expect(result.current.message).toBe("daemon not configured"));
-		expect(setApiBaseUrlMock).not.toHaveBeenCalled();
+		expect(setApiBaseUrlMock).toHaveBeenCalledWith(null);
 	});
 
-	it("does not point REST at an incompatible daemon even when its port is known", async () => {
+	it("quarantines REST for an incompatible daemon even when its port is known", async () => {
 		getStatusMock.mockResolvedValue({ state: "error", port: 3001, message: "wrong daemon" });
 		const queryClient = fakeQueryClient();
 
 		const { result } = renderHook(() => useDaemonStatus(queryClient));
 
 		await waitFor(() => expect(result.current).toEqual({ state: "error", port: 3001, message: "wrong daemon" }));
-		expect(setApiBaseUrlMock).not.toHaveBeenCalled();
+		expect(setApiBaseUrlMock).toHaveBeenCalledWith(null);
 	});
 
 	it("applies pushed status events from the bridge", async () => {
@@ -112,6 +112,26 @@ describe("useDaemonStatus", () => {
 		expect(result.current).toEqual({ state: "ready", port: 4777 });
 		expect(getStatusMock).toHaveBeenCalledTimes(2);
 		expect(setApiBaseUrlMock).toHaveBeenCalledWith("http://127.0.0.1:4777");
+	});
+
+	it("refreshes ready status so adopted daemon liveness is rechecked", async () => {
+		vi.useFakeTimers();
+		getStatusMock.mockResolvedValueOnce({ state: "ready", port: 4777 }).mockResolvedValueOnce({ state: "stopped" });
+		const queryClient = fakeQueryClient();
+
+		const { result } = renderHook(() => useDaemonStatus(queryClient));
+
+		await act(async () => {
+			await Promise.resolve();
+		});
+		expect(result.current).toEqual({ state: "ready", port: 4777 });
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(10_000);
+		});
+
+		expect(result.current).toEqual({ state: "stopped" });
+		expect(getStatusMock).toHaveBeenCalledTimes(2);
+		expect(setApiBaseUrlMock).toHaveBeenCalledWith(null);
 	});
 
 	it("still connects the transport when the initial IPC status call fails", async () => {

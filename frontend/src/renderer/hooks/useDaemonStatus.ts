@@ -7,6 +7,7 @@ import { setApiBaseUrl } from "../lib/api-client";
 
 type DaemonStatus = Awaited<ReturnType<typeof aoBridge.daemon.getStatus>>;
 const STATUS_REFRESH_MS = 2_000;
+const READY_STATUS_REFRESH_MS = 10_000;
 
 export function useDaemonStatus(queryClient: QueryClient = defaultQueryClient) {
 	const [status, setStatus] = useState<DaemonStatus>({ state: "stopped" });
@@ -36,13 +37,14 @@ export function useDaemonStatus(queryClient: QueryClient = defaultQueryClient) {
 					// last known status and keep the recovery loop alive.
 				})
 				.finally(() => {
-					if (active && statusRef.current.state !== "ready") scheduleRefresh();
+					if (!active) return;
+					scheduleRefresh(statusRef.current.state === "ready" ? READY_STATUS_REFRESH_MS : STATUS_REFRESH_MS);
 				});
 		};
 
-		const scheduleRefresh = () => {
+		const scheduleRefresh = (delayMs = STATUS_REFRESH_MS) => {
 			if (refreshTimer || !active) return;
-			refreshTimer = setTimeout(refreshStatus, STATUS_REFRESH_MS);
+			refreshTimer = setTimeout(refreshStatus, delayMs);
 		};
 
 		const applyStatus = (nextStatus: DaemonStatus) => {
@@ -52,7 +54,9 @@ export function useDaemonStatus(queryClient: QueryClient = defaultQueryClient) {
 			if (nextStatus.state === "ready" && nextStatus.port) {
 				setApiBaseUrl(`http://127.0.0.1:${nextStatus.port}`);
 				clearRefresh();
+				scheduleRefresh(READY_STATUS_REFRESH_MS);
 			} else {
+				setApiBaseUrl(null);
 				scheduleRefresh();
 			}
 			setStatus(nextStatus);
@@ -60,7 +64,7 @@ export function useDaemonStatus(queryClient: QueryClient = defaultQueryClient) {
 
 		refreshStatus();
 		const refreshOnFocus = () => {
-			if (statusRef.current.state !== "ready") refreshStatus();
+			refreshStatus();
 		};
 		const refreshOnVisibility = () => {
 			if (document.visibilityState === "visible") refreshOnFocus();

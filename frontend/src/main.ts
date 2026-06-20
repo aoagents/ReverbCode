@@ -317,7 +317,7 @@ async function refreshDaemonStatus(): Promise<DaemonStatus> {
 	const existing = await inspectExistingDaemon(launch);
 	if (existing) {
 		setDaemonStatus(existing);
-	} else if (daemonStatus.state === "ready") {
+	} else if (daemonStatus.state === "ready" || (daemonStatus.state === "error" && (daemonStatus.pid || daemonStatus.port))) {
 		setDaemonStatus({
 			state: "stopped",
 			message: "AO daemon is no longer reachable.",
@@ -504,7 +504,6 @@ function stopDaemon(): DaemonStatus {
 	}
 
 	killDaemon(daemonProcess);
-	daemonProcess = null;
 	setDaemonStatus({ state: "stopped" });
 	return daemonStatus;
 }
