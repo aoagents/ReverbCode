@@ -169,7 +169,7 @@ exposing it beyond loopback would be a security regression.
 | `AO_SHUTDOWN_TIMEOUT` | `10s`                                             | Graceful-shutdown hard cap.                                                 |
 | `AO_RUN_FILE`         | `<UserConfigDir>/agent-orchestrator/running.json` | PID + port handshake path.                                                  |
 | `AO_DATA_DIR`         | `<UserConfigDir>/agent-orchestrator/data`         | SQLite DB, WAL files, managed state.                                        |
-| `AO_AGENT`            | `claude-code`                                     | Compatibility agent adapter id validated at daemon startup.                  |
+| `AO_AGENT`            | `claude-code`                                     | Compatibility agent adapter id validated at daemon startup.                 |
 | `AO_SESSION_ID`       | _(unset)_                                         | Set inside spawned sessions; read by `ao send` and `ao hooks`.              |
 | `GITHUB_TOKEN`        | _(unset)_                                         | Used by the GitHub SCM and tracker adapters. Falls back to `gh auth token`. |
 
