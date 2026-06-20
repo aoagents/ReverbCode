@@ -205,25 +205,25 @@ select {
 }
 
 :is(
-		button,
-		select,
-		[role="button"],
-		[data-slot="select-trigger"],
-		[data-slot="select-item"],
-		[data-slot="dropdown-menu-item"],
-		[data-sidebar="menu-button"],
-		[data-sidebar="menu-sub-button"]
-	):disabled,
+	button,
+	select,
+	[role="button"],
+	[data-slot="select-trigger"],
+	[data-slot="select-item"],
+	[data-slot="dropdown-menu-item"],
+	[data-sidebar="menu-button"],
+	[data-sidebar="menu-sub-button"]
+):disabled,
 :is(
-		button,
-		select,
-		[role="button"],
-		[data-slot="select-trigger"],
-		[data-slot="select-item"],
-		[data-slot="dropdown-menu-item"],
-		[data-sidebar="menu-button"],
-		[data-sidebar="menu-sub-button"]
-	)[aria-disabled="true"] {
+	button,
+	select,
+	[role="button"],
+	[data-slot="select-trigger"],
+	[data-slot="select-item"],
+	[data-slot="dropdown-menu-item"],
+	[data-sidebar="menu-button"],
+	[data-sidebar="menu-sub-button"]
+)[aria-disabled="true"] {
 	cursor: not-allowed;
 }
 

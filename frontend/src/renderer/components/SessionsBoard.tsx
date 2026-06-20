@@ -147,7 +147,11 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 
 	return (
 		<div className="flex h-full min-h-0 flex-col bg-background text-foreground">
-			<DashboardSubhead title="Board" subtitle="Live agent sessions flowing from work → review → merge." actions={actions} />
+			<DashboardSubhead
+				title="Board"
+				subtitle="Live agent sessions flowing from work → review → merge."
+				actions={actions}
+			/>
 
 			<div className="min-h-0 flex-1 overflow-hidden p-[18px]">
 				{workspaceQuery.isError ? (
