@@ -32,6 +32,7 @@ const worker: WorkspaceSession = {
 	branch: "ao/sess-1",
 	status: "working",
 	updatedAt: "2026-06-10T00:00:00Z",
+	prs: [],
 };
 
 function renderKill(session: WorkspaceSession = worker) {

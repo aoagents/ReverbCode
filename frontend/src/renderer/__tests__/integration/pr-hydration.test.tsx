@@ -4,9 +4,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 
 // Drives the real useWorkspaceQuery + real Board / PR-page consumers end to end
-// for a normal project, mocking only the HTTP client and the router. Proves the
-// #251 fix: PR facts fetched from /pr flow through the shared workspace cache
-// into every consumer.
+// for a normal project, mocking only the HTTP client and the router. Proves PR
+// facts carried on the session list flow through the shared workspace cache into
+// every consumer.
 const { getMock, navigateMock } = vi.hoisted(() => ({ getMock: vi.fn(), navigateMock: vi.fn() }));
 
 vi.mock("../../lib/api-client", () => ({
@@ -24,7 +24,7 @@ import { PullRequestsPage } from "../../components/PullRequestsPage";
 
 // One ordinary project with one worker session that has an open PR (#278).
 function respondWithProjectAndPR() {
-	getMock.mockImplementation(async (url: string, options?: { params?: { path?: { sessionId?: string } } }) => {
+	getMock.mockImplementation(async (url: string) => {
 		if (url === "/api/v1/projects") {
 			return { data: { projects: [{ id: "proj-1", name: "my-app", path: "/repo/my-app" }] }, error: undefined };
 		}
@@ -40,27 +40,18 @@ function respondWithProjectAndPR() {
 							status: "pr_open",
 							isTerminated: false,
 							updatedAt: "2026-06-10T16:15:04Z",
-						},
-					],
-				},
-				error: undefined,
-			};
-		}
-		if (url === "/api/v1/sessions/{sessionId}/pr") {
-			expect(options?.params?.path?.sessionId).toBe("sess-1");
-			return {
-				data: {
-					sessionId: "sess-1",
-					prs: [
-						{
-							number: 278,
-							state: "open",
-							url: "https://github.com/aoagents/ReverbCode/pull/278",
-							ci: "passing",
-							review: "approved",
-							mergeability: "clean",
-							reviewComments: false,
-							updatedAt: "2026-06-10T16:15:04Z",
+							prs: [
+								{
+									number: 278,
+									state: "open",
+									url: "https://github.com/aoagents/ReverbCode/pull/278",
+									ci: "passing",
+									review: "approved",
+									mergeability: "clean",
+									reviewComments: false,
+									updatedAt: "2026-06-10T16:15:04Z",
+								},
+							],
 						},
 					],
 				},
