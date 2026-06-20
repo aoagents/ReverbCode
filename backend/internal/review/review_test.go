@@ -429,6 +429,14 @@ func TestSubmitChangesRequestedMessagesWorker(t *testing.T) {
 	if !strings.Contains(msgr.gotMsg, "fix the bug") || !strings.Contains(msgr.gotMsg, "98765") {
 		t.Fatalf("message missing body or review id: %q", msgr.gotMsg)
 	}
+	// The worker must be able to tell an AO internal review from external SCM
+	// reviewer feedback, and is asked to reply + resolve for an AO review.
+	if !strings.Contains(msgr.gotMsg, "AO code reviewer") {
+		t.Fatalf("message should identify the AO internal review: %q", msgr.gotMsg)
+	}
+	if !strings.Contains(msgr.gotMsg, "reply on that review") || !strings.Contains(msgr.gotMsg, "resolve") {
+		t.Fatalf("message should ask the worker to reply and resolve: %q", msgr.gotMsg)
+	}
 }
 
 func TestSubmitApprovedDoesNotMessageWorker(t *testing.T) {
@@ -455,8 +463,13 @@ func TestSubmitChangesRequestedOmitsReviewIDWhenAbsent(t *testing.T) {
 	if msgr.sends != 1 || !strings.Contains(msgr.gotMsg, "fix it") {
 		t.Fatalf("expected message with body: %+v", msgr)
 	}
-	if strings.Contains(msgr.gotMsg, "GitHub review") {
-		t.Fatalf("message should not reference a review id when none was supplied: %q", msgr.gotMsg)
+	// Still identified as an AO review, but with no id there is nothing to reply
+	// to or resolve, so that instruction is omitted.
+	if !strings.Contains(msgr.gotMsg, "AO code reviewer") {
+		t.Fatalf("message should identify the AO internal review: %q", msgr.gotMsg)
+	}
+	if strings.Contains(msgr.gotMsg, "reply on that review") {
+		t.Fatalf("message should not ask to reply/resolve when no review id was supplied: %q", msgr.gotMsg)
 	}
 }
 
