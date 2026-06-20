@@ -1,11 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import type { QueryClient } from "@tanstack/react-query";
 import { aoBridge } from "../lib/bridge";
+import { applyDaemonStatus, readDaemonStatus, type DaemonStatus } from "../lib/daemon-status";
 import { queryClient as defaultQueryClient } from "../lib/query-client";
 import { createEventTransport } from "../lib/event-transport";
-import { setApiBaseUrl } from "../lib/api-client";
 
-type DaemonStatus = Awaited<ReturnType<typeof aoBridge.daemon.getStatus>>;
 const STATUS_REFRESH_MS = 2_000;
 const READY_STATUS_REFRESH_MS = 10_000;
 
@@ -29,8 +28,7 @@ export function useDaemonStatus(queryClient: QueryClient = defaultQueryClient) {
 		const refreshStatus = () => {
 			clearRefresh();
 			const requestVersion = ++statusVersion;
-			void aoBridge.daemon
-				.getStatus()
+			void readDaemonStatus()
 				.then((nextStatus) => {
 					if (active && requestVersion === statusVersion) applyStatus(nextStatus);
 				})
@@ -54,17 +52,16 @@ export function useDaemonStatus(queryClient: QueryClient = defaultQueryClient) {
 			// transport's job (it invalidates, debounced, on every daemon status).
 			statusRef.current = nextStatus;
 			if (nextStatus.state === "ready" && nextStatus.port) {
-				setApiBaseUrl(`http://127.0.0.1:${nextStatus.port}`);
+				applyDaemonStatus(nextStatus);
 				clearRefresh();
 				scheduleRefresh(READY_STATUS_REFRESH_MS);
 			} else {
-				setApiBaseUrl(null);
+				applyDaemonStatus(nextStatus);
 				scheduleRefresh();
 			}
 			setStatus(nextStatus);
 		};
 
-		setApiBaseUrl(null);
 		refreshStatus();
 		const refreshOnFocus = () => {
 			refreshStatus();

@@ -8,7 +8,7 @@ function devApiBaseUrl(): string {
 const initialApiBaseUrl =
 	import.meta.env.VITE_AO_API_BASE_URL ?? (import.meta.env.DEV ? devApiBaseUrl() : "http://127.0.0.1:3001");
 
-let runtimeApiBaseUrl: string | null = null;
+let runtimeApiBaseUrl: string | null = import.meta.env.VITE_AO_API_BASE_URL ?? null;
 
 const baseUrlListeners = new Set<() => void>();
 
