@@ -5,10 +5,10 @@ function devApiBaseUrl(): string {
 	return typeof window === "undefined" ? "http://127.0.0.1:3001" : window.location.origin;
 }
 
-const initialApiBaseUrl =
-	import.meta.env.VITE_AO_API_BASE_URL ?? (import.meta.env.DEV ? devApiBaseUrl() : "http://127.0.0.1:3001");
+const explicitApiBaseUrl = import.meta.env.VITE_AO_API_BASE_URL;
+const initialApiBaseUrl = explicitApiBaseUrl ?? (import.meta.env.DEV ? devApiBaseUrl() : "http://127.0.0.1:3001");
 
-let runtimeApiBaseUrl: string | null = import.meta.env.VITE_AO_API_BASE_URL ?? null;
+let runtimeApiBaseUrl: string | null = explicitApiBaseUrl ?? null;
 
 const baseUrlListeners = new Set<() => void>();
 
@@ -33,7 +33,7 @@ export function subscribeApiBaseUrl(listener: () => void): () => void {
 }
 
 export function setApiBaseUrl(nextBaseUrl: string | null): void {
-	const normalized = nextBaseUrl === null ? null : nextBaseUrl.replace(/\/+$/, "");
+	const normalized = (nextBaseUrl ?? explicitApiBaseUrl ?? null)?.replace(/\/+$/, "") ?? null;
 	if (normalized === runtimeApiBaseUrl) return;
 	runtimeApiBaseUrl = normalized;
 	baseUrlListeners.forEach((listener) => listener());
