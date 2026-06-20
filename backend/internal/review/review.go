@@ -315,6 +315,17 @@ func (e *Engine) Submit(ctx context.Context, workerID domain.SessionID, runID st
 		return domain.ReviewRun{}, fmt.Errorf("%w: review run %q is not running", ErrInvalid, runID)
 	}
 
+	// Notify the worker before marking the run complete. If the message fails,
+	// the run stays 'running' so a retried `ao review submit` runs again instead
+	// of tripping the status='running' guard above on an already-completed run. A
+	// message that lands but a DB write that then fails degrades to one extra
+	// nudge on retry — the same trade lifecycle's sendOnce makes.
+	if verdict == domain.VerdictChangesRequested {
+		if err := e.notifyWorkerChangesRequested(ctx, workerID, body, githubReviewID); err != nil {
+			return domain.ReviewRun{}, err
+		}
+	}
+
 	updated, err := e.store.UpdateReviewRunResult(ctx, run.ID, domain.ReviewRunComplete, verdict, body, githubReviewID)
 	if err != nil {
 		return domain.ReviewRun{}, err
@@ -326,12 +337,6 @@ func (e *Engine) Submit(ctx context.Context, workerID domain.SessionID, runID st
 	run.Verdict = verdict
 	run.Body = body
 	run.GithubReviewID = githubReviewID
-
-	if verdict == domain.VerdictChangesRequested {
-		if err := e.notifyWorkerChangesRequested(ctx, workerID, body, githubReviewID); err != nil {
-			return domain.ReviewRun{}, err
-		}
-	}
 	return run, nil
 }
 

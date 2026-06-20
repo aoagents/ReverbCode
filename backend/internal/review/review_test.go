@@ -481,6 +481,20 @@ func TestSubmitPropagatesMessengerError(t *testing.T) {
 	if _, err := eng.Submit(context.Background(), "mer-1", "run-1", domain.VerdictChangesRequested, "fix it", "1"); err == nil {
 		t.Fatal("expected Submit to surface the messenger error")
 	}
+	// The run must stay running so a retried submit can try again, rather than
+	// being marked complete and then failing the status='running' guard.
+	if store.runs[0].Status != domain.ReviewRunRunning {
+		t.Fatalf("run should stay running after a failed send, got %q", store.runs[0].Status)
+	}
+
+	// A retry once the pane is back completes the run and messages the worker.
+	msgr.sendErr = nil
+	if _, err := eng.Submit(context.Background(), "mer-1", "run-1", domain.VerdictChangesRequested, "fix it", "1"); err != nil {
+		t.Fatalf("retry after recovered send: %v", err)
+	}
+	if store.runs[0].Status != domain.ReviewRunComplete || msgr.sends != 2 {
+		t.Fatalf("retry should complete the run and re-send: status=%q sends=%d", store.runs[0].Status, msgr.sends)
+	}
 }
 
 func TestSubmitValidationAndOwnership(t *testing.T) {
