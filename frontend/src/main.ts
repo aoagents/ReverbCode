@@ -21,6 +21,8 @@ app.setName("Agent Orchestrator");
 
 let mainWindow: BrowserWindow | null = null;
 let daemonProcess: ChildProcessWithoutNullStreams | null = null;
+let daemonStartPromise: Promise<DaemonStatus> | null = null;
+let daemonStartEpoch = 0;
 let daemonStatus: DaemonStatus = { state: "stopped" };
 
 const isDev = !app.isPackaged;
@@ -301,7 +303,7 @@ async function inspectExistingDaemon(launch: DaemonLaunchSpec): Promise<DaemonSt
 }
 
 async function refreshDaemonStatus(): Promise<DaemonStatus> {
-	if (daemonProcess || daemonStatus.state === "ready") {
+	if (daemonProcess) {
 		return daemonStatus;
 	}
 	const launch = resolveDaemonLaunch(
@@ -315,11 +317,27 @@ async function refreshDaemonStatus(): Promise<DaemonStatus> {
 	const existing = await inspectExistingDaemon(launch);
 	if (existing) {
 		setDaemonStatus(existing);
+	} else if (daemonStatus.state === "ready") {
+		setDaemonStatus({
+			state: "stopped",
+			message: "AO daemon is no longer reachable.",
+		});
 	}
 	return daemonStatus;
 }
 
 async function startDaemon(): Promise<DaemonStatus> {
+	if (daemonStartPromise) {
+		return daemonStartPromise;
+	}
+	const startEpoch = daemonStartEpoch;
+	daemonStartPromise = startDaemonInner(startEpoch).finally(() => {
+		daemonStartPromise = null;
+	});
+	return daemonStartPromise;
+}
+
+async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 	if (daemonProcess) {
 		return daemonStatus;
 	}
@@ -340,6 +358,9 @@ async function startDaemon(): Promise<DaemonStatus> {
 	}
 
 	const existing = await inspectExistingDaemon(launch);
+	if (startEpoch !== daemonStartEpoch) {
+		return daemonStatus;
+	}
 	if (existing) {
 		setDaemonStatus(existing);
 		return daemonStatus;
@@ -472,6 +493,7 @@ function killDaemon(child: ChildProcessWithoutNullStreams): void {
 }
 
 function stopDaemon(): DaemonStatus {
+	daemonStartEpoch += 1;
 	if (!daemonProcess) {
 		setDaemonStatus({ state: "stopped" });
 		return daemonStatus;
