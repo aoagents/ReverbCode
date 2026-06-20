@@ -52,13 +52,12 @@ func TestAttachmentStreamsRealZellijPane(t *testing.T) {
 	eventually(t, 3*time.Second, func() bool { return a.write([]byte("echo AO_MARKER_42\n")) == nil })
 	eventually(t, 5*time.Second, func() bool { return strings.Contains(got.string(), "AO_MARKER_42") })
 
-	// A fresh attach must carry zellij's init handshake: alt screen + SGR mouse
-	// tracking. This is the whole point of per-client attach — late clients see
-	// the mode negotiation, so wheel events are forwarded as mouse reports
-	// instead of going dead.
+	// A fresh attach must carry zellij's alt-screen init handshake. Mouse
+	// reporting is deliberately disabled for AO's embedded client, so this test
+	// should not require SGR mouse mode.
 	eventually(t, 5*time.Second, func() bool {
 		out := got.string()
-		return strings.Contains(out, "\x1b[?1049h") && strings.Contains(out, "\x1b[?1006h")
+		return strings.Contains(out, "\x1b[?1049h")
 	})
 
 	// Kill the session: the attachment must observe it as gone and not re-attach.

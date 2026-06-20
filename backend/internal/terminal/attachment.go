@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
-	"github.com/aoagents/agent-orchestrator/backend/internal/terminaldiag"
 )
 
 // PTYSource is what a terminal needs from the runtime: the argv that attaches a
@@ -51,13 +50,12 @@ const (
 // attachment is ONE client's hold on a pane: a private `zellij attach` PTY
 // spawned per mux open, streaming to a single sink. Zellij is the multiplexer —
 // it owns the session's screen state and scrollback, and answers every fresh
-// attach with its full init handshake (alt screen, SGR mouse tracking,
-// bracketed paste) followed by a faithful repaint. That handshake is why the
-// PTY is per-client and there is no server-side replay buffer: a byte ring
-// can replay recent output, but the one-time mode negotiation at the head of
-// the stream scrolls out of any bounded buffer, leaving late subscribers
-// without mouse reporting (wheel scroll dead). A fresh attach per client makes
-// Zellij re-send it, every time, by construction.
+// attach with its init handshake (alt screen, bracketed paste, and other terminal
+// modes enabled by the embedded client options) followed by a faithful repaint.
+// That handshake is why the PTY is per-client and there is no server-side replay
+// buffer: a byte ring can replay recent output, but the one-time mode negotiation
+// at the head of the stream scrolls out of any bounded buffer. A fresh attach per
+// client makes Zellij re-send it, every time, by construction.
 //
 // onOpen fires once the attach PTY is actually ready to accept input. onData
 // must not block: the WS layer funnels frames onto its own buffered writer.
@@ -118,16 +116,10 @@ func (a *attachment) run(ctx context.Context) {
 		return
 	}
 	defer a.clearRunCancel(cancel)
-	terminaldiag.Log("backend", "attachment.run.start", map[string]any{"handle": a.id})
-	defer terminaldiag.Log("backend", "attachment.run.end", map[string]any{"handle": a.id})
 
 	failures := 0
 	for {
 		if a.shouldStop(ctx) {
-			terminaldiag.Log("backend", "attachment.run.stop", map[string]any{
-				"handle":   a.id,
-				"failures": failures,
-			})
 			return
 		}
 
@@ -144,11 +136,6 @@ func (a *attachment) run(ctx context.Context) {
 		}
 		if err != nil {
 			failures++
-			terminaldiag.Log("backend", "attachment.liveness.error", map[string]any{
-				"handle":   a.id,
-				"failures": failures,
-				"error":    err.Error(),
-			})
 			if failures > a.maxReattach {
 				a.fail("liveness probe: " + err.Error())
 				return
@@ -159,27 +146,15 @@ func (a *attachment) run(ctx context.Context) {
 			continue
 		}
 		if !alive {
-			terminaldiag.Log("backend", "attachment.liveness.dead", map[string]any{
-				"handle":   a.id,
-				"failures": failures,
-			})
 			a.markExited()
 			return
 		}
-		terminaldiag.Log("backend", "attachment.liveness.alive", map[string]any{
-			"handle":   a.id,
-			"failures": failures,
-		})
 
 		argv, err := a.src.AttachCommand(a.handle)
 		if a.shouldStop(ctx) {
 			return
 		}
 		if err != nil {
-			terminaldiag.Log("backend", "attachment.command.error", map[string]any{
-				"handle": a.id,
-				"error":  err.Error(),
-			})
 			a.fail("attach command: " + err.Error())
 			return
 		}
@@ -187,13 +162,6 @@ func (a *attachment) run(ctx context.Context) {
 		if a.shouldStop(ctx) {
 			return
 		}
-		terminaldiag.Log("backend", "attachment.spawn.start", map[string]any{
-			"handle": a.id,
-			"argv0":  firstArg(argv),
-			"argc":   len(argv),
-			"cols":   cols,
-			"rows":   rows,
-		})
 		p, err := a.spawn(ctx, argv, rows, cols)
 		if a.shouldStop(ctx) {
 			if p != nil {
@@ -203,11 +171,6 @@ func (a *attachment) run(ctx context.Context) {
 		}
 		if err != nil {
 			failures++
-			terminaldiag.Log("backend", "attachment.spawn.error", map[string]any{
-				"handle":   a.id,
-				"failures": failures,
-				"error":    err.Error(),
-			})
 			if failures > a.maxReattach {
 				a.fail("spawn pty: " + err.Error())
 				return
@@ -219,7 +182,6 @@ func (a *attachment) run(ctx context.Context) {
 		}
 
 		if !a.setPTY(p) {
-			terminaldiag.Log("backend", "attachment.set_pty.rejected", map[string]any{"handle": a.id})
 			_ = p.Close()
 			return
 		}
@@ -227,10 +189,6 @@ func (a *attachment) run(ctx context.Context) {
 		a.copyOut(p)
 		a.clearPTY(p)
 		_ = p.Close()
-		terminaldiag.Log("backend", "attachment.pty.closed", map[string]any{
-			"handle":     a.id,
-			"durationMs": time.Since(start).Milliseconds(),
-		})
 		if a.shouldStop(ctx) {
 			return
 		}
@@ -248,36 +206,20 @@ func (a *attachment) run(ctx context.Context) {
 			return
 		}
 		a.log.Debug("terminal re-attaching", "id", a.id, "failures", failures)
-		terminaldiag.Log("backend", "attachment.reattach", map[string]any{
-			"handle":   a.id,
-			"failures": failures,
-		})
 	}
 }
 
 // copyOut pumps PTY output to the sink until the PTY closes or errors.
 func (a *attachment) copyOut(p ptyProcess) {
 	buf := make([]byte, 32*1024)
-	sawData := false
 	for {
 		n, err := p.Read(buf)
 		if n > 0 {
-			if !sawData {
-				sawData = true
-				terminaldiag.Log("backend", "attachment.output.first", map[string]any{
-					"handle": a.id,
-					"bytes":  n,
-				})
-			}
 			chunk := make([]byte, n)
 			copy(chunk, buf[:n])
 			a.onData(chunk)
 		}
 		if err != nil {
-			terminaldiag.Log("backend", "attachment.copy_out.end", map[string]any{
-				"handle": a.id,
-				"error":  err.Error(),
-			})
 			return
 		}
 	}
@@ -316,28 +258,15 @@ func (a *attachment) write(p []byte) error {
 	a.mu.Lock()
 	if a.closed || a.exited {
 		a.mu.Unlock()
-		terminaldiag.Log("backend", "attachment.input.rejected", map[string]any{
-			"handle": a.id,
-			"bytes":  len(chunk),
-			"reason": "closed",
-		})
 		return errors.New("terminal: attachment closed")
 	}
 	pty := a.pty
 	if pty == nil || !a.inputReady {
 		a.pendingInput = append(a.pendingInput, chunk)
 		a.mu.Unlock()
-		terminaldiag.Log("backend", "attachment.input.buffered", map[string]any{
-			"handle": a.id,
-			"bytes":  len(chunk),
-		})
 		return nil
 	}
 	a.mu.Unlock()
-	terminaldiag.Log("backend", "attachment.input.write", map[string]any{
-		"handle": a.id,
-		"bytes":  len(chunk),
-	})
 	_, err := pty.Write(chunk)
 	return err
 }
@@ -352,18 +281,8 @@ func (a *attachment) resize(rows, cols uint16) error {
 	pty := a.pty
 	a.mu.Unlock()
 	if pty == nil {
-		terminaldiag.Log("backend", "attachment.resize.recorded", map[string]any{
-			"handle": a.id,
-			"cols":   cols,
-			"rows":   rows,
-		})
 		return nil
 	}
-	terminaldiag.Log("backend", "attachment.resize.live", map[string]any{
-		"handle": a.id,
-		"cols":   cols,
-		"rows":   rows,
-	})
 	return pty.Resize(rows, cols)
 }
 
@@ -394,7 +313,6 @@ func (a *attachment) setPTY(p ptyProcess) bool {
 		a.opened = true
 	}
 	onOpen := a.onOpen
-	pendingLen := len(a.pendingInput)
 	a.mu.Unlock()
 	if rows > 0 && cols > 0 {
 		_ = p.Resize(rows, cols)
@@ -402,13 +320,6 @@ func (a *attachment) setPTY(p ptyProcess) bool {
 	if shouldOpen && onOpen != nil {
 		onOpen()
 	}
-	terminaldiag.Log("backend", "attachment.pty.ready", map[string]any{
-		"handle":     a.id,
-		"cols":       cols,
-		"rows":       rows,
-		"firstOpen":  shouldOpen,
-		"pendingLen": pendingLen,
-	})
 
 	for {
 		a.mu.Lock()
@@ -417,7 +328,6 @@ func (a *attachment) setPTY(p ptyProcess) bool {
 		if len(pending) == 0 {
 			a.inputReady = true
 			a.mu.Unlock()
-			terminaldiag.Log("backend", "attachment.input.ready", map[string]any{"handle": a.id})
 			return true
 		}
 		a.mu.Unlock()
@@ -462,10 +372,6 @@ func (a *attachment) close() {
 	if cancel != nil {
 		cancel()
 	}
-	terminaldiag.Log("backend", "attachment.close", map[string]any{
-		"handle": a.id,
-		"hadPTY": pty != nil,
-	})
 }
 
 func (a *attachment) setRunCancel(cancel context.CancelFunc) bool {
@@ -513,22 +419,10 @@ func (a *attachment) markExited() {
 	if a.onExit != nil {
 		a.onExit()
 	}
-	terminaldiag.Log("backend", "attachment.mark_exited", map[string]any{"handle": a.id})
 }
 
 // fail reports an unrecoverable attach error as an exit.
 func (a *attachment) fail(reason string) {
 	a.log.Warn("terminal attachment failed", "id", a.id, "reason", reason)
-	terminaldiag.Log("backend", "attachment.fail", map[string]any{
-		"handle": a.id,
-		"reason": reason,
-	})
 	a.markExited()
-}
-
-func firstArg(argv []string) string {
-	if len(argv) == 0 {
-		return ""
-	}
-	return argv[0]
 }

@@ -18,11 +18,6 @@ const api = {
 			};
 		},
 	},
-	diagnostics: {
-		logTerminal: (event: string, fields?: Record<string, string | number | boolean | null | undefined>) => {
-			ipcRenderer.send("diagnostics:terminal-flow", event, fields ?? {});
-		},
-	},
 };
 
 contextBridge.exposeInMainWorld("ao", api);

@@ -5,7 +5,6 @@ import { SessionInspector } from "./SessionInspector";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "./ui/resizable";
 import { useUiStore } from "../stores/ui-store";
 import { useShell } from "../lib/shell-context";
-import { logTerminalFlow } from "../lib/terminal-flow-log";
 import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
 import { isOrchestratorSession } from "../types/workspace";
 import type { TerminalTarget } from "../types/terminal";
@@ -25,13 +24,10 @@ type SessionViewProps = {
 	sessionId: string;
 };
 
-// The session detail screen: the persistent terminal + git rail, under the
-// shell-owned ShellTopbar. Rendered by both the project-scoped and
-// cross-project session routes. The terminal lives here (not in the shell) —
-// switching sessions only changes route params, so TanStack Router keeps this
-// component mounted and the terminal re-points its mux without remounting
-// (useTerminalSession). Leaving for the board unmounts it; a fresh server-side
-// zellij attach repaints the pane on return.
+	// The session detail screen: terminal + git rail, under the shell-owned
+	// ShellTopbar. Rendered by both the project-scoped and cross-project session
+	// routes. TerminalPane owns the terminal lifetime and remounts by terminal
+	// handle so each session gets a clean xterm/mux binding.
 //
 // The split is shadcn's resizable (react-resizable-panels v4) with a fully
 // collapsible inspector: the panel is `collapsible` and driven to 0% via the
@@ -53,24 +49,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const isOrchestrator = session ? isOrchestratorSession(session) : false;
 
 	useEffect(() => {
-		logTerminalFlow("session_view.effect.start", {
-			sessionId,
-			found: Boolean(session),
-			handle: session?.terminalHandleId,
-			kind: session?.kind ?? null,
-			daemonState: daemonStatus.state,
-		});
-		return () => {
-			logTerminalFlow("session_view.effect.cleanup", {
-				sessionId,
-				handle: session?.terminalHandleId,
-			});
-		};
-	}, [daemonStatus.state, session?.id, session?.kind, session?.terminalHandleId, sessionId]);
-
-	useEffect(() => {
 		setTerminalTarget({ kind: "worker" });
-		logTerminalFlow("session_view.target.reset", { sessionId });
 	}, [sessionId]);
 
 	// Orchestrator sessions are terminal-only; only worker sessions have the rail.

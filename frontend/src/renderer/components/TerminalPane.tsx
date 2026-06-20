@@ -3,7 +3,6 @@ import type { TerminalTarget } from "../types/terminal";
 import type { WorkspaceSession } from "../types/workspace";
 import type { Theme } from "../stores/ui-store";
 import { useTerminalSession, type AttachableTerminal, type TerminalSessionState } from "../hooks/useTerminalSession";
-import { logTerminalFlow } from "../lib/terminal-flow-log";
 import { XtermTerminal } from "./XtermTerminal";
 
 type TerminalPaneProps = {
@@ -16,24 +15,6 @@ type TerminalPaneProps = {
 export function TerminalPane({ session, theme, daemonReady, terminalTarget }: TerminalPaneProps) {
 	const terminalKey =
 		terminalTarget?.kind === "reviewer" ? terminalTarget.handleId : (session?.terminalHandleId ?? "empty");
-	const targetKind = terminalTarget?.kind ?? "worker";
-
-	useEffect(() => {
-		logTerminalFlow("terminal_pane.effect.start", {
-			sessionId: session?.id,
-			handle: terminalKey,
-			targetKind,
-			daemonReady,
-			hasBridge: Boolean(window.ao),
-		});
-		return () => {
-			logTerminalFlow("terminal_pane.effect.cleanup", {
-				sessionId: session?.id,
-				handle: terminalKey,
-				targetKind,
-			});
-		};
-	}, [daemonReady, session?.id, targetKind, terminalKey]);
 
 	if (!window.ao) {
 		const provider = terminalTarget?.kind === "reviewer" ? terminalTarget.harness : (session?.provider ?? "claude");
@@ -82,38 +63,18 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget }: Termi
 	const handleId = attachSession?.terminalHandleId;
 	const hadAttachmentRef = useRef(false);
 
-	useEffect(() => {
-		logTerminalFlow("attached_terminal.effect.start", {
-			sessionId: attachSession?.id,
-			handle: handleId,
-			daemonReady,
-			targetKind: terminalTarget?.kind ?? "worker",
-		});
-		return () => {
-			logTerminalFlow("attached_terminal.effect.cleanup", {
-				sessionId: attachSession?.id,
-				handle: handleId,
-			});
-		};
-	}, [attachSession?.id, daemonReady, handleId, terminalTarget?.kind]);
-
 	const handleReady = useCallback(
 		(handle: AttachableTerminal) => {
-			logTerminalFlow("attached_terminal.ready", { handle: handleId, cols: handle.cols, rows: handle.rows });
 			setTerminal(handle);
 		},
-		[handleId],
+		[],
 	);
 	const handleInitError = useCallback(
 		(err: unknown) => {
 			console.error("xterm failed to initialize", err);
-			logTerminalFlow("attached_terminal.init_error", {
-				handle: handleId,
-				error: err instanceof Error ? err.message : String(err),
-			});
 			setInitFailed(true);
 		},
-		[handleId],
+		[],
 	);
 
 	useEffect(() => {
@@ -130,7 +91,6 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget }: Termi
 			terminal.clear();
 		}
 		hadAttachmentRef.current = true;
-		logTerminalFlow("attached_terminal.attach_effect", { sessionId: attachSession?.id, handle: handleId });
 		return attach(terminal);
 	}, [terminal, handleId, attach, attachSession?.id]);
 

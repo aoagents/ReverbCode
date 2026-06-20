@@ -61,7 +61,4 @@ window.ao = {
 		stop: async () => ({ state: "stopped" }),
 		onStatus: () => () => undefined,
 	},
-	diagnostics: {
-		logTerminal: () => undefined,
-	},
 };

@@ -4,14 +4,12 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
-	"time"
 
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 	"github.com/go-chi/chi/v5"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/terminal"
-	"github.com/aoagents/agent-orchestrator/backend/internal/terminaldiag"
 )
 
 // terminalMuxReadLimit caps a single inbound frame. Client→server frames are small
@@ -40,21 +38,11 @@ func terminalMuxHandler(mgr *terminal.Manager, log *slog.Logger) http.HandlerFun
 		// from the loopback host, mirroring the legacy Node mux server.
 		c, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
 		if err != nil {
-			terminaldiag.Log("backend", "http.mux.upgrade.error", map[string]any{
-				"remote": r.RemoteAddr,
-				"error":  err.Error(),
-			})
 			log.Warn("terminal mux: websocket upgrade failed", "err", err)
 			return
 		}
-		started := time.Now()
-		terminaldiag.Log("backend", "http.mux.accept", map[string]any{"remote": r.RemoteAddr})
 		c.SetReadLimit(terminalMuxReadLimit)
 		mgr.Serve(r.Context(), &terminalMuxConn{c: c})
-		terminaldiag.Log("backend", "http.mux.end", map[string]any{
-			"remote":     r.RemoteAddr,
-			"durationMs": time.Since(started).Milliseconds(),
-		})
 	}
 }
 

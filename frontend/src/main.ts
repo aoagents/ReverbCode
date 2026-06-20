@@ -2,7 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, net, protocol, shell, type OpenDia
 import { updateElectronApp } from "update-electron-app";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync } from "node:fs";
-import { appendFile, mkdir, readFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -26,37 +26,6 @@ const isDev = !app.isPackaged;
 const RENDERER_SCHEME = "app";
 const RENDERER_HOST = "renderer";
 const RENDERER_ORIGIN = `${RENDERER_SCHEME}://${RENDERER_HOST}`;
-const TERMINAL_FLOW_LOG_PATH = path.join(os.homedir(), ".ao", "terminal-flow.log");
-const DIAGNOSTIC_STRING_LIMIT = 500;
-
-type DiagnosticValue = string | number | boolean | null | undefined;
-type DiagnosticFields = Record<string, DiagnosticValue>;
-
-function sanitizeDiagnosticFields(fields: unknown): DiagnosticFields {
-	if (!fields || typeof fields !== "object" || Array.isArray(fields)) return {};
-	const sanitized: DiagnosticFields = {};
-	for (const [key, value] of Object.entries(fields as Record<string, unknown>)) {
-		if (value === undefined || value === null || typeof value === "boolean" || typeof value === "number") {
-			sanitized[key] = value;
-		} else if (typeof value === "string") {
-			sanitized[key] = value.length > DIAGNOSTIC_STRING_LIMIT ? `${value.slice(0, DIAGNOSTIC_STRING_LIMIT)}...` : value;
-		}
-	}
-	return sanitized;
-}
-
-function appendTerminalFlowLog(side: "main" | "renderer", event: string, fields: unknown = {}): void {
-	const entry = {
-		ts: new Date().toISOString(),
-		side,
-		pid: process.pid,
-		event,
-		fields: sanitizeDiagnosticFields(fields),
-	};
-	void mkdir(path.dirname(TERMINAL_FLOW_LOG_PATH), { recursive: true })
-		.then(() => appendFile(TERMINAL_FLOW_LOG_PATH, `${JSON.stringify(entry)}\n`, "utf8"))
-		.catch(() => undefined);
-}
 
 // The packaged renderer is served from a custom standard scheme, not file://.
 // A file:// page has the opaque "null" origin, which the daemon must never
@@ -109,12 +78,10 @@ function preloadPath(): string {
 
 function setDaemonStatus(nextStatus: DaemonStatus): void {
 	daemonStatus = nextStatus;
-	appendTerminalFlowLog("main", "daemon.status", daemonStatus);
 	mainWindow?.webContents.send("daemon:status", daemonStatus);
 }
 
 function createWindow(): void {
-	appendTerminalFlowLog("main", "window.create", { dev: isDev });
 	mainWindow = new BrowserWindow({
 		width: 1320,
 		height: 860,
@@ -161,7 +128,6 @@ function createWindow(): void {
 	}
 
 	mainWindow.on("closed", () => {
-		appendTerminalFlowLog("main", "window.closed");
 		mainWindow = null;
 	});
 }
@@ -225,11 +191,6 @@ function startDaemon(): DaemonStatus {
 		detached: true,
 	});
 	daemonProcess = child;
-	appendTerminalFlowLog("main", "daemon.spawn", {
-		command: launch.command,
-		pid: child.pid ?? null,
-		source: launch.source,
-	});
 
 	// Discover the port the daemon ACTUALLY bound rather than trusting AO_PORT:
 	// the daemon may fall back to a different port than the one requested. Two
@@ -302,7 +263,6 @@ function startDaemon(): DaemonStatus {
 		stopDiscovery();
 		if (daemonProcess !== child) return;
 		daemonProcess = null;
-		appendTerminalFlowLog("main", "daemon.spawn.error", { error: error.message });
 		setDaemonStatus({ state: "error", message: error.message });
 	});
 
@@ -310,7 +270,6 @@ function startDaemon(): DaemonStatus {
 		stopDiscovery();
 		if (daemonProcess !== child) return;
 		daemonProcess = null;
-		appendTerminalFlowLog("main", "daemon.exit", { code: code ?? null, signal: signal ?? null });
 		setDaemonStatus({
 			state: "stopped",
 			message: signal ? `Daemon exited with ${signal}` : `Daemon exited with code ${code ?? "unknown"}`,
@@ -335,12 +294,10 @@ function killDaemon(child: ChildProcessWithoutNullStreams): void {
 
 function stopDaemon(): DaemonStatus {
 	if (!daemonProcess) {
-		appendTerminalFlowLog("main", "daemon.stop.no_process");
 		setDaemonStatus({ state: "stopped" });
 		return daemonStatus;
 	}
 
-	appendTerminalFlowLog("main", "daemon.stop", { pid: daemonProcess.pid ?? null });
 	killDaemon(daemonProcess);
 	daemonProcess = null;
 	setDaemonStatus({ state: "stopped" });
@@ -351,10 +308,6 @@ ipcMain.handle("daemon:getStatus", () => daemonStatus);
 ipcMain.handle("daemon:start", () => startDaemon());
 ipcMain.handle("daemon:stop", () => stopDaemon());
 ipcMain.handle("app:getVersion", () => app.getVersion());
-ipcMain.on("diagnostics:terminal-flow", (_event, event: unknown, fields: unknown) => {
-	if (typeof event !== "string" || event === "") return;
-	appendTerminalFlowLog("renderer", event, fields);
-});
 ipcMain.handle("app:chooseDirectory", async () => {
 	const options: OpenDialogOptions = {
 		properties: ["openDirectory"],

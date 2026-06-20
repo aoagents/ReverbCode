@@ -28,7 +28,6 @@ import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import type { AttachableTerminal, TerminalUserInputSource } from "../hooks/useTerminalSession";
-import { logTerminalFlow } from "../lib/terminal-flow-log";
 import { buildTerminalThemes } from "../lib/terminal-themes";
 import type { Theme } from "../stores/ui-store";
 
@@ -70,10 +69,9 @@ const terminalThemes = buildTerminalThemes();
 
 // Erase scrollback (3J) + display (2J) and home the cursor — yyork's
 // terminalResetSequence. Deliberately NOT term.reset(): every pane PTY is a
-// fresh per-client `zellij attach` whose handshake re-asserts the DEC private
-// modes (SGR mouse tracking, alt screen) anyway, but a full RIS would drop
-// them for the window until that handshake arrives — a flash where wheel
-// events stop reaching zellij. The clear only wipes pixels; modes stay up.
+// fresh per-client `zellij attach` whose handshake re-asserts terminal modes
+// anyway, but a full RIS would drop them for the window until that handshake
+// arrives. The clear only wipes pixels; modes stay up.
 const CLEAR_SEQUENCE = "\x1b[3J\x1b[2J\x1b[H";
 
 function preparePastedText(text: string): string {
@@ -105,7 +103,6 @@ export function XtermTerminal(props: XtermTerminalProps) {
 	useEffect(() => {
 		const host = hostRef.current;
 		if (!host) return undefined;
-		logTerminalFlow("xterm.mount", { theme: props.theme, hostReady: true });
 
 		let term: Terminal;
 		try {
@@ -140,13 +137,11 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				theme: props.theme === "dark" ? terminalThemes.dark : terminalThemes.light,
 			});
 		} catch (error) {
-			logTerminalFlow("xterm.construct.error", { error: error instanceof Error ? error.message : String(error) });
 			callbacksRef.current.onError?.(error);
 			return undefined;
 		}
 
 		termRef.current = term;
-		logTerminalFlow("xterm.constructed", { theme: props.theme });
 
 		const fit = new FitAddon();
 		term.loadAddon(fit);
@@ -158,7 +153,6 @@ export function XtermTerminal(props: XtermTerminalProps) {
 
 		term.open(host);
 		loadRenderer(term);
-		logTerminalFlow("xterm.opened", { cols: term.cols, rows: term.rows });
 
 		const fitTerminal = () => {
 			try {
@@ -279,11 +273,9 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			},
 			onResize: (listener) => term.onResize(listener),
 		};
-		logTerminalFlow("xterm.ready", { cols: term.cols, rows: term.rows });
 		callbacksRef.current.onReady?.(handle);
 
 		return () => {
-			logTerminalFlow("xterm.dispose", { cols: term.cols, rows: term.rows });
 			termRef.current = null;
 			cancelAnimationFrame(raf);
 			for (const timer of settleTimers) window.clearTimeout(timer);
