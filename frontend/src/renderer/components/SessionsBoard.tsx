@@ -1,8 +1,13 @@
 import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
+import { Plus } from "lucide-react";
 import { type AttentionZone, type WorkspaceSession, attentionZone, workerSessions } from "../types/workspace";
-import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
+import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { DashboardSubhead } from "./DashboardSubhead";
+import { OrchestratorIcon } from "./icons";
+import { NewTaskDialog } from "./NewTaskDialog";
+import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { cn } from "../lib/utils";
 
 type SessionsBoardProps = {
@@ -58,10 +63,16 @@ const COLUMNS: Column[] = [
 
 export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const navigate = useNavigate();
+	const queryClient = useQueryClient();
 	const workspaceQuery = useWorkspaceQuery();
 	const all = workspaceQuery.data ?? [];
 	const workspaces = projectId ? all.filter((w) => w.id === projectId) : all;
 	const sessions = workspaces.flatMap((w) => workerSessions(w.sessions));
+	const orchestrator = projectId
+		? workspaces[0]?.sessions.find((session) => session.kind === "orchestrator" && session.status !== "terminated")
+		: undefined;
+	const [isNewTaskOpen, setIsNewTaskOpen] = useState(false);
+	const [isSpawning, setIsSpawning] = useState(false);
 
 	const byZone = new Map<AttentionZone, WorkspaceSession[]>();
 	for (const session of sessions) {
@@ -79,9 +90,64 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			params: { projectId: session.workspaceId, sessionId: session.id },
 		});
 
+	const openOrchestrator = async () => {
+		if (!projectId) return;
+		if (orchestrator) {
+			void navigate({
+				to: "/projects/$projectId/sessions/$sessionId",
+				params: { projectId, sessionId: orchestrator.id },
+			});
+			return;
+		}
+		setIsSpawning(true);
+		try {
+			const sessionId = await spawnOrchestrator(projectId);
+			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+			void navigate({
+				to: "/projects/$projectId/sessions/$sessionId",
+				params: { projectId, sessionId },
+			});
+		} finally {
+			setIsSpawning(false);
+		}
+	};
+
+	const handleTaskCreated = async (sessionId: string) => {
+		if (!projectId) return;
+		await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+		void navigate({
+			to: "/projects/$projectId/sessions/$sessionId",
+			params: { projectId, sessionId },
+		});
+	};
+
+	const actions = projectId ? (
+		<>
+			<button
+				aria-label="New task"
+				className="dashboard-app-header__accent-btn"
+				onClick={() => setIsNewTaskOpen(true)}
+				type="button"
+			>
+				<Plus className="h-3.5 w-3.5" aria-hidden="true" />
+				New task
+			</button>
+			<button
+				aria-label={orchestrator ? "Orchestrator" : "Spawn Orchestrator"}
+				className="dashboard-app-header__primary-btn"
+				disabled={isSpawning}
+				onClick={() => void openOrchestrator()}
+				type="button"
+			>
+				<OrchestratorIcon className="h-3.5 w-3.5" aria-hidden="true" />
+				{isSpawning ? "Spawning..." : orchestrator ? "Orchestrator" : "Spawn Orchestrator"}
+			</button>
+		</>
+	) : undefined;
+
 	return (
 		<div className="flex h-full min-h-0 flex-col bg-background text-foreground">
-			<DashboardSubhead title="Board" subtitle="Live agent sessions flowing from work → review → merge." />
+			<DashboardSubhead title="Board" subtitle="Live agent sessions flowing from work → review → merge." actions={actions} />
 
 			<div className="min-h-0 flex-1 overflow-hidden p-[18px]">
 				{workspaceQuery.isError ? (
@@ -139,6 +205,12 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 					)}
 				</div>
 			)}
+			<NewTaskDialog
+				open={isNewTaskOpen}
+				projectId={projectId}
+				onCreated={(sessionId) => void handleTaskCreated(sessionId)}
+				onOpenChange={setIsNewTaskOpen}
+			/>
 		</div>
 	);
 }

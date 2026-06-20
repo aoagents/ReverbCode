@@ -71,6 +71,7 @@ const HOVER_ACTION_CLASS =
 
 type SidebarProps = {
 	daemonStatus: { state: string; message?: string };
+	underTopbar?: boolean;
 	workspaceError?: string;
 	workspaces: WorkspaceSummary[];
 	onCreateProject: (input: { path: string }) => Promise<void>;
@@ -119,7 +120,14 @@ function SessionDot({ session }: { session: WorkspaceSession }) {
 // _shell owns open state (synced to the ui-store) and `collapsible="icon"`
 // replaces the old hand-rolled CollapsedRail — the same tree restyles itself
 // via group-data-[collapsible=icon] into the 48px letter rail.
-export function Sidebar({ daemonStatus, workspaceError, workspaces, onCreateProject, onRemoveProject }: SidebarProps) {
+export function Sidebar({
+	daemonStatus,
+	underTopbar = true,
+	workspaceError,
+	workspaces,
+	onCreateProject,
+	onRemoveProject,
+}: SidebarProps) {
 	const selection = useSelection();
 	const eventsConnection = useEventsConnection();
 	const { state } = useSidebar();
@@ -151,8 +159,11 @@ export function Sidebar({ daemonStatus, workspaceError, workspaces, onCreateProj
 		// The container is fixed-positioned by the shadcn primitive; offset it
 		// below the 56px shell topbar so the bar runs edge-to-edge above it
 		// (same override as shadcn's header-above-sidebar block).
-		<SidebarRoot collapsible="icon" className="border-border top-14 h-[calc(100svh-3.5rem)]!">
-			<SidebarHeader className="gap-0 p-0 px-[7px] pt-3.5 group-data-[collapsible=icon]:px-1.5">
+		<SidebarRoot
+			collapsible="icon"
+			className={cn("border-border", underTopbar ? "top-14 h-[calc(100svh-3.5rem)]!" : "top-0 h-svh!")}
+		>
+			<SidebarHeader className="gap-0 p-0 pl-2.5 pr-[7px] pt-3.5 group-data-[collapsible=icon]:px-1.5">
 				{/* Brand (project-sidebar__brand); in the icon rail it becomes the old
             36px board button wrapping the 22px accent mark. */}
 				<div className="flex shrink-0 items-center gap-2.5 px-2 pb-[18px] group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:pb-2">
@@ -192,7 +203,7 @@ export function Sidebar({ daemonStatus, workspaceError, workspaces, onCreateProj
 				</div>
 			</SidebarHeader>
 
-			<SidebarContent className="gap-0 px-[7px] group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5">
+			<SidebarContent className="gap-0 pl-2.5 pr-[7px] group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5">
 				<SidebarGroup className="p-0">
 					{/* Section label (project-sidebar__nav-label) */}
 					<div className="flex shrink-0 items-center justify-between px-2 pb-2 group-data-[collapsible=icon]:hidden">
@@ -544,11 +555,10 @@ function ProjectItem({
 					{removeError}
 				</span>
 			)}
-			{/* project-sidebar__sessions: indented under the project parent with a
-          subtle guide line so worker sessions read as children, not peer
-          navigation rows. */}
+			{/* project-sidebar__sessions: indented under the project parent so worker
+          sessions read as children without adding a persistent guide rail. */}
 			{expanded && sessions.length > 0 && (
-				<SidebarMenuSub className="mx-0 ml-[18px] translate-x-0 gap-0 border-l border-border px-0 py-1 pl-2.5">
+				<SidebarMenuSub className="mx-0 ml-[18px] translate-x-0 gap-0 border-l-0 px-0 py-1 pl-2.5">
 					{sessions.map((session) => {
 						const active = selection.activeSessionId === session.id;
 						return (

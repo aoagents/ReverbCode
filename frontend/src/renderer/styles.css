@@ -189,6 +189,44 @@ select {
 	font: inherit;
 }
 
+:is(
+		button,
+		a[href],
+		summary,
+		select,
+		[role="button"],
+		[data-slot="select-trigger"],
+		[data-slot="select-item"],
+		[data-slot="dropdown-menu-item"],
+		[data-sidebar="menu-button"],
+		[data-sidebar="menu-sub-button"]
+	):not(:disabled):not([aria-disabled="true"]) {
+	cursor: pointer;
+}
+
+:is(
+		button,
+		select,
+		[role="button"],
+		[data-slot="select-trigger"],
+		[data-slot="select-item"],
+		[data-slot="dropdown-menu-item"],
+		[data-sidebar="menu-button"],
+		[data-sidebar="menu-sub-button"]
+	):disabled,
+:is(
+		button,
+		select,
+		[role="button"],
+		[data-slot="select-trigger"],
+		[data-slot="select-item"],
+		[data-slot="dropdown-menu-item"],
+		[data-sidebar="menu-button"],
+		[data-sidebar="menu-sub-button"]
+	)[aria-disabled="true"] {
+	cursor: not-allowed;
+}
+
 .xterm {
 	height: 100%;
 }
@@ -345,12 +383,25 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	color: var(--fg);
 }
 
+.dashboard-app-header__icon-btn--quiet {
+	width: 30px;
+	height: 30px;
+	border-radius: 6px;
+	color: var(--fg-muted);
+}
+
 .dashboard-app-header__kill-btn {
-	display: grid;
-	width: 34px;
-	height: 34px;
-	place-items: center;
-	border-radius: 7px;
+	display: inline-flex;
+	height: 30px;
+	align-items: center;
+	gap: 5px;
+	border-radius: 6px;
+	border: 1px solid color-mix(in srgb, var(--red) 58%, transparent);
+	background: color-mix(in srgb, var(--red) 5%, transparent);
+	padding: 0 10px;
+	font-size: 12px;
+	font-weight: 650;
+	line-height: 1;
 	color: var(--red);
 	transition:
 		background 0.12s ease,
@@ -359,6 +410,7 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 
 .dashboard-app-header__kill-btn:hover {
 	background: color-mix(in srgb, var(--red) 12%, transparent);
+	border-color: color-mix(in srgb, var(--red) 75%, transparent);
 }
 
 .dashboard-app-header__kill-confirm {
@@ -434,6 +486,13 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 
 .dashboard-app-header__primary-btn:disabled {
 	opacity: 0.6;
+}
+
+.dashboard-app-header__primary-btn--compact {
+	height: 32px;
+	border-radius: 7px;
+	padding: 0 14px;
+	font-size: 13px;
 }
 
 .dashboard-app-header__accent-btn {
