@@ -331,9 +331,12 @@ async function startDaemon(): Promise<DaemonStatus> {
 		return daemonStartPromise;
 	}
 	const startEpoch = daemonStartEpoch;
-	daemonStartPromise = startDaemonInner(startEpoch).finally(() => {
-		daemonStartPromise = null;
+	const promise = startDaemonInner(startEpoch).finally(() => {
+		if (daemonStartPromise === promise) {
+			daemonStartPromise = null;
+		}
 	});
+	daemonStartPromise = promise;
 	return daemonStartPromise;
 }
 
@@ -494,6 +497,7 @@ function killDaemon(child: ChildProcessWithoutNullStreams): void {
 
 function stopDaemon(): DaemonStatus {
 	daemonStartEpoch += 1;
+	daemonStartPromise = null;
 	if (!daemonProcess) {
 		setDaemonStatus({ state: "stopped" });
 		return daemonStatus;
