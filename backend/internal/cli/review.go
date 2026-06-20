@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"strings"
@@ -68,7 +69,7 @@ func newReviewSubmitCommand(ctx *commandContext) *cobra.Command {
 	cmd.Flags().StringVar(&opts.session, "session", "", "Worker session id (or pass it as the positional argument)")
 	cmd.Flags().StringVar(&opts.runID, "run", "", "Review run id (required)")
 	cmd.Flags().StringVar(&opts.verdict, "verdict", "", "Review verdict: approved or changes_requested (required)")
-	cmd.Flags().StringVar(&opts.body, "body", "", "Path to a Markdown file with the review body")
+	cmd.Flags().StringVar(&opts.body, "body", "", "Review body: a path to a Markdown file, or - to read from stdin (so nothing is written into the worktree)")
 	cmd.Flags().StringVar(&opts.reviewID, "review-id", "", "Id of the GitHub PR review just posted (the .id from the gh api POST that created the review)")
 	return cmd
 }
@@ -91,9 +92,17 @@ func (c *commandContext) submitReview(cmd *cobra.Command, args []string, opts re
 	}
 	var body string
 	if path := strings.TrimSpace(opts.body); path != "" {
-		raw, err := os.ReadFile(path)
+		var raw []byte
+		var err error
+		if path == "-" {
+			// Read the review from stdin so the reviewer never has to write a file
+			// into its checkout (where it could be committed onto the worker branch).
+			raw, err = io.ReadAll(cmd.InOrStdin())
+		} else {
+			raw, err = os.ReadFile(path)
+		}
 		if err != nil {
-			return usageError{fmt.Errorf("read body file: %w", err)}
+			return usageError{fmt.Errorf("read review body: %w", err)}
 		}
 		body = string(raw)
 	}
