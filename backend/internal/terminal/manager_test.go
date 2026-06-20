@@ -104,7 +104,7 @@ func TestServeBuffersInputUntilAttachReady(t *testing.T) {
 	pty := newFakePTY()
 	spawnStarted := make(chan struct{})
 	releaseSpawn := make(chan struct{})
-	spawn := func(context.Context, []string, uint16, uint16) (ptyProcess, error) {
+	spawn := func(context.Context, []string, []string, uint16, uint16) (ptyProcess, error) {
 		close(spawnStarted)
 		<-releaseSpawn
 		return pty, nil

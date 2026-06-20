@@ -1,4 +1,4 @@
-import { createFileRoute, Outlet, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { type CSSProperties, useCallback, useEffect } from "react";
 import { ShellTopbar } from "../components/ShellTopbar";
@@ -8,6 +8,7 @@ import { TitlebarNav } from "../components/TitlebarNav";
 import { useDaemonStatus } from "../hooks/useDaemonStatus";
 import { useWorkspaceQuery, workspaceQueryKey, workspaceQueryOptions } from "../hooks/useWorkspaceQuery";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
+import { captureRendererEvent, captureRendererException } from "../lib/telemetry";
 import { ShellProvider } from "../lib/shell-context";
 import { readStoredTheme, type Theme, useUiStore } from "../stores/ui-store";
 import type { WorkspaceSummary } from "../types/workspace";
@@ -34,11 +35,13 @@ function errorMessage(error: unknown) {
 // instead of Zustand. The daemon-status effect runs here exactly once.
 function ShellLayout() {
 	const navigate = useNavigate();
+	const pathname = useRouterState({ select: (state) => state.location.pathname });
 	const queryClient = useQueryClient();
 	const workspaceQuery = useWorkspaceQuery();
 	const workspaces = workspaceQuery.data ?? [];
 	const daemonStatus = useDaemonStatus(queryClient);
 	const { theme, setTheme, isSidebarOpen, toggleSidebar } = useUiStore();
+	const isBoardRoute = pathname === "/" || /^\/projects\/[^/]+$/.test(pathname);
 
 	const updateWorkspaces = useCallback(
 		(updater: (workspaces: WorkspaceSummary[]) => WorkspaceSummary[]) => {
@@ -49,8 +52,13 @@ function ShellLayout() {
 
 	const createProject = useCallback(
 		async (input: { path: string }) => {
+			void captureRendererEvent("ao.renderer.project_add_requested");
 			const { data, error } = await apiClient.POST("/api/v1/projects", { body: { path: input.path } });
-			if (error) throw new Error(apiErrorMessage(error));
+			if (error) {
+				const failure = new Error(apiErrorMessage(error));
+				void captureRendererException(failure, { source: "project-add" });
+				throw failure;
+			}
 			if (!data?.project) throw new Error("Project creation returned no project");
 
 			const workspace: WorkspaceSummary = {
@@ -60,6 +68,7 @@ function ShellLayout() {
 				type: "main",
 				sessions: [],
 			};
+			void captureRendererEvent("ao.renderer.project_add_succeeded", { project_id: workspace.id });
 			updateWorkspaces((current) => [workspace, ...current.filter((item) => item.id !== workspace.id)]);
 			void navigate({ to: "/projects/$projectId", params: { projectId: workspace.id } });
 		},
@@ -71,7 +80,12 @@ function ShellLayout() {
 			const { error } = await apiClient.DELETE("/api/v1/projects/{id}", {
 				params: { path: { id: projectId } },
 			});
-			if (error) throw new Error(apiErrorMessage(error));
+			if (error) {
+				const failure = new Error(apiErrorMessage(error));
+				void captureRendererException(failure, { source: "project-remove", project_id: projectId });
+				throw failure;
+			}
+			void captureRendererEvent("ao.renderer.project_removed", { project_id: projectId });
 			updateWorkspaces((current) => current.filter((item) => item.id !== projectId));
 		},
 		[updateWorkspaces],
@@ -117,7 +131,7 @@ function ShellLayout() {
           in the layout, not the screens, so the crumb and actions never shift
           when the outlet content swaps. */}
 			<div className="flex h-screen min-h-0 flex-col bg-background text-foreground">
-				<ShellTopbar />
+				{!isBoardRoute && <ShellTopbar />}
 				{/* Controlled by the ui-store so TitlebarNav / Topbar toggles (which
             call the store directly) stay in sync. --sidebar-width chains to
             the drag-resizable --ao-sidebar-w set on :root by useResizable. */}
@@ -129,6 +143,7 @@ function ShellLayout() {
 				>
 					<Sidebar
 						daemonStatus={daemonStatus}
+						underTopbar={!isBoardRoute}
 						onCreateProject={createProject}
 						onRemoveProject={removeProject}
 						workspaceError={workspaceQuery.isError ? errorMessage(workspaceQuery.error) : undefined}

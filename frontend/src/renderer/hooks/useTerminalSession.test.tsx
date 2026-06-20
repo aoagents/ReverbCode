@@ -17,6 +17,7 @@ const session: WorkspaceSession = {
 	branch: "main",
 	status: "working",
 	updatedAt: "now",
+	prs: [],
 };
 
 type FakeMux = {

@@ -23,6 +23,7 @@ type fakeSessionService struct {
 	cleanupProjects []domain.ProjectID
 	cleanupResult   []domain.SessionID
 	cleanupSkipped  []sessionsvc.CleanupSkipped
+	spawnErr        error
 	claimErr        error
 	listPRErr       error
 }
@@ -51,6 +52,9 @@ func (f *fakeSessionService) List(_ context.Context, filter sessionsvc.ListFilte
 }
 
 func (f *fakeSessionService) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.Session, error) {
+	if f.spawnErr != nil {
+		return domain.Session{}, f.spawnErr
+	}
 	now := time.Now().UTC()
 	s := domain.Session{SessionRecord: domain.SessionRecord{ID: domain.SessionID(string(cfg.ProjectID) + "-2"), ProjectID: cfg.ProjectID, IssueID: cfg.IssueID, Kind: cfg.Kind, Harness: cfg.Harness, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, CreatedAt: now, UpdatedAt: now}, Status: domain.StatusIdle}
 	f.sessions[s.ID] = s
@@ -241,6 +245,15 @@ func TestSessionsAPI_ListSpawnGetAndActions(t *testing.T) {
 	if status != http.StatusCreated {
 		t.Fatalf("orchestrator = %d, want 201; body=%s", status, body)
 	}
+}
+
+func TestSessionsAPI_SpawnBranchNotFetchedReturnsTypedError(t *testing.T) {
+	svc := newFakeSessionService()
+	svc.spawnErr = apierr.Invalid("BRANCH_NOT_FETCHED", `workspace: branch is not fetched: "feature/missing"`, nil)
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions", `{"projectId":"ao","kind":"worker","branch":"feature/missing","prompt":"fix"}`)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "BRANCH_NOT_FETCHED")
 }
 
 func TestSessionsAPI_RenameNotFound(t *testing.T) {

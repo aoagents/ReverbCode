@@ -19,14 +19,14 @@ type fakeSource struct {
 	attachErr error
 }
 
-func (f *fakeSource) AttachCommand(ports.RuntimeHandle) ([]string, error) {
+func (f *fakeSource) AttachCommand(ports.RuntimeHandle) ([]string, []string, error) {
 	if f.attachErr != nil {
-		return nil, f.attachErr
+		return nil, nil, f.attachErr
 	}
 	if f.argv == nil {
-		return []string{"zellij", "attach"}, nil
+		return []string{"zellij", "attach"}, nil, nil
 	}
-	return f.argv, nil
+	return f.argv, nil, nil
 }
 
 func (f *fakeSource) IsAlive(context.Context, ports.RuntimeHandle) (bool, error) {
@@ -119,7 +119,7 @@ type fakeSpawner struct {
 	sizes   [][2]uint16 // rows×cols passed to each spawn call, in order
 }
 
-func (f *fakeSpawner) spawn(_ context.Context, _ []string, rows, cols uint16) (ptyProcess, error) {
+func (f *fakeSpawner) spawn(_ context.Context, _ []string, _ []string, rows, cols uint16) (ptyProcess, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.err != nil {

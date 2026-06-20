@@ -95,7 +95,7 @@ func TestAttachmentBuffersInputUntilPTYReady(t *testing.T) {
 	pty := newFakePTY()
 	spawnStarted := make(chan struct{})
 	releaseSpawn := make(chan struct{})
-	spawn := func(context.Context, []string, uint16, uint16) (ptyProcess, error) {
+	spawn := func(context.Context, []string, []string, uint16, uint16) (ptyProcess, error) {
 		close(spawnStarted)
 		<-releaseSpawn
 		return pty, nil
@@ -375,7 +375,7 @@ func TestAttachmentCloseClosesPTYBeforeCancel(t *testing.T) {
 	beforeCancel := make(chan struct{})
 	afterCancel := make(chan struct{})
 	var spawnCtx context.Context
-	spawn := func(ctx context.Context, _ []string, _, _ uint16) (ptyProcess, error) {
+	spawn := func(ctx context.Context, _ []string, _ []string, _, _ uint16) (ptyProcess, error) {
 		spawnCtx = ctx
 		return &closeOrderPTY{
 			fakePTY: newFakePTY(),

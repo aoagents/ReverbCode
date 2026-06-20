@@ -34,6 +34,7 @@ func newStartCommand(ctx *commandContext) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			ctx.emitCLIInvoked(cmd.Context(), cmd)
 			if opts.json {
 				return writeJSON(cmd.OutOrStdout(), st)
 			}

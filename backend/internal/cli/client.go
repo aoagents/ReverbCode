@@ -75,6 +75,14 @@ func (c *commandContext) deleteJSON(ctx context.Context, path string, out any) e
 }
 
 func (c *commandContext) doJSON(ctx context.Context, method, path string, body, out any) error {
+	return c.doJSONPath(ctx, method, "/api/v1/"+path, body, out)
+}
+
+func (c *commandContext) postLoopbackJSON(ctx context.Context, path string, body any) error {
+	return c.doJSONPath(ctx, http.MethodPost, path, body, nil)
+}
+
+func (c *commandContext) doJSONPath(ctx context.Context, method, path string, body, out any) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -98,7 +106,7 @@ func (c *commandContext) doJSON(ctx context.Context, method, path string, body, 
 		}
 		reader = bytes.NewReader(payload)
 	}
-	url := fmt.Sprintf("http://%s:%d/api/v1/%s", config.LoopbackHost, info.Port, path)
+	url := fmt.Sprintf("http://%s:%d%s", config.LoopbackHost, info.Port, path)
 	req, err := http.NewRequestWithContext(ctx, method, url, reader) // #nosec G704 -- daemon host is fixed loopback; path is an internal API route.
 	if err != nil {
 		return err

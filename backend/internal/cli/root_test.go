@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -52,6 +53,66 @@ func TestCommandsRejectUnexpectedArgs(t *testing.T) {
 				t.Fatalf("ExitCode(%v) = %d, want 2", err, got)
 			}
 		})
+	}
+}
+
+func TestVersionEmitsCLIInvocationBestEffort(t *testing.T) {
+	cfg := setConfigEnv(t)
+	called := make(chan string, 1)
+	if err := runfile.Write(cfg.runFile, runfile.Info{PID: os.Getpid(), Port: 3001, StartedAt: time.Unix(100, 0).UTC()}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := executeCLI(t, Deps{
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if req.URL.Path == "/internal/telemetry/cli-invoked" {
+				called <- req.URL.Path
+				return jsonResponse(http.StatusAccepted, ""), nil
+			}
+			return jsonResponse(http.StatusNotFound, ""), nil
+		})},
+		ProcessAlive: func(pid int) bool { return pid == os.Getpid() },
+	}, "version"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case path := <-called:
+		if path != "/internal/telemetry/cli-invoked" {
+			t.Fatalf("telemetry path = %q, want /internal/telemetry/cli-invoked", path)
+		}
+	default:
+		t.Fatal("version did not emit CLI invocation")
+	}
+}
+
+func TestUsageErrorEmitsCLIUsageTelemetryBestEffort(t *testing.T) {
+	cfg := setConfigEnv(t)
+	called := make(chan string, 1)
+	if err := runfile.Write(cfg.runFile, runfile.Info{PID: os.Getpid(), Port: 3001, StartedAt: time.Unix(100, 0).UTC()}); err != nil {
+		t.Fatal(err)
+	}
+
+	deps := Deps{
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if req.URL.Path == "/internal/telemetry/cli-usage-error" {
+				called <- req.URL.Path
+				return jsonResponse(http.StatusAccepted, ""), nil
+			}
+			return jsonResponse(http.StatusNotFound, ""), nil
+		})},
+		ProcessAlive: func(pid int) bool { return pid == os.Getpid() },
+	}
+	err := executeWithDeps(deps, []string{"status", "extra"})
+	if err == nil {
+		t.Fatal("expected usage error")
+	}
+	select {
+	case path := <-called:
+		if path != "/internal/telemetry/cli-usage-error" {
+			t.Fatalf("telemetry path = %q, want /internal/telemetry/cli-usage-error", path)
+		}
+	default:
+		t.Fatal("usage error did not emit CLI usage telemetry")
 	}
 }
 
@@ -157,6 +218,54 @@ func TestStartClearsStaleRunFileBeforeSpawning(t *testing.T) {
 	}
 	if !strings.Contains(out, `"state": "ready"`) {
 		t.Fatalf("start did not report ready after clearing stale run-file:\n%s", out)
+	}
+}
+
+func TestStartEmitsCLIInvocationAfterReady(t *testing.T) {
+	cfg := setConfigEnv(t)
+	var spawned atomic.Bool
+	called := make(chan string, 1)
+	port := 3001
+	out, _, err := executeCLI(t, Deps{
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			switch req.URL.Path {
+			case "/healthz":
+				if !spawned.Load() {
+					return jsonResponse(http.StatusOK, `{"status":"ok","service":"not-ao","pid":4242}`), nil
+				}
+				return jsonResponse(http.StatusOK, fmt.Sprintf(`{"status":"ok","service":%q,"pid":%d}`, daemonmeta.ServiceName, os.Getpid())), nil
+			case "/readyz":
+				if !spawned.Load() {
+					return jsonResponse(http.StatusOK, `{"status":"not_ready","service":"not-ao","pid":4242}`), nil
+				}
+				return jsonResponse(http.StatusOK, fmt.Sprintf(`{"status":"ready","service":%q,"pid":%d}`, daemonmeta.ServiceName, os.Getpid())), nil
+			case "/internal/telemetry/cli-invoked":
+				called <- req.URL.Path
+				return jsonResponse(http.StatusAccepted, ""), nil
+			default:
+				return jsonResponse(http.StatusNotFound, ""), nil
+			}
+		})},
+		ProcessAlive: func(pid int) bool { return pid == os.Getpid() },
+		StartProcess: func(processStartConfig) error {
+			spawned.Store(true)
+			return runfile.Write(cfg.runFile, runfile.Info{PID: os.Getpid(), Port: port, StartedAt: time.Unix(110, 0).UTC()})
+		},
+		Now: func() time.Time { return time.Unix(120, 0).UTC() },
+	}, "start", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, `"state": "ready"`) {
+		t.Fatalf("start did not report ready:\n%s", out)
+	}
+	select {
+	case path := <-called:
+		if path != "/internal/telemetry/cli-invoked" {
+			t.Fatalf("telemetry path = %q, want /internal/telemetry/cli-invoked", path)
+		}
+	default:
+		t.Fatal("start did not emit CLI invocation after readiness")
 	}
 }
 
@@ -410,4 +519,19 @@ func closedPort(t *testing.T) int {
 		t.Fatal(err)
 	}
 	return port
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
+
+func jsonResponse(status int, body string) *http.Response {
+	if body == "" {
+		body = "{}"
+	}
+	return &http.Response{
+		StatusCode: status,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader(body)),
+	}
 }

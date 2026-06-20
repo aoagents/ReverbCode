@@ -12,12 +12,14 @@ import (
 )
 
 // PTYSource is what a terminal needs from the runtime: the argv that attaches a
-// PTY to a session's pane, and a liveness check used to decide whether a dropped
-// PTY should be re-attached or treated as a clean exit. The Zellij runtime adapter
-// satisfies this via AttachCommand/IsAlive; the interface lives here, next to its
-// only consumer, so terminal does not depend on a concrete adapter.
+// PTY to a session's pane (plus any env that argv needs but is not in the
+// daemon's process env — e.g. a per-session ZELLIJ_SOCKET_DIR on Windows),
+// and a liveness check used to decide whether a dropped PTY should be
+// re-attached or treated as a clean exit. The Zellij runtime adapter
+// satisfies this via AttachCommand/IsAlive; the interface lives here, next to
+// its only consumer, so terminal does not depend on a concrete adapter.
 type PTYSource interface {
-	AttachCommand(handle ports.RuntimeHandle) ([]string, error)
+	AttachCommand(handle ports.RuntimeHandle) (argv []string, env []string, err error)
 	IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool, error)
 }
 
@@ -35,8 +37,10 @@ type ptyProcess interface {
 // matters: the attach process reads the tty size once at startup, and sizing
 // the PTY only after exec relies on SIGWINCH delivery that can race the
 // process installing its handler — a missed signal leaves the zellij client
-// laid out for a stale size. ctx cancellation must terminate the process.
-type spawnFunc func(ctx context.Context, argv []string, rows, cols uint16) (ptyProcess, error)
+// laid out for a stale size. env, when non-nil, is the full env block for the
+// child (mirrors exec.Cmd.Env: nil means inherit). ctx cancellation must
+// terminate the process.
+type spawnFunc func(ctx context.Context, argv []string, env []string, rows, cols uint16) (ptyProcess, error)
 
 // reattach policy: a PTY that drops is re-attached while the underlying Zellij
 // session is still alive, up to maxReattach consecutive failures. An attach that
@@ -150,7 +154,7 @@ func (a *attachment) run(ctx context.Context) {
 			return
 		}
 
-		argv, err := a.src.AttachCommand(a.handle)
+		argv, env, err := a.src.AttachCommand(a.handle)
 		if a.shouldStop(ctx) {
 			return
 		}
@@ -162,7 +166,7 @@ func (a *attachment) run(ctx context.Context) {
 		if a.shouldStop(ctx) {
 			return
 		}
-		p, err := a.spawn(ctx, argv, rows, cols)
+		p, err := a.spawn(ctx, argv, env, rows, cols)
 		if a.shouldStop(ctx) {
 			if p != nil {
 				_ = p.Close()

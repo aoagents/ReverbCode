@@ -41,6 +41,15 @@ func TestInsertReviewRunDuplicateSHAMapsToSentinel(t *testing.T) {
 		t.Fatalf("duplicate insert err = %v, want ErrDuplicateReviewRun", err)
 	}
 
+	if ok, err := s.UpdateReviewRunResult(ctx, "run-1", domain.ReviewRunFailed, domain.VerdictNone, "claude: not found"); err != nil {
+		t.Fatalf("mark failed: %v", err)
+	} else if !ok {
+		t.Fatal("mark failed: got ok=false")
+	}
+	if err := s.InsertReviewRun(ctx, dup); err != nil {
+		t.Fatalf("retry after failed insert: %v", err)
+	}
+
 	// An empty target_sha is excluded from the index, so two are allowed.
 	for _, id := range []string{"run-empty-1", "run-empty-2"} {
 		r := run
