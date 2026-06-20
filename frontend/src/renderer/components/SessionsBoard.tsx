@@ -2,7 +2,14 @@ import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { Plus } from "lucide-react";
-import { type SessionStatus, type WorkspaceSession, STATUS_META, openPRs, statusOrder, workerSessions } from "../types/workspace";
+import {
+	type SessionStatus,
+	type WorkspaceSession,
+	STATUS_META,
+	openPRs,
+	statusOrder,
+	workerSessions,
+} from "../types/workspace";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { DashboardSubhead } from "./DashboardSubhead";
 import { OrchestratorIcon } from "./icons";
