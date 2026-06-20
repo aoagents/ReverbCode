@@ -128,7 +128,9 @@ func (f *fakeLauncher) Notify(_ context.Context, handleID string, spec LaunchSpe
 	f.gotSpec = spec
 	return f.notifyErr
 }
-func (f *fakeLauncher) Alive(_ context.Context, _ string) (bool, error) { return f.alive, nil }
+func (f *fakeLauncher) Alive(_ context.Context, _ string) (bool, error) {
+	return f.alive || f.spawned, nil
+}
 
 func liveWorker() domain.SessionRecord {
 	return domain.SessionRecord{
@@ -180,44 +182,37 @@ func TestTriggerSpawnsNewReviewerAndRecordsRunAfterLaunch(t *testing.T) {
 	}
 }
 
-func TestTriggerConcurrentSameWorkerSpawnsOnce(t *testing.T) {
+func TestTriggerConcurrentSameWorkerNeverDoubleSpawns(t *testing.T) {
+	// Concurrent triggers for the same worker must never end up with two
+	// independent reviewer panes for the same commit (#242): the loser of
+	// each race either finds the pane already alive (Notify, not Spawn) or
+	// loses the unique-insert race outright. Verdict-gated idempotency (#342)
+	// means a run with no verdict yet is no longer trusted blindly, so repeat
+	// triggers may notify the live pane again instead of being a pure no-op —
+	// that's fine; only an actual second Spawn would be a regression.
 	store := &fakeStore{}
-	// The winner's freshly-spawned reviewer is alive, so losers that re-read its
-	// Running run short-circuit to reuse instead of re-spawning.
-	launcher := &fakeLauncher{handle: "review-mer-1", alive: true}
+	launcher := &fakeLauncher{handle: "review-mer-1"}
 	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
 
 	const n = 8
 	var wg sync.WaitGroup
-	results := make([]TriggerResult, n)
 	errs := make([]error, n)
 	wg.Add(n)
 	for i := 0; i < n; i++ {
 		go func(i int) {
 			defer wg.Done()
-			results[i], errs[i] = eng.Trigger(context.Background(), "mer-1")
+			_, errs[i] = eng.Trigger(context.Background(), "mer-1")
 		}(i)
 	}
 	wg.Wait()
 
-	created := 0
 	for i := 0; i < n; i++ {
 		if errs[i] != nil {
 			t.Fatalf("Trigger[%d]: %v", i, errs[i])
 		}
-		if results[i].Created {
-			created++
-		}
-	}
-	// Exactly one trigger does the work; the rest reuse its run.
-	if created != 1 {
-		t.Errorf("Created=true count = %d, want exactly 1", created)
 	}
 	if launcher.spawnCount != 1 {
-		t.Errorf("reviewer spawn count = %d, want 1", launcher.spawnCount)
-	}
-	if len(store.runs) != 1 {
-		t.Errorf("recorded review runs = %d, want 1", len(store.runs))
+		t.Errorf("reviewer spawn count = %d, want exactly 1 (no double-spawn)", launcher.spawnCount)
 	}
 }
 
@@ -244,9 +239,14 @@ func TestTriggerFallsBackToExistingRunOnUniqueConflict(t *testing.T) {
 }
 
 func TestTriggerIsIdempotentForSameCommit(t *testing.T) {
+	// A verdict was actually recorded for this commit (via Submit) — this is
+	// the only state that counts as genuinely done.
 	store := &fakeStore{
 		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", ReviewerHandleID: "review-mer-1"},
-		runs:   []domain.ReviewRun{{ID: "run-1", SessionID: "mer-1", TargetSHA: "sha1", Status: domain.ReviewRunRunning}},
+		runs: []domain.ReviewRun{{
+			ID: "run-1", SessionID: "mer-1", TargetSHA: "sha1",
+			Status: domain.ReviewRunComplete, Verdict: domain.VerdictApproved,
+		}},
 	}
 	launcher := &fakeLauncher{alive: true}
 	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
@@ -266,36 +266,62 @@ func TestTriggerIsIdempotentForSameCommit(t *testing.T) {
 	}
 }
 
-func TestTriggerMarksStaleRunningPassFailedAndRetries(t *testing.T) {
-	// A Running pass whose reviewer process died (terminal closed mid-run) must
-	// not permanently short-circuit retries with "already up to date" (#342):
-	// the stale row is marked Failed and a fresh review is spawned.
+func TestTriggerRespawnsWhenRunningRowHasNoVerdict(t *testing.T) {
+	// A prior pass for this commit never produced a verdict — its execution
+	// may have been stopped (e.g. the user killed the terminal, or just
+	// interrupted the agent without killing the pane) without ever calling
+	// Submit. Pane liveness alone can't tell those apart, so Status=Running
+	// with no verdict is never trusted blindly: the stale row is marked
+	// Failed and a fresh pass starts, reusing the pane if it's still alive
+	// (Notify) and spawning a new one only if it's not (#342).
 	store := &fakeStore{
 		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", ReviewerHandleID: "review-mer-1"},
-		runs:   []domain.ReviewRun{{ID: "run-stale", ReviewID: "rev-1", SessionID: "mer-1", TargetSHA: "sha1", Status: domain.ReviewRunRunning}},
+		runs:   []domain.ReviewRun{{ID: "run-1", SessionID: "mer-1", TargetSHA: "sha1", Status: domain.ReviewRunRunning}},
 	}
-	launcher := &fakeLauncher{alive: false, handle: "review-mer-1"}
+	launcher := &fakeLauncher{alive: false, handle: "review-mer-2"}
 	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
 
 	res, err := eng.Trigger(context.Background(), "mer-1")
 	if err != nil {
 		t.Fatalf("Trigger: %v", err)
 	}
-	if !res.Created || res.Run.ID == "run-stale" {
-		t.Fatalf("expected a fresh run, got %+v", res)
+	if !res.Created {
+		t.Fatalf("expected a fresh pass when the prior run has no verdict: %+v", res)
 	}
 	if !launcher.spawned {
-		t.Fatalf("expected a fresh reviewer spawn: %+v", launcher)
-	}
-	if len(store.runs) != 2 {
-		t.Fatalf("expected the stale run plus a new one: %+v", store.runs)
+		t.Fatalf("expected a fresh spawn since the old pane is dead: %+v", launcher)
 	}
 	stale := store.runs[0]
-	if stale.ID != "run-stale" || stale.Status != domain.ReviewRunFailed || stale.Verdict != domain.VerdictNone {
-		t.Fatalf("stale run not marked failed: %+v", stale)
+	if stale.ID != "run-1" || stale.Status != domain.ReviewRunFailed {
+		t.Fatalf("expected stale run-1 marked Failed, got %+v", stale)
 	}
-	if !strings.Contains(stale.Body, "no longer alive") {
-		t.Fatalf("stale run body = %q, want liveness reason", stale.Body)
+}
+
+func TestTriggerNotifiesLiveReviewerWhenRunningRowHasNoVerdict(t *testing.T) {
+	// Same as above, but the pane is still alive (e.g. the user only
+	// interrupted the agent's work without killing the terminal/pane). The
+	// stale row is still superseded, but the live pane is re-notified instead
+	// of spawning a redundant second pane.
+	store := &fakeStore{
+		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", ReviewerHandleID: "review-mer-1"},
+		runs:   []domain.ReviewRun{{ID: "run-1", SessionID: "mer-1", TargetSHA: "sha1", Status: domain.ReviewRunRunning}},
+	}
+	launcher := &fakeLauncher{alive: true, handle: "review-mer-1"}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
+
+	res, err := eng.Trigger(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatalf("Trigger: %v", err)
+	}
+	if !res.Created {
+		t.Fatalf("expected a fresh pass even though the pane is reused: %+v", res)
+	}
+	if !launcher.notified || launcher.spawned {
+		t.Fatalf("expected notify on the still-alive pane, not a spawn: %+v", launcher)
+	}
+	stale := store.runs[0]
+	if stale.ID != "run-1" || stale.Status != domain.ReviewRunFailed {
+		t.Fatalf("expected stale run-1 marked Failed, got %+v", stale)
 	}
 }
 
