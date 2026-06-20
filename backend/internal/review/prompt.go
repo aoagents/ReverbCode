@@ -31,9 +31,12 @@ Do these steps in order:
    - Substitute the PR's owner/repo/number. Add one object to "comments" per inline finding; omit the field for a review with no inline comments.
    - To approve, use "event": "APPROVE". GitHub does not let you approve a PR you opened — if that fails because you are the author, retry with "event": "COMMENT" and a body stating it is an approval.
    - The printed number is the review id. If the call fails on the provider, leave the id empty.
-2. Write your full review to review.md and record the result with AO by running exactly:
+2. Record the result with AO. Write your full review to a temp file OUTSIDE the checkout — never into the worktree, or it gets committed onto the worker's branch — and pass that path to --body:
 
-    ao review submit --session %s --run %s --verdict <approved|changes_requested> --body review.md --review-id <id-from-step-1>
+    f="$(mktemp)"; cat >"$f" <<'MD'
+    <your full review markdown>
+    MD
+    ao review submit --session %s --run %s --verdict <approved|changes_requested> --body "$f" --review-id <id-from-step-1>
 
 Only if step 1 genuinely fails on the provider, still run step 2 (without --review-id) so the result is recorded.`,
 		spec.PRURL, spec.TargetSHA, spec.WorkerID, spec.RunID)
