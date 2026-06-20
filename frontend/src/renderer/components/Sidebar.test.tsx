@@ -104,9 +104,9 @@ describe("Sidebar", () => {
 		const count = screen.getByText("0");
 
 		if (!projectRow) throw new Error("Project row button not found");
-		expect(projectRow).toHaveClass("group-hover/menu-item:pr-[78px]");
-		expect(projectRow).toHaveClass("group-focus-within/menu-item:pr-[78px]");
-		expect(projectRow).toHaveClass("group-has-data-[state=open]/menu-item:pr-[78px]");
+		expect(projectRow).toHaveClass("group-hover/menu-item:pr-[84px]");
+		expect(projectRow).toHaveClass("group-focus-within/menu-item:pr-[84px]");
+		expect(projectRow).toHaveClass("group-has-data-[state=open]/menu-item:pr-[84px]");
 		expect(count).toHaveClass("group-hover/menu-item:opacity-0");
 		expect(count).toHaveClass("group-focus-within/menu-item:opacity-0");
 		expect(count).toHaveClass("group-has-data-[state=open]/menu-item:opacity-0");
