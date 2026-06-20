@@ -69,8 +69,8 @@ export function useDaemonStatus(queryClient: QueryClient = defaultQueryClient) {
 		document.addEventListener("visibilitychange", refreshOnVisibility);
 
 		void Promise.resolve().then(() => {
-				if (active) stopTransport = createEventTransport(queryClient).connect();
-			});
+			if (active) stopTransport = createEventTransport(queryClient).connect();
+		});
 
 		const stopStatusListener = aoBridge.daemon.onStatus(applyStatus);
 
