@@ -97,18 +97,13 @@ describe("Sidebar", () => {
 		expect(navigateMock).toHaveBeenCalledWith({ to: "/projects/$projectId", params: { projectId: "proj-1" } });
 	});
 
-	it("hides the worker count in every state that reveals project actions", () => {
+	it("always shows action icons and reserves padding for them", () => {
 		renderSidebar();
 
 		const projectRow = screen.getByText("Project One").closest("button");
-		const count = screen.getByText("0");
 
 		if (!projectRow) throw new Error("Project row button not found");
-		expect(projectRow).toHaveClass("group-hover/menu-item:pr-[84px]");
-		expect(projectRow).toHaveClass("group-focus-within/menu-item:pr-[84px]");
-		expect(projectRow).toHaveClass("group-has-data-[state=open]/menu-item:pr-[84px]");
-		expect(count).toHaveClass("group-hover/menu-item:opacity-0");
-		expect(count).toHaveClass("group-focus-within/menu-item:opacity-0");
-		expect(count).toHaveClass("group-has-data-[state=open]/menu-item:opacity-0");
+		// Padding is always reserved for the action cluster (not hover-gated)
+		expect(projectRow).toHaveClass("pr-[84px]");
 	});
 });
