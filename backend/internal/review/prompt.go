@@ -21,15 +21,15 @@ Post your review on the pull request using the available review tooling (request
 	prompt = fmt.Sprintf(`Review pull request %s (head commit %s).
 
 Do these steps in order:
-1. Post your review on the pull request and capture its id in one call. Post with `+"`gh api`"+` rather than `+"`gh pr review`"+`: it is the only way to attach inline comments, and its response carries the created review's id, so AO can tell the worker exactly which review to address.
+1. Post your review on the pull request and capture its id in one call. Post with `+"`gh api`"+` rather than `+"`gh pr review`"+`: it is the only way to attach inline comments, and its response carries the created review's id, so AO can tell the worker exactly which review to address. Send the review as a JSON body so the inline comments form a proper array of objects:
 
-    gh api --method POST repos/{owner}/{repo}/pulls/{number}/reviews \
-      -f event=REQUEST_CHANGES -f body="<summary>" \
-      -f 'comments[][path]=<file>' -F 'comments[][line]=<n>' -f 'comments[][body]=<finding>' \
-      --jq '.id'
+    gh api --method POST repos/{owner}/{repo}/pulls/{number}/reviews --input - --jq '.id' <<'JSON'
+    { "event": "REQUEST_CHANGES", "body": "<summary>",
+      "comments": [ { "path": "<file>", "line": <n>, "body": "<finding>" } ] }
+    JSON
 
-   - Substitute the PR's owner/repo/number. Repeat the three comments[][...] fields once per inline finding; drop them for a review with no inline comments.
-   - To approve, use event=APPROVE. GitHub does not let you approve a PR you opened — if that fails because you are the author, retry with event=COMMENT and a body stating it is an approval.
+   - Substitute the PR's owner/repo/number. Add one object to "comments" per inline finding; omit the field for a review with no inline comments.
+   - To approve, use "event": "APPROVE". GitHub does not let you approve a PR you opened — if that fails because you are the author, retry with "event": "COMMENT" and a body stating it is an approval.
    - The printed number is the review id. If the call fails on the provider, leave the id empty.
 2. Write your full review to review.md and record the result with AO by running exactly:
 
