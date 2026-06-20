@@ -185,9 +185,27 @@ func (e *Engine) Trigger(ctx context.Context, workerID domain.SessionID) (Trigge
 	}
 
 	// Idempotency: return a non-failed pass as-is. Failed passes stay visible
-	// but can be retried after the user fixes the underlying issue.
+	// but can be retried after the user fixes the underlying issue. A Running
+	// pass whose reviewer pane was killed out-of-band (e.g. the user closed the
+	// terminal directly, bypassing Submit) is not actually in progress, so its
+	// liveness is checked before trusting it — otherwise the worker is stuck
+	// forever unable to re-review the commit (#342).
 	if existing, ok, err := e.store.GetReviewRunBySessionAndSHA(ctx, workerID, targetSHA); err != nil {
 		return TriggerResult{}, err
+	} else if ok && existing.Status == domain.ReviewRunRunning {
+		alive := false
+		if review.ReviewerHandleID != "" {
+			alive, err = e.launcher.Alive(ctx, review.ReviewerHandleID)
+			if err != nil {
+				return TriggerResult{}, err
+			}
+		}
+		if alive {
+			return TriggerResult{Run: existing, ReviewerHandleID: review.ReviewerHandleID, Created: false}, nil
+		}
+		if _, err := e.store.UpdateReviewRunResult(ctx, existing.ID, domain.ReviewRunFailed, domain.VerdictNone, "reviewer pane no longer running"); err != nil {
+			return TriggerResult{}, err
+		}
 	} else if ok && existing.Status != domain.ReviewRunFailed {
 		return TriggerResult{Run: existing, ReviewerHandleID: review.ReviewerHandleID, Created: false}, nil
 	}

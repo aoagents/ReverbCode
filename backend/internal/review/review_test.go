@@ -128,7 +128,9 @@ func (f *fakeLauncher) Notify(_ context.Context, handleID string, spec LaunchSpe
 	f.gotSpec = spec
 	return f.notifyErr
 }
-func (f *fakeLauncher) Alive(_ context.Context, _ string) (bool, error) { return f.alive, nil }
+func (f *fakeLauncher) Alive(_ context.Context, _ string) (bool, error) {
+	return f.alive || f.spawned, nil
+}
 
 func liveWorker() domain.SessionRecord {
 	return domain.SessionRecord{
@@ -246,7 +248,7 @@ func TestTriggerIsIdempotentForSameCommit(t *testing.T) {
 		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", ReviewerHandleID: "review-mer-1"},
 		runs:   []domain.ReviewRun{{ID: "run-1", SessionID: "mer-1", TargetSHA: "sha1", Status: domain.ReviewRunRunning}},
 	}
-	launcher := &fakeLauncher{}
+	launcher := &fakeLauncher{alive: true}
 	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
 
 	res, err := eng.Trigger(context.Background(), "mer-1")
@@ -261,6 +263,34 @@ func TestTriggerIsIdempotentForSameCommit(t *testing.T) {
 	}
 	if len(store.runs) != 1 {
 		t.Fatalf("should not insert another run: %+v", store.runs)
+	}
+}
+
+func TestTriggerRespawnsWhenRunningRowIsStale(t *testing.T) {
+	// The reviewer pane for an in-flight run was killed out-of-band (e.g. the
+	// user closed its terminal directly instead of letting it finish), so the
+	// run never reaches Failed via Submit. Retrying must not report "already
+	// up to date" — it must mark the stale row Failed and start a fresh pass.
+	store := &fakeStore{
+		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", ReviewerHandleID: "review-mer-1"},
+		runs:   []domain.ReviewRun{{ID: "run-1", SessionID: "mer-1", TargetSHA: "sha1", Status: domain.ReviewRunRunning}},
+	}
+	launcher := &fakeLauncher{alive: false, handle: "review-mer-2"}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
+
+	res, err := eng.Trigger(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatalf("Trigger: %v", err)
+	}
+	if !res.Created {
+		t.Fatalf("expected a fresh pass when the prior run's pane is dead: %+v", res)
+	}
+	if !launcher.spawned {
+		t.Fatalf("expected a fresh spawn, not a notify, since the old pane is dead: %+v", launcher)
+	}
+	stale := store.runs[0]
+	if stale.ID != "run-1" || stale.Status != domain.ReviewRunFailed {
+		t.Fatalf("expected stale run-1 marked Failed, got %+v", stale)
 	}
 }
 
