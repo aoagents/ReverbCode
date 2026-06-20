@@ -10,7 +10,7 @@ import (
 func TestLoadDefaults(t *testing.T) {
 	// Clear every recognised var so we observe pure defaults regardless of the
 	// surrounding environment.
-	for _, k := range []string{"AO_PORT", "AO_REQUEST_TIMEOUT", "AO_SHUTDOWN_TIMEOUT", "AO_RUN_FILE", "AO_DATA_DIR", "AO_AGENT", "AO_ALLOWED_ORIGINS"} {
+	for _, k := range []string{"AO_PORT", "AO_REQUEST_TIMEOUT", "AO_SHUTDOWN_TIMEOUT", "AO_RUN_FILE", "AO_DATA_DIR", "AO_AGENT", "AO_ALLOWED_ORIGINS", "AO_TELEMETRY_EVENTS", "AO_TELEMETRY_METRICS", "AO_TELEMETRY_REMOTE", "AO_TELEMETRY_POSTHOG_KEY", "AO_TELEMETRY_POSTHOG_HOST"} {
 		t.Setenv(k, "")
 	}
 
@@ -48,6 +48,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.DataDir != wantDataDir {
 		t.Errorf("DataDir = %q, want %q", cfg.DataDir, wantDataDir)
 	}
+	if cfg.Telemetry.Remote != TelemetryRemoteOff || cfg.Telemetry.PostHogHost != DefaultTelemetryPostHogHost {
+		t.Fatalf("Telemetry defaults = %+v", cfg.Telemetry)
+	}
 }
 
 func TestLoadOverrides(t *testing.T) {
@@ -56,6 +59,11 @@ func TestLoadOverrides(t *testing.T) {
 	t.Setenv("AO_SHUTDOWN_TIMEOUT", "3s")
 	t.Setenv("AO_RUN_FILE", "/tmp/ao-test-running.json")
 	t.Setenv("AO_DATA_DIR", "/tmp/ao-test-data")
+	t.Setenv("AO_TELEMETRY_EVENTS", "on")
+	t.Setenv("AO_TELEMETRY_METRICS", "off")
+	t.Setenv("AO_TELEMETRY_REMOTE", "posthog")
+	t.Setenv("AO_TELEMETRY_POSTHOG_KEY", "phc_test")
+	t.Setenv("AO_TELEMETRY_POSTHOG_HOST", "https://eu.i.posthog.com")
 
 	cfg, err := Load()
 	if err != nil {
@@ -76,6 +84,12 @@ func TestLoadOverrides(t *testing.T) {
 	if cfg.DataDir != "/tmp/ao-test-data" {
 		t.Errorf("DataDir = %q, want /tmp/ao-test-data", cfg.DataDir)
 	}
+	if !cfg.Telemetry.Events || cfg.Telemetry.Metrics {
+		t.Fatalf("Telemetry toggles = %+v", cfg.Telemetry)
+	}
+	if cfg.Telemetry.Remote != TelemetryRemotePostHog || cfg.Telemetry.PostHogKey != "phc_test" || cfg.Telemetry.PostHogHost != "https://eu.i.posthog.com" {
+		t.Fatalf("Telemetry remote = %+v", cfg.Telemetry)
+	}
 }
 
 func TestLoadInvalid(t *testing.T) {
@@ -93,6 +107,9 @@ func TestLoadInvalid(t *testing.T) {
 		{"negative shutdown timeout", map[string]string{"AO_SHUTDOWN_TIMEOUT": "-5s"}},
 		{"null origin", map[string]string{"AO_ALLOWED_ORIGINS": "app://renderer,null"}},
 		{"wildcard origin", map[string]string{"AO_ALLOWED_ORIGINS": "*"}},
+		{"bad telemetry events", map[string]string{"AO_TELEMETRY_EVENTS": "maybe"}},
+		{"bad telemetry metrics", map[string]string{"AO_TELEMETRY_METRICS": "maybe"}},
+		{"bad telemetry remote", map[string]string{"AO_TELEMETRY_REMOTE": "otlp"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

@@ -16,10 +16,10 @@ import {
 } from "lucide-react";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
+import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { formatTimeCompact } from "../lib/format-time";
 import type { SessionStatus, WorkspaceSession } from "../types/workspace";
 import { workerDisplayStatus } from "../types/workspace";
-import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { cn } from "../lib/utils";
@@ -151,6 +151,7 @@ function SummaryView({
 }) {
 	const hasPr = Boolean(session.pullRequest);
 	const queryClient = useQueryClient();
+	const [reviewNotice, setReviewNotice] = useState<string | null>(null);
 	const query = useQuery({
 		queryKey: ["session-pr", session.id],
 		enabled: hasPr,
@@ -190,16 +191,23 @@ function SummaryView({
 	});
 	const triggerReview = useMutation({
 		mutationFn: async () => {
-			const { data, error } = await apiClient.POST("/api/v1/sessions/{sessionId}/reviews/trigger", {
+			const { data, error, response } = await apiClient.POST("/api/v1/sessions/{sessionId}/reviews/trigger", {
 				params: { path: { sessionId: session.id } },
 			});
 			if (error) throw new Error(apiErrorMessage(error, "Unable to start review"));
-			return data;
+			return { data, reused: response?.status === 200 };
 		},
-		onSuccess: (data) => {
+		onMutate: () => {
+			setReviewNotice(null);
+		},
+		onSuccess: ({ data, reused }) => {
 			void queryClient.invalidateQueries({ queryKey: ["session-reviews", session.id] });
 			void queryClient.invalidateQueries({ queryKey: ["session-pr", session.id] });
 			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+			if (reused) {
+				setReviewNotice("Review is already up to date for this commit.");
+				return;
+			}
 			if (data?.reviewerHandleId) {
 				onOpenReviewerTerminal?.({ handleId: data.reviewerHandleId, harness: data.review.harness || "reviewer" });
 			}
@@ -227,15 +235,16 @@ function SummaryView({
 					<p className="inspector-empty">Loading pull request…</p>
 				) : (
 					<div className="flex flex-col gap-2">
-						<div className="flex items-center gap-2">
+						<div className="inspector-pr-summary">
 							<GitPullRequest className="h-3.5 w-3.5 shrink-0 text-passive" aria-hidden="true" />
-							<span className="text-[12.5px] font-medium text-foreground">
-								PR #{prFacts?.number ?? session.pullRequest?.number}
-							</span>
+							<span className="inspector-pr-summary__title">PR #{prFacts?.number ?? session.pullRequest?.number}</span>
 							{prFacts ? (
 								<Badge
 									variant="outline"
-									className={cn("ml-auto h-5 px-1.5 text-[10px] font-medium", prStateTone[prFacts.state])}
+									className={cn(
+										"inspector-pr-summary__state h-5 px-1.5 text-[10px] font-medium",
+										prStateTone[prFacts.state],
+									)}
 								>
 									{prFacts.state}
 								</Badge>
@@ -264,6 +273,7 @@ function SummaryView({
 					onTrigger={() => triggerReview.mutate()}
 					reviewerHandleId={reviewsQuery.data?.reviewerHandleId ?? ""}
 					reviews={reviews}
+					notice={reviewNotice}
 					session={session}
 				/>
 			</Section>
@@ -297,6 +307,7 @@ function ReviewPanel({
 	isLoading,
 	isTriggering,
 	error,
+	notice,
 	onTrigger,
 	onOpenTerminal,
 }: {
@@ -307,6 +318,7 @@ function ReviewPanel({
 	isLoading: boolean;
 	isTriggering: boolean;
 	error: unknown;
+	notice: string | null;
 	onTrigger: () => void;
 	onOpenTerminal?: OpenReviewerTerminal;
 }) {
@@ -323,6 +335,7 @@ function ReviewPanel({
 	return (
 		<div className="reviewer-list">
 			{error ? <p className="reviewer-error">{apiErrorMessage(error, "Review request failed")}</p> : null}
+			{notice ? <p className="reviewer-notice">{notice}</p> : null}
 			<ReviewerCard
 				handleId={reviewerHandleId}
 				harness={harness}

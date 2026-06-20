@@ -121,7 +121,7 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 	})
 	f.StringVar(&opts.project, "project", "", "Project id to spawn the session in (required)")
 	f.StringVar(&opts.harness, "harness", "", "Agent harness / --agent: claude-code, codex, aider, opencode, grok, droid, amp, agy, crush, cursor, qwen, copilot, goose, auggie, continue, devin, cline, kimi, kiro, kilocode, vibe, pi, autohand (default: the daemon's AO_AGENT)")
-	f.StringVar(&opts.branch, "branch", "", "Branch for the session worktree (default: ao/<session-id>)")
+	f.StringVar(&opts.branch, "branch", "", "Branch for the session worktree (default: ao/<session-id>/root)")
 	f.StringVar(&opts.prompt, "prompt", "", "Initial prompt for the agent")
 	f.StringVar(&opts.issue, "issue", "", "Issue id to associate with the session")
 	f.StringVar(&opts.claimPR, "claim-pr", "", "Immediately claim an existing PR for the spawned session")

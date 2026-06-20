@@ -8,6 +8,7 @@ import { TitlebarNav } from "../components/TitlebarNav";
 import { useDaemonStatus } from "../hooks/useDaemonStatus";
 import { useWorkspaceQuery, workspaceQueryKey, workspaceQueryOptions } from "../hooks/useWorkspaceQuery";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
+import { captureRendererEvent, captureRendererException } from "../lib/telemetry";
 import { ShellProvider } from "../lib/shell-context";
 import { readStoredTheme, type Theme, useUiStore } from "../stores/ui-store";
 import type { WorkspaceSummary } from "../types/workspace";
@@ -49,8 +50,13 @@ function ShellLayout() {
 
 	const createProject = useCallback(
 		async (input: { path: string }) => {
+			void captureRendererEvent("ao.renderer.project_add_requested");
 			const { data, error } = await apiClient.POST("/api/v1/projects", { body: { path: input.path } });
-			if (error) throw new Error(apiErrorMessage(error));
+			if (error) {
+				const failure = new Error(apiErrorMessage(error));
+				void captureRendererException(failure, { source: "project-add" });
+				throw failure;
+			}
 			if (!data?.project) throw new Error("Project creation returned no project");
 
 			const workspace: WorkspaceSummary = {
@@ -60,6 +66,7 @@ function ShellLayout() {
 				type: "main",
 				sessions: [],
 			};
+			void captureRendererEvent("ao.renderer.project_add_succeeded", { project_id: workspace.id });
 			updateWorkspaces((current) => [workspace, ...current.filter((item) => item.id !== workspace.id)]);
 			void navigate({ to: "/projects/$projectId", params: { projectId: workspace.id } });
 		},
@@ -71,7 +78,12 @@ function ShellLayout() {
 			const { error } = await apiClient.DELETE("/api/v1/projects/{id}", {
 				params: { path: { id: projectId } },
 			});
-			if (error) throw new Error(apiErrorMessage(error));
+			if (error) {
+				const failure = new Error(apiErrorMessage(error));
+				void captureRendererException(failure, { source: "project-remove", project_id: projectId });
+				throw failure;
+			}
+			void captureRendererEvent("ao.renderer.project_removed", { project_id: projectId });
 			updateWorkspaces((current) => current.filter((item) => item.id !== projectId));
 		},
 		[updateWorkspaces],

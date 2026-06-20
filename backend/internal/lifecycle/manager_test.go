@@ -61,6 +61,16 @@ type fakeMessenger struct {
 	err  error
 }
 
+type telemetrySink struct {
+	events []ports.TelemetryEvent
+}
+
+func (s *telemetrySink) Emit(_ context.Context, ev ports.TelemetryEvent) {
+	s.events = append(s.events, ev)
+}
+
+func (*telemetrySink) Close(context.Context) error { return nil }
+
 func (f *fakeMessenger) Send(_ context.Context, _ domain.SessionID, msg string) error {
 	if f.err != nil {
 		return f.err
@@ -166,6 +176,37 @@ func TestMarkSpawned_StampsUTCActivity(t *testing.T) {
 	}
 }
 
+func TestActivity_WaitingInputEntryAndExitEmitTelemetry(t *testing.T) {
+	st := newFakeStore()
+	sink := &telemetrySink{}
+	m := New(st, nil, WithTelemetry(sink))
+	now := time.Unix(100, 0).UTC()
+	m.clock = func() time.Time { return now }
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:        "mer-1",
+		ProjectID: "mer",
+		Activity:  domain.Activity{State: domain.ActivityIdle, LastActivityAt: now.Add(-time.Minute)},
+	}
+
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityWaitingInput, Timestamp: now}); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(3 * time.Second)
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityActive, Timestamp: now}); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(sink.events) != 2 {
+		t.Fatalf("events = %#v, want waiting_input entered/exited", sink.events)
+	}
+	if sink.events[0].Name != "ao.session.waiting_input_entered" || sink.events[1].Name != "ao.session.waiting_input_exited" {
+		t.Fatalf("event names = %#v", []string{sink.events[0].Name, sink.events[1].Name})
+	}
+	if got := sink.events[1].Payload["dwell_ms"]; got != int64(3000) {
+		t.Fatalf("dwell_ms = %#v, want 3000", got)
+	}
+}
+
 func TestPRObservation_CIFailingNudgesAgentWithLogs(t *testing.T) {
 	m, st, msg := newManager()
 	st.sessions["mer-1"] = working("mer-1")
@@ -187,6 +228,46 @@ func TestPRObservation_ReviewCommentsNudgeAgent(t *testing.T) {
 	}
 	if len(msg.msgs) != 1 || !strings.Contains(msg.msgs[0], "fix this") {
 		t.Fatalf("want review nudge, got %v", msg.msgs)
+	}
+}
+
+func TestPRObservation_CINudgeSanitizesLogTailControlChars(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	// A CI log tail with an embedded ANSI escape sequence and a NUL byte; the
+	// agent's pane must receive the visible text without the control bytes.
+	o := ports.PRObservation{Fetched: true, URL: "pr1", CI: domain.CIFailing, Checks: []ports.PRCheckObservation{{Name: "build", CommitHash: "c1", Status: domain.PRCheckFailed, LogTail: "line1\x1b[2Jline2\x00\ttabbed"}}}
+	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 1 {
+		t.Fatalf("want one CI nudge, got %v", msg.msgs)
+	}
+	got := msg.msgs[0]
+	if strings.ContainsRune(got, '\x1b') || strings.ContainsRune(got, '\x00') {
+		t.Fatalf("nudge still carries control bytes: %q", got)
+	}
+	if !strings.Contains(got, "line1") || !strings.Contains(got, "line2") || !strings.Contains(got, "\ttabbed") {
+		t.Fatalf("nudge dropped visible text or tab: %q", got)
+	}
+}
+
+func TestPRObservation_ReviewNudgeSanitizesCommentControlChars(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	o := ports.PRObservation{Fetched: true, URL: "pr1", Review: domain.ReviewChangesRequest, Comments: []ports.PRCommentObservation{{ID: "1", Body: "please\x1b]0;pwned\afix this"}}}
+	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 1 {
+		t.Fatalf("want one review nudge, got %v", msg.msgs)
+	}
+	got := msg.msgs[0]
+	if strings.ContainsRune(got, '\x1b') || strings.ContainsRune(got, '\a') {
+		t.Fatalf("review nudge still carries control bytes: %q", got)
+	}
+	if !strings.Contains(got, "please") || !strings.Contains(got, "fix this") {
+		t.Fatalf("review nudge dropped visible text: %q", got)
 	}
 }
 

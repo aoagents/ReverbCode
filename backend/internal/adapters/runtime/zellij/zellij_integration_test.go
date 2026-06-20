@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -19,18 +20,26 @@ func TestRuntimeIntegration(t *testing.T) {
 
 	ctx := context.Background()
 	id := "ao_itest_zj"
-	socketDir := filepath.Join(os.TempDir(), "ao-zj-itest")
-	if err := os.MkdirAll(socketDir, 0o755); err != nil {
-		t.Fatalf("mkdir socket dir: %v", err)
-	}
+	socketDir := tempSocketDir(t, "ao-zj-itest-")
 	configDir := t.TempDir()
-	r := New(Options{Timeout: 5 * time.Second, SocketDir: socketDir, ConfigDir: configDir})
+	opts := Options{Timeout: 5 * time.Second, SocketDir: socketDir, ConfigDir: configDir}
+	if runtime.GOOS == "windows" {
+		opts.Timeout = 30 * time.Second
+		opts.LauncherBinary = buildAOForIntegration(t)
+		opts.Shell = "cmd.exe"
+	}
+	r := New(opts)
 	_ = r.Destroy(ctx, ports.RuntimeHandle{ID: id})
+	argv := []string{"sh", "-c", "echo ready-$AO_SESSION_ID"}
+	sendCommand := "echo hello-from-zellij"
+	if runtime.GOOS == "windows" {
+		argv = []string{"cmd.exe", "/D", "/Q", "/K", "echo ready-%AO_SESSION_ID%"}
+	}
 
 	h, err := r.Create(ctx, ports.RuntimeConfig{
 		SessionID:     "ao_itest_zj",
 		WorkspacePath: t.TempDir(),
-		Argv:          []string{"sh", "-c", "printf ready-$AO_SESSION_ID\\n"},
+		Argv:          argv,
 		Env:           map[string]string{"AO_SESSION_ID": id},
 	})
 	if err != nil {
@@ -45,22 +54,22 @@ func TestRuntimeIntegration(t *testing.T) {
 	if !alive {
 		t.Fatal("alive = false, want true")
 	}
+	prefixAlive, err := r.IsAlive(ctx, ports.RuntimeHandle{ID: "ao_itest"})
+	if err != nil {
+		t.Fatalf("IsAlive prefix: %v", err)
+	}
+	if prefixAlive {
+		t.Fatal("prefix handle reported alive; zellij session matching is not exact")
+	}
 
-	if err := r.SendMessage(ctx, h, "printf hello-from-zellij"); err != nil {
+	out := waitForRuntimeOutput(t, r, h, "ready-")
+	if !strings.Contains(out, "ready-") {
+		t.Fatalf("output = %q, want ready output", out)
+	}
+	if err := r.SendMessage(ctx, h, sendCommand); err != nil {
 		t.Fatalf("SendMessage: %v", err)
 	}
-	deadline := time.Now().Add(3 * time.Second)
-	var out string
-	for time.Now().Before(deadline) {
-		out, err = r.GetOutput(ctx, h, 30)
-		if err != nil {
-			t.Fatalf("GetOutput: %v", err)
-		}
-		if strings.Contains(out, "hello-from-zellij") {
-			break
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
+	out = waitForRuntimeOutput(t, r, h, "hello-from-zellij")
 	if !strings.Contains(out, "hello-from-zellij") {
 		t.Fatalf("output = %q, want sent command output", out)
 	}
@@ -77,16 +86,55 @@ func TestRuntimeIntegration(t *testing.T) {
 	}
 }
 
+func waitForRuntimeOutput(t *testing.T, r *Runtime, h ports.RuntimeHandle, want string) string {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	var out string
+	for time.Now().Before(deadline) {
+		var err error
+		out, err = r.GetOutput(context.Background(), h, 30)
+		if err != nil {
+			t.Fatalf("GetOutput: %v", err)
+		}
+		if strings.Contains(out, want) {
+			return out
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return out
+}
+
+func buildAOForIntegration(t *testing.T) string {
+	t.Helper()
+	out := filepath.Join(t.TempDir(), "ao.exe")
+	cmd := exec.Command("go", "build", "-o", out, "./cmd/ao")
+	cmd.Dir = filepath.Clean(filepath.Join("..", "..", "..", ".."))
+	if raw, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("build ao test launcher: %v: %s", err, strings.TrimSpace(string(raw)))
+	}
+	return out
+}
+
+func tempSocketDir(t *testing.T, pattern string) string {
+	t.Helper()
+	socketDir, err := os.MkdirTemp(os.TempDir(), pattern)
+	if err != nil {
+		t.Fatalf("mkdir socket dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(socketDir) })
+	return socketDir
+}
+
 func TestRuntimeIntegrationUsesExactSessionParsing(t *testing.T) {
 	if _, err := exec.LookPath("zellij"); err != nil {
 		t.Skip("zellij unavailable")
 	}
+	if runtime.GOOS == "windows" {
+		t.Skip("exact session parsing is covered by TestRuntimeIntegration on Windows")
+	}
 
 	ctx := context.Background()
-	socketDir := filepath.Join(os.TempDir(), "ao-zj-exact-itest")
-	if err := os.MkdirAll(socketDir, 0o755); err != nil {
-		t.Fatalf("mkdir socket dir: %v", err)
-	}
+	socketDir := tempSocketDir(t, "ao-zj-exact-itest-")
 	r := New(Options{Timeout: 5 * time.Second, SocketDir: socketDir, ConfigDir: t.TempDir()})
 	longID := "ao_zj_exact_long"
 	prefixID := "ao_zj_exact"
@@ -96,7 +144,7 @@ func TestRuntimeIntegrationUsesExactSessionParsing(t *testing.T) {
 	h, err := r.Create(ctx, ports.RuntimeConfig{
 		SessionID:     "ao_zj_exact_long",
 		WorkspacePath: t.TempDir(),
-		Argv:          []string{"printf", "ready\\n"},
+		Argv:          []string{"printf", "ready\n"},
 	})
 	if err != nil {
 		t.Fatalf("Create: %v", err)

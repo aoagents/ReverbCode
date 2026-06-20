@@ -1,25 +1,29 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
 import {
 	ChevronRight,
 	GitPullRequest,
+	LayoutDashboard,
 	Moon,
-	MoreHorizontal,
+	MoreVertical,
 	Plus,
 	Search,
 	Settings,
 	Sun,
 	Trash2,
-	Waypoints,
 } from "lucide-react";
 import { useState } from "react";
 import {
 	attentionZone,
+	isOrchestratorSession,
 	sessionIsActive,
 	type WorkspaceSession,
 	type WorkspaceSummary,
 	workerSessions,
 } from "../types/workspace";
 import { aoBridge } from "../lib/bridge";
+import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { useEventsConnection } from "../hooks/useEventsConnection";
 import { useResizable } from "../hooks/useResizable";
 import {
@@ -39,7 +43,6 @@ import {
 	SidebarGroupLabel,
 	SidebarHeader,
 	SidebarMenu,
-	SidebarMenuAction,
 	SidebarMenuButton,
 	SidebarMenuItem,
 	SidebarMenuSub,
@@ -49,6 +52,8 @@ import {
 	useSidebar,
 } from "./ui/sidebar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
+import { OrchestratorIcon } from "./icons";
+import aoLogo from "../assets/ao-logo.png";
 import { cn } from "../lib/utils";
 import { useUiStore } from "../stores/ui-store";
 
@@ -58,6 +63,12 @@ import { useUiStore } from "../stores/ui-store";
 // never crosses the titlebar strip.
 const isMac = typeof navigator !== "undefined" && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent);
 const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined;
+
+// Shared styling for the per-project hover action buttons (dashboard,
+// orchestrator, kebab): a 20px square icon button that tints on hover, matching
+// the old SidebarMenuAction footprint.
+const HOVER_ACTION_CLASS =
+	"grid size-5 shrink-0 place-items-center rounded-md text-passive transition-colors hover:bg-interactive-hover hover:text-foreground disabled:pointer-events-none disabled:opacity-50 data-[state=open]:bg-interactive-hover data-[state=open]:text-foreground [&_svg]:size-[15px]";
 
 type SidebarProps = {
 	daemonStatus: { state: string; message?: string };
@@ -148,8 +159,8 @@ export function Sidebar({ daemonStatus, workspaceError, workspaces, onCreateProj
 							<button
 								aria-label="Orchestrator board"
 								className={cn(
-									"grid h-[22px] w-[22px] shrink-0 place-items-center rounded-[6px] bg-accent text-accent-foreground",
-									"group-data-[collapsible=icon]:size-9 group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:bg-transparent group-data-[collapsible=icon]:text-current",
+									"grid h-[22px] w-[22px] shrink-0 place-items-center",
+									"group-data-[collapsible=icon]:size-9 group-data-[collapsible=icon]:rounded-lg",
 									selection.isHome
 										? "group-data-[collapsible=icon]:bg-interactive-active"
 										: "group-data-[collapsible=icon]:hover:bg-interactive-hover",
@@ -157,9 +168,7 @@ export function Sidebar({ daemonStatus, workspaceError, workspaces, onCreateProj
 								onClick={selection.goHome}
 								type="button"
 							>
-								<span className="contents group-data-[collapsible=icon]:grid group-data-[collapsible=icon]:h-[22px] group-data-[collapsible=icon]:w-[22px] group-data-[collapsible=icon]:place-items-center group-data-[collapsible=icon]:rounded-[6px] group-data-[collapsible=icon]:bg-accent group-data-[collapsible=icon]:text-accent-foreground">
-									<Waypoints className="h-3.5 w-3.5" aria-hidden="true" />
-								</span>
+								<img src={aoLogo} alt="" aria-hidden="true" className="h-[22px] w-[22px] rounded-[6px] object-cover" />
 							</button>
 						</TooltipTrigger>
 						<TooltipContent side="right" hidden={state !== "collapsed"}>
@@ -367,11 +376,35 @@ function ProjectItem({
 	onRemoveProject: (projectId: string) => Promise<void>;
 }) {
 	const projectActive = selection.activeProjectId === workspace.id && !selection.activeSessionId;
+	const queryClient = useQueryClient();
 	const [removeError, setRemoveError] = useState<string | null>(null);
 	const [isRemoving, setIsRemoving] = useState(false);
+	const [isSpawning, setIsSpawning] = useState(false);
 	// Live workers only: merged/terminated sessions leave the sidebar and stay
 	// reachable through the board's Done / Terminated bar (SessionsBoard).
 	const sessions = workerSessions(workspace.sessions).filter(sessionIsActive);
+	// The project's live orchestrator (if any) backs the hover Orchestrator
+	// button: navigate to it when present, otherwise spawn one first.
+	const orchestrator = workspace.sessions.find((s) => isOrchestratorSession(s) && sessionIsActive(s));
+
+	// Mirrors ShellTopbar's launcher: attach to the running orchestrator, or
+	// spawn one via the daemon and follow it once the workspace refetches.
+	const openOrchestrator = async () => {
+		if (orchestrator) {
+			selection.goSession(workspace.id, orchestrator.id);
+			return;
+		}
+		setIsSpawning(true);
+		try {
+			const sessionId = await spawnOrchestrator(workspace.id);
+			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+			selection.goSession(workspace.id, sessionId);
+		} catch (err) {
+			console.error("Failed to spawn orchestrator:", err);
+		} finally {
+			setIsSpawning(false);
+		}
+	};
 
 	const onProjectClick = () => {
 		if (!expanded) {
@@ -418,9 +451,10 @@ function ProjectItem({
 					"h-auto gap-[9px] rounded-[5px] px-1.5 py-[7px] text-[13px] font-medium text-muted-foreground transition-[padding]",
 					"hover:bg-interactive-hover hover:text-muted-foreground active:bg-interactive-hover active:text-muted-foreground",
 					"data-[active=true]:bg-interactive-active data-[active=true]:font-semibold data-[active=true]:text-foreground",
-					// Make room for the kebab action when the row is hovered, focused, or
-					// its menu is open (the absolutely-positioned action replaces the count).
-					"group-hover/menu-item:pr-[34px] group-focus-within/menu-item:pr-[34px] group-has-data-[state=open]/menu-item:pr-[34px]",
+					// Make room for the hover actions (dashboard, orchestrator, kebab)
+					// when the row is hovered, focused, or its menu is open (the
+					// absolutely-positioned cluster replaces the count).
+					"group-hover/menu-item:pr-[78px] group-focus-within/menu-item:pr-[78px] group-has-data-[state=open]/menu-item:pr-[78px]",
 					// Icon rail: the old 36px letter tile.
 					"group-data-[collapsible=icon]:size-9! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:p-0! group-data-[collapsible=icon]:font-semibold",
 				)}
@@ -439,30 +473,69 @@ function ProjectItem({
 					{sessions.length}
 				</span>
 			</SidebarMenuButton>
-			{/* Per-project actions: a kebab that reveals on row hover (replacing the
-          session count) — surfaces the daemon/CLI removal capability in the UI. */}
-			<DropdownMenu>
-				<DropdownMenuTrigger asChild>
-					<SidebarMenuAction showOnHover aria-label={`Project actions for ${workspace.name}`}>
-						<MoreHorizontal aria-hidden="true" />
-					</SidebarMenuAction>
-				</DropdownMenuTrigger>
-				<DropdownMenuContent side="right" align="start" className="min-w-44">
-					<DropdownMenuItem onSelect={() => selection.goSettings(workspace.id)}>
-						<Settings aria-hidden="true" />
-						Project settings
-					</DropdownMenuItem>
-					<DropdownMenuSeparator />
-					<DropdownMenuItem
-						className="text-destructive focus:text-destructive [&_svg]:text-destructive"
-						disabled={isRemoving}
-						onSelect={() => void removeProject()}
-					>
-						<Trash2 aria-hidden="true" />
-						Remove project
-					</DropdownMenuItem>
-				</DropdownMenuContent>
-			</DropdownMenu>
+			{/* Per-project hover actions: dashboard board, orchestrator, and a kebab
+          menu. The cluster reveals on row hover/focus (or while the kebab is
+          open), replacing the session count, and stays hidden in the icon rail. */}
+			<div
+				className={cn(
+					"absolute top-1/2 right-1 flex -translate-y-1/2 items-center gap-px",
+					"opacity-0 transition-opacity",
+					"group-hover/menu-item:opacity-100 group-focus-within/menu-item:opacity-100 group-has-data-[state=open]/menu-item:opacity-100",
+					"group-data-[collapsible=icon]:hidden",
+				)}
+			>
+				<Tooltip>
+					<TooltipTrigger asChild>
+						<button
+							aria-label={`Open ${workspace.name} dashboard`}
+							className={HOVER_ACTION_CLASS}
+							onClick={() => selection.goProject(workspace.id)}
+							type="button"
+						>
+							<LayoutDashboard aria-hidden="true" />
+						</button>
+					</TooltipTrigger>
+					<TooltipContent>Dashboard</TooltipContent>
+				</Tooltip>
+				<Tooltip>
+					<TooltipTrigger asChild>
+						<button
+							aria-label={orchestrator ? `Open ${workspace.name} orchestrator` : `Spawn ${workspace.name} orchestrator`}
+							className={HOVER_ACTION_CLASS}
+							disabled={isSpawning}
+							onClick={() => void openOrchestrator()}
+							type="button"
+						>
+							<OrchestratorIcon aria-hidden="true" />
+						</button>
+					</TooltipTrigger>
+					<TooltipContent>
+						{isSpawning ? "Spawning…" : orchestrator ? "Orchestrator" : "Spawn orchestrator"}
+					</TooltipContent>
+				</Tooltip>
+				<DropdownMenu>
+					<DropdownMenuTrigger asChild>
+						<button aria-label={`Project actions for ${workspace.name}`} className={HOVER_ACTION_CLASS} type="button">
+							<MoreVertical aria-hidden="true" />
+						</button>
+					</DropdownMenuTrigger>
+					<DropdownMenuContent side="right" align="start" className="min-w-44">
+						<DropdownMenuItem onSelect={() => selection.goSettings(workspace.id)}>
+							<Settings aria-hidden="true" />
+							Project settings
+						</DropdownMenuItem>
+						<DropdownMenuSeparator />
+						<DropdownMenuItem
+							className="text-destructive focus:text-destructive [&_svg]:text-destructive"
+							disabled={isRemoving}
+							onSelect={() => void removeProject()}
+						>
+							<Trash2 aria-hidden="true" />
+							Remove project
+						</DropdownMenuItem>
+					</DropdownMenuContent>
+				</DropdownMenu>
+			</div>
 			{removeError && (
 				<span className="sr-only" role="status">
 					{removeError}

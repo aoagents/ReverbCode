@@ -22,6 +22,8 @@ const PERMISSION_MODE_OPTIONS = [
 	{ value: "bypass-permissions", label: "Bypass permissions" },
 ] as const;
 
+const REVIEWER_OPTIONS = ["claude-code"] as const;
+
 const projectQueryKey = (id: string) => ["project", id] as const;
 
 export function ProjectSettingsForm({ projectId }: { projectId: string }) {
@@ -73,6 +75,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 		orchestratorAgent: config.orchestrator?.agent ?? "",
 		model: config.agentConfig?.model ?? "",
 		permissions: config.agentConfig?.permissions ?? "",
+		reviewerHarness: config.reviewers?.[0]?.harness ?? "",
 	});
 	const [savedAt, setSavedAt] = useState<number | null>(null);
 
@@ -91,6 +94,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 					model: form.model || undefined,
 					permissions: form.permissions || undefined,
 				}),
+				reviewers: form.reviewerHarness ? [{ harness: form.reviewerHarness }] : undefined,
 			};
 			const { error } = await apiClient.PUT("/api/v1/projects/{id}/config", {
 				params: { path: { id: projectId } },
@@ -188,6 +192,21 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				</CardContent>
 			</Card>
 
+			<Card>
+				<CardHeader>
+					<CardTitle className="text-[13px]">Reviewers</CardTitle>
+				</CardHeader>
+				<CardContent className="flex flex-col gap-4">
+					<Field label="Default reviewer agent" htmlFor="reviewerHarness">
+						<ReviewerSelect
+							id="reviewerHarness"
+							value={form.reviewerHarness}
+							onChange={(v) => setForm((f) => ({ ...f, reviewerHarness: v }))}
+						/>
+					</Field>
+				</CardContent>
+			</Card>
+
 			<div className="flex items-center gap-3">
 				<Button type="submit" variant="primary" disabled={mutation.isPending}>
 					{mutation.isPending ? "Saving…" : "Save changes"}
@@ -243,6 +262,24 @@ function AgentSelect({ id, value, onChange }: { id: string; value: string; onCha
 				{AGENT_OPTIONS.map((agent) => (
 					<SelectItem key={agent} value={agent}>
 						{agent}
+					</SelectItem>
+				))}
+			</SelectContent>
+		</Select>
+	);
+}
+
+function ReviewerSelect({ id, value, onChange }: { id: string; value: string; onChange: (value: string) => void }) {
+	return (
+		<Select value={value || "__default__"} onValueChange={(v) => onChange(v === "__default__" ? "" : v)}>
+			<SelectTrigger id={id} className="h-8 w-full text-[13px]">
+				<SelectValue />
+			</SelectTrigger>
+			<SelectContent>
+				<SelectItem value="__default__">Project default</SelectItem>
+				{REVIEWER_OPTIONS.map((reviewer) => (
+					<SelectItem key={reviewer} value={reviewer}>
+						{reviewer}
 					</SelectItem>
 				))}
 			</SelectContent>

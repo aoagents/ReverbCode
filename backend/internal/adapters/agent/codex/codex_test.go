@@ -60,8 +60,11 @@ func TestGetLaunchCommandBuildsCrossPlatformArgv(t *testing.T) {
 		"--dangerously-bypass-approvals-and-sandbox",
 	}
 	want = append(want, sessionHookFlags()...)
+	if runtime.GOOS == "windows" {
+		want = append(want, "--no-alt-screen")
+	}
 	want = append(want,
-		"-c", `projects={"`+workspace+`"={trust_level="trusted"}}`,
+		"-c", `projects={`+codexTOMLConfigString(workspace)+`={trust_level="trusted"}}`,
 		"-c", "model_instructions_file="+filepath.Join("tmp", "prompt with spaces.md"),
 		"--", "-fix this",
 	)
@@ -158,7 +161,7 @@ func TestAppendWorkspaceTrustFlagCoversLiteralAndResolvedPaths(t *testing.T) {
 	appendWorkspaceTrustFlag(&cmd, link)
 	want := []string{
 		"-c",
-		`projects={"` + link + `"={trust_level="trusted"},"` + target + `"={trust_level="trusted"}}`,
+		`projects={'` + link + `'={trust_level="trusted"},'` + target + `'={trust_level="trusted"}}`,
 	}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("trust flag\nwant: %#v\n got: %#v", want, cmd)
@@ -166,7 +169,7 @@ func TestAppendWorkspaceTrustFlagCoversLiteralAndResolvedPaths(t *testing.T) {
 
 	cmd = nil
 	appendWorkspaceTrustFlag(&cmd, target)
-	want = []string{"-c", `projects={"` + target + `"={trust_level="trusted"}}`}
+	want = []string{"-c", `projects={'` + target + `'={trust_level="trusted"}}`}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("canonical-path trust flag\nwant: %#v\n got: %#v", want, cmd)
 	}
@@ -415,8 +418,11 @@ func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 		"-c", `approvals_reviewer="auto_review"`,
 	}
 	want = append(want, sessionHookFlags()...)
+	if runtime.GOOS == "windows" {
+		want = append(want, "--no-alt-screen")
+	}
 	want = append(want,
-		"-c", `projects={"`+workspace+`"={trust_level="trusted"}}`,
+		"-c", `projects={`+codexTOMLConfigString(workspace)+`={trust_level="trusted"}}`,
 		"thread-123",
 	)
 	if !reflect.DeepEqual(cmd, want) {
@@ -566,7 +572,7 @@ func TestDoctorLaunchProbesMirrorLaunchFlags(t *testing.T) {
 	for _, want := range []string{
 		"hooks.SessionStart=", "hooks.UserPromptSubmit=", "hooks.PermissionRequest=", "hooks.Stop=",
 		"notice.hide_rate_limit_model_nudge=true",
-		`projects={"`,
+		`projects={`,
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("override probe missing %q in %s", want, joined)

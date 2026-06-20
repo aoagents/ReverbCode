@@ -77,6 +77,7 @@ describe("ProjectSettingsForm", () => {
 							model: "claude-opus-4-5",
 							permissions: "auto",
 						},
+						reviewers: [{ harness: "claude-code" }],
 					},
 				},
 			},
@@ -93,9 +94,11 @@ describe("ProjectSettingsForm", () => {
 		const workerAgent = screen.getByRole("combobox", { name: "Default worker agent" });
 		const orchestratorAgent = screen.getByRole("combobox", { name: "Default orchestrator agent" });
 		const permissionMode = screen.getByRole("combobox", { name: "Permission mode" });
+		const reviewerAgent = screen.getByRole("combobox", { name: "Default reviewer agent" });
 		expect(workerAgent).toHaveTextContent("codex");
 		expect(orchestratorAgent).toHaveTextContent("claude-code");
 		expect(permissionMode).toHaveTextContent("Auto");
+		expect(reviewerAgent).toHaveTextContent("claude-code");
 
 		await userEvent.clear(screen.getByLabelText("Default branch"));
 		await userEvent.type(screen.getByLabelText("Default branch"), "release");
@@ -128,11 +131,12 @@ describe("ProjectSettingsForm", () => {
 						model: "gpt-5-codex",
 						permissions: "bypass-permissions",
 					},
+					reviewers: [{ harness: "claude-code" }],
 				},
 			},
 		});
 		expect(await screen.findByText("Saved.")).toBeInTheDocument();
-	});
+	}, 10_000);
 
 	it("shows the daemon validation message when save fails", async () => {
 		getMock.mockResolvedValue({

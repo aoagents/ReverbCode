@@ -1,36 +1,80 @@
 # ReverbCode
 
-A Go-backed agent orchestration daemon for supervising parallel coding-agent
-sessions, with an `ao` CLI today and an Electron supervisor planned. The Go
-module and packages remain `agent-orchestrator`; "ReverbCode" is the public name.
+The orchestration layer for parallel AI coding agents. ReverbCode is a
+Go-backed daemon that supervises many coding-agent sessions at once, each in
+its own `git worktree`, and routes the feedback they need (CI failures, review
+comments, merge conflicts) back to the right agent automatically. It ships with
+an `ao` CLI and an Electron supervisor that both drive the same daemon over
+loopback.
+
+The Go module and packages remain `agent-orchestrator`; "ReverbCode" is the
+public name.
 
 See [`docs/architecture.md`](docs/architecture.md) for the backend mental model
-and [`AGENTS.md`](AGENTS.md) for the contributor / worker contract.
+and [`AGENTS.md`](AGENTS.md) for the contributor / worker contract. For current
+progress (what's shipped vs. in flight) see [`docs/STATUS.md`](docs/STATUS.md).
 
-## What's shipped today
+## What it does
 
-- Loopback-only HTTP daemon (`backend/internal/httpd`) controlling projects,
-  sessions, orchestrators, and hook callbacks over `127.0.0.1`.
-- `ao` Cobra CLI (`backend/cmd/ao`) — a thin client over the daemon for daemon
-  control, project/session/orchestrator management, and worker spawning.
-- Worker/orchestrator spawn into isolated `git worktree` workspaces, launched
-  inside a `zellij` runtime adapter.
-- Live per-PR observation via the provider-neutral SCM observer
-  (`backend/internal/observe/scm/`): polling loop, ETag guards, semantic
-  diffing, CI/check/review-thread tracking, and lifecycle nudges for CI
-  failures, review feedback, and merge conflicts.
-- A 20+ agent adapter platform under `backend/internal/adapters/agent/`
-  (`claude-code`, `codex`, `cursor`, `opencode`, `aider`, `amp`, `goose`,
-  `copilot`, `grok`, `qwen`, `kimi`, `crush`, `cline`, `droid`, and more),
-  registered through a shared registry with common activity-dispatch / hook
-  utilities.
-- SQLite store (`backend/internal/storage/sqlite/`) with sqlc-generated
-  queries, DB-triggered change-data-capture into `change_log`, and a CDC
-  poller/broadcaster (`backend/internal/cdc/`) feeding in-process subscribers
+- **Agent-agnostic.** A 23-adapter platform under
+  `backend/internal/adapters/agent/` (`claude-code`, `codex`, `cursor`,
+  `opencode`, `aider`, `amp`, `goose`, `copilot`, `grok`, `qwen`, `kimi`,
+  `crush`, `cline`, `droid`, `devin`, `auggie`, `continue`, `kiro`, `kilocode`,
+  and more), registered through a shared registry with common
+  activity-dispatch / hook utilities. The default is set by `AO_AGENT`.
+- **Isolated workspaces.** Worker and orchestrator sessions spawn into their own
+  `git worktree` (`backend/internal/adapters/workspace/gitworktree/`), launched
+  inside a `zellij` runtime adapter (`backend/internal/adapters/runtime/`) so
+  every session has its own attachable terminal.
+- **Live PR observation.** The provider-neutral SCM observer
+  (`backend/internal/observe/scm/`) polls each session's PR with ETag guards and
+  semantic diffing, tracking CI/check runs and review threads, and feeds those
+  facts into the lifecycle manager, which sends the owning agent nudges for CI
+  failures, review feedback, and merge conflicts. GitHub is the implemented
+  provider today.
+- **Durable facts, derived status.** The SQLite store
+  (`backend/internal/storage/sqlite/`) persists a small set of session facts
+  plus PR/check/comment rows; display status is computed at read time, never
+  stored. DB triggers append every user-visible change to `change_log`, and a
+  CDC poller/broadcaster (`backend/internal/cdc/`) feeds in-process subscribers
   and an SSE replay endpoint.
-- Session lifecycle manager + reaper (`backend/internal/lifecycle/`,
-  `backend/internal/observe/reaper/`): runtime/activity/PR facts reduced into
-  the small durable session state, display status derived at read time.
+- **Loopback-only daemon.** The HTTP daemon (`backend/internal/httpd`) controls
+  projects, sessions, orchestrators, and hook callbacks over `127.0.0.1` with no
+  auth, CORS, or TLS by design.
+- **Lifecycle manager + reaper** (`backend/internal/lifecycle/`,
+  `backend/internal/observe/reaper/`) reduce runtime/activity/PR observations
+  into the durable session state and reclaim dead sessions.
+
+## How it works
+
+1. Register a local git repo as a project (`ao project add`).
+2. Spawn a worker session (`ao spawn`), or an orchestrator that fans work out
+   across sessions. Each session gets its own `git worktree` and a `zellij`
+   pane.
+3. The agent develops, tests, and opens a PR from inside its worktree.
+4. The SCM observer watches that PR and routes feedback back to the agent: a CI
+   failure, a requested change, or a merge conflict becomes a nudge to the agent
+   that owns the PR.
+5. You inspect, attach a terminal, and merge from the CLI or the Electron app;
+   human attention is needed only where the loop can't resolve on its own.
+
+## Extensibility
+
+The backend is organized around inbound/outbound port contracts
+(`backend/internal/ports/`) with swappable adapters under
+`backend/internal/adapters/`:
+
+| Port      | Implemented adapters                          |
+| --------- | --------------------------------------------- |
+| Agent     | 23 harnesses (see above)                      |
+| Runtime   | `zellij`                                      |
+| Workspace | `git worktree`                                |
+| SCM       | GitHub                                        |
+| Tracker   | GitHub (adapter present; no runtime loop yet) |
+| Reviewer  | `claude-code`                                 |
+| Notifier  | port defined; no shipped adapter yet          |
+
+See [`docs/STATUS.md`](docs/STATUS.md) for which lanes are live at runtime.
 
 ## Quick start
 
@@ -161,20 +205,10 @@ touching the daemon API surface (`npm run sqlc`, `npm run api`).
 
 ## Status and roadmap
 
-Current `main` ships the CLI surface above, the SCM observer end-to-end
-(issues [#75](https://github.com/aoagents/agent-orchestrator/issues/75),
-[#108](https://github.com/aoagents/agent-orchestrator/issues/108),
-[#109](https://github.com/aoagents/agent-orchestrator/issues/109)), the agent
-adapter platform, and the CDC pipeline with SSE replay. The Tracker observer
-([#112](https://github.com/aoagents/agent-orchestrator/issues/112)) and live
-`pr_*` event consumers ([#110](https://github.com/aoagents/agent-orchestrator/issues/110))
-are in flight. The Electron + React supervisor under `frontend/` is real and
-wired to the daemon over the generated typed client (projects/sessions board,
-session view, terminal pane, pull-requests page); all daemon logic stays in the
-Go backend.
-
-Tracking milestone:
-[`rewrite`](https://github.com/aoagents/agent-orchestrator/milestone/1) on GitHub.
+Progress tracking lives in [`docs/STATUS.md`](docs/STATUS.md): what is shipped
+on `main` today, what is still in flight, and the linked
+[`rewrite`](https://github.com/aoagents/agent-orchestrator/milestone/1)
+milestone on GitHub.
 
 ## Contributing
 

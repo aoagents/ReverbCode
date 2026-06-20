@@ -6,8 +6,11 @@ import "@xterm/xterm/css/xterm.css";
 import "./styles.css";
 import { queryClient } from "./lib/query-client";
 import { createAppRouter } from "./router";
+import { TelemetryBoundary } from "./components/TelemetryBoundary";
+import { initTelemetry } from "./lib/telemetry";
 
 const router = createAppRouter(queryClient);
+void initTelemetry();
 
 declare module "@tanstack/react-router" {
 	interface Register {
@@ -17,8 +20,10 @@ declare module "@tanstack/react-router" {
 
 createRoot(document.getElementById("root") as HTMLElement).render(
 	<React.StrictMode>
-		<QueryClientProvider client={queryClient}>
-			<RouterProvider router={router} />
-		</QueryClientProvider>
+		<TelemetryBoundary>
+			<QueryClientProvider client={queryClient}>
+				<RouterProvider router={router} />
+			</QueryClientProvider>
+		</TelemetryBoundary>
 	</React.StrictMode>,
 );

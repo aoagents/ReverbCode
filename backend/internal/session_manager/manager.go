@@ -616,9 +616,10 @@ func defaultSessionBranch(id domain.SessionID, kind domain.SessionKind, prefix s
 		return "ao/" + prefix + "-orchestrator"
 	}
 	// A fresh, unique branch per worker session: gitworktree can't add a worktree
-	// on a branch already checked out elsewhere (e.g. main), so default to one
-	// derived from the assigned session id.
-	return "ao/" + string(id)
+	// on a branch already checked out elsewhere (e.g. main). Put the root work
+	// branch under a session namespace so sibling PR branches such as
+	// ao/<session>/<topic> remain valid Git refs.
+	return "ao/" + string(id) + "/root"
 }
 
 func buildPrompt(cfg ports.SpawnConfig) string {
@@ -699,16 +700,17 @@ Only ping the orchestrator for true blockers, cross-session coordination, or dec
 
 // workerMultiPRPrompt explains the branch convention AO uses to attribute pull
 // requests to this session. A worker may open several PRs in one session: AO
-// tracks every open PR whose source branch is the session's own branch or a
-// descendant of it. Stacking a PR on top of another therefore only requires
-// branching off with a `<session-branch>/<topic>` name; PRs on unrelated
-// branches are attributed to whichever session owns their branch prefix.
+// tracks every open PR whose source branch is the session's own branch or lives
+// in the same session namespace. Stacking a PR on top of another therefore only
+// requires branching off with a `<session-namespace>/<topic>` name; PRs on
+// unrelated branches are attributed to whichever session owns their namespace.
 func workerMultiPRPrompt() string {
 	return `## Pull requests for this session
 
-You can open more than one pull request from this session. AO attributes a PR to you when its source branch is your session's working branch or a branch descended from it (a "/"-separated child like ` + "`your-branch/topic`" + `).
+You can open more than one pull request from this session. AO attributes a PR to you when its source branch is your session's working branch or another branch in the same session namespace.
 
-- For independent PRs, create each source branch as a child of your session branch (` + "`your-branch/<topic>`" + `) so it stays in this session's namespace, then open the PR targeting your base branch as usual. The PR can target the base branch; only the source branch needs to stay under your session branch for AO to track it.
+- If your current branch ends in ` + "`/root`" + `, create independent PR branches as siblings under the same namespace, for example ` + "`<namespace>/<topic>`" + ` from ` + "`<namespace>/root`" + `. Do not create ` + "`<namespace>/root/<topic>`" + `.
+- Otherwise, create each source branch as a child of your session branch (` + "`your-branch/<topic>`" + `) so it stays in this session's namespace, then open the PR targeting your base branch as usual. The PR can target the base branch; only the source branch needs to stay under your session namespace for AO to track it.
 - To stack a PR on top of another (so it merges after its parent), create the child branch from the parent branch and name it ` + "`<parent-branch>/<topic>`" + `, then target the parent branch in the PR. AO recognizes the stack from the branch relationship and will only nudge you to resolve conflicts on the bottom-most PR.
 
 Keep branch names within your session's branch namespace so AO can track every PR you open.`

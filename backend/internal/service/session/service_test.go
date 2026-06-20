@@ -13,6 +13,13 @@ import (
 	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
 )
 
+type fakeTelemetrySink struct{ events []ports.TelemetryEvent }
+
+func (f *fakeTelemetrySink) Emit(_ context.Context, ev ports.TelemetryEvent) {
+	f.events = append(f.events, ev)
+}
+func (f *fakeTelemetrySink) Close(context.Context) error { return nil }
+
 type fakeStore struct {
 	sessions map[domain.SessionID]domain.SessionRecord
 	pr       map[domain.SessionID]domain.PRFacts
@@ -139,14 +146,18 @@ type fakeCommander struct {
 	cleanupProjects []domain.ProjectID
 	killErr         error
 	cleanupErr      error
+	spawnErr        error
 	spawned         bool
 	killsAtSpawn    int
 }
 
 func (f *fakeCommander) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.SessionRecord, error) {
+	if f.spawnErr != nil {
+		return domain.SessionRecord{}, f.spawnErr
+	}
 	f.spawned = true
 	f.killsAtSpawn = len(f.killed)
-	return domain.SessionRecord{ID: "mer-9", ProjectID: cfg.ProjectID, Kind: cfg.Kind}, nil
+	return domain.SessionRecord{ID: "mer-9", ProjectID: cfg.ProjectID, Kind: cfg.Kind, Harness: cfg.Harness}, nil
 }
 func (f *fakeCommander) Restore(context.Context, domain.SessionID) (domain.SessionRecord, error) {
 	return domain.SessionRecord{}, nil
@@ -265,6 +276,127 @@ func TestSpawnUnknownProjectReturns404(t *testing.T) {
 	}
 	if fc.spawned {
 		t.Fatal("manager.Spawn must NOT be invoked for an unknown project")
+	}
+}
+
+func TestSpawnEmitsFirstSessionOnboardingAndDuration(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", RegisteredAt: time.Unix(100, 0).UTC()}
+	sink := &fakeTelemetrySink{}
+	fc := &fakeCommander{}
+	svc := NewWithDeps(Deps{
+		Manager:   fc,
+		Store:     st,
+		Telemetry: sink,
+		Clock:     func() time.Time { return time.Unix(102, 0).UTC() },
+	})
+
+	if _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer"}); err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if len(sink.events) != 2 {
+		t.Fatalf("events = %#v, want spawned + first_session", sink.events)
+	}
+	if sink.events[0].Name != "ao.session.spawned" || sink.events[1].Name != "ao.onboarding.first_session_spawned" {
+		t.Fatalf("event names = %#v", []string{sink.events[0].Name, sink.events[1].Name})
+	}
+	if got := sink.events[0].Payload["duration_ms"]; got != int64(0) {
+		t.Fatalf("spawn duration_ms = %#v, want 0 with fixed clock", got)
+	}
+	if got := sink.events[1].Payload["since_first_project_ms"]; got != int64(2000) {
+		t.Fatalf("since_first_project_ms = %#v, want 2000", got)
+	}
+}
+
+func TestSpawnFailedEmitsDuration(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	sink := &fakeTelemetrySink{}
+	fc := &fakeCommander{spawnErr: errors.New("boom")}
+	now := time.Unix(200, 0).UTC()
+	svc := NewWithDeps(Deps{
+		Manager:   fc,
+		Store:     st,
+		Telemetry: sink,
+		Clock: func() time.Time {
+			v := now
+			now = now.Add(1500 * time.Millisecond)
+			return v
+		},
+	})
+
+	if _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer"}); err == nil {
+		t.Fatal("Spawn should fail")
+	}
+	if len(sink.events) != 1 || sink.events[0].Name != "ao.session.spawn_failed" {
+		t.Fatalf("events = %#v, want one spawn_failed", sink.events)
+	}
+	if got := sink.events[0].Payload["duration_ms"]; got != int64(1500) {
+		t.Fatalf("spawn_failed duration_ms = %#v, want 1500", got)
+	}
+	if got := sink.events[0].Payload["error_kind"]; got != "internal" {
+		t.Fatalf("spawn_failed error_kind = %#v, want internal", got)
+	}
+}
+
+func TestSpawnEmitsTelemetryOnSuccess(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	st.sessions["old-1"] = domain.SessionRecord{ID: "old-1", ProjectID: "other"}
+	fc := &fakeCommander{}
+	ts := &fakeTelemetrySink{}
+	svc := NewWithDeps(Deps{Manager: fc, Store: st, Telemetry: ts, Clock: func() time.Time { return time.Unix(1700000000, 0).UTC() }})
+
+	_, err := svc.Spawn(context.Background(), ports.SpawnConfig{
+		ProjectID: "mer",
+		Kind:      domain.KindWorker,
+		Harness:   domain.HarnessCodex,
+	})
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if len(ts.events) != 1 {
+		t.Fatalf("telemetry events = %d, want 1", len(ts.events))
+	}
+	ev := ts.events[0]
+	if ev.Name != "ao.session.spawned" || ev.Source != "session_service" {
+		t.Fatalf("event = %+v", ev)
+	}
+	if ev.ProjectID == nil || *ev.ProjectID != "mer" || ev.SessionID == nil || *ev.SessionID != "mer-9" {
+		t.Fatalf("event ids = %+v", ev)
+	}
+}
+
+func TestSpawnEmitsTelemetryOnFailure(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	fc := &fakeCommander{spawnErr: errors.New("boom")}
+	ts := &fakeTelemetrySink{}
+	svc := NewWithDeps(Deps{Manager: fc, Store: st, Telemetry: ts, Clock: func() time.Time { return time.Unix(1700000000, 0).UTC() }})
+
+	_, err := svc.Spawn(context.Background(), ports.SpawnConfig{
+		ProjectID: "mer",
+		Kind:      domain.KindWorker,
+		Harness:   domain.HarnessCodex,
+	})
+	if err == nil {
+		t.Fatal("Spawn error = nil, want failure")
+	}
+	if len(ts.events) != 1 {
+		t.Fatalf("telemetry events = %d, want 1", len(ts.events))
+	}
+	ev := ts.events[0]
+	if ev.Name != "ao.session.spawn_failed" || ev.Source != "session_service" || ev.Level != ports.TelemetryLevelError {
+		t.Fatalf("event = %+v", ev)
+	}
+	if ev.ProjectID == nil || *ev.ProjectID != "mer" || ev.SessionID != nil {
+		t.Fatalf("event ids = %+v", ev)
+	}
+	if got := ev.Payload["error_kind"]; got != "internal" {
+		t.Fatalf("event payload error_kind = %#v, want internal", got)
+	}
+	if _, ok := ev.Payload["error"]; ok {
+		t.Fatalf("event payload leaked raw error: %+v", ev.Payload)
 	}
 }
 

@@ -1,0 +1,108 @@
+package httpd
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/go-chi/chi/v5"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/config"
+)
+
+func TestCLIInvokedRouteEmitsTelemetry(t *testing.T) {
+	sink := &captureSink{}
+	r := NewRouterWithControl(config.Config{}, discardLogger(), nil, APIDeps{Telemetry: sink}, ControlDeps{})
+
+	req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/internal/telemetry/cli-invoked", strings.NewReader(`{"command":"status","commandPath":"ao status"}`))
+	req.Host = "127.0.0.1:3001"
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202", rec.Code)
+	}
+	if len(sink.events) != 2 {
+		t.Fatalf("events = %d, want 2", len(sink.events))
+	}
+	if sink.events[0].Name != "ao.cli.invoked" {
+		t.Fatalf("event name = %q, want ao.cli.invoked", sink.events[0].Name)
+	}
+	if got := sink.events[0].Payload["command_path"]; got != "ao status" {
+		t.Fatalf("command_path = %#v, want ao status", got)
+	}
+	if sink.events[1].Name != "ao.app.active" {
+		t.Fatalf("second event name = %q, want ao.app.active", sink.events[1].Name)
+	}
+	if got := sink.events[1].Payload["channel"]; got != "cli" {
+		t.Fatalf("channel = %#v, want cli", got)
+	}
+}
+
+func TestCLIInvokedRouteRequiresLoopback(t *testing.T) {
+	sink := &captureSink{}
+	r := NewRouterWithControl(config.Config{}, discardLogger(), nil, APIDeps{Telemetry: sink}, ControlDeps{})
+
+	req := httptest.NewRequest(http.MethodPost, "http://evil.example/internal/telemetry/cli-invoked", strings.NewReader(`{"command":"status","commandPath":"ao status"}`))
+	req.Host = "evil.example"
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", rec.Code)
+	}
+	if len(sink.events) != 0 {
+		t.Fatalf("events = %d, want 0", len(sink.events))
+	}
+}
+
+func TestCLIUsageErrorRouteEmitsTelemetry(t *testing.T) {
+	sink := &captureSink{}
+	r := chi.NewRouter()
+	mountTelemetry(r, sink)
+
+	req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/internal/telemetry/cli-usage-error", strings.NewReader(`{"command":"status","commandPath":"ao status","error":"too many args"}`))
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202", rec.Code)
+	}
+	if len(sink.events) != 1 || sink.events[0].Name != "ao.cli.usage_errors" {
+		t.Fatalf("events = %#v, want one ao.cli.usage_errors event", sink.events)
+	}
+}
+
+func TestRecoverTelemetryEmitsPanicEvent(t *testing.T) {
+	sink := &captureSink{}
+	r := NewRouterWithControl(config.Config{}, discardLogger(), nil, APIDeps{Telemetry: sink}, ControlDeps{})
+	r.Get("/panic", func(http.ResponseWriter, *http.Request) {
+		panic("boom")
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/panic", nil)
+	req.Host = "127.0.0.1:3001"
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", rec.Code)
+	}
+	var sawPanic, saw5xx bool
+	for _, ev := range sink.events {
+		switch ev.Name {
+		case "ao.daemon.panic":
+			sawPanic = true
+		case "ao.http.5xx":
+			saw5xx = true
+		}
+	}
+	if !sawPanic {
+		t.Fatalf("events = %#v, want ao.daemon.panic", sink.events)
+	}
+	if !saw5xx {
+		t.Fatalf("events = %#v, want ao.http.5xx after recovery", sink.events)
+	}
+}

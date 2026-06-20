@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { DaemonStatus } from "./shared/daemon-status";
+import type { TelemetryBootstrap } from "./shared/telemetry";
 
 const api = {
 	app: {
@@ -17,6 +18,9 @@ const api = {
 				ipcRenderer.off("daemon:status", wrapped);
 			};
 		},
+	},
+	telemetry: {
+		getBootstrap: () => ipcRenderer.invoke("telemetry:getBootstrap") as Promise<TelemetryBootstrap | null>,
 	},
 };
 
