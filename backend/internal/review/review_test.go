@@ -182,7 +182,9 @@ func TestTriggerSpawnsNewReviewerAndRecordsRunAfterLaunch(t *testing.T) {
 
 func TestTriggerConcurrentSameWorkerSpawnsOnce(t *testing.T) {
 	store := &fakeStore{}
-	launcher := &fakeLauncher{handle: "review-mer-1"}
+	// The winner's freshly-spawned reviewer is alive, so losers that re-read its
+	// Running run short-circuit to reuse instead of re-spawning.
+	launcher := &fakeLauncher{handle: "review-mer-1", alive: true}
 	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
 
 	const n = 8
@@ -246,7 +248,7 @@ func TestTriggerIsIdempotentForSameCommit(t *testing.T) {
 		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", ReviewerHandleID: "review-mer-1"},
 		runs:   []domain.ReviewRun{{ID: "run-1", SessionID: "mer-1", TargetSHA: "sha1", Status: domain.ReviewRunRunning}},
 	}
-	launcher := &fakeLauncher{}
+	launcher := &fakeLauncher{alive: true}
 	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
 
 	res, err := eng.Trigger(context.Background(), "mer-1")
@@ -261,6 +263,39 @@ func TestTriggerIsIdempotentForSameCommit(t *testing.T) {
 	}
 	if len(store.runs) != 1 {
 		t.Fatalf("should not insert another run: %+v", store.runs)
+	}
+}
+
+func TestTriggerMarksStaleRunningPassFailedAndRetries(t *testing.T) {
+	// A Running pass whose reviewer process died (terminal closed mid-run) must
+	// not permanently short-circuit retries with "already up to date" (#342):
+	// the stale row is marked Failed and a fresh review is spawned.
+	store := &fakeStore{
+		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", ReviewerHandleID: "review-mer-1"},
+		runs:   []domain.ReviewRun{{ID: "run-stale", ReviewID: "rev-1", SessionID: "mer-1", TargetSHA: "sha1", Status: domain.ReviewRunRunning}},
+	}
+	launcher := &fakeLauncher{alive: false, handle: "review-mer-1"}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
+
+	res, err := eng.Trigger(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatalf("Trigger: %v", err)
+	}
+	if !res.Created || res.Run.ID == "run-stale" {
+		t.Fatalf("expected a fresh run, got %+v", res)
+	}
+	if !launcher.spawned {
+		t.Fatalf("expected a fresh reviewer spawn: %+v", launcher)
+	}
+	if len(store.runs) != 2 {
+		t.Fatalf("expected the stale run plus a new one: %+v", store.runs)
+	}
+	stale := store.runs[0]
+	if stale.ID != "run-stale" || stale.Status != domain.ReviewRunFailed || stale.Verdict != domain.VerdictNone {
+		t.Fatalf("stale run not marked failed: %+v", stale)
+	}
+	if !strings.Contains(stale.Body, "no longer alive") {
+		t.Fatalf("stale run body = %q, want liveness reason", stale.Body)
 	}
 }
 
