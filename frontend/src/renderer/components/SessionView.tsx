@@ -24,10 +24,10 @@ type SessionViewProps = {
 	sessionId: string;
 };
 
-	// The session detail screen: terminal + git rail, under the shell-owned
-	// ShellTopbar. Rendered by both the project-scoped and cross-project session
-	// routes. TerminalPane owns the terminal lifetime and remounts by terminal
-	// handle so each session gets a clean xterm/mux binding.
+// The session detail screen: terminal + git rail, under the shell-owned
+// ShellTopbar. Rendered by both the project-scoped and cross-project session
+// routes. TerminalPane owns the terminal lifetime and remounts by terminal
+// handle so each session gets a clean xterm/mux binding.
 //
 // The split is shadcn's resizable (react-resizable-panels v4) with a fully
 // collapsible inspector: the panel is `collapsible` and driven to 0% via the

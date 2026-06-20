@@ -63,19 +63,13 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget }: Termi
 	const handleId = attachSession?.terminalHandleId;
 	const hadAttachmentRef = useRef(false);
 
-	const handleReady = useCallback(
-		(handle: AttachableTerminal) => {
-			setTerminal(handle);
-		},
-		[],
-	);
-	const handleInitError = useCallback(
-		(err: unknown) => {
-			console.error("xterm failed to initialize", err);
-			setInitFailed(true);
-		},
-		[],
-	);
+	const handleReady = useCallback((handle: AttachableTerminal) => {
+		setTerminal(handle);
+	}, []);
+	const handleInitError = useCallback((err: unknown) => {
+		console.error("xterm failed to initialize", err);
+		setInitFailed(true);
+	}, []);
 
 	useEffect(() => {
 		if (!terminal) return;
