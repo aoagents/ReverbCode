@@ -8,13 +8,13 @@ const {
 	subscribeApiBaseUrlMock,
 	unsubscribeBaseUrlMock,
 } = vi.hoisted(() => ({
-		onStatusMock: vi.fn(),
-		removeStatusMock: vi.fn(),
-		getApiBaseUrlMock: vi.fn(() => "http://127.0.0.1:3001"),
-		hasTrustedApiBaseUrlMock: vi.fn(() => true),
-		subscribeApiBaseUrlMock: vi.fn(),
-		unsubscribeBaseUrlMock: vi.fn(),
-	}));
+	onStatusMock: vi.fn(),
+	removeStatusMock: vi.fn(),
+	getApiBaseUrlMock: vi.fn(() => "http://127.0.0.1:3001"),
+	hasTrustedApiBaseUrlMock: vi.fn(() => true),
+	subscribeApiBaseUrlMock: vi.fn(),
+	unsubscribeBaseUrlMock: vi.fn(),
+}));
 
 vi.mock("./bridge", () => ({
 	aoBridge: {
