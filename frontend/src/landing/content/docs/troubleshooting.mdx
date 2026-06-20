@@ -21,8 +21,8 @@ Covers: install health, plugin resolution, notifier connectivity, stale temp fil
   <Accordion title="`ao: command not found`">
     The npm global bin isn't on your PATH. Find it with `npm config get prefix` and add `<prefix>/bin` to your shell's PATH.
   </Accordion>
-  <Accordion title="`tmux: command not found` (on Windows)">
-    Expected. Use `runtime: process` in your config. See [Platforms](/docs/platforms#windows).
+  <Accordion title="`zellij: command not found`">
+    Install `zellij` 0.44.3 or newer and make sure it is on `PATH`. The current Go rewrite does not wire `runtime: process`.
   </Accordion>
   <Accordion title="`gh: authentication required`">
     Run `gh auth login`. AO uses `gh` for every GitHub interaction.

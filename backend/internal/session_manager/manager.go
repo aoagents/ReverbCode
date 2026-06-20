@@ -229,19 +229,19 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	// post-create commands (e.g. `pnpm install`) before the agent launches.
 	if err := m.provisionWorkspace(ctx, project, ws.Path); err != nil {
 		_ = m.workspace.Destroy(ctx, ws)
-		m.markSpawnFailedTerminated(ctx, id)
+		m.rollbackSpawnSeedRow(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: provision: %w", id, err)
 	}
 
 	agent, ok := m.agents.Agent(cfg.Harness)
 	if !ok {
 		_ = m.workspace.Destroy(ctx, ws)
-		m.markSpawnFailedTerminated(ctx, id)
+		m.rollbackSpawnSeedRow(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: no agent adapter for harness %q", id, cfg.Harness)
 	}
 	if err := m.prepareWorkspace(ctx, agent, id, ws.Path); err != nil {
 		_ = m.workspace.Destroy(ctx, ws)
-		m.markSpawnFailedTerminated(ctx, id)
+		m.rollbackSpawnSeedRow(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: %w", id, err)
 	}
 	agentConfig := effectiveAgentConfig(cfg.Kind, project.Config)
@@ -256,7 +256,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	})
 	if err != nil {
 		_ = m.workspace.Destroy(ctx, ws)
-		m.markSpawnFailedTerminated(ctx, id)
+		m.rollbackSpawnSeedRow(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: launch command: %w", id, err)
 	}
 	// Pre-flight: confirm argv[0] actually exists on PATH (or as an absolute
@@ -265,7 +265,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	// unresolved binary would leak through as a "live" session that never ran.
 	if err := m.validateAgentBinary(argv); err != nil {
 		_ = m.workspace.Destroy(ctx, ws)
-		m.markSpawnFailedTerminated(ctx, id)
+		m.rollbackSpawnSeedRow(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: %w", id, err)
 	}
 	handle, err := m.runtime.Create(ctx, ports.RuntimeConfig{
@@ -276,7 +276,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	})
 	if err != nil {
 		_ = m.workspace.Destroy(ctx, ws)
-		m.markSpawnFailedTerminated(ctx, id)
+		m.rollbackSpawnSeedRow(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: runtime: %w", id, err)
 	}
 

@@ -13,33 +13,33 @@ The platform differences come from the tools used to run and attach to long-live
 	macos="full"
 	linux="full"
 	windows="partial"
-	note={<>Windows support is actively improving. Use the process runtime instead of tmux.</>}
+	note={<>Windows support is actively improving. The current Go rewrite requires zellij 0.44.3+ on PATH.</>}
 />
 
 ## Recommended Setup
 
-| Platform               | Runtime             | Notifications                      | Notes                                                                            |
-| ---------------------- | ------------------- | ---------------------------------- | -------------------------------------------------------------------------------- |
-| macOS                  | `tmux`              | `desktop`, Slack, Discord, webhook | Best local experience. iTerm2 attach support is macOS-only.                      |
-| Linux                  | `tmux`              | `desktop`, Slack, Discord, webhook | Best server and workstation setup. Desktop notifications need `notify-send`.     |
-| Windows                | `process`           | Slack, Discord, webhook            | Native tmux and iTerm2 are unavailable. Windows support is in progress.          |
-| Container or remote VM | `process` or `tmux` | Slack, Discord, webhook            | Use persistent storage for AO data and protect the dashboard with your own auth. |
+| Platform               | Runtime  | Notifications                      | Notes                                                                            |
+| ---------------------- | -------- | ---------------------------------- | -------------------------------------------------------------------------------- |
+| macOS                  | `zellij` | `desktop`, Slack, Discord, webhook | Current Go runtime. iTerm2 attach support is macOS-only.                         |
+| Linux                  | `zellij` | `desktop`, Slack, Discord, webhook | Current Go runtime. Desktop notifications need `notify-send`.                    |
+| Windows                | `zellij` | Slack, Discord, webhook            | `zellij` 0.44.3+ must be on `PATH`. Windows support is in progress.              |
+| Container or remote VM | `zellij` | Slack, Discord, webhook            | Use persistent storage for AO data and protect the dashboard with your own auth. |
 
 ## macOS
 
 macOS is the default local development target.
 
-Install tmux before using the default runtime:
+Install zellij before using AO:
 
 ```bash
-brew install tmux
+brew install zellij
 ```
 
 Recommended config:
 
 ```yaml title="agent-orchestrator.yaml"
 defaults:
-  runtime: tmux
+  runtime: zellij
   notifiers:
     - desktop
 ```
@@ -48,7 +48,7 @@ What works well on macOS:
 
 | Capability                                | Status    |
 | ----------------------------------------- | --------- |
-| tmux-backed worker sessions               | Supported |
+| zellij-backed worker sessions             | Supported |
 | Browser dashboard terminal                | Supported |
 | iTerm2 attach/open helpers                | Supported |
 | Desktop notifications                     | Supported |
@@ -63,45 +63,45 @@ What works well on macOS:
 
 Linux is a good fit for local workstations, remote development machines, and always-on hosts.
 
-Install tmux with your distribution package manager:
+Install zellij with your distribution package manager:
 
 ```bash
-sudo apt install tmux
+sudo apt install zellij
 ```
 
 Recommended config:
 
 ```yaml title="agent-orchestrator.yaml"
 defaults:
-  runtime: tmux
+  runtime: zellij
   notifiers:
     - desktop
 ```
 
 What to know:
 
-| Capability                  | Status                                                      |
-| --------------------------- | ----------------------------------------------------------- |
-| tmux-backed worker sessions | Supported                                                   |
-| Browser dashboard terminal  | Supported                                                   |
-| iTerm2 attach/open helpers  | Not available                                               |
-| Desktop notifications       | Supported when `notify-send` is installed                   |
-| Remote dashboard access     | Supported through port forwarding, Tailscale, or your proxy |
+| Capability                    | Status                                                      |
+| ----------------------------- | ----------------------------------------------------------- |
+| zellij-backed worker sessions | Supported                                                   |
+| Browser dashboard terminal    | Supported                                                   |
+| iTerm2 attach/open helpers    | Not available                                               |
+| Desktop notifications         | Supported when `notify-send` is installed                   |
+| Remote dashboard access       | Supported through port forwarding, Tailscale, or your proxy |
 
 If you are running AO on a headless Linux host, prefer Slack, Discord, or webhook notifications over desktop notifications.
 
 ## Windows
 
 <Callout type="warn" title="Windows support is in progress">
-	The native Windows path uses `runtime: process`. The core spawn and PR workflow is available, but tmux-specific
-	workflows and iTerm2 helpers do not apply.
+	The current Go rewrite requires `zellij` 0.44.3+ on `PATH`. `runtime: process` is not currently wired, so setting it
+	will not enable a Windows-specific process runtime.
 </Callout>
 
 Recommended config:
 
 ```yaml title="agent-orchestrator.yaml"
 defaults:
-  runtime: process
+  runtime: zellij
   notifiers:
     - slack
 ```
@@ -111,19 +111,19 @@ What works:
 | Capability                                                | Status                                                  |
 | --------------------------------------------------------- | ------------------------------------------------------- |
 | `ao start`, `ao stop`, `ao dashboard`                     | Supported                                               |
-| `ao spawn` and `ao spawn --prompt`                        | Supported through the process runtime                   |
+| `ao spawn` and `ao spawn --prompt`                        | Supported when zellij is installed                      |
 | GitHub, GitLab, and Linear tracker/SCM integrations       | Supported when their CLIs or credentials are configured |
 | Browser dashboard terminal                                | Supported through the direct PTY server                 |
 | Slack, Discord, webhook, Composio, and OpenClaw notifiers | Supported                                               |
 
 What is limited:
 
-| Capability                  | Status                 | Use instead                                    |
-| --------------------------- | ---------------------- | ---------------------------------------------- |
-| `runtime: tmux`             | Not available natively | `runtime: process`                             |
-| iTerm2 terminal integration | Not available          | Browser dashboard terminal                     |
-| Desktop notifier            | No-op on Windows       | Slack, Discord, webhook, Composio, or OpenClaw |
-| tmux attach commands        | Not available          | Dashboard terminal and AO session commands     |
+| Capability                  | Status              | Use instead                                    |
+| --------------------------- | ------------------- | ---------------------------------------------- |
+| `runtime: process`          | Not currently wired | Install zellij 0.44.3+ on `PATH`               |
+| iTerm2 terminal integration | Not available       | Browser dashboard terminal                     |
+| Desktop notifier            | No-op on Windows    | Slack, Discord, webhook, Composio, or OpenClaw |
+| tmux attach commands        | Not available       | Dashboard terminal and AO session commands     |
 
 Use PowerShell or Git Bash for normal CLI commands. If a command behaves differently because of shell quoting, put longer instructions in a file and send them with `ao send --file`.
 
@@ -135,7 +135,7 @@ Recommended config for containers:
 
 ```yaml title="agent-orchestrator.yaml"
 defaults:
-  runtime: process
+  runtime: zellij
   notifiers:
     - webhook
 ```
@@ -145,13 +145,12 @@ Operational notes:
 - Mount or preserve AO's data directory so session metadata survives restarts.
 - Forward the dashboard port, usually `3000`, only to trusted networks.
 - Prefer network notifiers over desktop notifications.
-- Use `tmux` only if it is installed and you want attachable terminal sessions inside the host.
+- Install `zellij` 0.44.3+ on `PATH`; the process runtime is not currently wired.
 
 ## Choosing A Runtime
 
-| Runtime   | Best for                                                                  | Tradeoff                                            |
-| --------- | ------------------------------------------------------------------------- | --------------------------------------------------- |
-| `tmux`    | macOS/Linux machines where you want durable, attachable terminal sessions | Requires tmux and does not work natively on Windows |
-| `process` | Windows, containers, and simpler process-managed environments             | Less of the workflow is tmux-attachable             |
+| Runtime  | Best for                                        | Tradeoff                                        |
+| -------- | ----------------------------------------------- | ----------------------------------------------- |
+| `zellij` | Current Go rewrite on macOS, Linux, and Windows | Requires zellij 0.44.3+ to be installed on PATH |
 
 Start with the recommended runtime for your OS. Change it only when the default runtime does not match where AO is running.

@@ -52,7 +52,7 @@ AO is built from plugins. The default setup works out of the box for common GitH
 | Plugin slot | What it controls                  | Examples                                    |
 | ----------- | --------------------------------- | ------------------------------------------- |
 | Agent       | Which coding tool writes changes  | Claude Code, Codex, Cursor, Aider, OpenCode |
-| Runtime     | How the agent process runs        | tmux, child process                         |
+| Runtime     | How the agent process runs        | zellij                                      |
 | Workspace   | Where code is checked out         | git worktree, full clone                    |
 | Tracker     | Where issues come from            | GitHub, GitLab, Linear                      |
 | SCM         | How PRs, reviews, and CI are read | GitHub, GitLab                              |
@@ -68,9 +68,8 @@ Most users start with the defaults and only edit `agent-orchestrator.yaml` when 
 	windows="partial"
 	note={
 		<>
-			Windows support is actively improving. Use the process runtime instead of tmux by setting{" "}
-			<code>defaults.runtime: process</code> in <code>agent-orchestrator.yaml</code>. See{" "}
-			<a href="/docs/platforms">Platforms</a> for details.
+			Windows support is actively improving. The current Go rewrite requires <code>zellij</code> 0.44.3+ on{" "}
+			<code>PATH</code>. See <a href="/docs/platforms">Platforms</a> for details.
 		</>
 	}
 />
