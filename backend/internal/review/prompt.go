@@ -21,19 +21,21 @@ Post your review on the pull request using the available review tooling (request
 	prompt = fmt.Sprintf(`Review pull request %s (head commit %s).
 
 Do these steps in order:
-1. Post your review on the pull request with `+"`gh`"+`, with inline comments for specific findings:
-   - If changes are needed, request changes.
-   - If it is ready, approve it. GitHub does not let you approve a PR you opened — if the approval is rejected because you are the PR author, post the same review as a regular comment instead (a COMMENT-event review whose body states it is an approval).
-2. Capture the id of the review you just posted so AO can tell the worker exactly which review to address. `+"`gh pr review`"+` prints no id, so read it back — review ids increase over time, so the highest id is the one you just posted:
+1. Post your review on the pull request and capture its id in one call. Post with `+"`gh api`"+` rather than `+"`gh pr review`"+`: it is the only way to attach inline comments, and its response carries the created review's id, so AO can tell the worker exactly which review to address.
 
-    gh api repos/{owner}/{repo}/pulls/{number}/reviews --jq 'map(.id) | max // empty'
+    gh api --method POST repos/{owner}/{repo}/pulls/{number}/reviews \
+      -f event=REQUEST_CHANGES -f body="<summary>" \
+      -f 'comments[][path]=<file>' -F 'comments[][line]=<n>' -f 'comments[][body]=<finding>' \
+      --jq '.id'
 
-   substituting the PR's owner/repo/number. This prints nothing if the post did not land; if so, leave the id empty.
-3. Write your full review to review.md and record the result with AO by running exactly:
+   - Substitute the PR's owner/repo/number. Repeat the three comments[][...] fields once per inline finding; drop them for a review with no inline comments.
+   - To approve, use event=APPROVE. GitHub does not let you approve a PR you opened — if that fails because you are the author, retry with event=COMMENT and a body stating it is an approval.
+   - The printed number is the review id. If the call fails on the provider, leave the id empty.
+2. Write your full review to review.md and record the result with AO by running exactly:
 
-    ao review submit --session %s --run %s --verdict <approved|changes_requested> --body review.md --review-id <id-from-step-2>
+    ao review submit --session %s --run %s --verdict <approved|changes_requested> --body review.md --review-id <id-from-step-1>
 
-Only if step 1 genuinely fails on the provider, still run step 3 (without --review-id) so the result is recorded.`,
+Only if step 1 genuinely fails on the provider, still run step 2 (without --review-id) so the result is recorded.`,
 		spec.PRURL, spec.TargetSHA, spec.WorkerID, spec.RunID)
 	return prompt, systemPrompt
 }
