@@ -21,6 +21,7 @@ app.setName("Agent Orchestrator");
 
 let mainWindow: BrowserWindow | null = null;
 let daemonProcess: ChildProcessWithoutNullStreams | null = null;
+let daemonStoppingProcess: ChildProcessWithoutNullStreams | null = null;
 let daemonStartPromise: Promise<DaemonStatus> | null = null;
 let daemonStartEpoch = 0;
 let daemonStatus: DaemonStatus = { state: "stopped" };
@@ -415,7 +416,7 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 	};
 
 	const reportBoundPort = (port: number) => {
-		if (portConfirmed || daemonProcess !== child) return;
+		if (portConfirmed || daemonProcess !== child || daemonStoppingProcess === child) return;
 		portConfirmed = true;
 		stopDiscovery();
 		setDaemonStatus({ state: "ready", port });
@@ -456,7 +457,7 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 	// Last resort: neither source confirmed (e.g. an older daemon build). Report
 	// the configured port so the renderer is not stuck on "starting" forever.
 	fallbackTimer = setTimeout(() => {
-		if (portConfirmed || daemonProcess !== child) return;
+		if (portConfirmed || daemonProcess !== child || daemonStoppingProcess === child) return;
 		stopDiscovery();
 		setDaemonStatus({
 			state: "ready",
@@ -469,6 +470,7 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		stopDiscovery();
 		if (daemonProcess !== child) return;
 		daemonProcess = null;
+		if (daemonStoppingProcess === child) daemonStoppingProcess = null;
 		setDaemonStatus({ state: "error", message: error.message });
 	});
 
@@ -476,6 +478,7 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		stopDiscovery();
 		if (daemonProcess !== child) return;
 		daemonProcess = null;
+		if (daemonStoppingProcess === child) daemonStoppingProcess = null;
 		setDaemonStatus({
 			state: "stopped",
 			message: signal ? `Daemon exited with ${signal}` : `Daemon exited with code ${code ?? "unknown"}`,
@@ -506,6 +509,7 @@ function stopDaemon(): DaemonStatus {
 		return daemonStatus;
 	}
 
+	daemonStoppingProcess = daemonProcess;
 	killDaemon(daemonProcess);
 	setDaemonStatus({ state: "stopped" });
 	return daemonStatus;

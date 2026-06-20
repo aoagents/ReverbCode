@@ -134,6 +134,32 @@ describe("useDaemonStatus", () => {
 		expect(setApiBaseUrlMock).toHaveBeenCalledWith(null);
 	});
 
+	it("ignores stale refresh responses that complete after a newer refresh", async () => {
+		let resolveFirst: (status: DaemonStatus) => void = () => undefined;
+		getStatusMock
+			.mockReturnValueOnce(new Promise<DaemonStatus>((resolve) => {
+				resolveFirst = resolve;
+			}))
+			.mockResolvedValueOnce({ state: "ready", port: 4777 });
+		const queryClient = fakeQueryClient();
+
+		const { result } = renderHook(() => useDaemonStatus(queryClient));
+
+		act(() => window.dispatchEvent(new Event("focus")));
+		await act(async () => {
+			await Promise.resolve();
+		});
+		expect(result.current).toEqual({ state: "ready", port: 4777 });
+
+		await act(async () => {
+			resolveFirst({ state: "stopped" });
+			await Promise.resolve();
+		});
+
+		expect(result.current).toEqual({ state: "ready", port: 4777 });
+		expect(setApiBaseUrlMock).toHaveBeenLastCalledWith("http://127.0.0.1:4777");
+	});
+
 	it("still connects the transport when the initial IPC status call fails", async () => {
 		getStatusMock.mockRejectedValue(new Error("ipc unavailable"));
 		const queryClient = fakeQueryClient();

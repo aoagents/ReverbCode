@@ -17,6 +17,7 @@ export function useDaemonStatus(queryClient: QueryClient = defaultQueryClient) {
 		let active = true;
 		let stopTransport: () => void = () => undefined;
 		let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+		let statusVersion = 0;
 
 		const clearRefresh = () => {
 			if (refreshTimer) {
@@ -27,17 +28,18 @@ export function useDaemonStatus(queryClient: QueryClient = defaultQueryClient) {
 
 		const refreshStatus = () => {
 			clearRefresh();
+			const requestVersion = ++statusVersion;
 			void aoBridge.daemon
 				.getStatus()
 				.then((nextStatus) => {
-					if (active) applyStatus(nextStatus);
+					if (active && requestVersion === statusVersion) applyStatus(nextStatus);
 				})
 				.catch(() => {
 					// IPC unavailable (browser preview, broken preload): stay on the
 					// last known status and keep the recovery loop alive.
 				})
 				.finally(() => {
-					if (!active) return;
+					if (!active || requestVersion !== statusVersion) return;
 					scheduleRefresh(statusRef.current.state === "ready" ? READY_STATUS_REFRESH_MS : STATUS_REFRESH_MS);
 				});
 		};
@@ -62,6 +64,7 @@ export function useDaemonStatus(queryClient: QueryClient = defaultQueryClient) {
 			setStatus(nextStatus);
 		};
 
+		setApiBaseUrl(null);
 		refreshStatus();
 		const refreshOnFocus = () => {
 			refreshStatus();
@@ -76,7 +79,10 @@ export function useDaemonStatus(queryClient: QueryClient = defaultQueryClient) {
 			if (active) stopTransport = createEventTransport(queryClient).connect();
 		});
 
-		const stopStatusListener = aoBridge.daemon.onStatus(applyStatus);
+		const stopStatusListener = aoBridge.daemon.onStatus((nextStatus) => {
+			statusVersion += 1;
+			applyStatus(nextStatus);
+		});
 
 		return () => {
 			active = false;
