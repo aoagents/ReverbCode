@@ -1,18 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
-	attentionZone,
 	findProjectOrchestrator,
 	sessionIsActive,
-	sessionNeedsAttention,
+	STATUS_META,
+	statusOrder,
 	toAgentProvider,
 	toSessionStatus,
-	workerDisplayStatus,
-	workerStatusPulses,
 	openPRs,
 	mergedPRCount,
 	primaryPR,
 	sortedPRs,
-	type AttentionZone,
 	type PRState,
 	type PullRequestFacts,
 	type SessionStatus,
@@ -46,12 +43,10 @@ const pr = (overrides: Partial<PullRequestFacts> & { number: number; state: PRSt
 });
 
 describe("toSessionStatus", () => {
-	it("passes through a known status", () => {
-		expect(toSessionStatus("mergeable")).toBe("mergeable");
-	});
-
-	it("overrides to terminated when the session is terminated", () => {
-		expect(toSessionStatus("working", true)).toBe("terminated");
+	it("passes through each of the five known states", () => {
+		for (const status of statusOrder) {
+			expect(toSessionStatus(status)).toBe(status);
+		}
 	});
 
 	it("falls back to working for an unknown status", () => {
@@ -63,36 +58,30 @@ describe("toSessionStatus", () => {
 	});
 });
 
-describe("workerDisplayStatus", () => {
-	it("prefers an explicit displayStatus override", () => {
-		expect(workerDisplayStatus(sessionWith({ status: "ci_failed", displayStatus: "done" }))).toBe("done");
+describe("STATUS_META", () => {
+	it("covers all five states and orders the board by urgency", () => {
+		expect(Object.keys(STATUS_META).sort()).toEqual(["idle", "needs_input", "ready", "stalled", "working"]);
+		expect(statusOrder).toEqual(["needs_input", "stalled", "ready", "working", "idle"]);
 	});
 
-	it.each([
-		["needs_input", "needs_you"],
-		["changes_requested", "needs_you"],
-		["review_pending", "needs_you"],
-		["ci_failed", "ci_failed"],
-		["approved", "mergeable"],
-		["mergeable", "mergeable"],
-		["merged", "done"],
-		["terminated", "done"],
-		["working", "working"],
-		["idle", "working"],
-	] as const)("maps %s to %s", (status, expected) => {
-		expect(workerDisplayStatus(sessionWith({ status }))).toBe(expected);
+	it("breathes only for working (the live state)", () => {
+		expect(STATUS_META.working.breathe).toBe(true);
+		for (const status of ["needs_input", "ready", "stalled", "idle"] as const) {
+			expect(STATUS_META[status].breathe).toBe(false);
+		}
+	});
+
+	it("flags attention for exactly needs_input and stalled", () => {
+		const attention = (statusOrder as SessionStatus[]).filter((s) => STATUS_META[s].attention).sort();
+		expect(attention).toEqual(["needs_input", "stalled"]);
 	});
 });
 
 describe("sessionIsActive", () => {
-	it("is false for merged and terminated", () => {
-		expect(sessionIsActive(sessionWith({ status: "merged" }))).toBe(false);
-		expect(sessionIsActive(sessionWith({ status: "terminated" }))).toBe(false);
-	});
-
-	it("is true for in-progress statuses", () => {
-		expect(sessionIsActive(sessionWith({ status: "working" }))).toBe(true);
-		expect(sessionIsActive(sessionWith({ status: "pr_open" }))).toBe(true);
+	it("is false only for terminated sessions", () => {
+		expect(sessionIsActive(sessionWith({ isTerminated: true }))).toBe(false);
+		expect(sessionIsActive(sessionWith({ isTerminated: false }))).toBe(true);
+		expect(sessionIsActive(sessionWith({ status: "idle" }))).toBe(true);
 	});
 });
 
@@ -105,14 +94,14 @@ describe("findProjectOrchestrator", () => {
 		// Regression: the daemon lists sessions by spawn number, so a dead
 		// orchestrator (zellij session deleted) sorts before its live successor.
 		// Picking it sent the Orchestrator button to an instant "[process exited]".
-		const dead = sessionWith({ id: "skills-4", kind: "orchestrator", status: "terminated" });
+		const dead = sessionWith({ id: "skills-4", kind: "orchestrator", isTerminated: true });
 		const live = sessionWith({ id: "skills-5", kind: "orchestrator", status: "needs_input" });
 		const worker = sessionWith({ id: "skills-6", kind: "worker", status: "working" });
 		expect(findProjectOrchestrator([workspaceWith([dead, live, worker])], "skills")).toBe(live);
 	});
 
 	it("returns undefined when every orchestrator is terminated", () => {
-		const dead = sessionWith({ id: "skills-4", kind: "orchestrator", status: "terminated" });
+		const dead = sessionWith({ id: "skills-4", kind: "orchestrator", isTerminated: true });
 		expect(findProjectOrchestrator([workspaceWith([dead])], "skills")).toBeUndefined();
 	});
 
@@ -124,26 +113,6 @@ describe("findProjectOrchestrator", () => {
 	it("returns undefined for an unknown project", () => {
 		const live = sessionWith({ id: "skills-5", kind: "orchestrator", status: "working" });
 		expect(findProjectOrchestrator([workspaceWith([live])], "other")).toBeUndefined();
-	});
-});
-
-describe("sessionNeedsAttention", () => {
-	it.each(["needs_input", "changes_requested", "review_pending", "ci_failed"] as const)("is true for %s", (status) => {
-		expect(sessionNeedsAttention(sessionWith({ status }))).toBe(true);
-	});
-
-	it("is false for statuses that don't need the user", () => {
-		expect(sessionNeedsAttention(sessionWith({ status: "working" }))).toBe(false);
-		expect(sessionNeedsAttention(sessionWith({ status: "mergeable" }))).toBe(false);
-	});
-});
-
-describe("workerStatusPulses", () => {
-	it("pulses only for working and needs_you", () => {
-		expect(workerStatusPulses("working")).toBe(true);
-		expect(workerStatusPulses("needs_you")).toBe(true);
-		expect(workerStatusPulses("mergeable")).toBe(false);
-		expect(workerStatusPulses("done")).toBe(false);
 	});
 });
 
@@ -190,31 +159,5 @@ describe("PR helpers", () => {
 
 	it("primaryPR is undefined when there are no PRs", () => {
 		expect(primaryPR(sessionWith({ prs: [] }))).toBeUndefined();
-	});
-});
-
-describe("attentionZone", () => {
-	const cases: Array<[SessionStatus, AttentionZone]> = [
-		["mergeable", "merge"],
-		["approved", "merge"],
-		["needs_input", "action"],
-		["ci_failed", "action"],
-		["changes_requested", "action"],
-		["review_pending", "pending"],
-		["pr_open", "pending"],
-		["draft", "pending"],
-		["working", "working"],
-		["idle", "working"],
-		["merged", "done"],
-		["terminated", "done"],
-	];
-
-	it.each(cases)("buckets %s into the %s zone", (status, zone) => {
-		expect(attentionZone(sessionWith({ status }))).toBe(zone);
-	});
-
-	it("prioritizes merge as the highest-ROI zone", () => {
-		// merge is checked before action/pending so an approved PR always surfaces.
-		expect(attentionZone(sessionWith({ status: "approved" }))).toBe("merge");
 	});
 });

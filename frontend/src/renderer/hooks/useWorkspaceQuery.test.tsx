@@ -48,7 +48,7 @@ describe("useWorkspaceQuery", () => {
 							terminalHandleId: "term-1",
 							displayName: "fix-bug",
 							harness: "claude-code",
-							status: "mergeable",
+							status: "ready",
 							isTerminated: false,
 							updatedAt: "2026-06-10T16:15:04Z",
 						},
@@ -81,7 +81,7 @@ describe("useWorkspaceQuery", () => {
 			terminalHandleId: "term-1",
 			title: "fix-bug",
 			provider: "claude-code",
-			status: "mergeable",
+			status: "ready",
 		});
 		expect(workspace.sessions[1]).toMatchObject({
 			id: "sess-2",
@@ -149,7 +149,7 @@ describe("useWorkspaceQuery", () => {
 		expect(sessions[1].prs).toEqual([]);
 	});
 
-	it("marks terminated sessions regardless of their reported status", async () => {
+	it("carries isTerminated and renders the backend status verbatim", async () => {
 		respondWith({
 			projects: { data: { projects: [{ id: "proj-1", name: "my-app", path: "/p" }] }, error: undefined },
 			sessions: {
@@ -158,7 +158,7 @@ describe("useWorkspaceQuery", () => {
 						{
 							id: "sess-1",
 							projectId: "proj-1",
-							status: "working",
+							status: "idle",
 							isTerminated: true,
 							updatedAt: "2026-06-10T16:15:04Z",
 						},
@@ -171,7 +171,11 @@ describe("useWorkspaceQuery", () => {
 		const { result } = renderHook(() => useWorkspaceQuery(), { wrapper });
 		await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
-		expect(result.current.data?.[0].sessions[0].status).toBe("terminated");
+		// The daemon already collapses terminated to the idle display status; the
+		// frontend renders it verbatim and keeps the separate isTerminated fact
+		// for liveness.
+		expect(result.current.data?.[0].sessions[0].status).toBe("idle");
+		expect(result.current.data?.[0].sessions[0].isTerminated).toBe(true);
 	});
 
 	it("surfaces a projects fetch error", async () => {

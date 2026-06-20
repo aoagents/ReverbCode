@@ -42,59 +42,59 @@ func TestBuildStacksMergedParentUnblocksChild(t *testing.T) {
 	}
 }
 
-func TestDeriveStatusWorstWinsAcrossIndependentPRs(t *testing.T) {
-	// Two independent open PRs (both target main): mergeable vs ci_failed.
-	// CI failure is more urgent, so the session reports ci_failed.
+func TestDeriveStatusUnfinishedPRWinsAcrossIndependentPRs(t *testing.T) {
+	// Two independent open PRs: one mergeable (clean), one ci_failed
+	// (unfinished). Stopped on undone work outranks the clean PR → Stalled.
 	prs := []domain.PRFacts{
 		{URL: "a", SourceBranch: "ao/a", TargetBranch: "main", Mergeability: domain.MergeMergeable},
 		{URL: "b", SourceBranch: "ao/b", TargetBranch: "main", CI: domain.CIFailing},
 	}
-	if got := deriveStatus(live(), prs, statusNow, true); got != domain.StatusCIFailed {
-		t.Fatalf("got %q want ci_failed", got)
+	if got := deriveStatus(live(), prs, statusNow, true); got != domain.StatusStalled {
+		t.Fatalf("got %q want stalled", got)
 	}
 }
 
-func TestDeriveStatusAllMergeableReportsMergeable(t *testing.T) {
+func TestDeriveStatusAllCleanIsReady(t *testing.T) {
 	prs := []domain.PRFacts{
 		{URL: "a", SourceBranch: "ao/a", TargetBranch: "main", Mergeability: domain.MergeMergeable},
 		{URL: "b", SourceBranch: "ao/b", TargetBranch: "main", Mergeability: domain.MergeMergeable},
 	}
-	if got := deriveStatus(live(), prs, statusNow, true); got != domain.StatusMergeable {
-		t.Fatalf("got %q want mergeable", got)
+	if got := deriveStatus(live(), prs, statusNow, true); got != domain.StatusReady {
+		t.Fatalf("got %q want ready", got)
 	}
 }
 
-func TestDeriveStatusStackedChildExemptFromAggregation(t *testing.T) {
-	// Root mergeable; blocked child is pr_open. Child is exempt, so the session
-	// reports mergeable rather than being dragged down to pr_open.
+func TestDeriveStatusStackedChildExemptFromReadiness(t *testing.T) {
+	// Root mergeable (clean); blocked child is a bare open PR (neutral). The
+	// child contributes nothing, so the session reads Ready off the root.
 	prs := []domain.PRFacts{
 		{URL: "root", SourceBranch: "ao/abc", TargetBranch: "main", Mergeability: domain.MergeMergeable},
 		{URL: "child", SourceBranch: "ao/abc/x", TargetBranch: "ao/abc"},
 	}
-	if got := deriveStatus(live(), prs, statusNow, true); got != domain.StatusMergeable {
-		t.Fatalf("got %q want mergeable (child exempt)", got)
+	if got := deriveStatus(live(), prs, statusNow, true); got != domain.StatusReady {
+		t.Fatalf("got %q want ready (child neutral)", got)
 	}
 }
 
-func TestDeriveStatusMergedParentOpenChildStaysOnChild(t *testing.T) {
-	// Parent merged, child now unblocked and review_pending: still alive, status
-	// follows the open child.
+func TestDeriveStatusMergedParentOpenCleanChildIsReady(t *testing.T) {
+	// Parent merged, child now unblocked and review_required (clean): stopped on
+	// a clean PR reads Ready.
 	prs := []domain.PRFacts{
 		{URL: "root", SourceBranch: "ao/abc", TargetBranch: "main", Merged: true},
 		{URL: "child", SourceBranch: "ao/abc/x", TargetBranch: "main", Review: domain.ReviewRequired},
 	}
-	if got := deriveStatus(live(), prs, statusNow, true); got != domain.StatusReviewPending {
-		t.Fatalf("got %q want review_pending", got)
+	if got := deriveStatus(live(), prs, statusNow, true); got != domain.StatusReady {
+		t.Fatalf("got %q want ready", got)
 	}
 }
 
-func TestDeriveStatusAllMergedReportsMerged(t *testing.T) {
+func TestDeriveStatusAllMergedIsIdle(t *testing.T) {
 	prs := []domain.PRFacts{
 		{URL: "a", Merged: true},
 		{URL: "b", Merged: true},
 	}
-	if got := deriveStatus(live(), prs, statusNow, true); got != domain.StatusMerged {
-		t.Fatalf("got %q want merged", got)
+	if got := deriveStatus(live(), prs, statusNow, true); got != domain.StatusIdle {
+		t.Fatalf("got %q want idle", got)
 	}
 }
 
@@ -114,14 +114,15 @@ func TestDeriveStatusEmptyPRsUsesActivity(t *testing.T) {
 	}
 }
 
-func TestDeriveStatusDegenerateAllBlockedStillAggregates(t *testing.T) {
-	// Two PRs each targeting the other's source branch (no visible root). The
-	// fallback aggregates across all so the session never goes dark.
+func TestDeriveStatusDegenerateAllBlockedSurfacesUnfinished(t *testing.T) {
+	// Two PRs each targeting the other's source branch (no visible root). Both
+	// are blocked, but a failing-CI child surfaces as unfinished work, so the
+	// stopped session reads Stalled rather than going dark.
 	prs := []domain.PRFacts{
 		{URL: "a", SourceBranch: "x", TargetBranch: "y", CI: domain.CIFailing},
 		{URL: "b", SourceBranch: "y", TargetBranch: "x", Mergeability: domain.MergeMergeable},
 	}
-	if got := deriveStatus(live(), prs, statusNow, true); got != domain.StatusCIFailed {
-		t.Fatalf("got %q want ci_failed (degenerate fallback)", got)
+	if got := deriveStatus(live(), prs, statusNow, true); got != domain.StatusStalled {
+		t.Fatalf("got %q want stalled (degenerate, unfinished surfaces)", got)
 	}
 }

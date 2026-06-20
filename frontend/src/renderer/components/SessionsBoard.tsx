@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { Plus } from "lucide-react";
-import { type AttentionZone, type WorkspaceSession, attentionZone, openPRs, workerSessions } from "../types/workspace";
+import { type SessionStatus, type WorkspaceSession, STATUS_META, openPRs, statusOrder, workerSessions } from "../types/workspace";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { DashboardSubhead } from "./DashboardSubhead";
 import { OrchestratorIcon } from "./icons";
@@ -15,51 +15,16 @@ type SessionsBoardProps = {
 	projectId?: string;
 };
 
-// The four kanban columns, left→right by flow (work → review → merge), ported
-// verbatim from agent-orchestrator (SIMPLE_KANBAN_LEVELS + AttentionZone +
-// mc-board.css). "done" is archived, not a column.
-type Column = {
-	level: AttentionZone;
-	label: string;
-	glow: string;
-	dot: string;
-	dotGlow: boolean;
-	titleClass: string;
-};
-const COLUMNS: Column[] = [
-	{
-		level: "working",
-		label: "Working",
-		glow: "color-mix(in srgb, var(--orange) 7%, transparent)",
-		dot: "var(--orange)",
-		dotGlow: true,
-		titleClass: "text-working",
-	},
-	{
-		level: "action",
-		label: "Needs you",
-		glow: "color-mix(in srgb, var(--amber) 6%, transparent)",
-		dot: "var(--amber)",
-		dotGlow: true,
-		titleClass: "text-warning",
-	},
-	{
-		level: "pending",
-		label: "In review",
-		glow: "var(--kanban-pending-glow)",
-		dot: "var(--fg-muted)",
-		dotGlow: false,
-		titleClass: "text-muted-foreground",
-	},
-	{
-		level: "merge",
-		label: "Ready to merge",
-		glow: "color-mix(in srgb, var(--green) 7%, transparent)",
-		dot: "var(--green)",
-		dotGlow: true,
-		titleClass: "text-success",
-	},
-];
+// The five kanban columns, left→right by human-action urgency, one per display
+// state ({@link statusOrder}). Each column reads its label and tone from the
+// shared STATUS_META so the board, pill, sidebar dot, and card badge never
+// disagree. Terminated sessions are archived in the done bar, not a column.
+type Column = { status: SessionStatus; label: string; tone: string };
+const COLUMNS: Column[] = statusOrder.map((status) => ({
+	status,
+	label: STATUS_META[status].label,
+	tone: STATUS_META[status].tone,
+}));
 
 export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const navigate = useNavigate();
@@ -69,17 +34,22 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const workspaces = projectId ? all.filter((w) => w.id === projectId) : all;
 	const sessions = workspaces.flatMap((w) => workerSessions(w.sessions));
 	const orchestrator = projectId
-		? workspaces[0]?.sessions.find((session) => session.kind === "orchestrator" && session.status !== "terminated")
+		? workspaces[0]?.sessions.find((session) => session.kind === "orchestrator" && !session.isTerminated)
 		: undefined;
 	const [isNewTaskOpen, setIsNewTaskOpen] = useState(false);
 	const [isSpawning, setIsSpawning] = useState(false);
 
-	const byZone = new Map<AttentionZone, WorkspaceSession[]>();
+	// Live sessions group into the five status columns; terminated ones archive
+	// into the done bar regardless of their (idle) display status.
+	const byStatus = new Map<SessionStatus, WorkspaceSession[]>();
+	const done: WorkspaceSession[] = [];
 	for (const session of sessions) {
-		const zone = attentionZone(session);
-		(byZone.get(zone) ?? byZone.set(zone, []).get(zone)!).push(session);
+		if (session.isTerminated) {
+			done.push(session);
+			continue;
+		}
+		(byStatus.get(session.status) ?? byStatus.set(session.status, []).get(session.status)!).push(session);
 	}
-	const done = byZone.get("done") ?? [];
 	// Collapsed by default, like agent-orchestrator's done-bar: finished and
 	// killed sessions cost one quiet line under the board until expanded.
 	const [doneExpanded, setDoneExpanded] = useState(false);
@@ -157,9 +127,9 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 				{workspaceQuery.isError ? (
 					<p className="py-10 text-center text-[12px] text-passive">Could not load sessions.</p>
 				) : (
-					<div className="grid h-full grid-cols-4 gap-2">
+					<div className="grid h-full grid-cols-5 gap-2">
 						{COLUMNS.map((col) => (
-							<ZoneColumn key={col.level} col={col} sessions={byZone.get(col.level) ?? []} onOpen={openSession} />
+							<ZoneColumn key={col.status} col={col} sessions={byStatus.get(col.status) ?? []} onOpen={openSession} />
 						))}
 					</div>
 				)}
@@ -228,20 +198,19 @@ function ZoneColumn({
 	sessions: WorkspaceSession[];
 	onOpen: (s: WorkspaceSession) => void;
 }) {
+	const glow = col.status === "idle" ? undefined : `0 0 7px color-mix(in srgb, ${col.tone} 60%, transparent)`;
 	return (
 		<section
 			className="flex min-w-0 flex-col overflow-hidden rounded-[13px]"
-			style={{ background: `linear-gradient(180deg, ${col.glow}, transparent 130px), var(--kanban-column-bg)` }}
+			style={{
+				background: `linear-gradient(180deg, color-mix(in srgb, ${col.tone} 7%, transparent), transparent 130px), var(--kanban-column-bg)`,
+			}}
 		>
 			<div className="flex shrink-0 items-center gap-[9px] px-[15px] pb-[11px] pt-[14px]">
-				<span
-					className="h-[7px] w-[7px] rounded-full"
-					style={{
-						background: col.dot,
-						boxShadow: col.dotGlow ? `0 0 7px color-mix(in srgb, ${col.dot} 60%, transparent)` : undefined,
-					}}
-				/>
-				<span className={cn("text-[11px] font-semibold uppercase tracking-[0.08em]", col.titleClass)}>{col.label}</span>
+				<span className="h-[7px] w-[7px] rounded-full" style={{ background: col.tone, boxShadow: glow }} />
+				<span className="text-[11px] font-semibold uppercase tracking-[0.08em]" style={{ color: col.tone }}>
+					{col.label}
+				</span>
 				<span className="ml-auto font-mono text-[11px] leading-none text-passive">{sessions.length}</span>
 			</div>
 			<div className="min-h-0 flex-1 overflow-y-auto px-[11px] pb-3">
@@ -279,8 +248,8 @@ function SessionCard({ session, onOpen }: { session: WorkspaceSession; onOpen: (
 			type="button"
 		>
 			<div className="flex items-center gap-2 px-[13px] pb-[9px] pt-3">
-				<span className={cn("inline-flex items-center gap-1.5 text-[11px] font-medium", badge.className)}>
-					<span className={cn("h-[7px] w-[7px] rounded-full bg-current")} />
+				<span className="inline-flex items-center gap-1.5 text-[11px] font-medium" style={{ color: badge.tone }}>
+					<span className="h-[7px] w-[7px] rounded-full bg-current" />
 					{badge.label}
 				</span>
 				<span className="ml-auto shrink-0 font-mono text-[10.5px] tracking-[0.04em] text-passive">
@@ -324,29 +293,7 @@ function agentLabel(provider: WorkspaceSession["provider"]): string {
 	}
 }
 
-function sessionBadge(session: WorkspaceSession): { label: string; className: string } {
-	switch (session.status) {
-		case "needs_input":
-			return { label: "Input needed", className: "text-warning" };
-		case "ci_failed":
-			return { label: "CI failed", className: "text-error" };
-		case "changes_requested":
-			return { label: "Changes requested", className: "text-warning" };
-		case "review_pending":
-			return { label: "Review pending", className: "text-muted-foreground" };
-		case "draft":
-			return { label: "Draft PR", className: "text-muted-foreground" };
-		case "pr_open":
-			return { label: "PR open", className: "text-muted-foreground" };
-		case "approved":
-			return { label: "Approved", className: "text-success" };
-		case "mergeable":
-			return { label: "Ready", className: "text-success" };
-		case "merged":
-			return { label: "Merged", className: "text-passive" };
-		case "terminated":
-			return { label: "Terminated", className: "text-passive" };
-		default:
-			return { label: "Working", className: "text-working" };
-	}
+function sessionBadge(session: WorkspaceSession): { label: string; tone: string } {
+	const meta = STATUS_META[session.status];
+	return { label: meta.label, tone: meta.tone };
 }

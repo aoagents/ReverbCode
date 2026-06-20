@@ -1,36 +1,34 @@
-export type SessionStatus =
-	| "working"
-	| "pr_open"
-	| "draft"
-	| "ci_failed"
-	| "review_pending"
-	| "changes_requested"
-	| "approved"
-	| "mergeable"
-	| "merged"
-	| "needs_input"
-	| "idle"
-	| "terminated";
+/**
+ * The five display states the dashboard renders, derived server-side and sent
+ * verbatim. Each maps to one distinct move a human makes when scanning a wall
+ * of agents — see {@link STATUS_META}. Finer PR detail lives in the inspector,
+ * not in the glanceable status.
+ */
+export type SessionStatus = "working" | "needs_input" | "ready" | "stalled" | "idle";
 
-const sessionStatuses = new Set<SessionStatus>([
-	"working",
-	"pr_open",
-	"draft",
-	"ci_failed",
-	"review_pending",
-	"changes_requested",
-	"approved",
-	"mergeable",
-	"merged",
-	"needs_input",
-	"idle",
-	"terminated",
-]);
+const sessionStatuses = new Set<SessionStatus>(["working", "needs_input", "ready", "stalled", "idle"]);
 
-export function toSessionStatus(status?: string, isTerminated = false): SessionStatus {
-	if (isTerminated) return "terminated";
+export function toSessionStatus(status?: string): SessionStatus {
 	return status && sessionStatuses.has(status as SessionStatus) ? (status as SessionStatus) : "working";
 }
+
+/**
+ * The one shared status definition every surface reads from: the pill, the
+ * board columns, the sidebar dot, and the card badge. `tone` is a theme var so
+ * each state tracks the light/dark palette; `breathe` is whether it pulses
+ * (alive); `attention` is whether it needs a human to unblock progress.
+ */
+export const STATUS_META: Record<SessionStatus, { label: string; tone: string; breathe: boolean; attention: boolean }> =
+	{
+		working: { label: "Working", tone: "var(--orange)", breathe: true, attention: false },
+		needs_input: { label: "Needs input", tone: "var(--amber)", breathe: false, attention: true },
+		ready: { label: "Ready", tone: "var(--green)", breathe: false, attention: false },
+		stalled: { label: "Stalled", tone: "var(--red)", breathe: false, attention: true },
+		idle: { label: "Idle", tone: "var(--fg-muted)", breathe: false, attention: false },
+	};
+
+/** Board columns left→right by human-action urgency. */
+export const statusOrder: SessionStatus[] = ["needs_input", "stalled", "ready", "working", "idle"];
 
 export type AgentProvider =
 	| "codex"
@@ -97,6 +95,9 @@ export type WorkspaceSession = {
 	kind?: SessionKind;
 	branch: string;
 	status: SessionStatus;
+	/** Whether the session is torn down. Drives liveness, not the display status
+	 * (a terminated session reads {@link SessionStatus} `idle`). */
+	isTerminated?: boolean;
 	/** ISO timestamp from the daemon — used for relative time in the inspector. */
 	createdAt?: string;
 	/** ISO timestamp from the daemon. */
@@ -111,35 +112,7 @@ export type WorkspaceSession = {
 	 * done server-side, so {@link status} already reflects all of these.
 	 */
 	prs: PullRequestFacts[];
-	/**
-	 * Display status as derived by the daemon at read time. Optional override; when
-	 * absent it is derived from {@link SessionStatus} via {@link workerDisplayStatus}.
-	 */
-	displayStatus?: WorkerDisplayStatus;
 };
-
-/** Glanceable worker status. Maps 1:1 to the accent colors in DESIGN.md. */
-export type WorkerDisplayStatus = "working" | "needs_you" | "mergeable" | "ci_failed" | "done";
-
-export function workerDisplayStatus(session: WorkspaceSession): WorkerDisplayStatus {
-	if (session.displayStatus) return session.displayStatus;
-	switch (session.status) {
-		case "needs_input":
-		case "changes_requested":
-		case "review_pending":
-			return "needs_you";
-		case "ci_failed":
-			return "ci_failed";
-		case "approved":
-		case "mergeable":
-			return "mergeable";
-		case "merged":
-		case "terminated":
-			return "done";
-		default:
-			return "working";
-	}
-}
 
 // Open PRs (actionable) sort above merged/closed; ties break by number.
 const prStateRank: Record<PRState, number> = { open: 0, draft: 1, merged: 2, closed: 3 };
@@ -187,79 +160,9 @@ export function workerSessions(sessions: WorkspaceSession[]): WorkspaceSession[]
 	return sessions.filter((s) => !isOrchestratorSession(s));
 }
 
+/** Whether the session is still live (not torn down). */
 export function sessionIsActive(session: WorkspaceSession): boolean {
-	return session.status !== "merged" && session.status !== "terminated";
-}
-
-export function sessionNeedsAttention(session: WorkspaceSession): boolean {
-	return (
-		session.status === "needs_input" ||
-		session.status === "changes_requested" ||
-		session.status === "review_pending" ||
-		session.status === "ci_failed"
-	);
-}
-
-export const workerStatusLabel: Record<WorkerDisplayStatus, string> = {
-	working: "working",
-	needs_you: "needs you",
-	mergeable: "mergeable",
-	ci_failed: "ci failed",
-	done: "done",
-};
-
-/** Whether a status should breathe (alive/working). */
-export function workerStatusPulses(status: WorkerDisplayStatus): boolean {
-	return status === "working" || status === "needs_you";
-}
-
-/**
- * Kanban attention zone, ordered by human-action urgency — ported from
- * agent-orchestrator's getAttentionLevel (packages/web/src/lib/types.ts),
- * collapsed to its default "simple" set and rebound to reverbcode's
- * {@link SessionStatus}. The board groups sessions into these columns so the
- * highest-ROrI work (a one-click merge) sits leftmost.
- */
-export type AttentionZone = "merge" | "action" | "pending" | "working" | "done";
-
-/** Columns left→right, most-urgent first. "done" is the archive column. */
-export const attentionZoneOrder: AttentionZone[] = ["merge", "action", "pending", "working", "done"];
-
-export const attentionZoneLabel: Record<AttentionZone, string> = {
-	merge: "Ready to merge",
-	action: "Needs you",
-	pending: "Pending",
-	working: "Working",
-	done: "Done",
-};
-
-export function attentionZone(session: WorkspaceSession): AttentionZone {
-	switch (session.status) {
-		// Terminal — archive.
-		case "merged":
-		case "terminated":
-			return "done";
-		// One click to clear — highest ROI, checked first.
-		case "approved":
-		case "mergeable":
-			return "merge";
-		// Agent waiting on a human (respond) or a problem to investigate (review);
-		// agent-orchestrator collapses these into one "action" zone by default.
-		case "needs_input":
-		case "ci_failed":
-		case "changes_requested":
-			return "action";
-		// Waiting on an external reviewer / CI — nothing to do right now.
-		case "review_pending":
-		case "pr_open":
-		case "draft":
-			return "pending";
-		// Agents doing their thing — don't interrupt.
-		case "working":
-		case "idle":
-		default:
-			return "working";
-	}
+	return !session.isTerminated;
 }
 
 export type WorkspaceSummary = {

@@ -58,7 +58,7 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget }: Termi
 	const { attach, state, error } = useTerminalSession(attachSession, { daemonReady });
 	const handleId = attachSession?.terminalHandleId;
 	const hadAttachmentRef = useRef(false);
-	const canRestoreSession = terminalTarget?.kind !== "reviewer" && session?.status === "terminated";
+	const canRestoreSession = terminalTarget?.kind !== "reviewer" && Boolean(session?.isTerminated);
 
 	const handleReady = useCallback((handle: AttachableTerminal) => setTerminal(handle), []);
 	const handleInitError = useCallback((err: unknown) => {

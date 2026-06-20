@@ -46,7 +46,7 @@ type SessionRecord struct {
 	// FirstSignalAt is when the FIRST agent hook callback arrived for the
 	// current spawn/restore: raw signal receipt, independent of the derived
 	// activity state. Zero means no hook has ever reported, which deriveStatus
-	// surfaces as StatusNoSignal after a grace period. Internal fact, not part
+	// surfaces as StatusStalled after a boot grace. Internal fact, not part
 	// of the API read model.
 	FirstSignalAt time.Time       `json:"-"`
 	IsTerminated  bool            `json:"isTerminated"`

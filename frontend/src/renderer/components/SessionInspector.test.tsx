@@ -44,7 +44,7 @@ const session = (prs: PullRequestFacts[]): WorkspaceSession => ({
 	provider: "claude-code",
 	kind: "worker",
 	branch: "feat/ns",
-	status: "review_pending",
+	status: "ready",
 	updatedAt: "2026-06-15T00:00:00Z",
 	prs,
 });

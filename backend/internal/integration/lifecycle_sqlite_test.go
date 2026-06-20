@@ -123,8 +123,8 @@ func TestSpawnPRKillRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Status != domain.StatusCIFailed {
-		t.Fatalf("want ci_failed, got %q", got.Status)
+	if got.Status != domain.StatusStalled {
+		t.Fatalf("want stalled, got %q", got.Status)
 	}
 	freed, err := st.sm.Kill(ctx, sess.ID)
 	if err != nil || !freed {

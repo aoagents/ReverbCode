@@ -35,40 +35,57 @@ func TestServiceDerivesStatusFromSessionFactsAndPR(t *testing.T) {
 		rec  domain.SessionRecord
 		pr   []domain.PRFacts
 		// hookless marks a harness with no activity pipeline (signalCapable
-		// false): silence is its permanent normal state, never no_signal.
+		// false): silence is its permanent normal state, never stalled.
 		hookless bool
 		want     domain.SessionStatus
 	}{
-		{"terminated", statusRec(domain.ActivityExited, true), nil, false, domain.StatusTerminated},
-		{"merged-pr", statusRec(domain.ActivityIdle, true), statusPR(domain.PRFacts{Merged: true}), false, domain.StatusMerged},
+		// Terminated and merged both collapse to Idle.
+		{"terminated", statusRec(domain.ActivityExited, true), nil, false, domain.StatusIdle},
+		{"merged-pr", statusRec(domain.ActivityIdle, true), statusPR(domain.PRFacts{Merged: true}), false, domain.StatusIdle},
+
+		// waiting_input outranks every PR fact.
 		{"needs-input", statusRec(domain.ActivityWaitingInput, false), statusPR(domain.PRFacts{CI: domain.CIFailing}), false, domain.StatusNeedsInput},
-		{"ci-failed", statusRec(domain.ActivityIdle, false), statusPR(domain.PRFacts{CI: domain.CIFailing}), false, domain.StatusCIFailed},
-		{"draft", statusRec(domain.ActivityIdle, false), statusPR(domain.PRFacts{Draft: true}), false, domain.StatusDraft},
-		{"changes-requested", statusRec(domain.ActivityIdle, false), statusPR(domain.PRFacts{Review: domain.ReviewChangesRequest}), false, domain.StatusChangesRequested},
-		{"mergeable", statusRec(domain.ActivityIdle, false), statusPR(domain.PRFacts{Mergeability: domain.MergeMergeable}), false, domain.StatusMergeable},
-		{"approved", statusRec(domain.ActivityIdle, false), statusPR(domain.PRFacts{Review: domain.ReviewApproved}), false, domain.StatusApproved},
-		{"review-pending", statusRec(domain.ActivityIdle, false), statusPR(domain.PRFacts{Review: domain.ReviewRequired}), false, domain.StatusReviewPending},
-		{"pr-open", statusRec(domain.ActivityIdle, false), statusPR(domain.PRFacts{}), false, domain.StatusPROpen},
+
+		// Stopped on an unfinished PR is Stalled, not Ready: the agent had the
+		// move and quit.
+		{"stopped-ci-failed", statusRec(domain.ActivityIdle, false), statusPR(domain.PRFacts{CI: domain.CIFailing}), false, domain.StatusStalled},
+		{"stopped-draft", statusRec(domain.ActivityIdle, false), statusPR(domain.PRFacts{Draft: true}), false, domain.StatusStalled},
+		{"stopped-changes-requested", statusRec(domain.ActivityIdle, false), statusPR(domain.PRFacts{Review: domain.ReviewChangesRequest}), false, domain.StatusStalled},
+		{"stopped-conflicting", statusRec(domain.ActivityIdle, false), statusPR(domain.PRFacts{Mergeability: domain.MergeConflicting}), false, domain.StatusStalled},
+
+		// An active agent on top of any PR keeps Working (active-wins).
+		{"active-on-unfinished-pr", statusRec(domain.ActivityActive, false), statusPR(domain.PRFacts{CI: domain.CIFailing}), false, domain.StatusWorking},
+		{"active-on-clean-pr", statusRec(domain.ActivityActive, false), statusPR(domain.PRFacts{Mergeability: domain.MergeMergeable}), false, domain.StatusWorking},
+
+		// Stopped on a clean PR is Ready.
+		{"stopped-mergeable", statusRec(domain.ActivityIdle, false), statusPR(domain.PRFacts{Mergeability: domain.MergeMergeable}), false, domain.StatusReady},
+		{"stopped-approved", statusRec(domain.ActivityIdle, false), statusPR(domain.PRFacts{Review: domain.ReviewApproved}), false, domain.StatusReady},
+		{"stopped-review-required", statusRec(domain.ActivityIdle, false), statusPR(domain.PRFacts{Review: domain.ReviewRequired}), false, domain.StatusReady},
+
+		// Bare open PR behaves as no PR: stopped reads Idle.
+		{"stopped-bare-pr-open", statusRec(domain.ActivityIdle, false), statusPR(domain.PRFacts{}), false, domain.StatusIdle},
+
 		{"working", statusRec(domain.ActivityActive, false), nil, false, domain.StatusWorking},
 		{"idle", statusRec(domain.ActivityIdle, false), nil, false, domain.StatusIdle},
 
-		// A live session whose hook-capable agent never signaled is no_signal
-		// once the grace passes — never a confident idle.
-		{"no-signal-after-grace", silentRec(2 * noSignalGrace), nil, false, domain.StatusNoSignal},
-		// A hook-less harness can never signal: its silence stays idle forever
-		// instead of degrading into a false "needs you".
-		{"hookless-silent-stays-idle", silentRec(2 * noSignalGrace), nil, true, domain.StatusIdle},
+		// A live session whose hook-capable agent never signaled is Stalled
+		// once the boot grace passes — never a confident idle.
+		{"never-booted-after-grace", silentRec(2 * bootGrace), nil, false, domain.StatusStalled},
+		// A hook-less harness can never signal: its silence stays idle forever.
+		{"hookless-silent-stays-idle", silentRec(2 * bootGrace), nil, true, domain.StatusIdle},
 		// Right after spawn the agent legitimately hasn't called back yet.
 		{"silent-within-grace-is-idle", silentRec(10 * time.Second), nil, false, domain.StatusIdle},
-		// Termination and PR facts outrank the missing-signal downgrade.
+
+		// Termination outranks the never-booted downgrade.
 		{
-			"no-signal-terminated-wins",
-			domain.SessionRecord{Activity: domain.Activity{State: domain.ActivityExited, LastActivityAt: statusNow.Add(-2 * noSignalGrace)}, IsTerminated: true},
+			"terminated-outranks-never-booted",
+			domain.SessionRecord{Activity: domain.Activity{State: domain.ActivityExited, LastActivityAt: statusNow.Add(-2 * bootGrace)}, IsTerminated: true},
 			nil,
 			false,
-			domain.StatusTerminated,
+			domain.StatusIdle,
 		},
-		{"no-signal-pr-wins", silentRec(2 * noSignalGrace), statusPR(domain.PRFacts{}), false, domain.StatusPROpen},
+		// Never-booted silence outranks a bare open PR (neutral → idle anyway).
+		{"never-booted-bare-pr", silentRec(2 * bootGrace), statusPR(domain.PRFacts{}), false, domain.StatusStalled},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -79,10 +96,28 @@ func TestServiceDerivesStatusFromSessionFactsAndPR(t *testing.T) {
 	}
 }
 
+// An active session gone silent past hangTimeout is caught as Stalled instead
+// of reading a calm Working; within the timeout it stays Working.
+func TestDeriveStatusHungActiveSessionStalls(t *testing.T) {
+	hung := domain.SessionRecord{
+		Activity:      domain.Activity{State: domain.ActivityActive, LastActivityAt: statusNow.Add(-2 * hangTimeout)},
+		FirstSignalAt: statusNow.Add(-3 * hangTimeout),
+	}
+	if got := deriveStatus(hung, nil, statusNow, true); got != domain.StatusStalled {
+		t.Fatalf("got %q want stalled", got)
+	}
+	live := domain.SessionRecord{
+		Activity:      domain.Activity{State: domain.ActivityActive, LastActivityAt: statusNow.Add(-1 * time.Minute)},
+		FirstSignalAt: statusNow.Add(-1 * time.Hour),
+	}
+	if got := deriveStatus(live, nil, statusNow, true); got != domain.StatusWorking {
+		t.Fatalf("got %q want working", got)
+	}
+}
+
 // A blocked stacked child cannot merge until its parent does, so its readiness
-// signals are suppressed, but its problem signals (failing CI, draft,
-// requested-changes/unresolved-comments) must still surface for the session.
-func TestAggregateStackedChildSignals(t *testing.T) {
+// is suppressed, but its problem signals still surface as unfinished work.
+func TestStackedChildSignals(t *testing.T) {
 	parent := domain.PRFacts{URL: "parent", SourceBranch: "feat", Mergeability: domain.MergeMergeable}
 	child := func(f domain.PRFacts) domain.PRFacts {
 		f.URL = "child"
@@ -95,24 +130,15 @@ func TestAggregateStackedChildSignals(t *testing.T) {
 		prs  []domain.PRFacts
 		want domain.SessionStatus
 	}{
-		{"blocked-child-ci-failing-surfaces", []domain.PRFacts{parent, child(domain.PRFacts{CI: domain.CIFailing})}, domain.StatusCIFailed},
-		{"blocked-child-draft-surfaces", []domain.PRFacts{parent, child(domain.PRFacts{Draft: true})}, domain.StatusDraft},
-		{"blocked-child-changes-requested-surfaces", []domain.PRFacts{parent, child(domain.PRFacts{Review: domain.ReviewChangesRequest})}, domain.StatusChangesRequested},
-		{"blocked-child-unresolved-comments-surfaces", []domain.PRFacts{parent, child(domain.PRFacts{ReviewComments: true})}, domain.StatusChangesRequested},
-		// A blocked child's readiness signals stay hidden: only the parent's
-		// mergeable state drives the session.
-		{"blocked-child-mergeable-suppressed", []domain.PRFacts{parent, child(domain.PRFacts{Mergeability: domain.MergeMergeable})}, domain.StatusMergeable},
-		{"blocked-child-approved-suppressed", []domain.PRFacts{parent, child(domain.PRFacts{Review: domain.ReviewApproved})}, domain.StatusMergeable},
-		// Degenerate set where every open PR is blocked and none is actionable:
-		// fall back to the raw aggregate so the session never goes dark.
-		{
-			"all-blocked-no-actionable-falls-back",
-			[]domain.PRFacts{
-				{URL: "a", SourceBranch: "feat/a", TargetBranch: "feat/b", Mergeability: domain.MergeMergeable},
-				{URL: "b", SourceBranch: "feat/b", TargetBranch: "feat/a", Mergeability: domain.MergeMergeable},
-			},
-			domain.StatusMergeable,
-		},
+		// A blocked child's problem drags the stopped session to Stalled.
+		{"blocked-child-ci-failing-stalls", []domain.PRFacts{parent, child(domain.PRFacts{CI: domain.CIFailing})}, domain.StatusStalled},
+		{"blocked-child-draft-stalls", []domain.PRFacts{parent, child(domain.PRFacts{Draft: true})}, domain.StatusStalled},
+		{"blocked-child-changes-requested-stalls", []domain.PRFacts{parent, child(domain.PRFacts{Review: domain.ReviewChangesRequest})}, domain.StatusStalled},
+		{"blocked-child-unresolved-comments-stalls", []domain.PRFacts{parent, child(domain.PRFacts{ReviewComments: true})}, domain.StatusStalled},
+		// A blocked child's readiness stays hidden: the parent's clean state
+		// alone drives the session to Ready.
+		{"blocked-child-mergeable-suppressed", []domain.PRFacts{parent, child(domain.PRFacts{Mergeability: domain.MergeMergeable})}, domain.StatusReady},
+		{"blocked-child-approved-suppressed", []domain.PRFacts{parent, child(domain.PRFacts{Review: domain.ReviewApproved})}, domain.StatusReady},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -123,11 +149,11 @@ func TestAggregateStackedChildSignals(t *testing.T) {
 	}
 }
 
-// Without an injected capability predicate the service must never claim
-// no_signal; with one, capability follows the predicate per harness.
+// Without an injected capability predicate the service must never claim a
+// signal-driven stall; with one, capability follows the predicate per harness.
 func TestHarnessSignalsCapabilityGate(t *testing.T) {
 	if (&Service{}).harnessSignals(domain.HarnessCodex) {
-		t.Fatal("zero-value Service reports signal-capable; want incapable (never no_signal)")
+		t.Fatal("zero-value Service reports signal-capable; want incapable (never stalled on silence)")
 	}
 	s := NewWithDeps(Deps{SignalCapable: func(h domain.AgentHarness) bool { return h == domain.HarnessCodex }})
 	if !s.harnessSignals(domain.HarnessCodex) {

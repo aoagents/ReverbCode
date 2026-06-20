@@ -14,9 +14,9 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import {
-	attentionZone,
 	isOrchestratorSession,
 	sessionIsActive,
+	STATUS_META,
 	type WorkspaceSession,
 	type WorkspaceSummary,
 	workerSessions,
@@ -97,21 +97,15 @@ function useSelection() {
 	};
 }
 
-// 6px session dot: mirrors the board's status language so the sidebar can be
-// scanned without opening the project board.
+// 6px session dot: reads the shared STATUS_META tone so the sidebar mirrors the
+// board's status language and can be scanned without opening the project board.
 function SessionDot({ session }: { session: WorkspaceSession }) {
-	const zone = attentionZone(session);
+	const { tone, breathe } = STATUS_META[session.status];
 	return (
 		<span
 			aria-hidden="true"
-			className={cn(
-				"mt-px h-1.5 w-1.5 shrink-0 rounded-full",
-				zone === "working" && "animate-status-pulse bg-working",
-				zone === "action" && (session.status === "ci_failed" ? "bg-error" : "bg-warning"),
-				zone === "pending" && "bg-passive",
-				zone === "merge" && "bg-success",
-				zone === "done" && "bg-passive",
-			)}
+			className={cn("mt-px h-1.5 w-1.5 shrink-0 rounded-full", breathe && "animate-status-pulse")}
+			style={{ background: tone }}
 		/>
 	);
 }
