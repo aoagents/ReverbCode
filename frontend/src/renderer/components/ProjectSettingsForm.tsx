@@ -171,6 +171,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 						value={form.workerAgent}
 						placeholder="Select worker agent"
 						label="Default worker agent"
+						invalid={validationError !== null && form.workerAgent === ""}
 						onChange={(v) => setForm((f) => ({ ...f, workerAgent: v }))}
 					/>
 					<RequiredAgentField
@@ -178,6 +179,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 						value={form.orchestratorAgent}
 						placeholder="Select orchestrator agent"
 						label="Default orchestrator agent"
+						invalid={validationError !== null && form.orchestratorAgent === ""}
 						onChange={(v) => setForm((f) => ({ ...f, orchestratorAgent: v }))}
 					/>
 					{missingRequiredAgent && (

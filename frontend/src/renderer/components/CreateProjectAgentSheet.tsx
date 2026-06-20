@@ -110,12 +110,14 @@ export function CreateProjectAgentSheet({
 
 export function RequiredAgentField({
 	id,
+	invalid = false,
 	label,
 	onChange,
 	placeholder,
 	value,
 }: {
 	id: string;
+	invalid?: boolean;
 	label: string;
 	onChange: (value: string) => void;
 	placeholder: string;
@@ -123,11 +125,11 @@ export function RequiredAgentField({
 }) {
 	return (
 		<div className="flex flex-col gap-1.5">
-			<Label htmlFor={id} className="text-[12px] text-muted-foreground">
+			<Label htmlFor={id} className="text-[12px] font-medium text-muted-foreground">
 				{label}
 			</Label>
 			<Select value={value} onValueChange={onChange}>
-				<SelectTrigger id={id} className="h-8 w-full text-[13px]" aria-invalid={value === ""}>
+				<SelectTrigger id={id} className="h-8 w-full text-[13px]" aria-invalid={invalid || undefined}>
 					<SelectValue placeholder={placeholder} />
 				</SelectTrigger>
 				<SelectContent>
