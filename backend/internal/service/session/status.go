@@ -109,9 +109,9 @@ func prMoves(open []domain.PRFacts) (hasClean, hasUnfinished bool) {
 type prBucketKind int
 
 const (
-	bucketNeutral prBucketKind = iota // bare open PR, just sitting there
-	bucketClean                       // a clean action waits on you
-	bucketUnfinished                  // the agent has more to do
+	bucketNeutral    prBucketKind = iota // bare open PR, just sitting there
+	bucketClean                          // a clean action waits on you
+	bucketUnfinished                     // the agent has more to do
 )
 
 // prBucket sorts one PR by whose move it is. Unfinished signals (failing CI,
