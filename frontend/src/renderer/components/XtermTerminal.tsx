@@ -71,33 +71,62 @@ const terminalThemes = buildTerminalThemes();
 // events stop reaching zellij. The clear only wipes pixels; modes stay up.
 const CLEAR_SEQUENCE = "\x1b[3J\x1b[2J\x1b[H";
 
+type ClipboardPlatform = "mac" | "windows" | "linux";
+
+function detectClipboardPlatform(): ClipboardPlatform {
+	const platform = navigator.platform || navigator.userAgent;
+	if (/mac/i.test(platform)) return "mac";
+	if (/win/i.test(platform)) return "windows";
+	return "linux";
+}
+
+type ClipboardChords = {
+	isCopy: (event: KeyboardEvent) => boolean;
+	isPaste: (event: KeyboardEvent) => boolean;
+};
+
+// Per-platform chords, not one shared chord: on macOS, Ctrl is free for
+// copy/paste because Ctrl+C/Ctrl+V have no PTY meaning there — Cmd owns
+// shortcuts. On Windows/Linux, Ctrl+C *is* SIGINT and Ctrl+V can be a
+// literal-paste control code in some shells, so plain Ctrl+C/Ctrl+V must keep
+// reaching the PTY untouched; those platforms use Ctrl+Shift+C/V instead, the
+// same convention GNOME Terminal and Windows Terminal use. Add a platform
+// here to extend.
+const CLIPBOARD_CHORDS: Record<ClipboardPlatform, ClipboardChords> = {
+	mac: {
+		isCopy: (event) => event.metaKey && !event.shiftKey && event.key.toLowerCase() === "c",
+		isPaste: (event) => event.metaKey && !event.shiftKey && event.key.toLowerCase() === "v",
+	},
+	windows: {
+		isCopy: (event) => event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "c",
+		isPaste: (event) => event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "v",
+	},
+	linux: {
+		isCopy: (event) => event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "c",
+		isPaste: (event) => event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "v",
+	},
+};
+
 // xterm's selection is an internal model rendered to canvas/WebGL, not a DOM
 // selection, so the OS/Electron "Copy" command can never see it — we must
-// intercept Cmd/Ctrl+C ourselves. When nothing is selected, Ctrl+C must keep
-// reaching the PTY (it's SIGINT), so we only swallow the event when there's a
-// selection to copy. Cmd/Ctrl+V is wired explicitly too: relying on xterm's
-// native DOM 'paste' event is not reliable across platforms under Electron.
-function isCopyShortcut(event: KeyboardEvent): boolean {
-	const modifier = event.metaKey || event.ctrlKey;
-	return modifier && event.key.toLowerCase() === "c";
-}
-
-function isPasteShortcut(event: KeyboardEvent): boolean {
-	const modifier = event.metaKey || event.ctrlKey;
-	return modifier && event.key.toLowerCase() === "v";
-}
-
+// intercept the copy chord ourselves. When nothing is selected we let the
+// event fall through unchanged (so plain Ctrl+C still reaches the PTY as
+// SIGINT on every platform). The paste chord is wired explicitly too: relying
+// on xterm's native DOM 'paste' event is not reliable across platforms under
+// Electron.
 function attachClipboardHandling(term: Terminal): void {
+	const chords = CLIPBOARD_CHORDS[detectClipboardPlatform()];
+
 	term.attachCustomKeyEventHandler((event) => {
 		if (event.type !== "keydown") return true;
 
-		if (isCopyShortcut(event)) {
+		if (chords.isCopy(event)) {
 			if (!term.hasSelection()) return true;
 			void navigator.clipboard.writeText(term.getSelection());
 			return false;
 		}
 
-		if (isPasteShortcut(event)) {
+		if (chords.isPaste(event)) {
 			void navigator.clipboard.readText().then((text) => {
 				if (text) term.paste(text);
 			});
