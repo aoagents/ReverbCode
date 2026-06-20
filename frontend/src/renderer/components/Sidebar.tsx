@@ -46,7 +46,6 @@ import {
 	SidebarMenuButton,
 	SidebarMenuItem,
 	SidebarMenuSub,
-	SidebarMenuSubButton,
 	SidebarMenuSubItem,
 	SidebarTrigger,
 	useSidebar,
@@ -97,17 +96,20 @@ function useSelection() {
 	};
 }
 
-// agent-orchestrator's SessionDot: 6px dot, neutral grey at rest, orange +
-// breathe while the agent is working. Other attention zones stay neutral here
-// (the board carries the richer colour coding).
+// 6px session dot: mirrors the board's status language so the sidebar can be
+// scanned without opening the project board.
 function SessionDot({ session }: { session: WorkspaceSession }) {
-	const working = attentionZone(session) === "working";
+	const zone = attentionZone(session);
 	return (
 		<span
 			aria-hidden="true"
 			className={cn(
 				"mt-px h-1.5 w-1.5 shrink-0 rounded-full",
-				working ? "animate-status-pulse bg-working" : "bg-passive",
+				zone === "working" && "animate-status-pulse bg-working",
+				zone === "action" && (session.status === "ci_failed" ? "bg-error" : "bg-warning"),
+				zone === "pending" && "bg-passive",
+				zone === "merge" && "bg-success",
+				zone === "done" && "bg-passive",
 			)}
 		/>
 	);
@@ -182,7 +184,7 @@ export function Sidebar({ daemonStatus, workspaceError, workspaces, onCreateProj
 					{!isMac && (
 						<Tooltip>
 							<TooltipTrigger asChild>
-								<SidebarTrigger className="shrink-0 rounded-md text-passive hover:bg-interactive-hover hover:text-foreground group-data-[collapsible=icon]:hidden [&_svg]:size-[15px]" />
+								<SidebarTrigger className="size-[18px] shrink-0 rounded-[4px] p-0 text-passive hover:bg-interactive-hover hover:text-foreground group-data-[collapsible=icon]:hidden [&_svg]:size-[15px]" />
 							</TooltipTrigger>
 							<TooltipContent>Collapse sidebar · ⌘B</TooltipContent>
 						</Tooltip>
@@ -448,9 +450,10 @@ function ProjectItem({
 				onClick={onProjectClick}
 				tooltip={workspace.name}
 				className={cn(
-					"h-auto gap-[9px] rounded-[5px] px-1.5 py-[7px] text-[13px] font-medium text-muted-foreground transition-[padding]",
-					"hover:bg-interactive-hover hover:text-muted-foreground active:bg-interactive-hover active:text-muted-foreground",
-					"data-[active=true]:bg-interactive-active data-[active=true]:font-semibold data-[active=true]:text-foreground",
+					"relative h-9 gap-[9px] rounded-[5px] px-1.5 py-0 text-[13px] font-medium text-muted-foreground transition-[background-color,padding,color]",
+					"before:absolute before:top-2 before:bottom-2 before:left-0 before:w-px before:rounded-full before:bg-transparent",
+					"hover:bg-interactive-hover hover:text-foreground active:bg-interactive-hover active:text-foreground",
+					"data-[active=true]:bg-interactive-active data-[active=true]:font-semibold data-[active=true]:text-foreground data-[active=true]:before:bg-accent",
 					// Make room for the hover actions (dashboard, orchestrator, kebab)
 					// when the row is hovered, focused, or its menu is open (the
 					// absolutely-positioned cluster replaces the count).
@@ -469,7 +472,7 @@ function ProjectItem({
 				/>
 				<span className="hidden group-data-[collapsible=icon]:block">{workspace.name.charAt(0).toUpperCase()}</span>
 				<span className="min-w-0 flex-1 truncate group-data-[collapsible=icon]:hidden">{workspace.name}</span>
-				<span className="shrink-0 font-mono text-[11px] text-passive group-hover/menu-item:opacity-0 group-focus-within/menu-item:opacity-0 group-has-data-[state=open]/menu-item:opacity-0 group-data-[collapsible=icon]:hidden">
+				<span className="grid h-4 min-w-4 shrink-0 place-items-center rounded bg-interactive-hover px-1 font-mono text-[10px] leading-none text-passive group-hover/menu-item:opacity-0 group-focus-within/menu-item:opacity-0 group-has-data-[state=open]/menu-item:opacity-0 group-data-[collapsible=icon]:hidden">
 					{sessions.length}
 				</span>
 			</SidebarMenuButton>
@@ -478,7 +481,7 @@ function ProjectItem({
           open), replacing the session count, and stays hidden in the icon rail. */}
 			<div
 				className={cn(
-					"absolute top-1/2 right-1 flex -translate-y-1/2 items-center gap-px",
+					"absolute top-0 right-1 flex h-9 items-center gap-px",
 					"opacity-0 transition-opacity",
 					"group-hover/menu-item:opacity-100 group-focus-within/menu-item:opacity-100 group-has-data-[state=open]/menu-item:opacity-100",
 					"group-data-[collapsible=icon]:hidden",
@@ -541,40 +544,36 @@ function ProjectItem({
 					{removeError}
 				</span>
 			)}
-			{/* project-sidebar__sessions. Divergence from AO (user decision
-          2026-06-12): no left indent or tree guide line — every sidebar row
-          (project or worker) spans the same full width. */}
+			{/* project-sidebar__sessions: indented under the project parent with a
+          subtle guide line so worker sessions read as children, not peer
+          navigation rows. */}
 			{expanded && sessions.length > 0 && (
-				<SidebarMenuSub className="mx-0 translate-x-0 gap-0 border-0 px-0 pb-2 pt-0.5">
+				<SidebarMenuSub className="mx-0 ml-[18px] translate-x-0 gap-0 border-l border-border px-0 py-1 pl-2.5">
 					{sessions.map((session) => {
 						const active = selection.activeSessionId === session.id;
 						return (
 							<SidebarMenuSubItem key={session.id}>
-								<SidebarMenuSubButton asChild isActive={active}>
-									<button
-										aria-current={active ? "page" : undefined}
-										aria-label={`Open ${session.title}`}
-										className={cn(
-											"h-auto w-full translate-x-0 gap-[9px] rounded-[5px] py-[5px] pl-2 pr-1.5 text-left transition-colors",
-											"hover:bg-interactive-hover data-[active=true]:bg-interactive-active",
-										)}
-										onClick={() => selection.goSession(workspace.id, session.id)}
-										type="button"
-									>
-										<SessionDot session={session} />
-										<span className="min-w-0 flex-1">
-											<span
-												className={cn(
-													"block truncate text-[12px]",
-													active ? "text-foreground" : "text-muted-foreground",
-												)}
-											>
-												{session.title}
-											</span>
-											<span className="block truncate font-mono text-[10px] text-passive">{session.id}</span>
+								<button
+									aria-current={active ? "page" : undefined}
+									aria-label={`Open ${session.title}`}
+									className={cn(
+										"relative flex h-auto w-full items-center gap-[9px] rounded-[4px] py-[5px] pl-2.5 pr-1.5 text-left outline-hidden transition-[color]",
+										"before:absolute before:top-1.5 before:bottom-1.5 before:left-0 before:w-px before:rounded-full before:bg-transparent",
+										"hover:text-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring",
+										active && "text-foreground before:bg-accent",
+									)}
+									onClick={() => selection.goSession(workspace.id, session.id)}
+									type="button"
+								>
+									<SessionDot session={session} />
+									<span className="min-w-0 flex-1">
+										<span
+											className={cn("block truncate text-[12px]", active ? "text-foreground" : "text-muted-foreground")}
+										>
+											{session.title}
 										</span>
-									</button>
-								</SidebarMenuSubButton>
+									</span>
+								</button>
 							</SidebarMenuSubItem>
 						);
 					})}
