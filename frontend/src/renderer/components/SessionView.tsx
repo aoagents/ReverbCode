@@ -155,12 +155,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
             be strings. Numeric sizes here once clamped the inspector to 45px. */}
 				<ResizablePanel defaultSize="72%" id="terminal" minSize="45%">
 					{browserPoppedOut && session ? (
-						<BrowserPanel
-							active
-							onTogglePopOut={setBrowserPoppedOut}
-							poppedOut
-							session={session}
-						/>
+						<BrowserPanel active onTogglePopOut={setBrowserPoppedOut} poppedOut session={session} />
 					) : (
 						<CenterPane
 							daemonReady={daemonStatus.state === "ready"}

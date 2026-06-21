@@ -61,9 +61,7 @@ type ShellLike = {
 	openExternal: (url: string) => Promise<void>;
 };
 
-type WebContentsViewConstructor = new (options: {
-	webPreferences: Electron.WebPreferences;
-}) => BrowserViewLike;
+type WebContentsViewConstructor = new (options: { webPreferences: Electron.WebPreferences }) => BrowserViewLike;
 
 export type BrowserViewHostOptions = {
 	mainWindow: BrowserWindowLike;
@@ -111,7 +109,10 @@ export function isAllowedBrowserURL(input: string, rendererOrigin?: string): boo
 	}
 }
 
-export function clampBoundsToWindow(rect: BrowserRect, windowBounds: Pick<BrowserRect, "width" | "height">): BrowserRect {
+export function clampBoundsToWindow(
+	rect: BrowserRect,
+	windowBounds: Pick<BrowserRect, "width" | "height">,
+): BrowserRect {
 	const rounded = {
 		x: Math.round(rect.x),
 		y: Math.round(rect.y),

@@ -47,13 +47,7 @@ const { workspaces, panels } = vi.hoisted(() => {
 // the split under test. (The topbar is shell-owned — see ShellTopbar.)
 vi.mock("./CenterPane", () => ({ CenterPane: () => <div>terminal center</div> }));
 vi.mock("./BrowserPanel", () => ({
-	BrowserPanel: ({
-		poppedOut,
-		onTogglePopOut,
-	}: {
-		poppedOut: boolean;
-		onTogglePopOut: (next: boolean) => void;
-	}) => (
+	BrowserPanel: ({ poppedOut, onTogglePopOut }: { poppedOut: boolean; onTogglePopOut: (next: boolean) => void }) => (
 		<button type="button" onClick={() => onTogglePopOut(!poppedOut)}>
 			{poppedOut ? "browser center" : "browser rail"}
 		</button>
