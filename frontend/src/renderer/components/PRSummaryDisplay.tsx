@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, ArrowUpRight } from "lucide-react";
+import { ArrowUpDown, ArrowUpRight } from "lucide-react";
 import { Fragment, type ReactNode } from "react";
 import type { SessionPRSummary } from "../hooks/useSessionScmSummary";
 import { prAttentionItems, prStatusRows, type PRAttentionLink, type PRDisplayTone } from "../lib/pr-display";
@@ -53,22 +53,23 @@ function PRDiffMeta({ pr }: { pr: SessionPRSummary }) {
 	const parts: ReactNode[] = [];
 	if (pr.changedFiles > 0) {
 		parts.push(
-			<span className="text-warning" key="files">
+			<span className="inline-flex items-center gap-0.5 text-warning" key="files">
+				<ArrowUpDown aria-hidden="true" className="h-2.5 w-2.5 shrink-0" strokeWidth={2.2} />
 				{pr.changedFiles} {pluralize("file", pr.changedFiles)}
 			</span>,
 		);
 	}
 	if (pr.additions > 0) {
 		parts.push(
-			<span className="inline-flex items-center gap-0.5 text-success" key="additions">
-				<ArrowUp aria-hidden="true" className="h-2.5 w-2.5 shrink-0" strokeWidth={2.2} />+{pr.additions}
+			<span className="text-success" key="additions">
+				+{pr.additions}
 			</span>,
 		);
 	}
 	if (pr.deletions > 0) {
 		parts.push(
-			<span className="inline-flex items-center gap-0.5 text-error" key="deletions">
-				<ArrowDown aria-hidden="true" className="h-2.5 w-2.5 shrink-0" strokeWidth={2.2} />-{pr.deletions}
+			<span className="text-error" key="deletions">
+				-{pr.deletions}
 			</span>,
 		);
 	}
