@@ -337,7 +337,9 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 	// health.pid mismatch) makes it return null — yet a daemon may still be serving
 	// the port. Spawning then would just make the Go child refuse and exit 1. Probe
 	// the expected port directly, independent of the run-file, and attach if a
-	// daemon answers.
+	// daemon answers. The expected port (AO_PORT or the default) is exactly the
+	// port the Go child would bind and collide on — probing a hardcoded 3001 would
+	// miss an AO_PORT override.
 	const directDaemon = await resolveDaemonFromPort({
 		expectedPort: expectedDaemonPort(process.env),
 		probe: readDaemonProbe,
