@@ -282,7 +282,9 @@ describe("resolveDaemonFromPort", () => {
 				"3001:readyz": { status: "ready", service: DAEMON_SERVICE_NAME, pid: 777, executablePath: "/old/ao" },
 			}),
 			identityError: (probe) =>
-				probe.executablePath === "/new/ao" ? null : `Another AO daemon is already running from ${probe.executablePath}.`,
+				probe.executablePath === "/new/ao"
+					? null
+					: `Another AO daemon is already running from ${probe.executablePath}.`,
 		});
 		expect(result).toMatchObject({
 			state: "error",
@@ -385,7 +387,11 @@ describe("end-to-end against a real daemon server", () => {
 
 	it("attaches to a genuinely serving daemon via the direct port probe", async () => {
 		const port = await startServer({ pid: 555 });
-		const result = await resolveDaemonFromPort({ expectedPort: port, probe: realProbe, identityError: NO_IDENTITY_ERROR });
+		const result = await resolveDaemonFromPort({
+			expectedPort: port,
+			probe: realProbe,
+			identityError: NO_IDENTITY_ERROR,
+		});
 		expect(result).toEqual({
 			state: "ready",
 			port,
@@ -399,13 +405,21 @@ describe("end-to-end against a real daemon server", () => {
 		const port = await startServer({ pid: 1 });
 		// Close the only server so the port is now refused.
 		await Promise.all(servers.splice(0).map((s) => new Promise<void>((r) => s.close(() => r()))));
-		const result = await resolveDaemonFromPort({ expectedPort: port, probe: realProbe, identityError: NO_IDENTITY_ERROR });
+		const result = await resolveDaemonFromPort({
+			expectedPort: port,
+			probe: realProbe,
+			identityError: NO_IDENTITY_ERROR,
+		});
 		expect(result).toBeNull();
 	});
 
 	it("does NOT attach to a foreign (non-AO) server squatting on the port", async () => {
 		const port = await startServer({ pid: 1, service: "some-other-service" });
-		const result = await resolveDaemonFromPort({ expectedPort: port, probe: realProbe, identityError: NO_IDENTITY_ERROR });
+		const result = await resolveDaemonFromPort({
+			expectedPort: port,
+			probe: realProbe,
+			identityError: NO_IDENTITY_ERROR,
+		});
 		expect(result).toBeNull();
 	});
 
@@ -419,7 +433,9 @@ describe("end-to-end against a real daemon server", () => {
 			isProcessAlive: ALIVE,
 			expectedPort: port,
 			identityError: (probe) =>
-				probe.executablePath === "/expected/ao" ? null : `Another AO daemon is already running from ${probe.executablePath}.`,
+				probe.executablePath === "/expected/ao"
+					? null
+					: `Another AO daemon is already running from ${probe.executablePath}.`,
 		});
 		expect(result).toMatchObject({
 			state: "error",
