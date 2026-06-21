@@ -86,7 +86,7 @@ describe("useBrowserView", () => {
 		expect(result.current.viewId).toBe("42:sess-1");
 	});
 
-	it("hides the native view when inactive and destroys it on unmount", async () => {
+	it("hides the native view when inactive and on unmount without destroying session state", async () => {
 		const bridge = setupBridge();
 		const slot = createSlot();
 		const { result, rerender, unmount } = renderHook(
@@ -106,7 +106,12 @@ describe("useBrowserView", () => {
 		);
 
 		unmount();
-		expect(bridge.destroy).toHaveBeenCalledWith("42:sess-1");
+		expect(bridge.setBounds).toHaveBeenLastCalledWith({
+			viewId: "42:sess-1",
+			rect: { x: 0, y: 0, width: 0, height: 0 },
+			visible: false,
+		});
+		expect(bridge.destroy).not.toHaveBeenCalled();
 	});
 
 	it("updates nav state only for the current view", async () => {

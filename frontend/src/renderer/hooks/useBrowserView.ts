@@ -117,7 +117,6 @@ export function useBrowserView({ sessionId, active, poppedOut }: UseBrowserViewO
 			const id = viewIdRef.current;
 			if (id) {
 				sendHiddenBounds(id);
-				window.ao?.browser.destroy(id);
 			}
 			viewIdRef.current = "";
 		};
