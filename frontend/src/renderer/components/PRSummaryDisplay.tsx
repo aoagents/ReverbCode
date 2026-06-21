@@ -1,5 +1,12 @@
+import { ArrowUpRight } from "lucide-react";
 import type { SessionPRSummary } from "../hooks/useSessionScmSummary";
-import { prAttentionItems, prStatusRows, type PRAttentionLink, type PRDisplayTone } from "../lib/pr-display";
+import {
+	prAttentionItems,
+	prDiffSummary,
+	prStatusRows,
+	type PRAttentionLink,
+	type PRDisplayTone,
+} from "../lib/pr-display";
 import { cn } from "../lib/utils";
 
 const toneClass: Record<PRDisplayTone, string> = {
@@ -20,6 +27,29 @@ export function PRStatusStrip({ className, pr }: { className?: string; pr: Sessi
 					{row.detail ? <span className="text-passive"> · {row.detail}</span> : null}
 				</span>
 			))}
+		</div>
+	);
+}
+
+export function PRSummaryMeta({
+	className,
+	leading,
+	pr,
+}: {
+	className?: string;
+	leading?: string;
+	pr: SessionPRSummary;
+}) {
+	const branchRange = prBranchRange(pr);
+	const diff = prDiffSummary(pr);
+	const primary = [leading, branchRange, pr.author].filter(Boolean);
+	if (primary.length === 0 && !diff) {
+		return null;
+	}
+	return (
+		<div className={cn("min-w-0 font-mono text-[10.5px] leading-4", className)}>
+			{primary.length > 0 ? <div className="truncate text-passive">{primary.join(" · ")}</div> : null}
+			{diff ? <div className="truncate text-muted-foreground">{diff}</div> : null}
 		</div>
 	);
 }
@@ -77,14 +107,15 @@ function AttentionLink({ interactive, link }: { interactive: boolean; link: PRAt
 	if (interactive && link.href) {
 		return (
 			<a
-				className="max-w-full truncate text-accent hover:underline"
+				className="inline-flex max-w-full min-w-0 items-center gap-0.5 text-accent hover:underline"
 				href={link.href}
 				onClick={(event) => event.stopPropagation()}
 				rel="noopener noreferrer"
 				target="_blank"
 				title={link.title}
 			>
-				{link.label}
+				<span className="truncate">{link.label}</span>
+				<ArrowUpRight aria-hidden="true" className="h-2.5 w-2.5 shrink-0" strokeWidth={2} />
 			</a>
 		);
 	}
@@ -93,4 +124,17 @@ function AttentionLink({ interactive, link }: { interactive: boolean; link: PRAt
 			{link.label}
 		</span>
 	);
+}
+
+function prBranchRange(pr: SessionPRSummary): string | undefined {
+	if (pr.sourceBranch && pr.targetBranch) {
+		return `${pr.sourceBranch} -> ${pr.targetBranch}`;
+	}
+	if (pr.sourceBranch) {
+		return pr.sourceBranch;
+	}
+	if (pr.targetBranch) {
+		return `-> ${pr.targetBranch}`;
+	}
+	return undefined;
 }

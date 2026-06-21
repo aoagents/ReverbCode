@@ -1,17 +1,17 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
-import { AlertCircle, CheckCircle2, CircleMinus, GitPullRequest, Play, Shield, Terminal } from "lucide-react";
+import { AlertCircle, ArrowUpRight, CheckCircle2, CircleMinus, GitPullRequest, Play, Shield, Terminal } from "lucide-react";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { formatTimeCompact } from "../lib/format-time";
 import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
-import { prDiffSummary, sessionPRDisplaySummaries } from "../lib/pr-display";
+import { prStatusRows, sessionPRDisplaySummaries, type PRDisplayTone } from "../lib/pr-display";
 import type { SessionStatus, WorkspaceSession } from "../types/workspace";
 import { sortedPRs, workerDisplayStatus } from "../types/workspace";
 import { Badge } from "./ui/badge";
 import { cn } from "../lib/utils";
-import { PRAttentionPanel, PRStatusStrip } from "./PRSummaryDisplay";
+import { PRAttentionPanel, PRSummaryMeta } from "./PRSummaryDisplay";
 
 type ProjectConfig = components["schemas"]["ProjectConfig"];
 type ReviewRun = components["schemas"]["ReviewRun"];
@@ -113,9 +113,19 @@ export function SessionInspector({
 	);
 }
 
-function Section({ title, action, children }: { title: string; action?: ReactNode; children: ReactNode }) {
+function Section({
+	action,
+	children,
+	className,
+	title,
+}: {
+	action?: ReactNode;
+	children: ReactNode;
+	className?: string;
+	title: string;
+}) {
 	return (
-		<section className="inspector-section">
+		<section className={cn("inspector-section", className)}>
 			<div className="inspector-section__head">
 				<span>{title}</span>
 				{action ?? null}
@@ -149,7 +159,7 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 				<ActivityTimeline session={session} />
 			</Section>
 
-			<Section title="Overview">
+			<Section className="inspector-section--separated" title="Overview">
 				<dl className="inspector-kv">
 					<Row k="Agent" v={session.provider} mono />
 					<Row k="Branch" v={branchLabel} mono />
@@ -174,25 +184,46 @@ function PRSummaryCard({ pr }: { pr: SessionPRSummary }) {
 					href={pr.htmlUrl || pr.url}
 					target="_blank"
 					rel="noopener noreferrer"
-					className="ml-auto text-[11px] font-medium text-accent hover:underline"
+					className="ml-auto inline-flex items-center gap-0.5 text-[11px] font-medium text-accent hover:underline"
 				>
-					Open
+					<span>Open</span>
+					<ArrowUpRight aria-hidden="true" className="h-3 w-3" strokeWidth={2} />
 				</a>
 			</div>
 			{pr.title ? <div className="mt-2 text-[12px] font-medium leading-snug text-foreground">{pr.title}</div> : null}
-			<div className="mt-1.5 truncate font-mono text-[10.5px] text-passive">
-				{[
-					pr.sourceBranch && `${pr.sourceBranch}${pr.targetBranch ? ` -> ${pr.targetBranch}` : ""}`,
-					pr.author,
-					prDiffSummary(pr),
-				]
-					.filter(Boolean)
-					.join(" · ")}
-			</div>
-			<PRStatusStrip className="mt-2" pr={pr} />
+			<PRSummaryMeta className="mt-1.5" pr={pr} />
+			<PRStatusStack className="mt-2" pr={pr} />
 			<PRAttentionPanel pr={pr} />
 		</div>
 	);
+}
+
+function PRStatusStack({ className, pr }: { className?: string; pr: SessionPRSummary }) {
+	return (
+		<div className={cn("flex flex-col gap-0.5 font-mono text-[10.5px] leading-4", className)}>
+			{prStatusRows(pr).map((row) => (
+				<div key={row.key} className="min-w-0 truncate">
+					<span className="text-passive">{row.label}</span>{" "}
+					<span className={cn("font-medium", inspectorStatusToneClass(row.tone))}>{row.value}</span>
+				</div>
+			))}
+		</div>
+	);
+}
+
+function inspectorStatusToneClass(tone: PRDisplayTone): string {
+	switch (tone) {
+		case "success":
+			return "text-success";
+		case "warning":
+			return "text-warning";
+		case "error":
+			return "text-error";
+		case "neutral":
+			return "text-muted-foreground";
+		case "passive":
+			return "text-passive";
+	}
 }
 
 type TimelineTone = "now" | "good" | "warn" | "neutral";

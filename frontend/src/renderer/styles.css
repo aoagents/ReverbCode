@@ -790,6 +790,11 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	margin-bottom: 22px;
 }
 
+.inspector-section--separated {
+	border-top: 1px solid var(--border);
+	padding-top: 18px;
+}
+
 .inspector-section__head {
 	display: flex;
 	align-items: center;
