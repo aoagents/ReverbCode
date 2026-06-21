@@ -10,6 +10,13 @@ const state = vi.hoisted(() => ({
 		modes: { bracketedPasteMode: boolean };
 		dataListeners: Set<(data: string) => void>;
 		selectionListeners: Set<() => void>;
+		_core: {
+			element: { classList: { add: ReturnType<typeof vi.fn>; remove: ReturnType<typeof vi.fn> } };
+			_selectionService: {
+				enable: ReturnType<typeof vi.fn>;
+				shouldForceSelection: (event: MouseEvent) => boolean;
+			};
+		};
 	},
 }));
 
@@ -23,6 +30,13 @@ vi.mock("@xterm/xterm", () => ({
 		modes = { bracketedPasteMode: false };
 		dataListeners = new Set<(data: string) => void>();
 		selectionListeners = new Set<() => void>();
+		_core = {
+			element: { classList: { add: vi.fn(), remove: vi.fn() } },
+			_selectionService: {
+				enable: vi.fn(),
+				shouldForceSelection: () => false,
+			},
+		};
 
 		constructor(options: Record<string, unknown>) {
 			this.options = options;
@@ -184,9 +198,12 @@ describe("XtermTerminal", () => {
 		expect(onInput).toHaveBeenCalledWith("\x1b[A", "terminal");
 	});
 
-	it("enables xterm's modifier selection without overriding mouse mode", () => {
+	it("forces plain drag selection while preserving xterm data forwarding", () => {
 		render(<XtermTerminal theme="dark" />);
 
 		expect(state.lastTerminal!.options.macOptionClickForcesSelection).toBe(true);
+		expect(state.lastTerminal!._core._selectionService.enable).toHaveBeenCalled();
+		expect(state.lastTerminal!._core.element.classList.remove).toHaveBeenCalledWith("enable-mouse-events");
+		expect(state.lastTerminal!._core._selectionService.shouldForceSelection({} as MouseEvent)).toBe(true);
 	});
 });
