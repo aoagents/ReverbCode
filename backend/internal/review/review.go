@@ -356,7 +356,8 @@ func (e *Engine) notifyWorkerChangesRequested(ctx context.Context, workerID doma
 	}
 	msg := "An AO code reviewer requested changes on your PR. Review the feedback below and address it."
 	if githubReviewID != "" {
-		msg += fmt.Sprintf(" This feedback is GitHub review %s. Once you have addressed it, reply on that review referencing id %s with how you addressed it, then resolve the review comment threads you addressed.", githubReviewID, githubReviewID)
+		safeReviewID := domain.SanitizeControlChars(githubReviewID)
+		msg += fmt.Sprintf(" This feedback is GitHub review %s. Once you have addressed it, reply on that review referencing id %s with how you addressed it, then resolve the review comment threads you addressed.", safeReviewID, safeReviewID)
 	}
 	if body != "" {
 		msg += "\n\n" + domain.SanitizeControlChars(body)

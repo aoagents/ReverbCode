@@ -416,18 +416,21 @@ func TestSubmitChangesRequestedMessagesWorker(t *testing.T) {
 	msgr := &fakeMessenger{}
 	eng := newEngineWithMessenger(store, msgr)
 
-	run, err := eng.Submit(context.Background(), "mer-1", "run-1", domain.VerdictChangesRequested, "fix the bug", "98765")
+	run, err := eng.Submit(context.Background(), "mer-1", "run-1", domain.VerdictChangesRequested, "fix the bug", "98\x1b[2J765")
 	if err != nil {
 		t.Fatalf("Submit: %v", err)
 	}
-	if run.GithubReviewID != "98765" || store.runs[0].GithubReviewID != "98765" {
+	if run.GithubReviewID != "98\x1b[2J765" || store.runs[0].GithubReviewID != "98\x1b[2J765" {
 		t.Fatalf("review id not persisted: run=%+v stored=%+v", run, store.runs[0])
 	}
 	if msgr.sends != 1 || msgr.gotID != "mer-1" {
 		t.Fatalf("expected one message to worker mer-1, got %+v", msgr)
 	}
-	if !strings.Contains(msgr.gotMsg, "fix the bug") || !strings.Contains(msgr.gotMsg, "98765") {
+	if !strings.Contains(msgr.gotMsg, "fix the bug") || !strings.Contains(msgr.gotMsg, "98[2J765") {
 		t.Fatalf("message missing body or review id: %q", msgr.gotMsg)
+	}
+	if strings.Contains(msgr.gotMsg, "\x1b") {
+		t.Fatalf("message should sanitize review id before sending to worker: %q", msgr.gotMsg)
 	}
 	// The worker must be able to tell an AO internal review from external SCM
 	// reviewer feedback, and is asked to reply + resolve for an AO review.
