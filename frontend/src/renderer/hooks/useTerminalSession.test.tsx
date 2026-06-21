@@ -17,6 +17,7 @@ const session: WorkspaceSession = {
 	branch: "main",
 	status: "working",
 	updatedAt: "now",
+	prs: [],
 };
 
 type FakeMux = {
@@ -24,6 +25,8 @@ type FakeMux = {
 	opens: Array<[string, number, number]>;
 	resizes: Array<[string, number, number]>;
 	inputs: Array<[string, string]>;
+	closes: string[];
+	events: string[];
 	disposed: boolean;
 	emitData(id: string, text: string): void;
 	emitOpened(id: string): void;
@@ -50,12 +53,17 @@ function createFakeMux(): FakeMux {
 		opens: [],
 		resizes: [],
 		inputs: [],
+		closes: [],
+		events: [],
 		disposed: false,
 		mux: {
 			open: (id, cols, rows) => fake.opens.push([id, cols, rows]),
 			sendInput: (id, input) => fake.inputs.push([id, input]),
 			resize: (id, cols, rows) => fake.resizes.push([id, cols, rows]),
-			close: () => undefined,
+			close: (id) => {
+				fake.closes.push(id);
+				fake.events.push(`close:${id}`);
+			},
 			onData: (id, listener) => subscribe(data, id, listener),
 			onExit: (id, listener) => subscribe(exit, id, listener),
 			onOpened: (id, listener) => subscribe(opened, id, listener),
@@ -66,6 +74,7 @@ function createFakeMux(): FakeMux {
 			},
 			dispose: () => {
 				fake.disposed = true;
+				fake.events.push("dispose");
 			},
 		},
 		emitData: (id, text) => data.get(id)?.forEach((listener) => listener(new TextEncoder().encode(text))),
@@ -81,11 +90,12 @@ type FakeTerminal = AttachableTerminal & {
 	lines: string[];
 	clears: number;
 	typeKeys(data: string): void;
+	paste(data: string): void;
 	emitResize(cols: number, rows: number): void;
 };
 
 function createFakeTerminal(): FakeTerminal {
-	const dataListeners = new Set<(data: string) => void>();
+	const inputListeners = new Set<Parameters<AttachableTerminal["onUserInput"]>[0]>();
 	const resizeListeners = new Set<(size: { cols: number; rows: number }) => void>();
 	const terminal: FakeTerminal = {
 		cols: 80,
@@ -97,15 +107,16 @@ function createFakeTerminal(): FakeTerminal {
 		clear: () => {
 			terminal.clears += 1;
 		},
-		onData: (listener) => {
-			dataListeners.add(listener);
-			return { dispose: () => dataListeners.delete(listener) };
+		onUserInput: (listener) => {
+			inputListeners.add(listener);
+			return { dispose: () => inputListeners.delete(listener) };
 		},
 		onResize: (listener) => {
 			resizeListeners.add(listener);
 			return { dispose: () => resizeListeners.delete(listener) };
 		},
-		typeKeys: (data) => dataListeners.forEach((listener) => listener(data)),
+		typeKeys: (data) => inputListeners.forEach((listener) => listener(data, "keyboard")),
+		paste: (data) => inputListeners.forEach((listener) => listener(data, "paste")),
 		emitResize: (cols, rows) => resizeListeners.forEach((listener) => listener({ cols, rows })),
 	};
 	return terminal;
@@ -162,10 +173,16 @@ describe("useTerminalSession", () => {
 
 	it("forwards PTY output, keystrokes, and resizes across the attachment", () => {
 		const { terminal, muxes } = setup();
+		act(() => muxes[0].emitOpened("handle-1"));
 		act(() => muxes[0].emitData("handle-1", "hello"));
 		expect(terminal.lines).toContain("hello");
 		terminal.typeKeys("ls\r");
 		expect(muxes[0].inputs).toEqual([["handle-1", "ls\r"]]);
+		terminal.paste("echo pasted\r");
+		expect(muxes[0].inputs).toEqual([
+			["handle-1", "ls\r"],
+			["handle-1", "echo pasted\r"],
+		]);
 		terminal.emitResize(120, 40);
 		act(() => void vi.advanceTimersByTime(100));
 		expect(muxes[0].resizes).toContainEqual(["handle-1", 120, 40]);
@@ -188,6 +205,15 @@ describe("useTerminalSession", () => {
 			["handle-1", 120, 40],
 			["handle-1", 120, 40],
 		]);
+	});
+
+	it("does not forward input until the server opens the current attachment", () => {
+		const { terminal, muxes } = setup();
+		terminal.typeKeys("too early");
+		expect(muxes[0].inputs).toEqual([]);
+		act(() => muxes[0].emitOpened("handle-1"));
+		terminal.typeKeys("ready\r");
+		expect(muxes[0].inputs).toEqual([["handle-1", "ready\r"]]);
 	});
 
 	it("a new resize burst supersedes a pending re-assert", () => {
@@ -237,6 +263,33 @@ describe("useTerminalSession", () => {
 		expect(view.result.current.state).toBe("attached");
 	});
 
+	it("ignores stale frames after a reconnect starts", () => {
+		const { view, terminal, muxes } = setup();
+		act(() => muxes[0].emitConnection("closed"));
+		act(() => void vi.advanceTimersByTime(500));
+		expect(muxes).toHaveLength(2);
+		act(() => muxes[0].emitOpened("handle-1"));
+		act(() => muxes[0].emitData("handle-1", "stale"));
+		expect(view.result.current.state).toBe("reattaching");
+		expect(terminal.lines).not.toContain("stale");
+		act(() => muxes[1].emitOpened("handle-1"));
+		expect(view.result.current.state).toBe("attached");
+	});
+
+	it("hard-reconnects when the server never acknowledges open", () => {
+		const { view, muxes } = setup();
+		act(() => void vi.advanceTimersByTime(2_999));
+		expect(muxes).toHaveLength(1);
+		act(() => void vi.advanceTimersByTime(1));
+		expect(view.result.current.state).toBe("reattaching");
+		expect(muxes[0].disposed).toBe(true);
+		act(() => void vi.advanceTimersByTime(500));
+		expect(muxes).toHaveLength(2);
+		expect(muxes[1].opens).toEqual([["handle-1", 80, 24]]);
+		act(() => muxes[1].emitOpened("handle-1"));
+		expect(view.result.current.state).toBe("attached");
+	});
+
 	it("backs off between failed reconnect attempts", () => {
 		const { muxes } = setup();
 		act(() => muxes[0].emitConnection("closed"));
@@ -251,13 +304,12 @@ describe("useTerminalSession", () => {
 
 	it("waits for daemon readiness instead of retrying, then reconnects when it flips", () => {
 		const { view, muxes } = setup({ daemonReady: false });
-		act(() => muxes[0].emitConnection("closed"));
 		expect(view.result.current.state).toBe("reattaching");
 		act(() => void vi.advanceTimersByTime(60_000));
-		expect(muxes).toHaveLength(1); // no retries against a dead daemon
+		expect(muxes).toHaveLength(0); // no initial attach or retries against a dead daemon
 		view.rerender({ daemonReady: true });
-		expect(muxes).toHaveLength(2); // reconnects immediately, without backoff debt
-		act(() => muxes[1].emitOpened("handle-1"));
+		expect(muxes).toHaveLength(1); // connects immediately, without backoff debt
+		act(() => muxes[0].emitOpened("handle-1"));
 		expect(view.result.current.state).toBe("attached");
 	});
 
@@ -266,6 +318,8 @@ describe("useTerminalSession", () => {
 		act(() => detach());
 		expect(view.result.current.state).toBe("idle");
 		expect(muxes[0].disposed).toBe(true);
+		expect(muxes[0].closes).toEqual(["handle-1"]);
+		expect(muxes[0].events).toEqual(["close:handle-1", "dispose"]);
 		act(() => muxes[0].emitConnection("closed"));
 		act(() => void vi.advanceTimersByTime(60_000));
 		expect(muxes).toHaveLength(1);

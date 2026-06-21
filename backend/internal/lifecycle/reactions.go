@@ -70,7 +70,10 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 			if ch.Status == domain.PRCheckFailed {
 				msg := "CI is failing on your PR. Review the output below and push a fix."
 				if ch.LogTail != "" {
-					msg += "\n\nFailing output:\n" + ch.LogTail
+					// LogTail is raw CI job output; sanitize before it reaches the
+					// agent's live pane so embedded escape sequences can't drive the
+					// terminal (the dedup signature stays on the raw bytes).
+					msg += "\n\nFailing output:\n" + domain.SanitizeControlChars(ch.LogTail)
 				}
 				return m.sendOnce(ctx, id, o.URL, "ci:"+o.URL+":"+ch.Name, ch.CommitHash+":"+ch.LogTail, msg, 0)
 			}
@@ -404,7 +407,11 @@ func reviewContent(comments []ports.PRCommentObservation) (string, string) {
 		if c.Resolved {
 			continue
 		}
-		bodies = append(bodies, c.Body)
+		// Comment bodies are attacker-influenced (anyone who can comment on the
+		// PR) and get pasted into the agent's live pane; strip control/escape
+		// chars. The signature is built from comment IDs, not bodies, so dedup is
+		// unaffected.
+		bodies = append(bodies, domain.SanitizeControlChars(c.Body))
 		ids = append(ids, c.ID)
 	}
 	return strings.Join(bodies, "\n\n"), strings.Join(ids, ",")

@@ -29,8 +29,9 @@ const (
 	// DefaultShutdownTimeout is the hard cap on graceful shutdown. After this
 	// the process exits even if connections are still draining.
 	DefaultShutdownTimeout = 10 * time.Second
-	// DefaultAgent is the agent adapter id the daemon wires when AO_AGENT is
-	// unset. It matches the claude-code adapter's manifest id.
+	// DefaultAgent is the compatibility value used when AO_AGENT is unset. The
+	// daemon validates it at startup, but worker/orchestrator spawns resolve from
+	// explicit requests or project role config instead of falling back to it.
 	DefaultAgent = "claude-code"
 	// DefaultTelemetryPostHogHost is the default PostHog ingestion host when
 	// remote telemetry is enabled and AO_TELEMETRY_POSTHOG_HOST is unset.
@@ -85,9 +86,8 @@ type Config struct {
 	// DataDir is the directory holding durable SQLite state: DB and WAL files.
 	// It is created on first use by the storage layer.
 	DataDir string
-	// Agent is the id of the agent adapter the daemon wires into the Session
-	// Manager (see DefaultAgent). Selected by AO_AGENT; startSession fails fast
-	// if no adapter with this id is registered.
+	// Agent is the compatibility agent adapter id selected by AO_AGENT;
+	// startSession fails fast if no adapter with this id is registered.
 	Agent string
 	// AllowedOrigins are the browser origins granted CORS read access (see
 	// DefaultAllowedOrigins). Overridden by AO_ALLOWED_ORIGINS.
@@ -113,7 +113,7 @@ func (c Config) Addr() string {
 //	AO_SHUTDOWN_TIMEOUT  shutdown deadline   (Go duration > 0, default 10s)
 //	AO_RUN_FILE          running.json path   (default ~/.ao/running.json)
 //	AO_DATA_DIR          durable state dir   (default ~/.ao/data)
-//	AO_AGENT             agent adapter id    (default claude-code)
+//	AO_AGENT             compatibility agent id (default claude-code)
 //	AO_ALLOWED_ORIGINS   CORS origins, comma-separated (default DefaultAllowedOrigins)
 //	AO_TELEMETRY_EVENTS  local event capture off|on (default off)
 //	AO_TELEMETRY_METRICS local metric capture off|on (default off)

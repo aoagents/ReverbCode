@@ -15,10 +15,12 @@ import (
 )
 
 type projectAddOptions struct {
-	path        string
-	id          string
-	name        string
-	asWorkspace bool
+	path              string
+	id                string
+	name              string
+	workerAgent       string
+	orchestratorAgent string
+	asWorkspace       bool
 }
 
 type projectListOptions struct {
@@ -37,10 +39,11 @@ type projectRemoveOptions struct {
 // addProjectRequest mirrors the daemon's project AddInput body for
 // POST /api/v1/projects. projectId and name are optional (pointers omit them).
 type addProjectRequest struct {
-	Path        string  `json:"path"`
-	ProjectID   *string `json:"projectId,omitempty"`
-	Name        *string `json:"name,omitempty"`
-	AsWorkspace bool    `json:"asWorkspace,omitempty"`
+	Path        string         `json:"path"`
+	ProjectID   *string        `json:"projectId,omitempty"`
+	Name        *string        `json:"name,omitempty"`
+	Config      *projectConfig `json:"config,omitempty"`
+	AsWorkspace bool           `json:"asWorkspace,omitempty"`
 }
 
 type projectSummary struct {
@@ -58,7 +61,7 @@ type projectDetails struct {
 	Path           string                 `json:"path"`
 	Repo           string                 `json:"repo"`
 	DefaultBranch  string                 `json:"defaultBranch"`
-	DefaultHarness string                 `json:"agent,omitempty"`
+	Agent          string                 `json:"agent,omitempty"`
 	Config         *projectConfig         `json:"config,omitempty"`
 	WorkspaceRepos []workspaceRepoDetails `json:"workspaceRepos,omitempty"`
 	ResolveError   string                 `json:"resolveError,omitempty"`
@@ -226,6 +229,12 @@ func newProjectAddCommand(ctx *commandContext) *cobra.Command {
 			if opts.name != "" {
 				req.Name = &opts.name
 			}
+			if opts.workerAgent != "" || opts.orchestratorAgent != "" {
+				req.Config = &projectConfig{
+					Worker:       roleOverride{Agent: opts.workerAgent},
+					Orchestrator: roleOverride{Agent: opts.orchestratorAgent},
+				}
+			}
 			var res projectResult
 			if err := ctx.postJSON(cmd.Context(), "projects", req, &res); err != nil {
 				return err
@@ -238,6 +247,8 @@ func newProjectAddCommand(ctx *commandContext) *cobra.Command {
 	f.StringVar(&opts.path, "path", "", "Absolute path to the local git repo (required)")
 	f.StringVar(&opts.id, "id", "", "Project id (default: derived by the daemon from the path)")
 	f.StringVar(&opts.name, "name", "", "Display name")
+	f.StringVar(&opts.workerAgent, "worker-agent", "", "Default worker session agent")
+	f.StringVar(&opts.orchestratorAgent, "orchestrator-agent", "", "Default orchestrator session agent")
 	f.BoolVar(&opts.asWorkspace, "as-workspace", false, "Register a parent folder as a workspace project (root-as-repo plus direct child repos)")
 	return cmd
 }
@@ -443,7 +454,7 @@ func writeProjectDetails(cmd *cobra.Command, res projectGetResult) error {
 		{label: "path", value: p.Path},
 		{label: "repo", value: p.Repo},
 		{label: "default branch", value: p.DefaultBranch},
-		{label: "default harness", value: p.DefaultHarness},
+		{label: "agent", value: p.Agent},
 		{label: "config", value: formatProjectConfig(p.Config)},
 		{label: "resolve error", value: p.ResolveError},
 	}

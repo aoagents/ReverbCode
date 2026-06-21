@@ -8,14 +8,16 @@ import (
 	"context"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	reviewcore "github.com/aoagents/agent-orchestrator/backend/internal/review"
 )
 
 // ErrInvalid and ErrNotFound re-export the engine sentinels so the HTTP
 // controller maps service failures to 422/404 without importing the core.
 var (
-	ErrInvalid  = reviewcore.ErrInvalid
-	ErrNotFound = reviewcore.ErrNotFound
+	ErrInvalid             = reviewcore.ErrInvalid
+	ErrNotFound            = reviewcore.ErrNotFound
+	ErrAgentBinaryNotFound = ports.ErrAgentBinaryNotFound
 )
 
 // Manager is the reviews surface the HTTP controller depends on.

@@ -12,7 +12,7 @@ import {
 	Sun,
 	Trash2,
 } from "lucide-react";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import {
 	attentionZone,
 	isOrchestratorSession,
@@ -46,7 +46,6 @@ import {
 	SidebarMenuButton,
 	SidebarMenuItem,
 	SidebarMenuSub,
-	SidebarMenuSubButton,
 	SidebarMenuSubItem,
 	SidebarTrigger,
 	useSidebar,
@@ -56,6 +55,7 @@ import { OrchestratorIcon } from "./icons";
 import aoLogo from "../assets/ao-logo.png";
 import { cn } from "../lib/utils";
 import { useUiStore } from "../stores/ui-store";
+import { CreateProjectAgentSheet, type CreateProjectAgentSelection } from "./CreateProjectAgentSheet";
 
 // The macOS hiddenInset traffic lights and the fixed TitlebarNav overlay live
 // in the full-width topbar's left inset (_shell renders the bar above the
@@ -72,9 +72,10 @@ const HOVER_ACTION_CLASS =
 
 type SidebarProps = {
 	daemonStatus: { state: string; message?: string };
+	underTopbar?: boolean;
 	workspaceError?: string;
 	workspaces: WorkspaceSummary[];
-	onCreateProject: (input: { path: string }) => Promise<void>;
+	onCreateProject: (input: { path: string; workerAgent: string; orchestratorAgent: string }) => Promise<void>;
 	onRemoveProject: (projectId: string) => Promise<void>;
 };
 
@@ -97,17 +98,20 @@ function useSelection() {
 	};
 }
 
-// agent-orchestrator's SessionDot: 6px dot, neutral grey at rest, orange +
-// breathe while the agent is working. Other attention zones stay neutral here
-// (the board carries the richer colour coding).
+// 6px session dot: mirrors the board's status language so the sidebar can be
+// scanned without opening the project board.
 function SessionDot({ session }: { session: WorkspaceSession }) {
-	const working = attentionZone(session) === "working";
+	const zone = attentionZone(session);
 	return (
 		<span
 			aria-hidden="true"
 			className={cn(
 				"mt-px h-1.5 w-1.5 shrink-0 rounded-full",
-				working ? "animate-status-pulse bg-working" : "bg-passive",
+				zone === "working" && "animate-status-pulse bg-working",
+				zone === "action" && (session.status === "ci_failed" ? "bg-error" : "bg-warning"),
+				zone === "pending" && "bg-passive",
+				zone === "merge" && "bg-success",
+				zone === "done" && "bg-passive",
 			)}
 		/>
 	);
@@ -117,7 +121,14 @@ function SessionDot({ session }: { session: WorkspaceSession }) {
 // _shell owns open state (synced to the ui-store) and `collapsible="icon"`
 // replaces the old hand-rolled CollapsedRail — the same tree restyles itself
 // via group-data-[collapsible=icon] into the 48px letter rail.
-export function Sidebar({ daemonStatus, workspaceError, workspaces, onCreateProject, onRemoveProject }: SidebarProps) {
+export function Sidebar({
+	daemonStatus,
+	underTopbar = true,
+	workspaceError,
+	workspaces,
+	onCreateProject,
+	onRemoveProject,
+}: SidebarProps) {
 	const selection = useSelection();
 	const eventsConnection = useEventsConnection();
 	const { state } = useSidebar();
@@ -149,8 +160,11 @@ export function Sidebar({ daemonStatus, workspaceError, workspaces, onCreateProj
 		// The container is fixed-positioned by the shadcn primitive; offset it
 		// below the 56px shell topbar so the bar runs edge-to-edge above it
 		// (same override as shadcn's header-above-sidebar block).
-		<SidebarRoot collapsible="icon" className="border-border top-14 h-[calc(100svh-3.5rem)]!">
-			<SidebarHeader className="gap-0 p-0 px-[7px] pt-3.5 group-data-[collapsible=icon]:px-1.5">
+		<SidebarRoot
+			collapsible="icon"
+			className={cn("border-border", underTopbar ? "top-14 h-[calc(100svh-3.5rem)]!" : "top-0 h-svh!")}
+		>
+			<SidebarHeader className="gap-0 p-0 pl-2.5 pr-[7px] pt-3.5 group-data-[collapsible=icon]:px-1.5">
 				{/* Brand (project-sidebar__brand); in the icon rail it becomes the old
             36px board button wrapping the 22px accent mark. */}
 				<div className="flex shrink-0 items-center gap-2.5 px-2 pb-[18px] group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:pb-2">
@@ -182,7 +196,7 @@ export function Sidebar({ daemonStatus, workspaceError, workspaces, onCreateProj
 					{!isMac && (
 						<Tooltip>
 							<TooltipTrigger asChild>
-								<SidebarTrigger className="shrink-0 rounded-md text-passive hover:bg-interactive-hover hover:text-foreground group-data-[collapsible=icon]:hidden [&_svg]:size-[15px]" />
+								<SidebarTrigger className="size-[18px] shrink-0 rounded-[4px] p-0 text-passive hover:bg-interactive-hover hover:text-foreground group-data-[collapsible=icon]:hidden [&_svg]:size-[15px]" />
 							</TooltipTrigger>
 							<TooltipContent>Collapse sidebar · ⌘B</TooltipContent>
 						</Tooltip>
@@ -190,7 +204,7 @@ export function Sidebar({ daemonStatus, workspaceError, workspaces, onCreateProj
 				</div>
 			</SidebarHeader>
 
-			<SidebarContent className="gap-0 px-[7px] group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5">
+			<SidebarContent className="gap-0 pl-2.5 pr-[7px] group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5">
 				<SidebarGroup className="p-0">
 					{/* Section label (project-sidebar__nav-label) */}
 					<div className="flex shrink-0 items-center justify-between px-2 pb-2 group-data-[collapsible=icon]:hidden">
@@ -448,13 +462,13 @@ function ProjectItem({
 				onClick={onProjectClick}
 				tooltip={workspace.name}
 				className={cn(
-					"h-auto gap-[9px] rounded-[5px] px-1.5 py-[7px] text-[13px] font-medium text-muted-foreground transition-[padding]",
-					"hover:bg-interactive-hover hover:text-muted-foreground active:bg-interactive-hover active:text-muted-foreground",
-					"data-[active=true]:bg-interactive-active data-[active=true]:font-semibold data-[active=true]:text-foreground",
-					// Make room for the hover actions (dashboard, orchestrator, kebab)
-					// when the row is hovered, focused, or its menu is open (the
-					// absolutely-positioned cluster replaces the count).
-					"group-hover/menu-item:pr-[78px] group-focus-within/menu-item:pr-[78px] group-has-data-[state=open]/menu-item:pr-[78px]",
+					"relative h-9 gap-[9px] rounded-[5px] px-1.5 py-0 text-[13px] font-medium text-muted-foreground transition-[background-color,padding,color]",
+					"before:absolute before:top-2 before:bottom-2 before:left-0 before:w-px before:rounded-full before:bg-transparent",
+					"hover:bg-interactive-hover hover:text-foreground active:bg-interactive-hover active:text-foreground",
+					"data-[active=true]:bg-interactive-active data-[active=true]:font-semibold data-[active=true]:text-foreground data-[active=true]:before:bg-accent",
+					// Always reserve room for the action cluster (dashboard,
+					// orchestrator, kebab) — icons are always visible, not hover-gated.
+					"pr-[84px]",
 					// Icon rail: the old 36px letter tile.
 					"group-data-[collapsible=icon]:size-9! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:p-0! group-data-[collapsible=icon]:font-semibold",
 				)}
@@ -469,18 +483,16 @@ function ProjectItem({
 				/>
 				<span className="hidden group-data-[collapsible=icon]:block">{workspace.name.charAt(0).toUpperCase()}</span>
 				<span className="min-w-0 flex-1 truncate group-data-[collapsible=icon]:hidden">{workspace.name}</span>
-				<span className="shrink-0 font-mono text-[11px] text-passive group-hover/menu-item:opacity-0 group-focus-within/menu-item:opacity-0 group-has-data-[state=open]/menu-item:opacity-0 group-data-[collapsible=icon]:hidden">
+				<span className="hidden h-4 min-w-4 shrink-0 place-items-center rounded bg-interactive-hover px-1 font-mono text-[10px] leading-none text-passive">
 					{sessions.length}
 				</span>
 			</SidebarMenuButton>
-			{/* Per-project hover actions: dashboard board, orchestrator, and a kebab
-          menu. The cluster reveals on row hover/focus (or while the kebab is
-          open), replacing the session count, and stays hidden in the icon rail. */}
+			{/* Per-project actions: dashboard board, orchestrator, and a kebab
+			menu. Always visible (not hover-gated) to avoid CSS :hover group
+			propagation issues in Electron's Chromium. Hidden in the icon rail. */}
 			<div
 				className={cn(
-					"absolute top-1/2 right-1 flex -translate-y-1/2 items-center gap-px",
-					"opacity-0 transition-opacity",
-					"group-hover/menu-item:opacity-100 group-focus-within/menu-item:opacity-100 group-has-data-[state=open]/menu-item:opacity-100",
+					"absolute top-0 right-1 z-10 flex h-9 items-center gap-px",
 					"group-data-[collapsible=icon]:hidden",
 				)}
 			>
@@ -541,40 +553,35 @@ function ProjectItem({
 					{removeError}
 				</span>
 			)}
-			{/* project-sidebar__sessions. Divergence from AO (user decision
-          2026-06-12): no left indent or tree guide line — every sidebar row
-          (project or worker) spans the same full width. */}
+			{/* project-sidebar__sessions: indented under the project parent so worker
+          sessions read as children without adding a persistent guide rail. */}
 			{expanded && sessions.length > 0 && (
-				<SidebarMenuSub className="mx-0 translate-x-0 gap-0 border-0 px-0 pb-2 pt-0.5">
+				<SidebarMenuSub className="mx-0 ml-[18px] translate-x-0 gap-0 border-l-0 px-0 py-1 pl-2.5">
 					{sessions.map((session) => {
 						const active = selection.activeSessionId === session.id;
 						return (
 							<SidebarMenuSubItem key={session.id}>
-								<SidebarMenuSubButton asChild isActive={active}>
-									<button
-										aria-current={active ? "page" : undefined}
-										aria-label={`Open ${session.title}`}
-										className={cn(
-											"h-auto w-full translate-x-0 gap-[9px] rounded-[5px] py-[5px] pl-2 pr-1.5 text-left transition-colors",
-											"hover:bg-interactive-hover data-[active=true]:bg-interactive-active",
-										)}
-										onClick={() => selection.goSession(workspace.id, session.id)}
-										type="button"
-									>
-										<SessionDot session={session} />
-										<span className="min-w-0 flex-1">
-											<span
-												className={cn(
-													"block truncate text-[12px]",
-													active ? "text-foreground" : "text-muted-foreground",
-												)}
-											>
-												{session.title}
-											</span>
-											<span className="block truncate font-mono text-[10px] text-passive">{session.id}</span>
+								<button
+									aria-current={active ? "page" : undefined}
+									aria-label={`Open ${session.title}`}
+									className={cn(
+										"relative flex h-auto w-full items-center gap-[9px] rounded-[4px] py-[5px] pl-2.5 pr-1.5 text-left outline-hidden transition-[color]",
+										"before:absolute before:top-1.5 before:bottom-1.5 before:left-0 before:w-px before:rounded-full before:bg-transparent",
+										"hover:text-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring",
+										active && "text-foreground before:bg-accent",
+									)}
+									onClick={() => selection.goSession(workspace.id, session.id)}
+									type="button"
+								>
+									<SessionDot session={session} />
+									<span className="min-w-0 flex-1">
+										<span
+											className={cn("block truncate text-[12px]", active ? "text-foreground" : "text-muted-foreground")}
+										>
+											{session.title}
 										</span>
-									</button>
-								</SidebarMenuSubButton>
+									</span>
+								</button>
 							</SidebarMenuSubItem>
 						);
 					})}
@@ -585,15 +592,70 @@ function ProjectItem({
 }
 
 function CreateProjectButton({ onCreateProject }: Pick<SidebarProps, "onCreateProject">) {
+	return (
+		<CreateProjectFlow onCreateProject={onCreateProject}>
+			{({ disabled, choosePath, label }) => (
+				<Tooltip>
+					<TooltipTrigger asChild>
+						<button
+							aria-label="New project"
+							className="grid h-[18px] w-[18px] place-items-center rounded-[4px] text-passive transition-colors hover:bg-interactive-hover hover:text-muted-foreground"
+							disabled={disabled}
+							onClick={choosePath}
+							type="button"
+						>
+							<Plus className="h-[13px] w-[13px]" aria-hidden="true" />
+						</button>
+					</TooltipTrigger>
+					<TooltipContent>{label}</TooltipContent>
+				</Tooltip>
+			)}
+		</CreateProjectFlow>
+	);
+}
+
+function CreateProjectListItem({ onCreateProject }: Pick<SidebarProps, "onCreateProject">) {
+	return (
+		<CreateProjectFlow onCreateProject={onCreateProject}>
+			{({ disabled, choosePath, label }) => (
+				<SidebarMenuItem className="mb-px group-data-[collapsible=icon]:mb-0">
+					<Tooltip>
+						<TooltipTrigger asChild>
+							<button
+								aria-label="New project"
+								className="grid h-9 w-full place-items-center rounded-[5px] text-passive transition-colors hover:bg-interactive-hover hover:text-muted-foreground"
+								disabled={disabled}
+								onClick={choosePath}
+								type="button"
+							>
+								<Plus className="h-[13px] w-[13px]" aria-hidden="true" />
+							</button>
+						</TooltipTrigger>
+						<TooltipContent>{label}</TooltipContent>
+					</Tooltip>
+				</SidebarMenuItem>
+			)}
+		</CreateProjectFlow>
+	);
+}
+
+function CreateProjectFlow({
+	children,
+	onCreateProject,
+}: Pick<SidebarProps, "onCreateProject"> & {
+	children: (state: { choosePath: () => void; disabled: boolean; label: string }) => ReactNode;
+}) {
 	const [error, setError] = useState<string | null>(null);
+	const [selectedPath, setSelectedPath] = useState<string | null>(null);
 	const [isChoosingPath, setIsChoosingPath] = useState(false);
+	const [isCreating, setIsCreating] = useState(false);
 
 	const choosePath = async () => {
 		setError(null);
 		setIsChoosingPath(true);
 		try {
-			const selectedPath = await aoBridge.app.chooseDirectory();
-			if (selectedPath) await onCreateProject({ path: selectedPath });
+			const path = await aoBridge.app.chooseDirectory();
+			if (path) setSelectedPath(path);
 		} catch (err) {
 			setError(err instanceof Error ? err.message : "Could not add project");
 		} finally {
@@ -601,69 +663,43 @@ function CreateProjectButton({ onCreateProject }: Pick<SidebarProps, "onCreatePr
 		}
 	};
 
+	const createProject = async (selection: CreateProjectAgentSelection) => {
+		if (!selectedPath) return;
+		setError(null);
+		setIsCreating(true);
+		try {
+			await onCreateProject({ path: selectedPath, ...selection });
+			setSelectedPath(null);
+		} catch (err) {
+			setError(err instanceof Error ? err.message : "Could not add project");
+		} finally {
+			setIsCreating(false);
+		}
+	};
+
+	const label = isChoosingPath ? "Opening..." : isCreating ? "Creating..." : "New project";
+
 	return (
 		<>
-			<Tooltip>
-				<TooltipTrigger asChild>
-					<button
-						aria-label="New project"
-						className="grid h-[18px] w-[18px] place-items-center rounded-[4px] text-passive transition-colors hover:bg-interactive-hover hover:text-muted-foreground"
-						disabled={isChoosingPath}
-						onClick={choosePath}
-						type="button"
-					>
-						<Plus className="h-[13px] w-[13px]" aria-hidden="true" />
-					</button>
-				</TooltipTrigger>
-				<TooltipContent>{isChoosingPath ? "Opening…" : "New project"}</TooltipContent>
-			</Tooltip>
+			{children({ choosePath: () => void choosePath(), disabled: isChoosingPath || isCreating, label })}
+			<CreateProjectAgentSheet
+				error={error}
+				isCreating={isCreating}
+				onOpenChange={(open) => {
+					if (!open) {
+						setSelectedPath(null);
+						setError(null);
+					}
+				}}
+				onSubmit={createProject}
+				open={selectedPath !== null}
+				path={selectedPath}
+			/>
 			{error && (
 				<span className="sr-only" role="status">
 					{error}
 				</span>
 			)}
 		</>
-	);
-}
-
-function CreateProjectListItem({ onCreateProject }: Pick<SidebarProps, "onCreateProject">) {
-	const [error, setError] = useState<string | null>(null);
-	const [isChoosingPath, setIsChoosingPath] = useState(false);
-
-	const choosePath = async () => {
-		setError(null);
-		setIsChoosingPath(true);
-		try {
-			const selectedPath = await aoBridge.app.chooseDirectory();
-			if (selectedPath) await onCreateProject({ path: selectedPath });
-		} catch (err) {
-			setError(err instanceof Error ? err.message : "Could not add project");
-		} finally {
-			setIsChoosingPath(false);
-		}
-	};
-
-	return (
-		<SidebarMenuItem className="mb-px group-data-[collapsible=icon]:mb-0">
-			<Tooltip>
-				<TooltipTrigger asChild>
-					<button
-						aria-label="New project"
-						className="grid h-9 w-full place-items-center rounded-[5px] text-passive transition-colors hover:bg-interactive-hover hover:text-muted-foreground"
-						disabled={isChoosingPath}
-						onClick={choosePath}
-						type="button"
-					>
-						<Plus className="h-[13px] w-[13px]" aria-hidden="true" />
-					</button>
-				</TooltipTrigger>
-				<TooltipContent>{isChoosingPath ? "Opening…" : "New project"}</TooltipContent>
-			</Tooltip>
-			{error && (
-				<span className="sr-only" role="status">
-					{error}
-				</span>
-			)}
-		</SidebarMenuItem>
 	);
 }

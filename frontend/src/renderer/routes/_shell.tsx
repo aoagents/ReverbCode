@@ -1,4 +1,4 @@
-import { createFileRoute, Outlet, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { type CSSProperties, useCallback, useEffect } from "react";
 import { ShellTopbar } from "../components/ShellTopbar";
@@ -8,8 +8,10 @@ import { TitlebarNav } from "../components/TitlebarNav";
 import { useDaemonStatus } from "../hooks/useDaemonStatus";
 import { useWorkspaceQuery, workspaceQueryKey, workspaceQueryOptions } from "../hooks/useWorkspaceQuery";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
+import { refreshDaemonStatus } from "../lib/daemon-status";
 import { addRendererExceptionStep, captureRendererEvent, captureRendererException } from "../lib/telemetry";
 import { ShellProvider } from "../lib/shell-context";
+import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { readStoredTheme, type Theme, useUiStore } from "../stores/ui-store";
 import type { WorkspaceSummary } from "../types/workspace";
 
@@ -17,7 +19,10 @@ export const Route = createFileRoute("/_shell")({
 	// Prefetch the workspace list for the whole shell (parent loaders run before
 	// children); pairs with the router's defaultPreload: "intent" so a hovered
 	// nav target is warm before the click.
-	loader: ({ context }) => context.queryClient.ensureQueryData(workspaceQueryOptions),
+	loader: async ({ context }) => {
+		await refreshDaemonStatus().catch(() => undefined);
+		return context.queryClient.ensureQueryData(workspaceQueryOptions);
+	},
 	component: ShellLayout,
 });
 
@@ -35,11 +40,13 @@ function errorMessage(error: unknown) {
 // instead of Zustand. The daemon-status effect runs here exactly once.
 function ShellLayout() {
 	const navigate = useNavigate();
+	const pathname = useRouterState({ select: (state) => state.location.pathname });
 	const queryClient = useQueryClient();
 	const workspaceQuery = useWorkspaceQuery();
 	const workspaces = workspaceQuery.data ?? [];
 	const daemonStatus = useDaemonStatus(queryClient);
 	const { theme, setTheme, isSidebarOpen, toggleSidebar } = useUiStore();
+	const isBoardRoute = pathname === "/" || /^\/projects\/[^/]+$/.test(pathname);
 
 	const updateWorkspaces = useCallback(
 		(updater: (workspaces: WorkspaceSummary[]) => WorkspaceSummary[]) => {
@@ -49,14 +56,22 @@ function ShellLayout() {
 	);
 
 	const createProject = useCallback(
-		async (input: { path: string }) => {
+		async (input: { path: string; workerAgent: string; orchestratorAgent: string }) => {
 			void addRendererExceptionStep("Project add requested", {
 				source: "project-add",
 				operation: "project_add",
 				surface: "project_board",
 			});
 			void captureRendererEvent("ao.renderer.project_add_requested");
-			const { data, error } = await apiClient.POST("/api/v1/projects", { body: { path: input.path } });
+			const { data, error } = await apiClient.POST("/api/v1/projects", {
+				body: {
+					path: input.path,
+					config: {
+						worker: { agent: input.workerAgent },
+						orchestrator: { agent: input.orchestratorAgent },
+					},
+				},
+			});
 			if (error) {
 				const failure = new Error(apiErrorMessage(error));
 				void captureRendererException(failure, { source: "project-add", operation: "project_add", surface: "project_board" });
@@ -73,9 +88,20 @@ function ShellLayout() {
 			};
 			void captureRendererEvent("ao.renderer.project_add_succeeded", { project_id: workspace.id });
 			updateWorkspaces((current) => [workspace, ...current.filter((item) => item.id !== workspace.id)]);
-			void navigate({ to: "/projects/$projectId", params: { projectId: workspace.id } });
+			try {
+				const sessionId = await spawnOrchestrator(workspace.id);
+				await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+				void navigate({
+					to: "/projects/$projectId/sessions/$sessionId",
+					params: { projectId: workspace.id, sessionId },
+				});
+			} catch (spawnError) {
+				void navigate({ to: "/projects/$projectId", params: { projectId: workspace.id } });
+				const message = spawnError instanceof Error ? spawnError.message : "Could not start orchestrator";
+				throw new Error(`Project added, but orchestrator did not start: ${message}`);
+			}
 		},
-		[navigate, updateWorkspaces],
+		[navigate, queryClient, updateWorkspaces],
 	);
 
 	const removeProject = useCallback(
@@ -145,7 +171,7 @@ function ShellLayout() {
           in the layout, not the screens, so the crumb and actions never shift
           when the outlet content swaps. */}
 			<div className="flex h-screen min-h-0 flex-col bg-background text-foreground">
-				<ShellTopbar />
+				{!isBoardRoute && <ShellTopbar />}
 				{/* Controlled by the ui-store so TitlebarNav / Topbar toggles (which
             call the store directly) stay in sync. --sidebar-width chains to
             the drag-resizable --ao-sidebar-w set on :root by useResizable. */}
@@ -157,6 +183,7 @@ function ShellLayout() {
 				>
 					<Sidebar
 						daemonStatus={daemonStatus}
+						underTopbar={!isBoardRoute}
 						onCreateProject={createProject}
 						onRemoveProject={removeProject}
 						workspaceError={workspaceQuery.isError ? errorMessage(workspaceQuery.error) : undefined}

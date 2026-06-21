@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"unicode"
 
 	"github.com/go-chi/chi/v5"
 
@@ -274,7 +273,7 @@ func (c *SessionsController) send(w http.ResponseWriter, r *http.Request) {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "MESSAGE_TOO_LONG", "Message is too long", nil)
 		return
 	}
-	message := stripUnsafeControlChars(in.Message)
+	message := domain.SanitizeControlChars(in.Message)
 	if err := c.Svc.Send(r.Context(), sessionID(r), message); err != nil {
 		envelope.WriteError(w, r, err)
 		return
@@ -403,15 +402,6 @@ func parseSessionListFilter(r *http.Request) (sessionsvc.ListFilter, error) {
 	return filter, nil
 }
 
-func stripUnsafeControlChars(message string) string {
-	return strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) && r != '\n' && r != '\r' && r != '\t' {
-			return -1
-		}
-		return r
-	}, message)
-}
-
 func writeSessionPRError(w http.ResponseWriter, r *http.Request, err error) {
 	var claimed ports.PRClaimedByActiveSessionError
 	switch {
@@ -437,7 +427,7 @@ func writeSessionPRError(w http.ResponseWriter, r *http.Request, err error) {
 }
 
 func sessionView(s domain.Session) SessionView {
-	return SessionView{Session: s, PRs: sessionPRFacts(s.PRs)}
+	return SessionView{Session: s, Branch: s.Metadata.Branch, PRs: sessionPRFacts(s.PRs)}
 }
 
 func sessionViews(sessions []domain.Session) []SessionView {

@@ -222,6 +222,8 @@ func TestE2E_SpawnAndProjectAddDTORoundTrip(t *testing.T) {
 			"--path", "/repo/mer",
 			"--id", "demo",
 			"--name", "Demo",
+			"--worker-agent", "codex",
+			"--orchestrator-agent", "claude-code",
 			"--as-workspace",
 		})
 		if err := root.Execute(); err != nil {
@@ -237,6 +239,15 @@ func TestE2E_SpawnAndProjectAddDTORoundTrip(t *testing.T) {
 		}
 		if got.Name == nil || *got.Name != "Demo" {
 			t.Errorf("Name = %v, want %q", got.Name, "Demo")
+		}
+		if got.Config == nil {
+			t.Fatal("Config = nil, want role agent config")
+		}
+		if got.Config.Worker.Harness != domain.HarnessCodex {
+			t.Errorf("Config.Worker.Harness = %q, want codex", got.Config.Worker.Harness)
+		}
+		if got.Config.Orchestrator.Harness != domain.HarnessClaudeCode {
+			t.Errorf("Config.Orchestrator.Harness = %q, want claude-code", got.Config.Orchestrator.Harness)
 		}
 		if !got.AsWorkspace {
 			t.Errorf("AsWorkspace = false, want true (CLI json:\"asWorkspace\" vs AddInput)")

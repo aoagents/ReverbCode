@@ -231,6 +231,46 @@ func TestPRObservation_ReviewCommentsNudgeAgent(t *testing.T) {
 	}
 }
 
+func TestPRObservation_CINudgeSanitizesLogTailControlChars(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	// A CI log tail with an embedded ANSI escape sequence and a NUL byte; the
+	// agent's pane must receive the visible text without the control bytes.
+	o := ports.PRObservation{Fetched: true, URL: "pr1", CI: domain.CIFailing, Checks: []ports.PRCheckObservation{{Name: "build", CommitHash: "c1", Status: domain.PRCheckFailed, LogTail: "line1\x1b[2Jline2\x00\ttabbed"}}}
+	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 1 {
+		t.Fatalf("want one CI nudge, got %v", msg.msgs)
+	}
+	got := msg.msgs[0]
+	if strings.ContainsRune(got, '\x1b') || strings.ContainsRune(got, '\x00') {
+		t.Fatalf("nudge still carries control bytes: %q", got)
+	}
+	if !strings.Contains(got, "line1") || !strings.Contains(got, "line2") || !strings.Contains(got, "\ttabbed") {
+		t.Fatalf("nudge dropped visible text or tab: %q", got)
+	}
+}
+
+func TestPRObservation_ReviewNudgeSanitizesCommentControlChars(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	o := ports.PRObservation{Fetched: true, URL: "pr1", Review: domain.ReviewChangesRequest, Comments: []ports.PRCommentObservation{{ID: "1", Body: "please\x1b]0;pwned\afix this"}}}
+	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 1 {
+		t.Fatalf("want one review nudge, got %v", msg.msgs)
+	}
+	got := msg.msgs[0]
+	if strings.ContainsRune(got, '\x1b') || strings.ContainsRune(got, '\a') {
+		t.Fatalf("review nudge still carries control bytes: %q", got)
+	}
+	if !strings.Contains(got, "please") || !strings.Contains(got, "fix this") {
+		t.Fatalf("review nudge dropped visible text: %q", got)
+	}
+}
+
 func TestSCMObservationProjectsToExistingPRReactions(t *testing.T) {
 	m, st, msg := newManager()
 	st.sessions["mer-1"] = working("mer-1")

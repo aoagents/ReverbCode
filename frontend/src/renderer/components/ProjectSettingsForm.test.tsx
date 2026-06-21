@@ -149,6 +149,10 @@ describe("ProjectSettingsForm", () => {
 					path: "/repo/project-one",
 					repo: "",
 					defaultBranch: "main",
+					config: {
+						worker: { agent: "codex" },
+						orchestrator: { agent: "claude-code" },
+					},
 				},
 			},
 			error: undefined,
@@ -164,5 +168,36 @@ describe("ProjectSettingsForm", () => {
 
 		expect(await screen.findByText("invalid permissions")).toBeInTheDocument();
 		expect(screen.queryByText("Saved.")).not.toBeInTheDocument();
+	});
+
+	it("requires worker and orchestrator agents for existing projects missing role config", async () => {
+		getMock.mockResolvedValue({
+			data: {
+				status: "ok",
+				project: {
+					id: "proj-1",
+					name: "Project One",
+					kind: "single_repo",
+					path: "/repo/project-one",
+					repo: "",
+					defaultBranch: "main",
+					config: {},
+				},
+			},
+			error: undefined,
+		});
+
+		renderSettings();
+
+		expect(await screen.findByText("Worker and orchestrator agents are required.")).toBeInTheDocument();
+		expect(screen.getByRole("combobox", { name: "Default worker agent" })).toHaveTextContent("Select worker agent");
+		expect(screen.getByRole("combobox", { name: "Default orchestrator agent" })).toHaveTextContent(
+			"Select orchestrator agent",
+		);
+
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		expect(await screen.findAllByText("Worker and orchestrator agents are required.")).toHaveLength(2);
+		expect(putMock).not.toHaveBeenCalled();
 	});
 });

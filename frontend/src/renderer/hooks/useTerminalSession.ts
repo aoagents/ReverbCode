@@ -18,6 +18,8 @@ import { workspaceQueryKey } from "./useWorkspaceQuery";
  * The slice of xterm's Terminal the attachment needs. Structural, so tests can
  * drive the hook with a tiny fake instead of a real xterm + DOM.
  */
+export type TerminalUserInputSource = "keyboard" | "paste" | "composition";
+
 export type AttachableTerminal = {
 	cols: number;
 	rows: number;
@@ -30,7 +32,7 @@ export type AttachableTerminal = {
 	 * with wheel scroll dead (see XtermTerminal's CLEAR_SEQUENCE).
 	 */
 	clear: () => void;
-	onData: (listener: (data: string) => void) => { dispose: () => void };
+	onUserInput: (listener: (data: string, source: TerminalUserInputSource) => void) => { dispose: () => void };
 	onResize: (listener: (size: { cols: number; rows: number }) => void) => { dispose: () => void };
 };
 
@@ -51,6 +53,7 @@ export type UseTerminalSessionOptions = {
 
 const RETRY_BASE_MS = 500;
 const RETRY_MAX_MS = 8_000;
+const OPEN_TIMEOUT_MS = 3_000;
 // Trailing debounce on grid changes: a pane drag emits a burst of intermediate
 // sizes; the attached program should get one SIGWINCH when the drag settles,
 // not dozens (yyork's terminal-panel does the same at its socket layer).
@@ -88,9 +91,12 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		handle: null as string | null,
 		disposers: [] as Array<() => void>,
 		retryTimer: null as ReturnType<typeof setTimeout> | null,
+		openTimer: null as ReturnType<typeof setTimeout> | null,
 		resizeTimer: null as ReturnType<typeof setTimeout> | null,
 		attempts: 0,
 		firstAttach: true,
+		generation: 0,
+		inputReady: false,
 		detached: true,
 	});
 
@@ -109,9 +115,17 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 			clearTimeout(r.retryTimer);
 			r.retryTimer = null;
 		}
+		if (r.openTimer) {
+			clearTimeout(r.openTimer);
+			r.openTimer = null;
+		}
 		if (r.resizeTimer) {
 			clearTimeout(r.resizeTimer);
 			r.resizeTimer = null;
+		}
+		r.inputReady = false;
+		if (r.mux && r.handle) {
+			r.mux.close(r.handle);
 		}
 		r.disposers.forEach((dispose) => dispose());
 		r.disposers = [];
@@ -119,15 +133,35 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		r.mux = null;
 	}, []);
 
+	const isCurrentAttachment = useCallback((generation: number, handle: string, mux: TerminalMux) => {
+		const r = runtime.current;
+		return !r.detached && r.generation === generation && r.handle === handle && r.mux === mux;
+	}, []);
+
+	const clearOpenTimer = useCallback((generation: number) => {
+		const r = runtime.current;
+		if (r.generation !== generation || !r.openTimer) return;
+		clearTimeout(r.openTimer);
+		r.openTimer = null;
+	}, []);
+
 	const scheduleReattach = useCallback(() => {
 		const r = runtime.current;
-		if (r.detached || !r.terminal || !r.handle) return;
+		if (r.detached || !r.terminal || !r.handle) {
+			return;
+		}
 		// A socket dropping after the PTY ended (or errored) changes nothing.
-		if (stateRef.current === "exited" || stateRef.current === "error") return;
+		if (stateRef.current === "exited" || stateRef.current === "error") {
+			return;
+		}
 		transition("reattaching");
 		// Not ready → no timer; the daemonReady effect reconnects when it flips.
-		if (!optionsRef.current.daemonReady) return;
-		if (r.retryTimer) return;
+		if (!optionsRef.current.daemonReady) {
+			return;
+		}
+		if (r.retryTimer) {
+			return;
+		}
 		const delay = Math.min(RETRY_BASE_MS * 2 ** r.attempts, RETRY_MAX_MS);
 		r.attempts += 1;
 		r.retryTimer = setTimeout(() => {
@@ -139,45 +173,75 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 	const connect = useCallback(() => {
 		const r = runtime.current;
 		const { terminal, handle } = r;
-		if (!terminal || !handle || r.detached) return;
+		if (!terminal || !handle || r.detached) {
+			return;
+		}
+		const generation = r.generation + 1;
+		r.generation = generation;
+		r.inputReady = false;
 		teardownMux();
 
 		const mux = (optionsRef.current.createMux ?? defaultCreateMux)();
 		r.mux = mux;
 
 		r.disposers.push(
-			mux.onData(handle, (bytes) => terminal.write(bytes)),
+			mux.onData(handle, (bytes) => {
+				if (!isCurrentAttachment(generation, handle, mux)) return;
+				terminal.write(bytes);
+			}),
 			mux.onOpened(handle, () => {
+				if (!isCurrentAttachment(generation, handle, mux)) return;
+				clearOpenTimer(generation);
+				r.inputReady = true;
 				r.attempts = 0;
 				setError(undefined);
 				transition("attached");
 			}),
 			mux.onExit(handle, () => {
+				if (!isCurrentAttachment(generation, handle, mux)) return;
+				clearOpenTimer(generation);
+				r.inputReady = false;
 				terminal.writeln("\r\n\x1b[2m[process exited]\x1b[0m");
 				transition("exited");
 				invalidateWorkspaces();
 			}),
 			mux.onError(handle, (message) => {
+				if (!isCurrentAttachment(generation, handle, mux)) return;
+				clearOpenTimer(generation);
+				r.inputReady = false;
 				terminal.writeln(`\r\n\x1b[2m[terminal error] ${message}\x1b[0m`);
 				setError(message);
 				transition("error");
 				invalidateWorkspaces();
 			}),
 			mux.onConnectionChange((connectionState) => {
-				if (connectionState === "closed") scheduleReattach();
+				if (!isCurrentAttachment(generation, handle, mux)) return;
+				if (connectionState === "closed") {
+					clearOpenTimer(generation);
+					r.inputReady = false;
+					scheduleReattach();
+				}
 			}),
 		);
-		const input = terminal.onData((data) => mux.sendInput(handle, data));
+		const input = terminal.onUserInput((data) => {
+			if (!isCurrentAttachment(generation, handle, mux) || !r.inputReady) {
+				return;
+			}
+			mux.sendInput(handle, data);
+		});
 		// xterm only fires onResize when the grid actually changed; the debounce
 		// additionally collapses a drag's burst of changes into one PTY resize.
 		// Each settled resize is re-asserted once (see RESIZE_REASSERT_MS); both
 		// stages share resizeTimer so a new burst or teardown cancels either.
 		const resize = terminal.onResize(({ cols, rows }) => {
+			if (!isCurrentAttachment(generation, handle, mux)) return;
 			if (r.resizeTimer) clearTimeout(r.resizeTimer);
 			r.resizeTimer = setTimeout(() => {
+				if (!isCurrentAttachment(generation, handle, mux)) return;
 				mux.resize(handle, cols, rows);
 				r.resizeTimer = setTimeout(() => {
 					r.resizeTimer = null;
+					if (!isCurrentAttachment(generation, handle, mux)) return;
 					mux.resize(handle, cols, rows);
 				}, RESIZE_REASSERT_MS);
 			}, RESIZE_DEBOUNCE_MS);
@@ -200,7 +264,14 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 
 		mux.open(handle, terminal.cols, terminal.rows);
 		mux.resize(handle, terminal.cols, terminal.rows);
-	}, [invalidateWorkspaces, scheduleReattach, teardownMux, transition]);
+		r.openTimer = setTimeout(() => {
+			if (!isCurrentAttachment(generation, handle, mux)) return;
+			r.openTimer = null;
+			transition("reattaching");
+			teardownMux();
+			scheduleReattach();
+		}, OPEN_TIMEOUT_MS);
+	}, [clearOpenTimer, invalidateWorkspaces, isCurrentAttachment, scheduleReattach, teardownMux, transition]);
 	connectRef.current = connect;
 
 	/**
@@ -218,16 +289,22 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 			r.firstAttach = true;
 			setError(undefined);
 			if (handle) {
-				transition("connecting");
-				connect();
+				if (optionsRef.current.daemonReady) {
+					transition("connecting");
+					connect();
+				} else {
+					transition("reattaching");
+				}
 			} else {
 				transition("idle");
 			}
 			return () => {
+				r.generation += 1;
 				r.detached = true;
 				teardownMux();
 				r.terminal = null;
 				r.handle = null;
+				r.inputReady = false;
 				setError(undefined);
 				transition("idle");
 			};
@@ -250,7 +327,10 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 	// forgot to call detach.
 	useEffect(
 		() => () => {
-			runtime.current.detached = true;
+			const r = runtime.current;
+			r.generation += 1;
+			r.detached = true;
+			r.inputReady = false;
 			teardownMux();
 		},
 		[teardownMux],

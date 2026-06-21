@@ -4,5 +4,8 @@
 export type DaemonStatus = {
 	state: "starting" | "ready" | "stopped" | "error";
 	port?: number;
+	pid?: number;
+	executablePath?: string;
+	workingDirectory?: string;
 	message?: string;
 };

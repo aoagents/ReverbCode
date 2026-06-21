@@ -3,6 +3,7 @@ import { useState } from "react";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { RequiredAgentField } from "./CreateProjectAgentSheet";
 import { DashboardSubhead } from "./DashboardSubhead";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
@@ -11,9 +12,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 
 type Project = components["schemas"]["Project"];
 type ProjectConfig = components["schemas"]["ProjectConfig"];
-
-// Agents the daemon registers. Empty = "use the daemon default".
-const AGENT_OPTIONS = ["claude-code", "codex", "opencode", "amp", "goose", "kiro"] as const;
 
 const PERMISSION_MODE_OPTIONS = [
 	{ value: "default", label: "Default" },
@@ -78,6 +76,8 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 		reviewerHarness: config.reviewers?.[0]?.harness ?? "",
 	});
 	const [savedAt, setSavedAt] = useState<number | null>(null);
+	const [validationError, setValidationError] = useState<string | null>(null);
+	const missingRequiredAgent = form.workerAgent === "" || form.orchestratorAgent === "";
 
 	const mutation = useMutation({
 		mutationFn: async () => {
@@ -87,8 +87,8 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				...config,
 				defaultBranch: form.defaultBranch || undefined,
 				sessionPrefix: form.sessionPrefix || undefined,
-				worker: blankToUndefined({ ...config.worker, agent: form.workerAgent || undefined }),
-				orchestrator: blankToUndefined({ ...config.orchestrator, agent: form.orchestratorAgent || undefined }),
+				worker: { ...config.worker, agent: form.workerAgent },
+				orchestrator: { ...config.orchestrator, agent: form.orchestratorAgent },
 				agentConfig: blankToUndefined({
 					...config.agentConfig,
 					model: form.model || undefined,
@@ -104,6 +104,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 		},
 		onSuccess: () => {
 			setSavedAt(Date.now());
+			setValidationError(null);
 			void queryClient.invalidateQueries({ queryKey: ["project", projectId] });
 			onSaved();
 		},
@@ -114,6 +115,12 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 			className="mx-auto flex max-w-2xl flex-col gap-4"
 			onSubmit={(event) => {
 				event.preventDefault();
+				setSavedAt(null);
+				if (missingRequiredAgent) {
+					setValidationError("Worker and orchestrator agents are required.");
+					return;
+				}
+				setValidationError(null);
 				mutation.mutate();
 			}}
 		>
@@ -159,20 +166,25 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 					<CardTitle className="text-[13px]">Agents</CardTitle>
 				</CardHeader>
 				<CardContent className="flex flex-col gap-4">
-					<Field label="Default worker agent" htmlFor="workerAgent">
-						<AgentSelect
-							id="workerAgent"
-							value={form.workerAgent}
-							onChange={(v) => setForm((f) => ({ ...f, workerAgent: v }))}
-						/>
-					</Field>
-					<Field label="Default orchestrator agent" htmlFor="orchestratorAgent">
-						<AgentSelect
-							id="orchestratorAgent"
-							value={form.orchestratorAgent}
-							onChange={(v) => setForm((f) => ({ ...f, orchestratorAgent: v }))}
-						/>
-					</Field>
+					<RequiredAgentField
+						id="workerAgent"
+						value={form.workerAgent}
+						placeholder="Select worker agent"
+						label="Default worker agent"
+						invalid={validationError !== null && form.workerAgent === ""}
+						onChange={(v) => setForm((f) => ({ ...f, workerAgent: v }))}
+					/>
+					<RequiredAgentField
+						id="orchestratorAgent"
+						value={form.orchestratorAgent}
+						placeholder="Select orchestrator agent"
+						label="Default orchestrator agent"
+						invalid={validationError !== null && form.orchestratorAgent === ""}
+						onChange={(v) => setForm((f) => ({ ...f, orchestratorAgent: v }))}
+					/>
+					{missingRequiredAgent && (
+						<p className="text-[12px] leading-5 text-error">Worker and orchestrator agents are required.</p>
+					)}
 					<Field label="Model override" htmlFor="model">
 						<input
 							id="model"
@@ -211,6 +223,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				<Button type="submit" variant="primary" disabled={mutation.isPending}>
 					{mutation.isPending ? "Saving…" : "Save changes"}
 				</Button>
+				{validationError && <span className="text-[12px] text-error">{validationError}</span>}
 				{mutation.isError && (
 					<span className="text-[12px] text-error">
 						{mutation.error instanceof Error ? mutation.error.message : "Save failed"}
@@ -243,25 +256,6 @@ function PermissionModeSelect({
 				{PERMISSION_MODE_OPTIONS.map((opt) => (
 					<SelectItem key={opt.value} value={opt.value}>
 						{opt.label}
-					</SelectItem>
-				))}
-			</SelectContent>
-		</Select>
-	);
-}
-
-function AgentSelect({ id, value, onChange }: { id: string; value: string; onChange: (value: string) => void }) {
-	// "" sentinel → daemon default; Select can't hold an empty value, so map it.
-	return (
-		<Select value={value || "__default__"} onValueChange={(v) => onChange(v === "__default__" ? "" : v)}>
-			<SelectTrigger id={id} className="h-8 w-full text-[13px]">
-				<SelectValue />
-			</SelectTrigger>
-			<SelectContent>
-				<SelectItem value="__default__">Daemon default</SelectItem>
-				{AGENT_OPTIONS.map((agent) => (
-					<SelectItem key={agent} value={agent}>
-						{agent}
 					</SelectItem>
 				))}
 			</SelectContent>

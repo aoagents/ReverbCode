@@ -60,12 +60,9 @@ func (l *lifecycleStack) Stop() {
 
 // startSession builds the controller-facing session service: a session manager
 // over the real zellij runtime, a per-session gitworktree workspace, the shared
-// store + LCM, the per-session agent resolver (AO_AGENT default), and the
-// agent messenger. The returned service is mounted at httpd APIDeps.Sessions.
+// store + LCM, the per-session agent resolver, and the agent messenger. The
+// returned service is mounted at httpd APIDeps.Sessions.
 func startSession(cfg config.Config, runtime *zellij.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, messenger ports.AgentMessenger, telemetry ports.EventSink, log *slog.Logger) (*sessionsvc.Service, reviewsvc.Manager, error) {
-	// Resolve the default agent once and share it with both the resolver (which
-	// launches it for an unspecified harness) and the session manager (which
-	// persists it onto the seed row), so the stored harness matches what runs.
 	defaultAgent := cfg.Agent
 	if defaultAgent == "" {
 		defaultAgent = config.DefaultAgent
@@ -87,15 +84,14 @@ func startSession(cfg config.Config, runtime *zellij.Runtime, store *sqlite.Stor
 		return nil, nil, fmt.Errorf("session workspace: %w", err)
 	}
 	mgr := sessionmanager.New(sessionmanager.Deps{
-		Runtime:        runtime,
-		Agents:         agents,
-		Workspace:      ws,
-		Store:          store,
-		Messenger:      messenger,
-		Lifecycle:      lcm,
-		DataDir:        cfg.DataDir,
-		DefaultHarness: domain.AgentHarness(defaultAgent),
-		Logger:         log,
+		Runtime:   runtime,
+		Agents:    agents,
+		Workspace: ws,
+		Store:     store,
+		Messenger: messenger,
+		Lifecycle: lcm,
+		DataDir:   cfg.DataDir,
+		Logger:    log,
 	})
 	scmProvider, err := newGitHubSCMProvider(log)
 	if err != nil {
@@ -179,20 +175,15 @@ func buildAgentRegistry() (*adapters.Registry, error) {
 
 // agentRegistry adapts the generic adapter Registry to ports.AgentResolver: it
 // maps a session's harness onto the registered adapter of the same id and
-// asserts that adapter drives an agent. An empty harness falls back to the
-// daemon's configured default (AO_AGENT), so a spawn that names no harness still
-// gets a real agent.
+// asserts that adapter drives an agent. Empty harnesses are invalid at the
+// session manager boundary and deliberately do not resolve here.
 type agentRegistry struct {
-	reg            *adapters.Registry
-	defaultHarness domain.AgentHarness
+	reg *adapters.Registry
 }
 
 var _ ports.AgentResolver = agentRegistry{}
 
 func (a agentRegistry) Agent(harness domain.AgentHarness) (ports.Agent, bool) {
-	if harness == "" {
-		harness = a.defaultHarness
-	}
 	adapter, ok := a.reg.Get(string(harness))
 	if !ok {
 		return nil, false
@@ -203,10 +194,9 @@ func (a agentRegistry) Agent(harness domain.AgentHarness) (ports.Agent, bool) {
 
 // buildAgentResolver constructs the per-session agent resolver the Session
 // Manager consumes (sessionmanager.Deps.Agents): a registry of the shipped
-// adapters plus the configured default harness. It fails fast if the default
-// does not resolve, so a typo'd AO_AGENT surfaces at startup. The session lane
-// plugs this in when it mounts the controller-facing session service at the
-// httpd APIDeps.Sessions slot.
+// adapters. It still validates AO_AGENT at startup for compatibility with the
+// config surface, but worker/orchestrator spawns must provide a resolved
+// harness before calling Agent.
 func buildAgentResolver(defaultAgent string, log *slog.Logger) (ports.AgentResolver, error) {
 	if defaultAgent == "" {
 		defaultAgent = config.DefaultAgent
@@ -215,8 +205,8 @@ func buildAgentResolver(defaultAgent string, log *slog.Logger) (ports.AgentResol
 	if err != nil {
 		return nil, err
 	}
-	resolver := agentRegistry{reg: reg, defaultHarness: domain.AgentHarness(defaultAgent)}
-	if _, ok := resolver.Agent(""); !ok {
+	resolver := agentRegistry{reg: reg}
+	if _, ok := resolver.Agent(domain.AgentHarness(defaultAgent)); !ok {
 		return nil, fmt.Errorf("configured default agent %q is not a registered adapter", defaultAgent)
 	}
 	ids := make([]string, 0)

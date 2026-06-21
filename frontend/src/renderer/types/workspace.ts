@@ -9,6 +9,7 @@ export type SessionStatus =
 	| "mergeable"
 	| "merged"
 	| "needs_input"
+	| "no_signal"
 	| "idle"
 	| "terminated";
 
@@ -23,6 +24,7 @@ const sessionStatuses = new Set<SessionStatus>([
 	"mergeable",
 	"merged",
 	"needs_input",
+	"no_signal",
 	"idle",
 	"terminated",
 ]);
@@ -67,6 +69,26 @@ export type ChangedFile = {
 
 export type SessionKind = "worker" | "orchestrator";
 
+/** Lifecycle state of a single pull request, mirrors the daemon's enum. */
+export type PRState = "open" | "draft" | "merged" | "closed";
+
+/**
+ * One attributed pull request, mirroring the daemon's SessionPRFacts wire shape.
+ * A session can own many (e.g. a stack), so {@link WorkspaceSession.prs} is a
+ * list. The wire carries no source/target branch or parent pointer, so the UI
+ * renders a flat list of PRs, not a stack tree.
+ */
+export type PullRequestFacts = {
+	url: string;
+	number: number;
+	state: PRState;
+	ci: string;
+	review: string;
+	mergeability: string;
+	reviewComments: boolean;
+	updatedAt: string;
+};
+
 export type WorkspaceSession = {
 	id: string;
 	terminalHandleId?: string;
@@ -85,10 +107,12 @@ export type WorkspaceSession = {
 	changedFiles?: ChangedFile[];
 	/** Pre-filled commit subject for the Git rail, when known. */
 	commitMessage?: string;
-	pullRequest?: {
-		number: number;
-		state: "open" | "draft" | "merged" | "closed";
-	};
+	/**
+	 * The session's attributed pull requests. One session can own many (a stack
+	 * or independent PRs); empty when none are open yet. Status aggregation is
+	 * done server-side, so {@link status} already reflects all of these.
+	 */
+	prs: PullRequestFacts[];
 	/**
 	 * Display status as derived by the daemon at read time. Optional override; when
 	 * absent it is derived from {@link SessionStatus} via {@link workerDisplayStatus}.
@@ -97,7 +121,7 @@ export type WorkspaceSession = {
 };
 
 /** Glanceable worker status. Maps 1:1 to the accent colors in DESIGN.md. */
-export type WorkerDisplayStatus = "working" | "needs_you" | "mergeable" | "ci_failed" | "done";
+export type WorkerDisplayStatus = "working" | "needs_you" | "mergeable" | "ci_failed" | "no_signal" | "done";
 
 export function workerDisplayStatus(session: WorkspaceSession): WorkerDisplayStatus {
 	if (session.displayStatus) return session.displayStatus;
@@ -108,6 +132,8 @@ export function workerDisplayStatus(session: WorkspaceSession): WorkerDisplaySta
 			return "needs_you";
 		case "ci_failed":
 			return "ci_failed";
+		case "no_signal":
+			return "no_signal";
 		case "approved":
 		case "mergeable":
 			return "mergeable";
@@ -117,6 +143,28 @@ export function workerDisplayStatus(session: WorkspaceSession): WorkerDisplaySta
 		default:
 			return "working";
 	}
+}
+
+// Open PRs (actionable) sort above merged/closed; ties break by number.
+const prStateRank: Record<PRState, number> = { open: 0, draft: 1, merged: 2, closed: 3 };
+
+/** A session's PRs ordered actionable-first (open, draft, merged, closed). */
+export function sortedPRs(session: WorkspaceSession): PullRequestFacts[] {
+	return [...session.prs].sort((a, b) => prStateRank[a.state] - prStateRank[b.state] || a.number - b.number);
+}
+
+/** PRs still in flight (open or draft). */
+export function openPRs(session: WorkspaceSession): PullRequestFacts[] {
+	return session.prs.filter((pr) => pr.state === "open" || pr.state === "draft");
+}
+
+export function mergedPRCount(session: WorkspaceSession): number {
+	return session.prs.filter((pr) => pr.state === "merged").length;
+}
+
+/** The highest-priority PR for compact one-line surfaces (board card, sidebar). */
+export function primaryPR(session: WorkspaceSession): PullRequestFacts | undefined {
+	return sortedPRs(session)[0];
 }
 
 export function isOrchestratorSession(session: WorkspaceSession): boolean {
@@ -150,6 +198,7 @@ export function sessionIsActive(session: WorkspaceSession): boolean {
 export function sessionNeedsAttention(session: WorkspaceSession): boolean {
 	return (
 		session.status === "needs_input" ||
+		session.status === "no_signal" ||
 		session.status === "changes_requested" ||
 		session.status === "review_pending" ||
 		session.status === "ci_failed"
@@ -161,6 +210,7 @@ export const workerStatusLabel: Record<WorkerDisplayStatus, string> = {
 	needs_you: "needs you",
 	mergeable: "mergeable",
 	ci_failed: "ci failed",
+	no_signal: "no signal",
 	done: "done",
 };
 
@@ -202,6 +252,7 @@ export function attentionZone(session: WorkspaceSession): AttentionZone {
 		// Agent waiting on a human (respond) or a problem to investigate (review);
 		// agent-orchestrator collapses these into one "action" zone by default.
 		case "needs_input":
+		case "no_signal":
 		case "ci_failed":
 		case "changes_requested":
 			return "action";
@@ -227,10 +278,6 @@ export type WorkspaceSummary = {
 	diff?: {
 		additions: number;
 		deletions: number;
-	};
-	pullRequest?: {
-		number: number;
-		state: "open" | "draft" | "merged" | "closed";
 	};
 	sessions: WorkspaceSession[];
 };

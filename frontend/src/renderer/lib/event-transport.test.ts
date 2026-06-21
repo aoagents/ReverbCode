@@ -1,13 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { onStatusMock, removeStatusMock, getApiBaseUrlMock, subscribeApiBaseUrlMock, unsubscribeBaseUrlMock } =
-	vi.hoisted(() => ({
-		onStatusMock: vi.fn(),
-		removeStatusMock: vi.fn(),
-		getApiBaseUrlMock: vi.fn(() => "http://127.0.0.1:3001"),
-		subscribeApiBaseUrlMock: vi.fn(),
-		unsubscribeBaseUrlMock: vi.fn(),
-	}));
+const {
+	onStatusMock,
+	removeStatusMock,
+	getApiBaseUrlMock,
+	hasTrustedApiBaseUrlMock,
+	subscribeApiBaseUrlMock,
+	unsubscribeBaseUrlMock,
+} = vi.hoisted(() => ({
+	onStatusMock: vi.fn(),
+	removeStatusMock: vi.fn(),
+	getApiBaseUrlMock: vi.fn(() => "http://127.0.0.1:3001"),
+	hasTrustedApiBaseUrlMock: vi.fn(() => true),
+	subscribeApiBaseUrlMock: vi.fn(),
+	unsubscribeBaseUrlMock: vi.fn(),
+}));
 
 vi.mock("./bridge", () => ({
 	aoBridge: {
@@ -17,6 +24,7 @@ vi.mock("./bridge", () => ({
 
 vi.mock("./api-client", () => ({
 	getApiBaseUrl: getApiBaseUrlMock,
+	hasTrustedApiBaseUrl: hasTrustedApiBaseUrlMock,
 	subscribeApiBaseUrl: subscribeApiBaseUrlMock,
 }));
 
@@ -54,6 +62,7 @@ beforeEach(() => {
 	onStatusMock.mockReset().mockReturnValue(removeStatusMock);
 	removeStatusMock.mockReset();
 	getApiBaseUrlMock.mockReset().mockReturnValue("http://127.0.0.1:3001");
+	hasTrustedApiBaseUrlMock.mockReset().mockReturnValue(true);
 	subscribeApiBaseUrlMock.mockReset().mockReturnValue(unsubscribeBaseUrlMock);
 	unsubscribeBaseUrlMock.mockReset();
 	setEventsConnectionState("idle");
@@ -95,6 +104,19 @@ describe("createEventTransport", () => {
 		expect(first.closed).toBe(true);
 		expect(EventSourceStub.instances).toHaveLength(2);
 		expect(EventSourceStub.instances[1].url).toBe("http://127.0.0.1:3099/api/v1/events");
+	});
+
+	it("closes the source and skips reconnecting when the base URL is untrusted", () => {
+		createEventTransport(fakeQueryClient()).connect();
+		const first = EventSourceStub.instances[0];
+		const onStatusHandler = onStatusMock.mock.calls[0][0] as () => void;
+
+		hasTrustedApiBaseUrlMock.mockReturnValue(false);
+		onStatusHandler();
+
+		expect(first.closed).toBe(true);
+		expect(EventSourceStub.instances).toHaveLength(1);
+		expect(getEventsConnectionState()).toBe("disconnected");
 	});
 
 	it("debounces a workspace invalidation after a status change", () => {

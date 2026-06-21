@@ -283,9 +283,10 @@ func (r *Runtime) Destroy(ctx context.Context, handle ports.RuntimeHandle) error
 	if err != nil {
 		return err
 	}
-	if _, err := r.run(ctx, deleteSessionArgs(id)...); err != nil {
+	out, err := r.run(ctx, deleteSessionArgs(id)...)
+	if err != nil {
 		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
+		if errors.As(err, &exitErr) && deleteSessionMissingOutput(string(out)) {
 			return nil
 		}
 		return fmt.Errorf("zellij runtime: destroy session %s: %w", id, err)
@@ -355,6 +356,18 @@ func (r *Runtime) IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool
 func noActiveSessionsOutput(out string) bool {
 	s := strings.ToLower(out)
 	return strings.Contains(s, "no active") && strings.Contains(s, "session")
+}
+
+func deleteSessionMissingOutput(out string) bool {
+	s := strings.ToLower(out)
+	if noActiveSessionsOutput(s) {
+		return true
+	}
+	return strings.Contains(s, "session") &&
+		(strings.Contains(s, "not found") ||
+			strings.Contains(s, "does not exist") ||
+			strings.Contains(s, "not exist") ||
+			strings.Contains(s, "not a session"))
 }
 
 // AttachCommand returns the argv a human runs to attach their terminal to the

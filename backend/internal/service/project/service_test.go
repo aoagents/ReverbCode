@@ -52,6 +52,32 @@ func gitRepoOnBranch(t *testing.T, branch string) string {
 	return dir
 }
 
+// gitRepoWithOriginHead creates a repo whose remote default (origin/HEAD) points
+// at defaultBranch while the working tree is checked out on featureBranch. This
+// mirrors a user adding a project while sitting on a feature branch: detection
+// must record the remote default, not the active branch.
+func gitRepoWithOriginHead(t *testing.T, defaultBranch, featureBranch string) string {
+	t.Helper()
+	dir := t.TempDir()
+	run := func(args ...string) {
+		if out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v (%s)", args, err, out)
+		}
+	}
+	if out, err := exec.Command("git", "init", "-b", defaultBranch, dir).CombinedOutput(); err != nil {
+		t.Fatalf("git unavailable: %v (%s)", err, out)
+	}
+	run("config", "user.email", "test@example.com")
+	run("config", "user.name", "test")
+	run("commit", "--allow-empty", "-m", "init")
+	// Fabricate a remote-tracking default without a real remote: point
+	// refs/remotes/origin/<defaultBranch> at HEAD, then set origin/HEAD to it.
+	run("update-ref", "refs/remotes/origin/"+defaultBranch, "HEAD")
+	run("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/"+defaultBranch)
+	run("checkout", "-b", featureBranch)
+	return dir
+}
+
 func ptr(s string) *string { return &s }
 
 // wantCode asserts err is an *apierr.Error carrying the given machine code.
@@ -295,6 +321,42 @@ func TestManager_AddDetectsNonMainDefaultBranch(t *testing.T) {
 	}
 	if proj2.DefaultBranch != "release" {
 		t.Fatalf("explicit DefaultBranch = %q, want release", proj2.DefaultBranch)
+	}
+}
+
+// A repo checked out on a feature branch must NOT record that branch as the
+// project default — detection must prefer the remote default (origin/HEAD), so a
+// repo whose origin/HEAD is `main` stays on `main` even when HEAD is elsewhere.
+func TestManager_AddPrefersOriginHeadOverCheckedOutBranch(t *testing.T) {
+	ctx := context.Background()
+	m := newManager(t)
+	repo := gitRepoWithOriginHead(t, "main", "fix/pr-attachment")
+
+	proj, err := m.Add(ctx, project.AddInput{Path: repo, ProjectID: ptr("ao")})
+	if err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	// origin/HEAD is `main`, which equals DefaultBranchName, so config stays empty
+	// and the effective default resolves to main — never the feature branch.
+	if proj.DefaultBranch != domain.DefaultBranchName {
+		t.Fatalf("DefaultBranch = %q, want %q (not the checked-out feature branch)",
+			proj.DefaultBranch, domain.DefaultBranchName)
+	}
+}
+
+// When origin/HEAD points at a non-main default (e.g. master), detection records
+// that — not the feature branch the user happens to be on.
+func TestManager_AddPrefersOriginHeadNonMain(t *testing.T) {
+	ctx := context.Background()
+	m := newManager(t)
+	repo := gitRepoWithOriginHead(t, "master", "fix/pr-attachment")
+
+	proj, err := m.Add(ctx, project.AddInput{Path: repo, ProjectID: ptr("ao")})
+	if err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if proj.DefaultBranch != "master" {
+		t.Fatalf("DefaultBranch = %q, want master (origin/HEAD), not feature branch", proj.DefaultBranch)
 	}
 }
 

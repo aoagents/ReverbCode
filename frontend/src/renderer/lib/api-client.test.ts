@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { apiClient, getApiBaseUrl, setApiBaseUrl, subscribeApiBaseUrl } from "./api-client";
+import { apiClient, getApiBaseUrl, hasTrustedApiBaseUrl, setApiBaseUrl, subscribeApiBaseUrl } from "./api-client";
 
 describe("apiClient runtime base URL", () => {
 	afterEach(() => {
@@ -99,6 +99,19 @@ describe("apiClient runtime base URL", () => {
 		// Empty base → no rewrite; openapi-fetch's own request reaches fetch as-is.
 		expect(seen).toHaveLength(1);
 		expect(seen[0].url).toContain("/api/v1/projects");
+	});
+
+	it("returns unavailable without fetching when the daemon base URL is untrusted", async () => {
+		const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+		setApiBaseUrl(null);
+
+		const { error } = await apiClient.GET("/api/v1/projects");
+
+		expect(error).toEqual({ message: "AO daemon is not ready." });
+		expect(getApiBaseUrl()).toBe("");
+		expect(hasTrustedApiBaseUrl()).toBe(false);
+		expect(fetchSpy).not.toHaveBeenCalled();
 	});
 });
 

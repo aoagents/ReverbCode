@@ -23,15 +23,20 @@ func versionArgs() []string {
 }
 
 func createSessionArgs(id, layoutPath string) []string {
-	return []string{
+	clientOptions := embeddedClientOptions()
+	args := make([]string, 0, 6+len(clientOptions)+6)
+	args = append(args,
 		"attach", "--create-background", id,
 		"options",
 		"--default-layout", layoutPath,
-		"--pane-frames", "false",
+	)
+	args = append(args, clientOptions...)
+	args = append(args,
 		"--session-serialization", "false",
 		"--show-startup-tips", "false",
 		"--show-release-notes", "false",
-	}
+	)
+	return args
 }
 
 func listPanesArgs(id string) []string {
@@ -68,10 +73,25 @@ func deleteSessionArgs(id string) []string {
 }
 
 func attachArgs(id string) []string {
-	return []string{
+	clientOptions := embeddedClientOptions()
+	args := make([]string, 0, 3+len(clientOptions))
+	args = append(args,
 		"attach", id,
 		"options",
+	)
+	args = append(args, clientOptions...)
+	return args
+}
+
+func embeddedClientOptions() []string {
+	return []string{
 		"--pane-frames", "false",
+		"--mouse-mode", "false",
+		"--advanced-mouse-actions", "false",
+		"--mouse-hover-effects", "false",
+		"--focus-follows-mouse", "false",
+		"--mouse-click-through", "false",
+		"--support-kitty-keyboard-protocol", "false",
 	}
 }
 
@@ -88,7 +108,7 @@ func buildLayout(cfg ports.RuntimeConfig, shellPath string) string {
 		return directLayoutString(cfg.WorkspacePath, cfg.Argv)
 	}
 	spec := shellLaunchSpecFor(shellPath)
-	shellCommand := shellLaunchCommand(cfg, shellPath, spec)
+	shellCommand := shellLaunchCommand(cfg, spec)
 	return layoutString(cfg.WorkspacePath, shellPath, spec.args, shellCommand)
 }
 
@@ -176,17 +196,17 @@ func layoutString(workspacePath, shellPath string, shellArgs []string, shellComm
 		"}\n"
 }
 
-func shellLaunchCommand(cfg ports.RuntimeConfig, shellPath string, spec shellLaunchSpec) string {
+func shellLaunchCommand(cfg ports.RuntimeConfig, spec shellLaunchSpec) string {
 	if len(spec.args) > 0 && spec.args[0] == "-NoLogo" {
 		return wrapLaunchCommandPowerShell(cfg)
 	}
 	if len(spec.args) > 0 && spec.args[0] == "/D" {
 		return wrapLaunchCommandCmd(cfg)
 	}
-	return wrapLaunchCommandUnix(cfg, shellPath)
+	return wrapLaunchCommandUnix(cfg)
 }
 
-func wrapLaunchCommandUnix(cfg ports.RuntimeConfig, shellPath string) string {
+func wrapLaunchCommandUnix(cfg ports.RuntimeConfig) string {
 	path := cfg.Env["PATH"]
 	if path == "" {
 		path = getenv("PATH")
@@ -209,9 +229,6 @@ func wrapLaunchCommandUnix(cfg ports.RuntimeConfig, shellPath string) string {
 		b.WriteString("; ")
 	}
 	b.WriteString(quoteArgvUnix(cfg.Argv))
-	b.WriteString("; exec ")
-	b.WriteString(shellQuote(shellPath))
-	b.WriteString(" -i")
 	return b.String()
 }
 

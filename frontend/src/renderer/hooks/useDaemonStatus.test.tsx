@@ -1,7 +1,7 @@
 import { renderHook, waitFor } from "@testing-library/react";
 import { act } from "react";
 import type { QueryClient } from "@tanstack/react-query";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { getStatusMock, onStatusMock, removeStatusMock, connectMock, stopTransportMock, setApiBaseUrlMock } = vi.hoisted(
 	() => ({
@@ -35,12 +35,17 @@ function fakeQueryClient(): QueryClient {
 }
 
 beforeEach(() => {
+	vi.useRealTimers();
 	getStatusMock.mockReset().mockResolvedValue({ state: "stopped" });
 	onStatusMock.mockReset().mockReturnValue(removeStatusMock);
 	removeStatusMock.mockReset();
 	connectMock.mockReset().mockReturnValue(stopTransportMock);
 	stopTransportMock.mockReset();
 	setApiBaseUrlMock.mockReset();
+});
+
+afterEach(() => {
+	vi.useRealTimers();
 });
 
 describe("useDaemonStatus", () => {
@@ -57,14 +62,24 @@ describe("useDaemonStatus", () => {
 		expect(queryClient.invalidateQueries).not.toHaveBeenCalled();
 	});
 
-	it("does not touch the base URL for statuses without a port", async () => {
+	it("quarantines the base URL for statuses without a port", async () => {
 		getStatusMock.mockResolvedValue({ state: "stopped", message: "daemon not configured" });
 		const queryClient = fakeQueryClient();
 
 		const { result } = renderHook(() => useDaemonStatus(queryClient));
 
 		await waitFor(() => expect(result.current.message).toBe("daemon not configured"));
-		expect(setApiBaseUrlMock).not.toHaveBeenCalled();
+		expect(setApiBaseUrlMock).toHaveBeenCalledWith(null);
+	});
+
+	it("quarantines REST for an incompatible daemon even when its port is known", async () => {
+		getStatusMock.mockResolvedValue({ state: "error", port: 3001, message: "wrong daemon" });
+		const queryClient = fakeQueryClient();
+
+		const { result } = renderHook(() => useDaemonStatus(queryClient));
+
+		await waitFor(() => expect(result.current).toEqual({ state: "error", port: 3001, message: "wrong daemon" }));
+		expect(setApiBaseUrlMock).toHaveBeenCalledWith(null);
 	});
 
 	it("applies pushed status events from the bridge", async () => {
@@ -77,6 +92,74 @@ describe("useDaemonStatus", () => {
 
 		expect(result.current).toEqual({ state: "ready", port: 4555 });
 		expect(setApiBaseUrlMock).toHaveBeenCalledWith("http://127.0.0.1:4555");
+	});
+
+	it("refreshes non-ready status until the daemon is ready", async () => {
+		vi.useFakeTimers();
+		getStatusMock.mockResolvedValueOnce({ state: "starting" }).mockResolvedValueOnce({ state: "ready", port: 4777 });
+		const queryClient = fakeQueryClient();
+
+		const { result } = renderHook(() => useDaemonStatus(queryClient));
+
+		await act(async () => {
+			await Promise.resolve();
+		});
+		expect(result.current).toEqual({ state: "starting" });
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(2_000);
+		});
+
+		expect(result.current).toEqual({ state: "ready", port: 4777 });
+		expect(getStatusMock).toHaveBeenCalledTimes(2);
+		expect(setApiBaseUrlMock).toHaveBeenCalledWith("http://127.0.0.1:4777");
+	});
+
+	it("refreshes ready status so adopted daemon liveness is rechecked", async () => {
+		vi.useFakeTimers();
+		getStatusMock.mockResolvedValueOnce({ state: "ready", port: 4777 }).mockResolvedValueOnce({ state: "stopped" });
+		const queryClient = fakeQueryClient();
+
+		const { result } = renderHook(() => useDaemonStatus(queryClient));
+
+		await act(async () => {
+			await Promise.resolve();
+		});
+		expect(result.current).toEqual({ state: "ready", port: 4777 });
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(10_000);
+		});
+
+		expect(result.current).toEqual({ state: "stopped" });
+		expect(getStatusMock).toHaveBeenCalledTimes(2);
+		expect(setApiBaseUrlMock).toHaveBeenCalledWith(null);
+	});
+
+	it("ignores stale refresh responses that complete after a newer refresh", async () => {
+		let resolveFirst: (status: DaemonStatus) => void = () => undefined;
+		getStatusMock
+			.mockReturnValueOnce(
+				new Promise<DaemonStatus>((resolve) => {
+					resolveFirst = resolve;
+				}),
+			)
+			.mockResolvedValueOnce({ state: "ready", port: 4777 });
+		const queryClient = fakeQueryClient();
+
+		const { result } = renderHook(() => useDaemonStatus(queryClient));
+
+		act(() => window.dispatchEvent(new Event("focus")));
+		await act(async () => {
+			await Promise.resolve();
+		});
+		expect(result.current).toEqual({ state: "ready", port: 4777 });
+
+		await act(async () => {
+			resolveFirst({ state: "stopped" });
+			await Promise.resolve();
+		});
+
+		expect(result.current).toEqual({ state: "ready", port: 4777 });
+		expect(setApiBaseUrlMock).toHaveBeenLastCalledWith("http://127.0.0.1:4777");
 	});
 
 	it("still connects the transport when the initial IPC status call fails", async () => {

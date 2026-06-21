@@ -35,7 +35,7 @@ func TestAttachmentStreamsRealZellijPane(t *testing.T) {
 	handle, err := rt.Create(context.Background(), ports.RuntimeConfig{
 		SessionID:     domain.SessionID(name),
 		WorkspacePath: t.TempDir(),
-		Argv:          []string{"printf", "AO_READY\\n"},
+		Argv:          []string{"sh", "-lc", "printf AO_READY\\n; exec sh -i"},
 	})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
@@ -43,7 +43,7 @@ func TestAttachmentStreamsRealZellijPane(t *testing.T) {
 	t.Cleanup(func() { _ = rt.Destroy(context.Background(), handle) })
 
 	var got safeBytes
-	a := newAttachment(name, handle, rt, defaultSpawn, got.add, nil, testLogger())
+	a := newAttachment(name, handle, rt, defaultSpawn, nil, got.add, nil, testLogger())
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go a.run(ctx)
@@ -52,13 +52,12 @@ func TestAttachmentStreamsRealZellijPane(t *testing.T) {
 	eventually(t, 3*time.Second, func() bool { return a.write([]byte("echo AO_MARKER_42\n")) == nil })
 	eventually(t, 5*time.Second, func() bool { return strings.Contains(got.string(), "AO_MARKER_42") })
 
-	// A fresh attach must carry zellij's init handshake: alt screen + SGR mouse
-	// tracking. This is the whole point of per-client attach — late clients see
-	// the mode negotiation, so wheel events are forwarded as mouse reports
-	// instead of going dead.
+	// A fresh attach must carry zellij's alt-screen init handshake. Mouse
+	// reporting is deliberately disabled for AO's embedded client, so this test
+	// should not require SGR mouse mode.
 	eventually(t, 5*time.Second, func() bool {
 		out := got.string()
-		return strings.Contains(out, "\x1b[?1049h") && strings.Contains(out, "\x1b[?1006h")
+		return strings.Contains(out, "\x1b[?1049h")
 	})
 
 	// Kill the session: the attachment must observe it as gone and not re-attach.
@@ -89,28 +88,32 @@ func TestAttachmentReattachAdoptsNewSize(t *testing.T) {
 	handle, err := rt.Create(context.Background(), ports.RuntimeConfig{
 		SessionID:     domain.SessionID(name),
 		WorkspacePath: t.TempDir(),
-		Argv:          []string{"printf", "AO_READY\\n"},
+		Argv:          []string{"sh", "-lc", "printf AO_READY\\n; exec sh -i"},
 	})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	t.Cleanup(func() { _ = rt.Destroy(context.Background(), handle) })
 
-	attachAt := func(rows, cols uint16) (*attachment, *safeBytes, context.CancelFunc) {
+	attachAt := func(rows, cols uint16) (*attachment, *safeBytes, <-chan struct{}, context.CancelFunc) {
 		var got safeBytes
-		a := newAttachment(name, handle, rt, defaultSpawn, got.add, nil, testLogger())
+		opened := make(chan struct{})
+		a := newAttachment(name, handle, rt, defaultSpawn, func() { close(opened) }, got.add, nil, testLogger())
 		if err := a.resize(rows, cols); err != nil {
 			t.Fatalf("record size: %v", err)
 		}
 		ctx, cancel := context.WithCancel(context.Background())
 		go a.run(ctx)
-		return a, &got, cancel
+		return a, &got, opened, cancel
 	}
 
 	// Client A at 115x37: wait for the pane shell, then detach.
-	a, gotA, cancelA := attachAt(37, 115)
-	eventually(t, 5*time.Second, func() bool { return a.write([]byte("\n")) == nil })
-	eventually(t, 5*time.Second, func() bool { return strings.Contains(gotA.string(), "AO_READY") })
+	a, _, openedA, cancelA := attachAt(37, 115)
+	select {
+	case <-openedA:
+	case <-time.After(5 * time.Second):
+		t.Fatal("client A did not attach")
+	}
 	a.close()
 	cancelA()
 
@@ -118,9 +121,14 @@ func TestAttachmentReattachAdoptsNewSize(t *testing.T) {
 	// frontend reconnecting. The inner pane must see B's grid (zellij chrome
 	// shaves a couple rows/cols, so assert the reported cols land near 148 and
 	// far from 115).
-	b, gotB, cancelB := attachAt(40, 148)
+	b, gotB, openedB, cancelB := attachAt(40, 148)
 	defer cancelB()
 	defer b.close()
+	select {
+	case <-openedB:
+	case <-time.After(5 * time.Second):
+		t.Fatal("client B did not attach")
+	}
 
 	eventually(t, 5*time.Second, func() bool { return b.write([]byte("echo SIZE:$(stty size)\n")) == nil })
 	eventually(t, 10*time.Second, func() bool {

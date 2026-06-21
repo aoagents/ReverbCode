@@ -301,12 +301,25 @@ func resolveGitOriginURL(path string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// resolveDefaultBranch returns the repo's currently checked-out branch via
-// `git -C path symbolic-ref --short HEAD`. A detached HEAD, missing repo, or any
-// other git error returns an empty string — `project add` must not fail just
-// because the branch can't be resolved (the caller falls back to
-// DefaultBranchName).
+// resolveDefaultBranch returns the repo's default branch, preferring the
+// remote's default (`origin/HEAD`) over the currently checked-out branch. This
+// matters because the user may have the repo on a feature branch when adding the
+// project: keying off HEAD would persist that feature branch as the project
+// default and base every session worktree on it. `origin/HEAD` reflects the
+// real default (e.g. `master`, `develop`) regardless of the active branch.
+//
+// Falls back to the checked-out branch when origin/HEAD is unset (no remote, or
+// it was never fetched). A detached HEAD, missing repo, or any other git error
+// returns an empty string — `project add` must not fail just because the branch
+// can't be resolved (the caller falls back to DefaultBranchName).
 func resolveDefaultBranch(path string) string {
+	if out, err := exec.Command(
+		"git", "-C", path, "symbolic-ref", "--short", "refs/remotes/origin/HEAD",
+	).Output(); err == nil {
+		if ref := strings.TrimSpace(string(out)); ref != "" {
+			return strings.TrimPrefix(ref, "origin/")
+		}
+	}
 	out, err := exec.Command("git", "-C", path, "symbolic-ref", "--short", "HEAD").Output()
 	if err != nil {
 		return ""

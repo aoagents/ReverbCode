@@ -54,38 +54,43 @@ const (
 // attachment is ONE client's hold on a pane: a private `zellij attach` PTY
 // spawned per mux open, streaming to a single sink. Zellij is the multiplexer —
 // it owns the session's screen state and scrollback, and answers every fresh
-// attach with its full init handshake (alt screen, SGR mouse tracking,
-// bracketed paste) followed by a faithful repaint. That handshake is why the
-// PTY is per-client and there is no server-side replay buffer: a byte ring
-// can replay recent output, but the one-time mode negotiation at the head of
-// the stream scrolls out of any bounded buffer, leaving late subscribers
-// without mouse reporting (wheel scroll dead). A fresh attach per client makes
-// Zellij re-send it, every time, by construction.
+// attach with its init handshake (alt screen, bracketed paste, and other terminal
+// modes enabled by the embedded client options) followed by a faithful repaint.
+// That handshake is why the PTY is per-client and there is no server-side replay
+// buffer: a byte ring can replay recent output, but the one-time mode negotiation
+// at the head of the stream scrolls out of any bounded buffer. A fresh attach per
+// client makes Zellij re-send it, every time, by construction.
 //
-// onData must not block: the WS layer funnels frames onto its own buffered
-// writer. onExit fires at most once, when the attach loop gives up (runtime
-// dead, attach failure cap) — never on close().
+// onOpen fires once the attach PTY is actually ready to accept input. onData
+// must not block: the WS layer funnels frames onto its own buffered writer.
+// onExit fires at most once, when the attach loop gives up (runtime dead,
+// attach failure cap) — never on close().
 type attachment struct {
 	id     string
 	handle ports.RuntimeHandle
 	src    PTYSource
 	spawn  spawnFunc
 	log    *slog.Logger
+	onOpen func()
 	onData func(data []byte)
 	onExit func()
 
 	maxReattach int
 	resetGrace  time.Duration
 
-	mu     sync.Mutex
-	pty    ptyProcess
-	rows   uint16 // last size the client asked for; re-applied on every attach
-	cols   uint16
-	closed bool
-	exited bool
+	mu           sync.Mutex
+	pty          ptyProcess
+	cancel       context.CancelFunc
+	rows         uint16 // last size the client asked for; re-applied on every attach
+	cols         uint16
+	closed       bool
+	exited       bool
+	opened       bool
+	inputReady   bool
+	pendingInput [][]byte
 }
 
-func newAttachment(id string, handle ports.RuntimeHandle, src PTYSource, spawn spawnFunc, onData func([]byte), onExit func(), log *slog.Logger) *attachment {
+func newAttachment(id string, handle ports.RuntimeHandle, src PTYSource, spawn spawnFunc, onOpen func(), onData func([]byte), onExit func(), log *slog.Logger) *attachment {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -98,6 +103,7 @@ func newAttachment(id string, handle ports.RuntimeHandle, src PTYSource, spawn s
 		src:         src,
 		spawn:       spawn,
 		log:         log,
+		onOpen:      onOpen,
 		onData:      onData,
 		onExit:      onExit,
 		maxReattach: defaultMaxReattach,
@@ -108,9 +114,16 @@ func newAttachment(id string, handle ports.RuntimeHandle, src PTYSource, spawn s
 // run drives attach → read-loop → re-attach until the pane exits cleanly, the
 // attachment is closed, or ctx is cancelled. It is started once per attachment.
 func (a *attachment) run(ctx context.Context) {
+	ctx, cancel := context.WithCancel(ctx)
+	if !a.setRunCancel(cancel) {
+		cancel()
+		return
+	}
+	defer a.clearRunCancel(cancel)
+
 	failures := 0
 	for {
-		if a.isClosed() || ctx.Err() != nil {
+		if a.shouldStop(ctx) {
 			return
 		}
 
@@ -122,6 +135,9 @@ func (a *attachment) run(ctx context.Context) {
 		// not proof of death: it retries with backoff up to the same
 		// consecutive-failure cap as attach failures.
 		alive, err := a.src.IsAlive(ctx, a.handle)
+		if a.shouldStop(ctx) {
+			return
+		}
 		if err != nil {
 			failures++
 			if failures > a.maxReattach {
@@ -139,12 +155,24 @@ func (a *attachment) run(ctx context.Context) {
 		}
 
 		argv, env, err := a.src.AttachCommand(a.handle)
+		if a.shouldStop(ctx) {
+			return
+		}
 		if err != nil {
 			a.fail("attach command: " + err.Error())
 			return
 		}
 		rows, cols := a.size()
+		if a.shouldStop(ctx) {
+			return
+		}
 		p, err := a.spawn(ctx, argv, env, rows, cols)
+		if a.shouldStop(ctx) {
+			if p != nil {
+				_ = p.Close()
+			}
+			return
+		}
 		if err != nil {
 			failures++
 			if failures > a.maxReattach {
@@ -157,10 +185,17 @@ func (a *attachment) run(ctx context.Context) {
 			continue
 		}
 
-		a.setPTY(p)
+		if !a.setPTY(p) {
+			_ = p.Close()
+			return
+		}
 		start := time.Now()
 		a.copyOut(p)
+		a.clearPTY(p)
 		_ = p.Close()
+		if a.shouldStop(ctx) {
+			return
+		}
 
 		if time.Since(start) >= a.resetGrace {
 			failures = 0
@@ -215,15 +250,28 @@ func reattachBackoff(failures int) time.Duration {
 	return d
 }
 
-// write sends client keystrokes to the PTY. It is a no-op if no PTY is attached.
+// write sends client keystrokes to the PTY. Input that arrives after open but
+// before the attach PTY is published is buffered and flushed as soon as setPTY
+// runs, so a fast user cannot type into the attach race and lose bytes.
 func (a *attachment) write(p []byte) error {
-	a.mu.Lock()
-	pty := a.pty
-	a.mu.Unlock()
-	if pty == nil {
-		return errors.New("terminal: no active pty")
+	if len(p) == 0 {
+		return nil
 	}
-	_, err := pty.Write(p)
+	chunk := append([]byte(nil), p...)
+
+	a.mu.Lock()
+	if a.closed || a.exited {
+		a.mu.Unlock()
+		return errors.New("terminal: attachment closed")
+	}
+	pty := a.pty
+	if pty == nil || !a.inputReady {
+		a.pendingInput = append(a.pendingInput, chunk)
+		a.mu.Unlock()
+		return nil
+	}
+	a.mu.Unlock()
+	_, err := pty.Write(chunk)
 	return err
 }
 
@@ -255,14 +303,55 @@ func (a *attachment) size() (rows, cols uint16) {
 // requested size onto it (see resize) — the spawn already started at the size
 // read in run, but a resize frame can land between that read and registration
 // here; the replay (Setsize + explicit WINCH) converges the late case.
-func (a *attachment) setPTY(p ptyProcess) {
+func (a *attachment) setPTY(p ptyProcess) bool {
 	a.mu.Lock()
+	if a.closed || a.exited {
+		a.mu.Unlock()
+		return false
+	}
 	a.pty = p
+	a.inputReady = false
 	rows, cols := a.rows, a.cols
+	shouldOpen := !a.opened
+	if shouldOpen {
+		a.opened = true
+	}
+	onOpen := a.onOpen
 	a.mu.Unlock()
 	if rows > 0 && cols > 0 {
 		_ = p.Resize(rows, cols)
 	}
+	if shouldOpen && onOpen != nil {
+		onOpen()
+	}
+
+	for {
+		a.mu.Lock()
+		pending := append([][]byte(nil), a.pendingInput...)
+		a.pendingInput = nil
+		if len(pending) == 0 {
+			a.inputReady = true
+			a.mu.Unlock()
+			return true
+		}
+		a.mu.Unlock()
+
+		for _, chunk := range pending {
+			if _, err := p.Write(chunk); err != nil {
+				a.fail("flush pending input: " + err.Error())
+				return false
+			}
+		}
+	}
+}
+
+func (a *attachment) clearPTY(p ptyProcess) {
+	a.mu.Lock()
+	if a.pty == p {
+		a.pty = nil
+		a.inputReady = false
+	}
+	a.mu.Unlock()
 }
 
 // close detaches this client: stop re-attaching and kill the attach PTY. It
@@ -277,16 +366,43 @@ func (a *attachment) close() {
 	a.closed = true
 	pty := a.pty
 	a.pty = nil
+	a.inputReady = false
+	a.pendingInput = nil
+	cancel := a.cancel
 	a.mu.Unlock()
 	if pty != nil {
 		_ = pty.Close()
 	}
+	if cancel != nil {
+		cancel()
+	}
+}
+
+func (a *attachment) setRunCancel(cancel context.CancelFunc) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.closed {
+		return false
+	}
+	a.cancel = cancel
+	return true
+}
+
+func (a *attachment) clearRunCancel(cancel context.CancelFunc) {
+	a.mu.Lock()
+	a.cancel = nil
+	a.mu.Unlock()
+	cancel()
 }
 
 func (a *attachment) isClosed() bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.closed
+}
+
+func (a *attachment) shouldStop(ctx context.Context) bool {
+	return ctx.Err() != nil || a.isClosed()
 }
 
 func (a *attachment) isExited() bool {
