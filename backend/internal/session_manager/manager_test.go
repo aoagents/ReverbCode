@@ -425,11 +425,22 @@ func TestKill_TearsDownRuntimeAndWorkspace(t *testing.T) {
 		t.Fatal("kill should destroy runtime and workspace")
 	}
 }
-func TestKill_RefusesIncompleteHandle(t *testing.T) {
+// TestKill_TerminatesIncompleteHandle: a session whose runtime handle or
+// workspace path is missing is still terminated — the destroy steps are
+// skipped, but the session moves to terminal state so it can be cleaned up
+// from the dashboard.
+func TestKill_TerminatesIncompleteHandle(t *testing.T) {
 	m, st, _, _ := newManager()
 	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Activity: domain.Activity{State: domain.ActivityActive}}
-	if _, err := m.Kill(ctx, "mer-1"); !errors.Is(err, ErrIncompleteHandle) {
-		t.Fatalf("want ErrIncompleteHandle, got %v", err)
+	freed, err := m.Kill(ctx, "mer-1")
+	if err != nil {
+		t.Fatalf("want nil error, got %v", err)
+	}
+	if freed {
+		t.Fatal("freed = true, want false for session with no workspace")
+	}
+	if !st.sessions["mer-1"].IsTerminated {
+		t.Fatal("session should be terminated even without a handle")
 	}
 }
 

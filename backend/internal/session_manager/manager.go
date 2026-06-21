@@ -361,8 +361,6 @@ func (m *Manager) markSpawnFailedTerminated(ctx context.Context, id domain.Sessi
 // don't accumulate terminated rows in session lists. DeleteSession only removes
 // rows still in seed state; if the row has progressed or the delete itself
 // fails, fall back to parking it terminated so a phantom row never looks live.
-// (Kill is not a usable fallback here: it refuses seed rows with
-// ErrIncompleteHandle before recording terminal intent.)
 func (m *Manager) rollbackSpawnSeedRow(ctx context.Context, id domain.SessionID) {
 	if deleted, err := m.store.DeleteSession(ctx, id); err == nil && deleted {
 		return
@@ -405,6 +403,11 @@ func (m *Manager) RollbackSpawn(ctx context.Context, id domain.SessionID) (delet
 // workspace. A workspace teardown refused by the worktree-remove safety
 // (uncommitted work) is never forced: the session still terminates and Kill
 // succeeds with freed=false, signalling the workspace was preserved.
+//
+// A session whose runtime handle or workspace path is missing (e.g. spawn
+// failed partway, handle lost after a crash) is still terminated — the destroy
+// steps are skipped for whatever is absent, but the session record always
+// moves to terminal state so it can be cleaned up from the dashboard.
 func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 	rec, ok, err := m.store.GetSession(ctx, id)
 	if err != nil {
@@ -415,22 +418,31 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 	}
 	handle := runtimeHandle(rec.Metadata)
 	ws := workspaceInfo(rec)
-	if handle.ID == "" || ws.Path == "" {
-		return false, fmt.Errorf("kill %s: %w", id, ErrIncompleteHandle)
-	}
+
+	// Always record terminal intent so the session is marked terminated even
+	// when the runtime/workspace handle is missing.
 	if err := m.lcm.MarkTerminated(ctx, id); err != nil {
 		return false, fmt.Errorf("kill %s: %w", id, err)
 	}
-	if err := m.runtime.Destroy(ctx, handle); err != nil {
-		return false, fmt.Errorf("kill %s: runtime: %w", id, err)
-	}
-	if err := m.workspace.Destroy(ctx, ws); err != nil {
-		if errors.Is(err, ports.ErrWorkspaceDirty) {
-			return false, nil
+
+	// Only tear down what exists. A session may have lost its handle after a
+	// crash or never acquired one if spawn failed partway.
+	if handle.ID != "" {
+		if err := m.runtime.Destroy(ctx, handle); err != nil {
+			return false, fmt.Errorf("kill %s: runtime: %w", id, err)
 		}
-		return false, fmt.Errorf("kill %s: workspace: %w", id, err)
 	}
-	return true, nil
+	freed := false
+	if ws.Path != "" {
+		if err := m.workspace.Destroy(ctx, ws); err != nil {
+			if errors.Is(err, ports.ErrWorkspaceDirty) {
+				return false, nil
+			}
+			return false, fmt.Errorf("kill %s: workspace: %w", id, err)
+		}
+		freed = true
+	}
+	return freed, nil
 }
 
 // Restore relaunches a torn-down session in its workspace. The fallible I/O runs
