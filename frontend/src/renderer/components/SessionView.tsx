@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { PanelImperativeHandle, PanelSize } from "react-resizable-panels";
+import { BrowserPanel } from "./BrowserPanel";
 import { CenterPane } from "./CenterPane";
 import { SessionInspector } from "./SessionInspector";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "./ui/resizable";
@@ -44,12 +45,14 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const inspectorRef = useRef<PanelImperativeHandle | null>(null);
 	const inspectorSeparatorRef = useRef<HTMLDivElement | null>(null);
 	const [terminalTarget, setTerminalTarget] = useState<TerminalTarget>({ kind: "worker" });
+	const [browserPoppedOut, setBrowserPoppedOut] = useState(false);
 
 	const session = workspaces.flatMap((workspace) => workspace.sessions).find((s) => s.id === sessionId);
 	const isOrchestrator = session ? isOrchestratorSession(session) : false;
 
 	useEffect(() => {
 		setTerminalTarget({ kind: "worker" });
+		setBrowserPoppedOut(false);
 	}, [sessionId]);
 
 	// Orchestrator sessions are terminal-only; only worker sessions have the rail.
@@ -151,13 +154,22 @@ export function SessionView({ sessionId }: SessionViewProps) {
 				{/* react-resizable-panels v4: bare numbers are PIXELS; percentages must
             be strings. Numeric sizes here once clamped the inspector to 45px. */}
 				<ResizablePanel defaultSize="72%" id="terminal" minSize="45%">
-					<CenterPane
-						daemonReady={daemonStatus.state === "ready"}
-						onSelectWorkerTerminal={() => setTerminalTarget({ kind: "worker" })}
-						session={session}
-						terminalTarget={terminalTarget}
-						theme={theme}
-					/>
+					{browserPoppedOut && session ? (
+						<BrowserPanel
+							active
+							onTogglePopOut={setBrowserPoppedOut}
+							poppedOut
+							session={session}
+						/>
+					) : (
+						<CenterPane
+							daemonReady={daemonStatus.state === "ready"}
+							onSelectWorkerTerminal={() => setTerminalTarget({ kind: "worker" })}
+							session={session}
+							terminalTarget={terminalTarget}
+							theme={theme}
+						/>
+					)}
 				</ResizablePanel>
 				{hasInspector ? (
 					<>
@@ -181,9 +193,12 @@ export function SessionView({ sessionId }: SessionViewProps) {
                   the pane clips instead of reflowing the inspector mid-collapse. */}
 							<div className="h-full min-w-[280px]">
 								<SessionInspector
+									browserPoppedOut={browserPoppedOut}
+									isInspectorVisible={isInspectorOpen}
 									onOpenReviewerTerminal={({ handleId, harness }) =>
 										setTerminalTarget({ kind: "reviewer", handleId, harness })
 									}
+									onToggleBrowserPopOut={setBrowserPoppedOut}
 									session={session}
 								/>
 							</div>

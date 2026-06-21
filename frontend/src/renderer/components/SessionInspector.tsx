@@ -7,7 +7,9 @@ import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { formatTimeCompact } from "../lib/format-time";
 import type { PRState, PullRequestFacts, SessionStatus, WorkspaceSession } from "../types/workspace";
 import { sortedPRs, workerDisplayStatus } from "../types/workspace";
+import { BrowserPanel } from "./BrowserPanel";
 import { Badge } from "./ui/badge";
+import { Button } from "./ui/button";
 import { cn } from "../lib/utils";
 
 type ProjectConfig = components["schemas"]["ProjectConfig"];
@@ -67,9 +69,15 @@ const prStateTone: Record<PRState, string> = {
 export function SessionInspector({
 	session,
 	onOpenReviewerTerminal,
+	browserPoppedOut = false,
+	isInspectorVisible = true,
+	onToggleBrowserPopOut,
 }: {
 	session?: WorkspaceSession;
 	onOpenReviewerTerminal?: OpenReviewerTerminal;
+	browserPoppedOut?: boolean;
+	isInspectorVisible?: boolean;
+	onToggleBrowserPopOut?: (next: boolean) => void;
 }) {
 	const [view, setView] = useState<InspectorView>("summary");
 
@@ -104,7 +112,14 @@ export function SessionInspector({
 			<div className="session-inspector__body">
 				{view === "summary" ? <SummaryView session={session} /> : null}
 				{view === "reviews" ? <ReviewsView onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} /> : null}
-				{view === "browser" ? <BrowserView /> : null}
+				{view === "browser" ? (
+					<BrowserView
+						browserPoppedOut={browserPoppedOut}
+						isActive={isInspectorVisible && !browserPoppedOut}
+						onTogglePopOut={onToggleBrowserPopOut}
+						session={session}
+					/>
+				) : null}
 			</div>
 		</aside>
 	);
@@ -510,19 +525,37 @@ function reviewStatus(review?: ReviewRun): {
 	return { label: "Complete", tone: "success", icon: <CheckCircle2 aria-hidden="true" /> };
 }
 
-function BrowserView() {
-	return (
-		<div role="tabpanel">
-			<div className="inspector-empty inspector-empty--browser">
-				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
-					<circle cx="12" cy="12" r="9" />
-					<line x1="3" y1="12" x2="21" y2="12" />
-					<path d="M12 3a14 14 0 0 1 0 18 14 14 0 0 1 0-18" />
-				</svg>
-				<p>No live browser preview.</p>
-				<span>A browser plugin will render what the agent is viewing here.</span>
+function BrowserView({
+	session,
+	isActive,
+	browserPoppedOut,
+	onTogglePopOut,
+}: {
+	session: WorkspaceSession;
+	isActive: boolean;
+	browserPoppedOut: boolean;
+	onTogglePopOut?: (next: boolean) => void;
+}) {
+	if (browserPoppedOut) {
+		return (
+			<div role="tabpanel">
+				<div className="inspector-empty inspector-empty--browser">
+					<p>Browser preview is in the center pane.</p>
+					<Button onClick={() => onTogglePopOut?.(false)} size="sm" type="button" variant="outline">
+						Return to panel
+					</Button>
+				</div>
 			</div>
-		</div>
+		);
+	}
+
+	return (
+		<BrowserPanel
+			active={isActive}
+			onTogglePopOut={(next) => onTogglePopOut?.(next)}
+			poppedOut={false}
+			session={session}
+		/>
 	);
 }
 

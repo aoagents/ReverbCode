@@ -45,8 +45,27 @@ const { workspaces, panels } = vi.hoisted(() => {
 
 // The terminal and inspector body pull in xterm/SSE machinery irrelevant to
 // the split under test. (The topbar is shell-owned — see ShellTopbar.)
-vi.mock("./CenterPane", () => ({ CenterPane: () => <div /> }));
-vi.mock("./SessionInspector", () => ({ SessionInspector: () => <div /> }));
+vi.mock("./CenterPane", () => ({ CenterPane: () => <div>terminal center</div> }));
+vi.mock("./BrowserPanel", () => ({
+	BrowserPanel: ({
+		poppedOut,
+		onTogglePopOut,
+	}: {
+		poppedOut: boolean;
+		onTogglePopOut: (next: boolean) => void;
+	}) => (
+		<button type="button" onClick={() => onTogglePopOut(!poppedOut)}>
+			{poppedOut ? "browser center" : "browser rail"}
+		</button>
+	),
+}));
+vi.mock("./SessionInspector", () => ({
+	SessionInspector: ({ onToggleBrowserPopOut }: { onToggleBrowserPopOut?: () => void }) => (
+		<button type="button" onClick={onToggleBrowserPopOut}>
+			pop browser
+		</button>
+	),
+}));
 vi.mock("../lib/shell-context", () => ({
 	useShell: () => ({ daemonStatus: { state: "ready" } }),
 }));
@@ -258,5 +277,18 @@ describe("SessionView", () => {
 		// The shortcut is inactive without an inspector.
 		fireEvent.keyDown(window, { key: "B", metaKey: true, shiftKey: true });
 		expect(useUiStore.getState().isInspectorOpen).toBe(true);
+	});
+
+	it("lets the browser take over the center pane and return to the rail", () => {
+		render(<SessionView sessionId="sess-1" />);
+
+		expect(screen.getByText("terminal center")).toBeInTheDocument();
+		fireEvent.click(screen.getByRole("button", { name: "pop browser" }));
+
+		expect(screen.queryByText("terminal center")).not.toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "browser center" })).toBeInTheDocument();
+
+		fireEvent.click(screen.getByRole("button", { name: "browser center" }));
+		expect(screen.getByText("terminal center")).toBeInTheDocument();
 	});
 });
