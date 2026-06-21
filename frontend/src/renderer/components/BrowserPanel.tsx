@@ -1,7 +1,6 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { ArrowLeft, ArrowRight, Globe2, Maximize2, Minimize2, RefreshCw, X } from "lucide-react";
 import { useBrowserView, type BrowserViewModel } from "../hooks/useBrowserView";
-import { apiClient } from "../lib/api-client";
 import type { WorkspaceSession } from "../types/workspace";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -18,6 +17,7 @@ export function BrowserPanel({ session, active, poppedOut, onTogglePopOut }: Bro
 		sessionId: session.id,
 		active,
 		poppedOut,
+		previewUrl: session.previewUrl,
 	});
 	return (
 		<BrowserPanelView
@@ -31,43 +31,16 @@ export function BrowserPanel({ session, active, poppedOut, onTogglePopOut }: Bro
 }
 
 export function BrowserPanelView({
-	session,
-	active,
 	poppedOut,
 	onTogglePopOut,
 	browserView,
 }: BrowserPanelProps & { browserView: BrowserViewModel }) {
-	const { viewId, navState, slotRef, navigate, goBack, goForward, reload, stop } = browserView;
+	const { navState, slotRef, navigate, goBack, goForward, reload, stop } = browserView;
 	const [urlInput, setUrlInput] = useState(navState.url);
-	const previewCheckKeyRef = useRef<string | null>(null);
 
 	useEffect(() => {
 		setUrlInput(navState.url);
 	}, [navState.url]);
-
-	useEffect(() => {
-		const previewViewKey = `${session.id}:${viewId}`;
-		const previewCheckKey = `${previewViewKey}:${session.updatedAt}`;
-		if (!active || !viewId || navState.url || previewCheckKeyRef.current === previewCheckKey) {
-			return;
-		}
-		previewCheckKeyRef.current = previewCheckKey;
-		let cancelled = false;
-		void apiClient
-			.GET("/api/v1/sessions/{sessionId}/preview", {
-				params: { path: { sessionId: session.id } },
-			})
-			.then(({ data }) => {
-				const previewUrl = data?.previewUrl?.trim();
-				if (!cancelled && previewUrl) {
-					void navigate(previewUrl);
-				}
-			})
-			.catch(() => undefined);
-		return () => {
-			cancelled = true;
-		};
-	}, [active, navigate, navState.url, session.id, session.updatedAt, viewId]);
 
 	const submit = (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();

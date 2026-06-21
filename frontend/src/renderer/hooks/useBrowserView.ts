@@ -7,6 +7,11 @@ type UseBrowserViewOptions = {
 	sessionId: string;
 	active: boolean;
 	poppedOut: boolean;
+	/**
+	 * Preview target driven by the daemon (via `ao preview`, streamed over CDC).
+	 * When set, the view navigates here automatically; changing it re-navigates.
+	 */
+	previewUrl?: string;
 };
 
 export type BrowserViewModel = {
@@ -32,7 +37,7 @@ const EMPTY_NAV_STATE: BrowserNavState = {
 
 const HIDDEN_RECT: BrowserRect = { x: 0, y: 0, width: 0, height: 0 };
 
-export function useBrowserView({ sessionId, active, poppedOut }: UseBrowserViewOptions): BrowserViewModel {
+export function useBrowserView({ sessionId, active, poppedOut, previewUrl }: UseBrowserViewOptions): BrowserViewModel {
 	const [viewId, setViewId] = useState("");
 	const [navState, setNavState] = useState<BrowserNavState>(EMPTY_NAV_STATE);
 	const slotNodeRef = useRef<HTMLDivElement | null>(null);
@@ -40,6 +45,7 @@ export function useBrowserView({ sessionId, active, poppedOut }: UseBrowserViewO
 	const activeRef = useRef(active);
 	const frameRef = useRef<number | null>(null);
 	const observerRef = useRef<ResizeObserver | null>(null);
+	const previewNavRef = useRef<string | null>(null);
 
 	useEffect(() => {
 		activeRef.current = active;
@@ -156,6 +162,25 @@ export function useBrowserView({ sessionId, active, poppedOut }: UseBrowserViewO
 		if (next) setNavState(next);
 	}, []);
 
+	const navigate = useCallback(
+		(url: string) => withView((id) => window.ao!.browser.navigate({ viewId: id, url })),
+		[withView],
+	);
+
+	// Drive navigation from the daemon-set preview URL. Re-navigate only when the
+	// target actually changes; skip when it already matches what the view shows
+	// (the CDC stream replays the same session payload on unrelated updates).
+	useEffect(() => {
+		const target = previewUrl?.trim();
+		if (!target || !viewId) return;
+		if (previewNavRef.current === target || navState.url === target) {
+			previewNavRef.current = target;
+			return;
+		}
+		previewNavRef.current = target;
+		void navigate(target);
+	}, [navState.url, navigate, previewUrl, viewId]);
+
 	const destroy = useCallback(() => {
 		const id = viewIdRef.current;
 		if (!id) return;
@@ -168,7 +193,7 @@ export function useBrowserView({ sessionId, active, poppedOut }: UseBrowserViewO
 		viewId,
 		navState,
 		slotRef,
-		navigate: (url) => withView((id) => window.ao!.browser.navigate({ viewId: id, url })),
+		navigate,
 		goBack: () => withView((id) => window.ao!.browser.goBack(id)),
 		goForward: () => withView((id) => window.ao!.browser.goForward(id)),
 		reload: () => withView((id) => window.ao!.browser.reload(id)),

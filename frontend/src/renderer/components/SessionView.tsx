@@ -52,16 +52,30 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const isOrchestrator = session ? isOrchestratorSession(session) : false;
 	// Orchestrator sessions are terminal-only; only worker sessions have the rail.
 	const hasInspector = !isOrchestrator;
+	const previewUrl = session?.previewUrl?.trim() || undefined;
+	const revealedPreviewRef = useRef<string | null>(null);
 	const browserView = useBrowserView({
 		sessionId,
 		active: Boolean(session && hasInspector && (browserPoppedOut || isInspectorOpen)),
 		poppedOut: browserPoppedOut,
+		previewUrl,
 	});
 
 	useEffect(() => {
 		setTerminalTarget({ kind: "worker" });
 		setBrowserPoppedOut(false);
+		revealedPreviewRef.current = null;
 	}, [sessionId]);
+
+	// `ao preview` sets session.previewUrl (streamed over CDC); surface the result
+	// by swapping the center pane to the browser. Tracked per URL so re-revealing
+	// fires on a fresh target but a manual "Return to panel" sticks while the URL
+	// is unchanged.
+	useEffect(() => {
+		if (!previewUrl || revealedPreviewRef.current === previewUrl) return;
+		revealedPreviewRef.current = previewUrl;
+		setBrowserPoppedOut(true);
+	}, [previewUrl]);
 
 	// Computed when the inspector panel mounts and frozen while it stays
 	// mounted: rrp re-registers the panel (a layout effect keyed on defaultSize,

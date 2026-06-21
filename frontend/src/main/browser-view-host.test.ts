@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { clampBoundsToWindow, normalizeBrowserURL } from "./browser-view-host";
+import { clampBoundsToWindow, isAllowedBrowserURL, normalizeBrowserURL } from "./browser-view-host";
 
 describe("normalizeBrowserURL", () => {
 	it("defaults localhost-style inputs to http", () => {
@@ -12,10 +12,24 @@ describe("normalizeBrowserURL", () => {
 		expect(normalizeBrowserURL("example.com").href).toBe("https://example.com/");
 	});
 
+	it("allows file:// preview targets without mangling the scheme", () => {
+		expect(normalizeBrowserURL("file:///tmp/preview/index.html").href).toBe("file:///tmp/preview/index.html");
+		expect(normalizeBrowserURL("file:///C:/tmp/index.html").protocol).toBe("file:");
+	});
+
 	it("rejects privileged or unsupported schemes", () => {
-		expect(() => normalizeBrowserURL("file:///C:/tmp/index.html")).toThrow(/unsupported/i);
 		expect(() => normalizeBrowserURL("app://renderer/index.html")).toThrow(/unsupported/i);
 		expect(() => normalizeBrowserURL("javascript:alert(1)")).toThrow(/unsupported/i);
+	});
+});
+
+describe("isAllowedBrowserURL", () => {
+	it("allows file:// even when a renderer origin is set", () => {
+		expect(isAllowedBrowserURL("file:///tmp/preview/index.html", "http://localhost:5173")).toBe(true);
+	});
+
+	it("still blocks the renderer's own http origin", () => {
+		expect(isAllowedBrowserURL("http://localhost:5173/", "http://localhost:5173")).toBe(false);
 	});
 });
 

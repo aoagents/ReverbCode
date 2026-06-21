@@ -1,8 +1,8 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { BrowserPanel, BrowserPanelView } from "./BrowserPanel";
-import type { BrowserNavState, BrowserViewModel } from "../hooks/useBrowserView";
+import { BrowserPanel } from "./BrowserPanel";
+import type { BrowserNavState } from "../hooks/useBrowserView";
 import type { WorkspaceSession } from "../types/workspace";
 
 const hookState = vi.hoisted(() => ({
@@ -11,6 +11,7 @@ const hookState = vi.hoisted(() => ({
 	goForward: vi.fn(),
 	reload: vi.fn(),
 	stop: vi.fn(),
+	previewUrl: undefined as string | undefined,
 	navState: {
 		viewId: "42:sess-1",
 		url: "",
@@ -19,26 +20,22 @@ const hookState = vi.hoisted(() => ({
 		canGoForward: false,
 		isLoading: false,
 	} as BrowserNavState,
-	previewGet: vi.fn(),
-}));
-
-vi.mock("../lib/api-client", () => ({
-	apiClient: {
-		GET: hookState.previewGet,
-	},
 }));
 
 vi.mock("../hooks/useBrowserView", () => ({
-	useBrowserView: () => ({
-		viewId: "42:sess-1",
-		navState: hookState.navState,
-		slotRef: vi.fn(),
-		navigate: hookState.navigate,
-		goBack: hookState.goBack,
-		goForward: hookState.goForward,
-		reload: hookState.reload,
-		stop: hookState.stop,
-	}),
+	useBrowserView: (options: { previewUrl?: string }) => {
+		hookState.previewUrl = options.previewUrl;
+		return {
+			viewId: "42:sess-1",
+			navState: hookState.navState,
+			slotRef: vi.fn(),
+			navigate: hookState.navigate,
+			goBack: hookState.goBack,
+			goForward: hookState.goForward,
+			reload: hookState.reload,
+			stop: hookState.stop,
+		};
+	},
 }));
 
 const session: WorkspaceSession = {
@@ -54,21 +51,6 @@ const session: WorkspaceSession = {
 	prs: [],
 };
 
-function browserView(overrides: Partial<BrowserViewModel> = {}): BrowserViewModel {
-	return {
-		viewId: "42:sess-1",
-		navState: hookState.navState,
-		slotRef: vi.fn(),
-		navigate: hookState.navigate,
-		goBack: hookState.goBack,
-		goForward: hookState.goForward,
-		reload: hookState.reload,
-		stop: hookState.stop,
-		destroy: vi.fn(),
-		...overrides,
-	};
-}
-
 describe("BrowserPanel", () => {
 	beforeEach(() => {
 		hookState.navigate.mockReset();
@@ -76,8 +58,7 @@ describe("BrowserPanel", () => {
 		hookState.goForward.mockReset();
 		hookState.reload.mockReset();
 		hookState.stop.mockReset();
-		hookState.previewGet.mockReset();
-		hookState.previewGet.mockResolvedValue({ data: { previewUrl: "" } });
+		hookState.previewUrl = undefined;
 		hookState.navState = {
 			viewId: "42:sess-1",
 			url: "",
@@ -98,140 +79,17 @@ describe("BrowserPanel", () => {
 		expect(hookState.navigate).toHaveBeenCalledWith("localhost:5173");
 	});
 
-	it("auto-opens the session preview URL when the browser is empty", async () => {
-		hookState.previewGet.mockResolvedValue({
-			data: { previewUrl: "http://127.0.0.1:3001/api/v1/sessions/sess-1/preview/files/index.html" },
-		});
-		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
-
-		await waitFor(() =>
-			expect(hookState.navigate).toHaveBeenCalledWith(
-				"http://127.0.0.1:3001/api/v1/sessions/sess-1/preview/files/index.html",
-			),
-		);
-		expect(hookState.previewGet).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/preview", {
-			params: { path: { sessionId: "sess-1" } },
-		});
-	});
-
-	it("rechecks the session preview after worker activity when no preview existed yet", async () => {
-		hookState.previewGet.mockResolvedValueOnce({ data: { previewUrl: "" } }).mockResolvedValueOnce({
-			data: { previewUrl: "http://127.0.0.1:3001/api/v1/sessions/sess-1/preview/files/index.html" },
-		});
-		const { rerender } = render(
-			<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />,
-		);
-
-		await waitFor(() => expect(hookState.previewGet).toHaveBeenCalledTimes(1));
-		expect(hookState.navigate).not.toHaveBeenCalled();
-
-		rerender(
+	it("threads the session preview URL into the browser view (which drives navigation)", () => {
+		render(
 			<BrowserPanel
 				active
 				onTogglePopOut={() => undefined}
 				poppedOut={false}
-				session={{ ...session, updatedAt: "2026-06-15T00:01:00Z" }}
+				session={{ ...session, previewUrl: "file:///tmp/preview/index.html" }}
 			/>,
 		);
 
-		await waitFor(() =>
-			expect(hookState.navigate).toHaveBeenCalledWith(
-				"http://127.0.0.1:3001/api/v1/sessions/sess-1/preview/files/index.html",
-			),
-		);
-	});
-
-	it("waits for the native browser view before auto-opening a preview", async () => {
-		hookState.previewGet.mockResolvedValue({
-			data: { previewUrl: "http://127.0.0.1:3001/api/v1/sessions/sess-1/preview/files/index.html" },
-		});
-		const { rerender } = render(
-			<BrowserPanelView
-				active
-				browserView={browserView({ viewId: "" })}
-				onTogglePopOut={() => undefined}
-				poppedOut={false}
-				session={session}
-			/>,
-		);
-
-		expect(hookState.previewGet).not.toHaveBeenCalled();
-		expect(hookState.navigate).not.toHaveBeenCalled();
-
-		rerender(
-			<BrowserPanelView
-				active
-				browserView={browserView({ viewId: "42:sess-1" })}
-				onTogglePopOut={() => undefined}
-				poppedOut={false}
-				session={session}
-			/>,
-		);
-
-		await waitFor(() =>
-			expect(hookState.navigate).toHaveBeenCalledWith(
-				"http://127.0.0.1:3001/api/v1/sessions/sess-1/preview/files/index.html",
-			),
-		);
-	});
-
-	it("auto-opens again when returning to a session whose native browser view was recreated", async () => {
-		const otherSession = { ...session, id: "sess-2", updatedAt: "2026-06-15T00:02:00Z" };
-		hookState.previewGet.mockImplementation((_path, options) => {
-			const sessionId = options.params.path.sessionId;
-			return Promise.resolve({
-				data: {
-					previewUrl:
-						sessionId === "sess-1" ? "http://127.0.0.1:3001/api/v1/sessions/sess-1/preview/files/index.html" : "",
-				},
-			});
-		});
-		const { rerender } = render(
-			<BrowserPanelView
-				active
-				browserView={browserView({ viewId: "42:sess-1" })}
-				onTogglePopOut={() => undefined}
-				poppedOut={false}
-				session={session}
-			/>,
-		);
-		await waitFor(() =>
-			expect(hookState.navigate).toHaveBeenCalledWith(
-				"http://127.0.0.1:3001/api/v1/sessions/sess-1/preview/files/index.html",
-			),
-		);
-
-		hookState.navigate.mockClear();
-		rerender(
-			<BrowserPanelView
-				active
-				browserView={browserView({ viewId: "42:sess-2" })}
-				onTogglePopOut={() => undefined}
-				poppedOut={false}
-				session={otherSession}
-			/>,
-		);
-		await waitFor(() =>
-			expect(hookState.previewGet).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/preview", {
-				params: { path: { sessionId: "sess-2" } },
-			}),
-		);
-
-		rerender(
-			<BrowserPanelView
-				active
-				browserView={browserView({ viewId: "43:sess-1" })}
-				onTogglePopOut={() => undefined}
-				poppedOut={false}
-				session={session}
-			/>,
-		);
-
-		await waitFor(() =>
-			expect(hookState.navigate).toHaveBeenCalledWith(
-				"http://127.0.0.1:3001/api/v1/sessions/sess-1/preview/files/index.html",
-			),
-		);
+		expect(hookState.previewUrl).toBe("file:///tmp/preview/index.html");
 	});
 
 	it("binds navigation controls to nav state", async () => {

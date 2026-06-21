@@ -84,7 +84,8 @@ type BrowserEntry = {
 };
 
 const OFFSCREEN_BOUNDS: BrowserRect = { x: -10_000, y: -10_000, width: 0, height: 0 };
-const ALLOWED_PROTOCOLS = new Set(["http:", "https:"]);
+// ponytail: file:// allowed unsanitized; preview targets are agent-trusted for now
+const ALLOWED_PROTOCOLS = new Set(["http:", "https:", "file:"]);
 
 export function normalizeBrowserURL(input: string): URL {
 	const raw = input.trim();
