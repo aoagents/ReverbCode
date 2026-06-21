@@ -30,7 +30,7 @@ type ReviewRun = components["schemas"]["ReviewRun"];
 type ReviewsResponse = components["schemas"]["ListReviewsResponse"];
 type OpenReviewerTerminal = (target: { handleId: string; harness: string }) => void;
 
-type InspectorView = "summary" | "reviews" | "browser";
+export type InspectorView = "summary" | "reviews" | "browser";
 
 const VIEWS: { id: InspectorView; label: string; icon: ReactNode }[] = [
 	{
@@ -86,6 +86,8 @@ export function SessionInspector({
 	isInspectorVisible = true,
 	onToggleBrowserPopOut,
 	browserView,
+	view: viewProp,
+	onViewChange,
 }: {
 	session?: WorkspaceSession;
 	onOpenReviewerTerminal?: OpenReviewerTerminal;
@@ -93,8 +95,16 @@ export function SessionInspector({
 	isInspectorVisible?: boolean;
 	onToggleBrowserPopOut?: (next: boolean) => void;
 	browserView?: BrowserViewModel;
+	/** Controlled active tab. Omit to let the inspector own its own selection. */
+	view?: InspectorView;
+	onViewChange?: (view: InspectorView) => void;
 }) {
-	const [view, setView] = useState<InspectorView>("summary");
+	const [internalView, setInternalView] = useState<InspectorView>("summary");
+	const view = viewProp ?? internalView;
+	const setView = (next: InspectorView) => {
+		setInternalView(next);
+		onViewChange?.(next);
+	};
 
 	if (!session) {
 		return (

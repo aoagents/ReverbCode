@@ -977,6 +977,56 @@ paths:
       summary: Discover a browser preview URL for a session workspace
       tags:
       - sessions
+    post:
+      operationId: setSessionPreview
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetSessionPreviewRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Set (or autodetect) the browser preview URL for a session
+      tags:
+      - sessions
   /api/v1/sessions/{sessionId}/preview/files/*:
     get:
       operationId: getSessionPreviewFile
@@ -1431,6 +1481,8 @@ components:
         issueId:
           type: string
         kind:
+          type: string
+        previewUrl:
           type: string
         projectId:
           type: string
@@ -2216,6 +2268,13 @@ components:
           $ref: '#/components/schemas/ProjectConfig'
       required:
       - config
+      type: object
+    SetSessionPreviewRequest:
+      properties:
+        url:
+          description: Preview target URL. When empty, the daemon autodetects a static
+            entry point in the session workspace.
+          type: string
       type: object
     SpawnOrchestratorRequest:
       properties:

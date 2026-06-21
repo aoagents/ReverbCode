@@ -20,6 +20,7 @@ type Store interface {
 	ListSessions(ctx context.Context, project domain.ProjectID) ([]domain.SessionRecord, error)
 	ListAllSessions(ctx context.Context) ([]domain.SessionRecord, error)
 	RenameSession(ctx context.Context, id domain.SessionID, displayName string, updatedAt time.Time) (bool, error)
+	SetSessionPreviewURL(ctx context.Context, id domain.SessionID, previewURL string, updatedAt time.Time) (bool, error)
 	GetDisplayPRFactsForSession(ctx context.Context, id domain.SessionID) (domain.PRFacts, bool, error)
 	ListPRFactsForSession(ctx context.Context, id domain.SessionID) ([]domain.PRFacts, error)
 	ListPRsBySession(ctx context.Context, sessionID domain.SessionID) ([]domain.PullRequest, error)
@@ -321,6 +322,23 @@ func (s *Service) Rename(ctx context.Context, id domain.SessionID, displayName s
 		return apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
 	}
 	return nil
+}
+
+// SetPreview persists the browser preview URL for a session and returns the
+// refreshed read model. The URL is taken verbatim from the caller (the
+// controller resolves it, either an explicit target or an autodetected entry).
+// Persisting it via the store fans out a session_updated CDC event through the
+// sessions_cdc_update trigger, mirroring how other session mutations surface on
+// the live event stream.
+func (s *Service) SetPreview(ctx context.Context, id domain.SessionID, previewURL string) (domain.Session, error) {
+	updated, err := s.store.SetSessionPreviewURL(ctx, id, previewURL, time.Now().UTC())
+	if err != nil {
+		return domain.Session{}, fmt.Errorf("set preview url %s: %w", id, err)
+	}
+	if !updated {
+		return domain.Session{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	return s.Get(ctx, id)
 }
 
 // Cleanup delegates terminal workspace cleanup to the internal manager and

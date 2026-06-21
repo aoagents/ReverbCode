@@ -61,9 +61,7 @@ type ShellLike = {
 	openExternal: (url: string) => Promise<void>;
 };
 
-type WebContentsViewConstructor = new (options: {
-	webPreferences: Electron.WebPreferences;
-}) => BrowserViewLike;
+type WebContentsViewConstructor = new (options: { webPreferences: Electron.WebPreferences }) => BrowserViewLike;
 
 export type BrowserViewHostOptions = {
 	mainWindow: BrowserWindowLike;
@@ -86,7 +84,8 @@ type BrowserEntry = {
 };
 
 const OFFSCREEN_BOUNDS: BrowserRect = { x: -10_000, y: -10_000, width: 0, height: 0 };
-const ALLOWED_PROTOCOLS = new Set(["http:", "https:"]);
+// ponytail: file:// allowed unsanitized; preview targets are agent-trusted for now
+const ALLOWED_PROTOCOLS = new Set(["http:", "https:", "file:"]);
 
 export function normalizeBrowserURL(input: string): URL {
 	const raw = input.trim();
@@ -111,7 +110,10 @@ export function isAllowedBrowserURL(input: string, rendererOrigin?: string): boo
 	}
 }
 
-export function clampBoundsToWindow(rect: BrowserRect, windowBounds: Pick<BrowserRect, "width" | "height">): BrowserRect {
+export function clampBoundsToWindow(
+	rect: BrowserRect,
+	windowBounds: Pick<BrowserRect, "width" | "height">,
+): BrowserRect {
 	const rounded = {
 		x: Math.round(rect.x),
 		y: Math.round(rect.y),

@@ -119,8 +119,12 @@ type CleanupSessionsQuery struct {
 // fields are json:"-"; these curated fields are what serialize.
 type SessionView struct {
 	domain.Session
-	Branch string           `json:"branch,omitempty"`
-	PRs    []SessionPRFacts `json:"prs"`
+	Branch string `json:"branch,omitempty"`
+	// PreviewURL is the browser preview target the desktop app opens for this
+	// session, set via POST /sessions/{sessionId}/preview. Empty (omitted) when
+	// no preview has been requested. Pulled from the json:"-" domain Metadata.
+	PreviewURL string           `json:"previewUrl,omitempty"`
+	PRs        []SessionPRFacts `json:"prs"`
 }
 
 // ListSessionsResponse is the body of GET /api/v1/sessions.
@@ -153,6 +157,13 @@ type SessionPreviewResponse struct {
 // RenameSessionRequest is the body of PATCH /api/v1/sessions/{sessionId}.
 type RenameSessionRequest struct {
 	DisplayName string `json:"displayName" minLength:"1"`
+}
+
+// SetSessionPreviewRequest is the body of POST /api/v1/sessions/{sessionId}/preview.
+// An empty url asks the daemon to autodetect a static entry point in the
+// session workspace; a non-empty url is used verbatim as the preview target.
+type SetSessionPreviewRequest struct {
+	URL string `json:"url,omitempty" description:"Preview target URL. When empty, the daemon autodetects a static entry point in the session workspace."`
 }
 
 // RenameSessionResponse is the body of PATCH /api/v1/sessions/{sessionId}.

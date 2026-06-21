@@ -82,6 +82,17 @@ func (f *fakeStore) RenameSession(_ context.Context, id domain.SessionID, displa
 	return true, nil
 }
 
+func (f *fakeStore) SetSessionPreviewURL(_ context.Context, id domain.SessionID, previewURL string, updatedAt time.Time) (bool, error) {
+	r, ok := f.sessions[id]
+	if !ok {
+		return false, nil
+	}
+	r.Metadata.PreviewURL = previewURL
+	r.UpdatedAt = updatedAt
+	f.sessions[id] = r
+	return true, nil
+}
+
 func (f *fakeStore) GetDisplayPRFactsForSession(_ context.Context, id domain.SessionID) (domain.PRFacts, bool, error) {
 	pr, ok := f.pr[id]
 	return pr, ok, nil
@@ -144,6 +155,29 @@ func TestSessionRenameUpdatesDisplayName(t *testing.T) {
 	}
 	if got := st.sessions["mer-1"].DisplayName; got != "Fix issue #90" {
 		t.Fatalf("display name = %q, want trimmed rename", got)
+	}
+}
+
+func TestSessionSetPreviewPersistsURL(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer"}
+
+	sess, err := (&Service{store: st, clock: time.Now}).SetPreview(context.Background(), "mer-1", "file:///tmp/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.Metadata.PreviewURL != "file:///tmp/index.html" {
+		t.Fatalf("returned preview url = %q, want set value", sess.Metadata.PreviewURL)
+	}
+	if got := st.sessions["mer-1"].Metadata.PreviewURL; got != "file:///tmp/index.html" {
+		t.Fatalf("persisted preview url = %q, want set value", got)
+	}
+}
+
+func TestSessionSetPreviewUnknownSession(t *testing.T) {
+	st := newFakeStore()
+	if _, err := (&Service{store: st}).SetPreview(context.Background(), "ghost-1", "http://x"); err == nil {
+		t.Fatal("want error for unknown session")
 	}
 }
 

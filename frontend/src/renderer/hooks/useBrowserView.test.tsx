@@ -35,14 +35,16 @@ function setupBridge() {
 				isLoading: false,
 			};
 		},
-		ensure: vi.fn(async (sessionId: string): Promise<BrowserNavState> => ({
-			viewId: `42:${sessionId}`,
-			url: "",
-			title: "",
-			canGoBack: false,
-			canGoForward: false,
-			isLoading: false,
-		})),
+		ensure: vi.fn(
+			async (sessionId: string): Promise<BrowserNavState> => ({
+				viewId: `42:${sessionId}`,
+				url: "",
+				title: "",
+				canGoBack: false,
+				canGoForward: false,
+				isLoading: false,
+			}),
+		),
 		setBounds: vi.fn(),
 		navigate: vi.fn(async ({ viewId }: { viewId: string }) => bridge.stateFor(viewId)),
 		goBack: vi.fn(async (viewId: string) => bridge.stateFor(viewId)),
@@ -143,5 +145,36 @@ describe("useBrowserView", () => {
 		);
 		expect(result.current.navState.url).toBe("http://localhost:5173/");
 		expect(result.current.navState.title).toBe("Local app");
+	});
+
+	it("navigates to a daemon-set preview URL and re-navigates only when it changes", async () => {
+		const bridge = setupBridge();
+		const { rerender } = renderHook(
+			({ previewUrl }) => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false, previewUrl }),
+			{ initialProps: { previewUrl: "http://localhost:5173/" } },
+		);
+
+		await waitFor(() =>
+			expect(bridge.navigate).toHaveBeenCalledWith({ viewId: "42:sess-1", url: "http://localhost:5173/" }),
+		);
+		expect(bridge.navigate).toHaveBeenCalledTimes(1);
+
+		// Same URL replayed (CDC re-emits the session payload) must not re-navigate.
+		rerender({ previewUrl: "http://localhost:5173/" });
+		expect(bridge.navigate).toHaveBeenCalledTimes(1);
+
+		// A changed target re-navigates.
+		rerender({ previewUrl: "file:///tmp/preview/index.html" });
+		await waitFor(() =>
+			expect(bridge.navigate).toHaveBeenCalledWith({ viewId: "42:sess-1", url: "file:///tmp/preview/index.html" }),
+		);
+		expect(bridge.navigate).toHaveBeenCalledTimes(2);
+	});
+
+	it("does not navigate without a preview URL", async () => {
+		const bridge = setupBridge();
+		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
+		await waitFor(() => expect(result.current.viewId).toBe("42:sess-1"));
+		expect(bridge.navigate).not.toHaveBeenCalled();
 	});
 });

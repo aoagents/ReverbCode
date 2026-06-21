@@ -136,7 +136,7 @@ describe("ProjectSettingsForm", () => {
 			},
 		});
 		expect(await screen.findByText("Saved.")).toBeInTheDocument();
-	}, 30_000);
+	}, 20_000);
 
 	it("shows the daemon validation message when save fails", async () => {
 		getMock.mockResolvedValue({

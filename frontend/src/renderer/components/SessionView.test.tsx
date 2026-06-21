@@ -63,7 +63,14 @@ const browserDestroy = vi.hoisted(() => vi.fn());
 vi.mock("../hooks/useBrowserView", () => ({
 	useBrowserView: () => ({
 		viewId: "browser:sess-1",
-		navState: { viewId: "browser:sess-1", url: "http://127.0.0.1:4173/", title: "Calculator", canGoBack: false, canGoForward: false, isLoading: false },
+		navState: {
+			viewId: "browser:sess-1",
+			url: "http://127.0.0.1:4173/",
+			title: "Calculator",
+			canGoBack: false,
+			canGoForward: false,
+			isLoading: false,
+		},
 		slotRef: vi.fn(),
 		navigate: vi.fn(),
 		goBack: vi.fn(),
@@ -74,8 +81,8 @@ vi.mock("../hooks/useBrowserView", () => ({
 	}),
 }));
 vi.mock("./SessionInspector", () => ({
-	SessionInspector: ({ onToggleBrowserPopOut }: { onToggleBrowserPopOut?: () => void }) => (
-		<button type="button" onClick={onToggleBrowserPopOut}>
+	SessionInspector: ({ onToggleBrowserPopOut, view }: { onToggleBrowserPopOut?: () => void; view?: string }) => (
+		<button type="button" data-view={view} onClick={onToggleBrowserPopOut}>
 			pop browser
 		</button>
 	),
@@ -306,5 +313,23 @@ describe("SessionView", () => {
 		fireEvent.click(screen.getByRole("button", { name: "browser center" }));
 		expect(screen.getByText("terminal center")).toBeInTheDocument();
 		expect(browserDestroy).not.toHaveBeenCalled();
+	});
+
+	it("reveals an `ao preview` URL in the inspector Browser tab, not the center pane", () => {
+		const worker = workspaces[0].sessions[0];
+		worker.previewUrl = "http://localhost:5173/";
+		try {
+			useUiStore.setState({ isInspectorOpen: false });
+			render(<SessionView sessionId="sess-1" />);
+
+			// Center pane keeps the terminal — the preview must not pop out over it.
+			expect(screen.getByText("terminal center")).toBeInTheDocument();
+			expect(screen.queryByRole("button", { name: "browser center" })).not.toBeInTheDocument();
+			// Rail opened and switched to the Browser tab.
+			expect(useUiStore.getState().isInspectorOpen).toBe(true);
+			expect(screen.getByRole("button", { name: "pop browser" })).toHaveAttribute("data-view", "browser");
+		} finally {
+			delete worker.previewUrl;
+		}
 	});
 });

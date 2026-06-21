@@ -41,7 +41,13 @@ Every product command resolves to a daemon HTTP route. Run `ao <command>
 | `ao session claim-pr <id> <pr-ref>` | `POST /api/v1/sessions/{id}/pr/claim`          |
 | `ao orchestrator ls`                | `GET /api/v1/orchestrators`                    |
 | `ao send`                           | `POST /api/v1/sessions/{id}/send`              |
+| `ao preview [url]`                  | `POST /api/v1/sessions/{id}/preview`           |
 | `ao hooks <agent> <event>`          | `POST /api/v1/sessions/{id}/activity` (hidden) |
+
+`ao preview` resolves its session from the `AO_SESSION_ID` environment variable
+(it is meant to run inside a session), not a flag. With no argument it
+autodetects an `index.html` in the session workspace; with a URL argument it
+opens that URL verbatim (`file://`, `http`, `https`).
 
 `go run .` in `backend/` remains a compatibility wrapper around the daemon.
 

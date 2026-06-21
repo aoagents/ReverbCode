@@ -104,6 +104,11 @@ export type WorkspaceSession = {
 	createdAt?: string;
 	/** ISO timestamp from the daemon. */
 	updatedAt: string;
+	/**
+	 * Live preview target set by the daemon (via `ao preview`) and streamed over
+	 * CDC. When non-empty, the browser panel opens and navigates here.
+	 */
+	previewUrl?: string;
 	/** The session's git diff against its base, when known. */
 	changedFiles?: ChangedFile[];
 	/** Pre-filled commit subject for the Git rail, when known. */
