@@ -1,12 +1,7 @@
-import { ArrowUpRight } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpRight } from "lucide-react";
+import { Fragment, type ReactNode } from "react";
 import type { SessionPRSummary } from "../hooks/useSessionScmSummary";
-import {
-	prAttentionItems,
-	prDiffSummary,
-	prStatusRows,
-	type PRAttentionLink,
-	type PRDisplayTone,
-} from "../lib/pr-display";
+import { prAttentionItems, prStatusRows, type PRAttentionLink, type PRDisplayTone } from "../lib/pr-display";
 import { cn } from "../lib/utils";
 
 const toneClass: Record<PRDisplayTone, string> = {
@@ -41,15 +36,52 @@ export function PRSummaryMeta({
 	pr: SessionPRSummary;
 }) {
 	const branchRange = prBranchRange(pr);
-	const diff = prDiffSummary(pr);
+	const hasDiff = hasDiffMetadata(pr);
 	const primary = [leading, branchRange, pr.author].filter(Boolean);
-	if (primary.length === 0 && !diff) {
+	if (primary.length === 0 && !hasDiff) {
 		return null;
 	}
 	return (
 		<div className={cn("min-w-0 font-mono text-[10.5px] leading-4", className)}>
 			{primary.length > 0 ? <div className="truncate text-passive">{primary.join(" · ")}</div> : null}
-			{diff ? <div className="truncate text-muted-foreground">{diff}</div> : null}
+			{hasDiff ? <PRDiffMeta pr={pr} /> : null}
+		</div>
+	);
+}
+
+function PRDiffMeta({ pr }: { pr: SessionPRSummary }) {
+	const parts: ReactNode[] = [];
+	if (pr.changedFiles > 0) {
+		parts.push(
+			<span className="text-warning" key="files">
+				{pr.changedFiles} {pluralize("file", pr.changedFiles)}
+			</span>,
+		);
+	}
+	if (pr.additions > 0) {
+		parts.push(
+			<span className="inline-flex items-center gap-0.5 text-success" key="additions">
+				<ArrowUp aria-hidden="true" className="h-2.5 w-2.5 shrink-0" strokeWidth={2.2} />
+				+{pr.additions}
+			</span>,
+		);
+	}
+	if (pr.deletions > 0) {
+		parts.push(
+			<span className="inline-flex items-center gap-0.5 text-error" key="deletions">
+				<ArrowDown aria-hidden="true" className="h-2.5 w-2.5 shrink-0" strokeWidth={2.2} />
+				-{pr.deletions}
+			</span>,
+		);
+	}
+	return (
+		<div className="flex min-w-0 flex-wrap items-center gap-x-1.5 text-muted-foreground">
+			{parts.map((part, index) => (
+				<Fragment key={index}>
+					{index > 0 ? <span className="text-passive">·</span> : null}
+					{part}
+				</Fragment>
+			))}
 		</div>
 	);
 }
@@ -137,4 +169,12 @@ function prBranchRange(pr: SessionPRSummary): string | undefined {
 		return `-> ${pr.targetBranch}`;
 	}
 	return undefined;
+}
+
+function hasDiffMetadata(pr: SessionPRSummary): boolean {
+	return pr.changedFiles > 0 || pr.additions > 0 || pr.deletions > 0;
+}
+
+function pluralize(noun: string, count: number): string {
+	return count === 1 ? noun : `${noun}s`;
 }
