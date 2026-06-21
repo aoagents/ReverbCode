@@ -231,6 +231,108 @@ select {
 	height: 100%;
 }
 
+.terminal-pane-frame:fullscreen {
+	background: var(--bg);
+}
+
+.terminal-toolbar {
+	display: flex;
+	height: 56px;
+	flex: 0 0 56px;
+	align-items: center;
+	border-bottom: 1px solid var(--border);
+	background: var(--bg);
+	padding: 0 18px;
+}
+
+.terminal-toolbar__label {
+	display: flex;
+	min-width: 0;
+	align-items: center;
+	gap: 12px;
+}
+
+.terminal-toolbar__eyebrow {
+	flex: 0 0 auto;
+	font-family: var(--font-mono);
+	font-size: 11px;
+	font-weight: 700;
+	letter-spacing: 0.09em;
+	color: var(--fg-muted);
+}
+
+.terminal-toolbar__session {
+	min-width: 0;
+	overflow: hidden;
+	font-family: var(--font-mono);
+	font-size: 13px;
+	font-weight: 600;
+	color: var(--fg-passive);
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.terminal-toolbar__controls {
+	display: flex;
+	margin-left: auto;
+	align-items: center;
+	gap: 12px;
+	font-family: var(--font-mono);
+	color: var(--fg-passive);
+}
+
+.terminal-toolbar__control {
+	display: inline-flex;
+	width: 24px;
+	height: 24px;
+	align-items: center;
+	justify-content: center;
+	border: 0;
+	border-radius: 5px;
+	background: transparent;
+	color: var(--fg-passive);
+	cursor: pointer;
+	font-family: var(--font-mono);
+	font-size: 13px;
+	line-height: 1;
+	transition:
+		background 120ms ease,
+		color 120ms ease,
+		opacity 120ms ease;
+}
+
+.terminal-toolbar__control:hover {
+	background: var(--interactive-hover);
+	color: var(--fg);
+}
+
+.terminal-toolbar__control:focus-visible {
+	outline: 2px solid color-mix(in srgb, var(--accent) 50%, transparent);
+	outline-offset: 1px;
+}
+
+.terminal-toolbar__control:disabled {
+	cursor: default;
+	opacity: 0.35;
+}
+
+.terminal-toolbar__control:disabled:hover {
+	background: transparent;
+	color: var(--fg-passive);
+}
+
+.terminal-toolbar__control--icon {
+	margin-left: 6px;
+}
+
+.terminal-toolbar__font-size {
+	width: 42px;
+	text-align: center;
+	font-size: 12px;
+	font-weight: 600;
+	color: var(--fg-muted);
+}
+
 :root[data-theme="light"] .xterm .xterm-viewport::-webkit-scrollbar-thumb {
 	background: rgb(0 0 0 / 0.12);
 }

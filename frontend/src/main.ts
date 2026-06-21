@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, net, protocol, shell, type OpenDialogOptions } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, net, protocol, shell, type OpenDialogOptions } from "electron";
 import { updateElectronApp } from "update-electron-app";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -540,6 +540,13 @@ ipcMain.handle("app:chooseDirectory", async () => {
 	if (result.canceled) return null;
 	return result.filePaths[0] ?? null;
 });
+ipcMain.handle("clipboard:writeText", (_event, text: string) => {
+	clipboard.writeText(text, "clipboard");
+	if (process.platform === "linux") {
+		clipboard.writeText(text, "selection");
+	}
+});
+ipcMain.handle("clipboard:readText", () => clipboard.readText());
 
 // Auto-update only runs for packaged builds reading the GitHub Releases feed
 // (see forge.config.ts publishers). In dev there is no feed, so it is skipped.

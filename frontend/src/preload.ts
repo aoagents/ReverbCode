@@ -7,6 +7,10 @@ const api = {
 		getVersion: () => ipcRenderer.invoke("app:getVersion") as Promise<string>,
 		chooseDirectory: () => ipcRenderer.invoke("app:chooseDirectory") as Promise<string | null>,
 	},
+	clipboard: {
+		writeText: (text: string) => ipcRenderer.invoke("clipboard:writeText", text) as Promise<void>,
+		readText: () => ipcRenderer.invoke("clipboard:readText") as Promise<string>,
+	},
 	daemon: {
 		getStatus: () => ipcRenderer.invoke("daemon:getStatus") as Promise<DaemonStatus>,
 		start: () => ipcRenderer.invoke("daemon:start") as Promise<DaemonStatus>,
