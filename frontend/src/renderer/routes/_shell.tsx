@@ -13,7 +13,7 @@ import { addRendererExceptionStep, captureRendererEvent, captureRendererExceptio
 import { ShellProvider } from "../lib/shell-context";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { readStoredTheme, type Theme, useUiStore } from "../stores/ui-store";
-import type { WorkspaceSummary } from "../types/workspace";
+import { toAgentProvider, type WorkspaceSession, type WorkspaceSummary } from "../types/workspace";
 
 export const Route = createFileRoute("/_shell")({
 	// Prefetch the workspace list for the whole shell (parent loaders run before
@@ -94,7 +94,36 @@ function ShellLayout() {
 			updateWorkspaces((current) => [workspace, ...current.filter((item) => item.id !== workspace.id)]);
 			try {
 				const sessionId = await spawnOrchestrator(workspace.id);
-				await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+				// Optimistically inject the orchestrator session into the workspace
+				// cache so SessionView can render immediately — even if the background
+				// refetch is slow or fails (the daemon is busy with the spawn workload:
+				// git worktree, provisioning, Zellij runtime). Without this, the cache
+				// retains the workspace with sessions: [] from the optimistic update
+				// above, and the staleTime: 10_000 window suppresses a mount-triggered
+				// refetch in SessionView, so the route shows "Session not found" until
+				// the 15s refetchInterval fires. See issue #370.
+				const ts = new Date().toISOString();
+				const orchestratorSession: WorkspaceSession = {
+					id: sessionId,
+					workspaceId: workspace.id,
+					workspaceName: workspace.name,
+					title: "orchestrator",
+					provider: toAgentProvider(input.orchestratorAgent),
+					kind: "orchestrator",
+					branch: `session/${sessionId}`,
+					status: "working",
+					createdAt: ts,
+					updatedAt: ts,
+					prs: [],
+				};
+				updateWorkspaces((current) =>
+					current.map((w) =>
+						w.id === workspace.id
+							? { ...w, sessions: [orchestratorSession, ...w.sessions] }
+							: w,
+					),
+				);
+				await queryClient.refetchQueries({ queryKey: workspaceQueryKey });
 				void navigate({
 					to: "/projects/$projectId/sessions/$sessionId",
 					params: { projectId: workspace.id, sessionId },
