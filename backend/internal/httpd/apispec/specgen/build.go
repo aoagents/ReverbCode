@@ -139,6 +139,7 @@ var schemaNames = map[string]string{
 	"ControllersListSessionsResponse":       "ListSessionsResponse",
 	"ControllersSpawnSessionRequest":        "SpawnSessionRequest",
 	"ControllersSessionResponse":            "SessionResponse",
+	"ControllersSessionPreviewResponse":     "SessionPreviewResponse",
 	"ControllersRenameSessionRequest":       "RenameSessionRequest",
 	"ControllersRenameSessionResponse":      "RenameSessionResponse",
 	"ControllersRestoreSessionResponse":     "RestoreSessionResponse",
@@ -445,6 +446,29 @@ func sessionOperations() []operation {
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
 			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/sessions/{sessionId}/preview", id: "getSessionPreview", tag: "sessions",
+			summary:    "Discover a browser preview URL for a session workspace",
+			pathParams: []any{controllers.SessionIDParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.SessionPreviewResponse{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/sessions/{sessionId}/preview/files/*", id: "getSessionPreviewFile", tag: "sessions",
+			summary:    "Serve a static browser preview file from a session workspace",
+			pathParams: []any{controllers.SessionIDParam{}},
+			resps: []respUnit{
+				{http.StatusOK, ""},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+			contentTypes: map[int]string{http.StatusOK: "text/html"},
 		},
 		{
 			method: http.MethodGet, path: "/api/v1/sessions/{sessionId}/pr", id: "listSessionPRs", tag: "sessions",

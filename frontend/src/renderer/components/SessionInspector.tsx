@@ -7,7 +7,8 @@ import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { formatTimeCompact } from "../lib/format-time";
 import type { PRState, PullRequestFacts, SessionStatus, WorkspaceSession } from "../types/workspace";
 import { sortedPRs, workerDisplayStatus } from "../types/workspace";
-import { BrowserPanel } from "./BrowserPanel";
+import { BrowserPanelView } from "./BrowserPanel";
+import type { BrowserViewModel } from "../hooks/useBrowserView";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { cn } from "../lib/utils";
@@ -72,12 +73,14 @@ export function SessionInspector({
 	browserPoppedOut = false,
 	isInspectorVisible = true,
 	onToggleBrowserPopOut,
+	browserView,
 }: {
 	session?: WorkspaceSession;
 	onOpenReviewerTerminal?: OpenReviewerTerminal;
 	browserPoppedOut?: boolean;
 	isInspectorVisible?: boolean;
 	onToggleBrowserPopOut?: (next: boolean) => void;
+	browserView?: BrowserViewModel;
 }) {
 	const [view, setView] = useState<InspectorView>("summary");
 
@@ -115,6 +118,7 @@ export function SessionInspector({
 				{view === "browser" ? (
 					<BrowserView
 						browserPoppedOut={browserPoppedOut}
+						browserView={browserView}
 						isActive={isInspectorVisible && !browserPoppedOut}
 						onTogglePopOut={onToggleBrowserPopOut}
 						session={session}
@@ -530,11 +534,13 @@ function BrowserView({
 	isActive,
 	browserPoppedOut,
 	onTogglePopOut,
+	browserView,
 }: {
 	session: WorkspaceSession;
 	isActive: boolean;
 	browserPoppedOut: boolean;
 	onTogglePopOut?: (next: boolean) => void;
+	browserView?: BrowserViewModel;
 }) {
 	if (browserPoppedOut) {
 		return (
@@ -549,9 +555,14 @@ function BrowserView({
 		);
 	}
 
+	if (!browserView) {
+		return null;
+	}
+
 	return (
-		<BrowserPanel
+		<BrowserPanelView
 			active={isActive}
+			browserView={browserView}
 			onTogglePopOut={(next) => onTogglePopOut?.(next)}
 			poppedOut={false}
 			session={session}
