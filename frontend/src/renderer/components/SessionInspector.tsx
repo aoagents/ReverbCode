@@ -181,7 +181,11 @@ function PRSummaryCard({ pr }: { pr: SessionPRSummary }) {
 			</div>
 			{pr.title ? <div className="mt-2 text-[12px] font-medium leading-snug text-foreground">{pr.title}</div> : null}
 			<div className="mt-1.5 truncate font-mono text-[10.5px] text-passive">
-				{[pr.sourceBranch && `${pr.sourceBranch}${pr.targetBranch ? ` -> ${pr.targetBranch}` : ""}`, pr.author, prDiffSummary(pr)]
+				{[
+					pr.sourceBranch && `${pr.sourceBranch}${pr.targetBranch ? ` -> ${pr.targetBranch}` : ""}`,
+					pr.author,
+					prDiffSummary(pr),
+				]
 					.filter(Boolean)
 					.join(" · ")}
 			</div>

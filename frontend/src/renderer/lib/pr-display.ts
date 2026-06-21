@@ -152,7 +152,9 @@ export function prAttentionItems(pr: SessionPRSummary): PRAttentionItem[] {
 
 	const items: PRAttentionItem[] = [];
 	if (pr.mergeability.state === "conflicting") {
-		items.push(mergeAttention(pr, "merge_conflict", "Resolve merge conflict", "Conflicts with the base branch", "error"));
+		items.push(
+			mergeAttention(pr, "merge_conflict", "Resolve merge conflict", "Conflicts with the base branch", "error"),
+		);
 	} else if (pr.mergeability.state === "blocked" || pr.mergeability.state === "unstable") {
 		items.push(mergeAttention(pr, "merge_blocked", "Merge blocked", "Provider reports merge is blocked", "warning"));
 	}

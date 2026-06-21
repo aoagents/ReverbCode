@@ -56,7 +56,11 @@ export function PRAttentionPanel({
 						{item.links.length > 0 ? (
 							<div className="mt-0.5 flex min-w-0 flex-wrap gap-x-1.5 gap-y-1 font-mono text-[10.5px]">
 								{item.links.map((link, index) => (
-									<AttentionLink interactive={interactiveLinks} key={`${item.kind}-${index}-${link.label}`} link={link} />
+									<AttentionLink
+										interactive={interactiveLinks}
+										key={`${item.kind}-${index}-${link.label}`}
+										link={link}
+									/>
 								))}
 								{item.overflowLabel ? <span className="text-passive">{item.overflowLabel}</span> : null}
 							</div>

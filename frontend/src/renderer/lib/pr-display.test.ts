@@ -37,11 +37,7 @@ describe("prStatusRows", () => {
 			}),
 		);
 
-		expect(rows.map((row) => `${row.label}:${row.value}`)).toEqual([
-			"CI:Checking",
-			"Review:None",
-			"Merge:Checking",
-		]);
+		expect(rows.map((row) => `${row.label}:${row.value}`)).toEqual(["CI:Checking", "Review:None", "Merge:Checking"]);
 	});
 
 	it("includes minimal diff detail on the merge row", () => {
