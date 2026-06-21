@@ -47,7 +47,7 @@ const { workspaces, panels } = vi.hoisted(() => {
 // the split under test. (The topbar is shell-owned — see ShellTopbar.)
 vi.mock("./CenterPane", () => ({ CenterPane: () => <div>terminal center</div> }));
 vi.mock("./BrowserPanel", () => ({
-	BrowserPanel: ({
+	BrowserPanelView: ({
 		poppedOut,
 		onTogglePopOut,
 	}: {
@@ -58,6 +58,20 @@ vi.mock("./BrowserPanel", () => ({
 			{poppedOut ? "browser center" : "browser rail"}
 		</button>
 	),
+}));
+const browserDestroy = vi.hoisted(() => vi.fn());
+vi.mock("../hooks/useBrowserView", () => ({
+	useBrowserView: () => ({
+		viewId: "browser:sess-1",
+		navState: { viewId: "browser:sess-1", url: "http://127.0.0.1:4173/", title: "Calculator", canGoBack: false, canGoForward: false, isLoading: false },
+		slotRef: vi.fn(),
+		navigate: vi.fn(),
+		goBack: vi.fn(),
+		goForward: vi.fn(),
+		reload: vi.fn(),
+		stop: vi.fn(),
+		destroy: browserDestroy,
+	}),
 }));
 vi.mock("./SessionInspector", () => ({
 	SessionInspector: ({ onToggleBrowserPopOut }: { onToggleBrowserPopOut?: () => void }) => (
@@ -148,6 +162,7 @@ describe("SessionView", () => {
 		window.localStorage.clear();
 		useUiStore.setState({ isInspectorOpen: true });
 		panels.clear();
+		browserDestroy.mockReset();
 	});
 
 	// Regression: react-resizable-panels v4 treats bare numeric sizes as PIXELS
@@ -290,5 +305,6 @@ describe("SessionView", () => {
 
 		fireEvent.click(screen.getByRole("button", { name: "browser center" }));
 		expect(screen.getByText("terminal center")).toBeInTheDocument();
+		expect(browserDestroy).not.toHaveBeenCalled();
 	});
 });

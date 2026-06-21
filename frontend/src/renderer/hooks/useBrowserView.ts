@@ -9,7 +9,7 @@ type UseBrowserViewOptions = {
 	poppedOut: boolean;
 };
 
-type BrowserViewModel = {
+export type BrowserViewModel = {
 	viewId: string;
 	navState: BrowserNavState;
 	slotRef: (node: HTMLDivElement | null) => void;
@@ -18,6 +18,7 @@ type BrowserViewModel = {
 	goForward: () => Promise<void>;
 	reload: () => Promise<void>;
 	stop: () => Promise<void>;
+	destroy: () => void;
 };
 
 const EMPTY_NAV_STATE: BrowserNavState = {
@@ -156,6 +157,14 @@ export function useBrowserView({ sessionId, active, poppedOut }: UseBrowserViewO
 		if (next) setNavState(next);
 	}, []);
 
+	const destroy = useCallback(() => {
+		const id = viewIdRef.current;
+		if (!id) return;
+		sendHiddenBounds(id);
+		window.ao?.browser.destroy(id);
+		viewIdRef.current = "";
+	}, [sendHiddenBounds]);
+
 	return {
 		viewId,
 		navState,
@@ -165,5 +174,6 @@ export function useBrowserView({ sessionId, active, poppedOut }: UseBrowserViewO
 		goForward: () => withView((id) => window.ao!.browser.goForward(id)),
 		reload: () => withView((id) => window.ao!.browser.reload(id)),
 		stop: () => withView((id) => window.ao!.browser.stop(id)),
+		destroy,
 	};
 }

@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { PanelImperativeHandle, PanelSize } from "react-resizable-panels";
-import { BrowserPanel } from "./BrowserPanel";
+import { BrowserPanelView } from "./BrowserPanel";
 import { CenterPane } from "./CenterPane";
 import { SessionInspector } from "./SessionInspector";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "./ui/resizable";
 import { useUiStore } from "../stores/ui-store";
 import { useShell } from "../lib/shell-context";
+import { useBrowserView } from "../hooks/useBrowserView";
 import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
 import { isOrchestratorSession } from "../types/workspace";
 import type { TerminalTarget } from "../types/terminal";
@@ -49,14 +50,19 @@ export function SessionView({ sessionId }: SessionViewProps) {
 
 	const session = workspaces.flatMap((workspace) => workspace.sessions).find((s) => s.id === sessionId);
 	const isOrchestrator = session ? isOrchestratorSession(session) : false;
+	// Orchestrator sessions are terminal-only; only worker sessions have the rail.
+	const hasInspector = !isOrchestrator;
+	const browserView = useBrowserView({
+		sessionId,
+		active: Boolean(session && hasInspector && (browserPoppedOut || isInspectorOpen)),
+		poppedOut: browserPoppedOut,
+	});
 
 	useEffect(() => {
 		setTerminalTarget({ kind: "worker" });
 		setBrowserPoppedOut(false);
 	}, [sessionId]);
 
-	// Orchestrator sessions are terminal-only; only worker sessions have the rail.
-	const hasInspector = !isOrchestrator;
 	// Computed when the inspector panel mounts and frozen while it stays
 	// mounted: rrp re-registers the panel (a layout effect keyed on defaultSize,
 	// among others) whenever this prop's identity changes, and the imperative
@@ -155,8 +161,9 @@ export function SessionView({ sessionId }: SessionViewProps) {
             be strings. Numeric sizes here once clamped the inspector to 45px. */}
 				<ResizablePanel defaultSize="72%" id="terminal" minSize="45%">
 					{browserPoppedOut && session ? (
-						<BrowserPanel
+						<BrowserPanelView
 							active
+							browserView={browserView}
 							onTogglePopOut={setBrowserPoppedOut}
 							poppedOut
 							session={session}
@@ -199,6 +206,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 										setTerminalTarget({ kind: "reviewer", handleId, harness })
 									}
 									onToggleBrowserPopOut={setBrowserPoppedOut}
+									browserView={browserView}
 									session={session}
 								/>
 							</div>

@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { BrowserPanel } from "./BrowserPanel";
@@ -19,6 +19,13 @@ const hookState = vi.hoisted(() => ({
 		canGoForward: false,
 		isLoading: false,
 	} as BrowserNavState,
+	previewGet: vi.fn(),
+}));
+
+vi.mock("../lib/api-client", () => ({
+	apiClient: {
+		GET: hookState.previewGet,
+	},
 }));
 
 vi.mock("../hooks/useBrowserView", () => ({
@@ -54,6 +61,8 @@ describe("BrowserPanel", () => {
 		hookState.goForward.mockReset();
 		hookState.reload.mockReset();
 		hookState.stop.mockReset();
+		hookState.previewGet.mockReset();
+		hookState.previewGet.mockResolvedValue({ data: { previewUrl: "" } });
 		hookState.navState = {
 			viewId: "42:sess-1",
 			url: "",
@@ -72,6 +81,22 @@ describe("BrowserPanel", () => {
 		await userEvent.type(input, "localhost:5173{Enter}");
 
 		expect(hookState.navigate).toHaveBeenCalledWith("localhost:5173");
+	});
+
+	it("auto-opens the session preview URL when the browser is empty", async () => {
+		hookState.previewGet.mockResolvedValue({
+			data: { previewUrl: "http://127.0.0.1:3001/api/v1/sessions/sess-1/preview/files/index.html" },
+		});
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		await waitFor(() =>
+			expect(hookState.navigate).toHaveBeenCalledWith(
+				"http://127.0.0.1:3001/api/v1/sessions/sess-1/preview/files/index.html",
+			),
+		);
+		expect(hookState.previewGet).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/preview", {
+			params: { path: { sessionId: "sess-1" } },
+		});
 	});
 
 	it("binds navigation controls to nav state", async () => {

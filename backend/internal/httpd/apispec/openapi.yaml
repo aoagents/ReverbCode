@@ -862,6 +862,84 @@ paths:
       summary: Claim an existing pull request for a session
       tags:
       - sessions
+  /api/v1/sessions/{sessionId}/preview:
+    get:
+      operationId: getSessionPreview
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionPreviewResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Discover a browser preview URL for a session workspace
+      tags:
+      - sessions
+  /api/v1/sessions/{sessionId}/preview/files/*:
+    get:
+      operationId: getSessionPreviewFile
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            text/html:
+              schema:
+                type: string
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Serve a static browser preview file from a session workspace
+      tags:
+      - sessions
   /api/v1/sessions/{sessionId}/restore:
     post:
       operationId: restoreSession
@@ -1765,6 +1843,17 @@ components:
       - mergeability
       - reviewComments
       - updatedAt
+      type: object
+    SessionPreviewResponse:
+      properties:
+        entry:
+          type: string
+        previewUrl:
+          type: string
+        sessionId:
+          type: string
+      required:
+      - sessionId
       type: object
     SessionResponse:
       properties:

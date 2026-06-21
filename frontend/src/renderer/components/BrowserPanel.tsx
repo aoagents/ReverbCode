@@ -1,6 +1,7 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { ArrowLeft, ArrowRight, Globe2, Maximize2, Minimize2, RefreshCw, X } from "lucide-react";
-import { useBrowserView } from "../hooks/useBrowserView";
+import { useBrowserView, type BrowserViewModel } from "../hooks/useBrowserView";
+import { apiClient } from "../lib/api-client";
 import type { WorkspaceSession } from "../types/workspace";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -13,16 +14,56 @@ type BrowserPanelProps = {
 };
 
 export function BrowserPanel({ session, active, poppedOut, onTogglePopOut }: BrowserPanelProps) {
-	const { navState, slotRef, navigate, goBack, goForward, reload, stop } = useBrowserView({
+	const browserView = useBrowserView({
 		sessionId: session.id,
 		active,
 		poppedOut,
 	});
+	return (
+		<BrowserPanelView
+			active={active}
+			browserView={browserView}
+			onTogglePopOut={onTogglePopOut}
+			poppedOut={poppedOut}
+			session={session}
+		/>
+	);
+}
+
+export function BrowserPanelView({
+	session,
+	active,
+	poppedOut,
+	onTogglePopOut,
+	browserView,
+}: BrowserPanelProps & { browserView: BrowserViewModel }) {
+	const { navState, slotRef, navigate, goBack, goForward, reload, stop } = browserView;
 	const [urlInput, setUrlInput] = useState(navState.url);
+	const autoPreviewSessionRef = useRef<string | null>(null);
 
 	useEffect(() => {
 		setUrlInput(navState.url);
 	}, [navState.url]);
+
+	useEffect(() => {
+		if (!active || navState.url || autoPreviewSessionRef.current === session.id) return;
+		autoPreviewSessionRef.current = session.id;
+		let cancelled = false;
+		void apiClient
+			.GET("/api/v1/sessions/{sessionId}/preview", {
+				params: { path: { sessionId: session.id } },
+			})
+			.then(({ data }) => {
+				const previewUrl = data?.previewUrl?.trim();
+				if (!cancelled && previewUrl) {
+					void navigate(previewUrl);
+				}
+			})
+			.catch(() => undefined);
+		return () => {
+			cancelled = true;
+		};
+	}, [active, navigate, navState.url, session.id]);
 
 	const submit = (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();

@@ -4,6 +4,10 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/url"
+	"os"
+	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -59,6 +63,8 @@ func (c *SessionsController) Register(r chi.Router) {
 	r.Post("/sessions", c.spawn)
 	r.Post("/sessions/cleanup", c.cleanup)
 	r.Get("/sessions/{sessionId}", c.get)
+	r.Get("/sessions/{sessionId}/preview", c.preview)
+	r.Get("/sessions/{sessionId}/preview/files/*", c.previewFile)
 	r.Get("/sessions/{sessionId}/pr", c.listPRs)
 	r.Post("/sessions/{sessionId}/pr/claim", c.claimPR)
 	r.Patch("/sessions/{sessionId}", c.rename)
@@ -130,6 +136,43 @@ func (c *SessionsController) get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	envelope.WriteJSON(w, http.StatusOK, SessionResponse{Session: sessionView(sess)})
+}
+
+func (c *SessionsController) preview(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "GET", "/api/v1/sessions/{sessionId}/preview")
+		return
+	}
+	sess, err := c.Svc.Get(r.Context(), sessionID(r))
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	entry, ok := discoverPreviewEntry(sess.Metadata.WorkspacePath)
+	res := SessionPreviewResponse{SessionID: sessionID(r)}
+	if ok {
+		res.Entry = entry
+		res.PreviewURL = previewFileURL(r, sessionID(r), entry)
+	}
+	envelope.WriteJSON(w, http.StatusOK, res)
+}
+
+func (c *SessionsController) previewFile(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "GET", "/api/v1/sessions/{sessionId}/preview/files/*")
+		return
+	}
+	sess, err := c.Svc.Get(r.Context(), sessionID(r))
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	file, ok := confinedPreviewPath(sess.Metadata.WorkspacePath, chi.URLParam(r, "*"))
+	if !ok {
+		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "PREVIEW_FILE_NOT_FOUND", "Preview file not found", nil)
+		return
+	}
+	http.ServeFile(w, r, file)
 }
 
 func (c *SessionsController) listPRs(w http.ResponseWriter, r *http.Request) {
@@ -424,6 +467,61 @@ func writeSessionPRError(w http.ResponseWriter, r *http.Request, err error) {
 	default:
 		envelope.WriteError(w, r, err)
 	}
+}
+
+func discoverPreviewEntry(workspacePath string) (string, bool) {
+	if strings.TrimSpace(workspacePath) == "" {
+		return "", false
+	}
+	for _, candidate := range []string{"index.html", "public/index.html", "dist/index.html", "build/index.html"} {
+		file, ok := confinedPreviewPath(workspacePath, candidate)
+		if !ok {
+			continue
+		}
+		info, err := os.Stat(file)
+		if err == nil && !info.IsDir() {
+			return candidate, true
+		}
+	}
+	return "", false
+}
+
+func confinedPreviewPath(workspacePath, assetPath string) (string, bool) {
+	root, err := filepath.Abs(workspacePath)
+	if err != nil || root == "" {
+		return "", false
+	}
+	clean := strings.TrimPrefix(path.Clean("/"+strings.TrimSpace(assetPath)), "/")
+	if clean == "" || clean == "." {
+		clean = "index.html"
+	}
+	file := filepath.Join(root, filepath.FromSlash(clean))
+	absFile, err := filepath.Abs(file)
+	if err != nil {
+		return "", false
+	}
+	rel, err := filepath.Rel(root, absFile)
+	if err != nil || rel == "." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." {
+		return "", false
+	}
+	return absFile, true
+}
+
+func previewFileURL(r *http.Request, id domain.SessionID, entry string) string {
+	u := url.URL{
+		Scheme: "http",
+		Host:   r.Host,
+		Path:   "/api/v1/sessions/" + url.PathEscape(string(id)) + "/preview/files/" + escapePath(entry),
+	}
+	return u.String()
+}
+
+func escapePath(raw string) string {
+	parts := strings.Split(raw, "/")
+	for i, part := range parts {
+		parts[i] = url.PathEscape(part)
+	}
+	return strings.Join(parts, "/")
 }
 
 func sessionView(s domain.Session) SessionView {
