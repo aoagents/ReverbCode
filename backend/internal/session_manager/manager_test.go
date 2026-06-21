@@ -425,6 +425,7 @@ func TestKill_TearsDownRuntimeAndWorkspace(t *testing.T) {
 		t.Fatal("kill should destroy runtime and workspace")
 	}
 }
+
 // TestKill_TerminatesIncompleteHandle: a session whose runtime handle or
 // workspace path is missing is still terminated — the destroy steps are
 // skipped, but the session moves to terminal state so it can be cleaned up
