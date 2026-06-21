@@ -6,6 +6,7 @@ import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { formatTimeCompact } from "../lib/format-time";
 import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
+import { sessionPRDisplaySummaries } from "../lib/pr-display";
 import type { SessionStatus, WorkspaceSession } from "../types/workspace";
 import { sortedPRs, workerDisplayStatus } from "../types/workspace";
 import { Badge } from "./ui/badge";
@@ -125,64 +126,40 @@ function Section({ title, action, children }: { title: string; action?: ReactNod
 
 function SummaryView({ session }: { session: WorkspaceSession }) {
 	const query = useSessionScmSummary(session.id);
-	const prFacts = query.data?.[0];
+	const prSummaries = sessionPRDisplaySummaries(session, query.data);
+	const primaryPRSummary = prSummaries[0];
+	const prSectionTitle =
+		prSummaries.length > 1 ? `Pull requests (${prSummaries.length})` : "Pull request";
 	const branchLabel = session.branch || `session/${session.id}`;
 
 	return (
 		<div role="tabpanel">
-			<Section
-				title="Pull request"
-				action={
-					prFacts?.htmlUrl || prFacts?.url ? (
-						<a
-							href={prFacts.htmlUrl || prFacts.url}
-							target="_blank"
-							rel="noopener noreferrer"
-							className="inspector-section__link"
-						>
-							Open
-						</a>
-					) : undefined
-				}
-			>
-				{query.isLoading ? (
-					<p className="inspector-empty">Loading pull request...</p>
-				) : query.isError ? (
-					<p className="inspector-empty">Could not load pull request summary.</p>
-				) : !prFacts ? (
+			<Section title={prSectionTitle}>
+				{prSummaries.length === 0 ? (
 					<p className="inspector-empty">No pull request opened yet.</p>
 				) : (
 					<div className="flex flex-col gap-2">
-						<div className="flex items-center gap-2">
-							<GitPullRequest className="h-3.5 w-3.5 shrink-0 text-passive" aria-hidden="true" />
-							<span className="text-[12.5px] font-medium text-foreground">PR #{prFacts.number}</span>
-							<Badge
-								variant="outline"
-								className={cn("ml-auto h-5 px-1.5 text-[10px] font-medium", prStateTone[prFacts.state])}
-							>
-								{prFacts.state}
-							</Badge>
-						</div>
-						<div className="text-[12px] font-medium leading-snug text-foreground">{prFacts.title || "Untitled PR"}</div>
-						<dl className="inspector-kv">
-							<Row k="Author" v={prFacts.author || "-"} mono />
-							<Row k="Branch" v={`${prFacts.sourceBranch || "-"} -> ${prFacts.targetBranch || "-"}`} mono />
-							<Row k="Observed" v={formatTimeCompact(prFacts.observedAt ?? prFacts.updatedAt)} mono />
-						</dl>
+						{prSummaries.map((pr) => (
+							<PRSummaryCard key={pr.number} pr={pr} />
+						))}
 					</div>
 				)}
 			</Section>
 
-			{prFacts ? (
+			{primaryPRSummary ? (
 				<>
 					<Section title="CI">
 						<dl className="inspector-kv">
-							<Row k="State" v={prFacts.ci.state} mono />
-							<Row k="Observed" v={formatTimeCompact(prFacts.ciObservedAt ?? prFacts.updatedAt)} mono />
+							<Row k="State" v={primaryPRSummary.ci.state} mono />
+							<Row
+								k="Observed"
+								v={formatTimeCompact(primaryPRSummary.ciObservedAt ?? primaryPRSummary.updatedAt)}
+								mono
+							/>
 						</dl>
-						{prFacts.ci.failingChecks.length > 0 ? (
+						{primaryPRSummary.ci.failingChecks.length > 0 ? (
 							<div className="mt-2 flex flex-col gap-1.5">
-								{prFacts.ci.failingChecks.map((check) =>
+								{primaryPRSummary.ci.failingChecks.map((check) =>
 									check.url ? (
 										<a
 											key={`${check.name}-${check.url}`}
@@ -205,12 +182,16 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 
 					<Section title="Review">
 						<dl className="inspector-kv">
-							<Row k="Decision" v={prFacts.review.decision} mono />
-							<Row k="Observed" v={formatTimeCompact(prFacts.reviewObservedAt ?? prFacts.updatedAt)} mono />
+							<Row k="Decision" v={primaryPRSummary.review.decision} mono />
+							<Row
+								k="Observed"
+								v={formatTimeCompact(primaryPRSummary.reviewObservedAt ?? primaryPRSummary.updatedAt)}
+								mono
+							/>
 						</dl>
-						{prFacts.review.unresolvedBy.length > 0 ? (
+						{primaryPRSummary.review.unresolvedBy.length > 0 ? (
 							<div className="mt-2 flex flex-col gap-2">
-								{prFacts.review.unresolvedBy.map((reviewer) => (
+								{primaryPRSummary.review.unresolvedBy.map((reviewer) => (
 									<div key={reviewer.reviewerId} className="text-[11.5px] text-muted-foreground">
 										<span className="font-mono text-foreground">{reviewer.reviewerId}</span>
 										<span className="font-mono"> - {reviewer.count}</span>
@@ -247,9 +228,9 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 					<Section
 						title="Mergeability"
 						action={
-							prFacts.mergeability.prUrl ? (
+							primaryPRSummary.mergeability.prUrl ? (
 								<a
-									href={prFacts.mergeability.prUrl}
+									href={primaryPRSummary.mergeability.prUrl}
 									target="_blank"
 									rel="noopener noreferrer"
 									className="inspector-section__link"
@@ -260,16 +241,20 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 						}
 					>
 						<dl className="inspector-kv">
-							<Row k="State" v={prFacts.mergeability.state} mono />
+							<Row k="State" v={primaryPRSummary.mergeability.state} mono />
 							<Row
 								k="Reasons"
-								v={prFacts.mergeability.reasons.length ? prFacts.mergeability.reasons.join(", ") : "-"}
+								v={
+									primaryPRSummary.mergeability.reasons.length
+										? primaryPRSummary.mergeability.reasons.join(", ")
+										: "-"
+								}
 								mono
 							/>
 						</dl>
-						{prFacts.mergeability.conflictFiles?.length ? (
+						{primaryPRSummary.mergeability.conflictFiles?.length ? (
 							<div className="mt-2 flex flex-col gap-1">
-								{prFacts.mergeability.conflictFiles.map((file) =>
+								{primaryPRSummary.mergeability.conflictFiles.map((file) =>
 									file.url ? (
 										<a
 											key={file.path}
@@ -302,6 +287,34 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 					<Row k="Session" v={session.id} mono />
 				</dl>
 			</Section>
+		</div>
+	);
+}
+
+function PRSummaryCard({ pr }: { pr: SessionPRSummary }) {
+	return (
+		<div className="rounded-[7px] border border-border bg-surface px-3 py-2.5">
+			<div className="flex items-center gap-2">
+				<GitPullRequest className="h-3.5 w-3.5 shrink-0 text-passive" aria-hidden="true" />
+				<span className="text-[12.5px] font-medium text-foreground">PR #{pr.number}</span>
+				<Badge variant="outline" className={cn("h-5 px-1.5 text-[10px] font-medium", prStateTone[pr.state])}>
+					{pr.state}
+				</Badge>
+				<a
+					href={pr.htmlUrl || pr.url}
+					target="_blank"
+					rel="noopener noreferrer"
+					className="ml-auto text-[11px] font-medium text-accent hover:underline"
+				>
+					Open
+				</a>
+			</div>
+			{pr.title ? <div className="mt-2 text-[12px] font-medium leading-snug text-foreground">{pr.title}</div> : null}
+			<dl className="inspector-kv mt-2">
+				<Row k="CI" v={pr.ci.state} mono />
+				<Row k="Review" v={pr.review.decision} mono />
+				<Row k="Merge" v={pr.mergeability.state} mono />
+			</dl>
 		</div>
 	);
 }

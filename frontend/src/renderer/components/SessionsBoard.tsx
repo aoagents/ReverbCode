@@ -9,6 +9,7 @@ import { DashboardSubhead } from "./DashboardSubhead";
 import { OrchestratorIcon } from "./icons";
 import { NewTaskDialog } from "./NewTaskDialog";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
+import { sessionPRDisplaySummaries } from "../lib/pr-display";
 import { cn } from "../lib/utils";
 
 type SessionsBoardProps = {
@@ -261,7 +262,7 @@ function SessionCard({ session, onOpen }: { session: WorkspaceSession; onOpen: (
 	const badge = sessionBadge(session);
 	const branch = session.branch || "";
 	const showBranch = branch !== "" && !sameLabel(branch, session.title) && !sameLabel(branch, session.id);
-	const prSummary = useSessionScmSummary(session.id).data?.[0];
+	const prSummary = sessionPRDisplaySummaries(session, useSessionScmSummary(session.id).data)[0];
 	const failingChecks = prSummary?.ci.failingChecks.slice(0, 2) ?? [];
 	const reviewers = prSummary?.review.unresolvedBy.slice(0, 2).map((reviewer) => reviewer.reviewerId) ?? [];
 	return (
@@ -292,7 +293,10 @@ function SessionCard({ session, onOpen }: { session: WorkspaceSession; onOpen: (
 			<div className="border-t border-border px-[13px] py-2 font-mono text-[10.5px] text-passive">
 				{prSummary ? (
 					<div className="flex flex-col gap-1">
-						<span>PR #{prSummary.number} - {prSummary.state} - CI {prSummary.ci.state}</span>
+						<span>
+							PR #{prSummary.number} · {prSummary.state}
+						</span>
+						<span>CI {prSummary.ci.state}</span>
 						{failingChecks.length > 0 ? (
 							<span className="truncate text-error">{failingChecks.map((check) => check.name).join(", ")}</span>
 						) : null}

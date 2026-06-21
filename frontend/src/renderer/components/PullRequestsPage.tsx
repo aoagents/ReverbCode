@@ -8,6 +8,7 @@ import {
 	sessionScmSummaryQueryOptions,
 	type SessionPRSummary,
 } from "../hooks/useSessionScmSummary";
+import { comparePRDisplaySummaries, sessionPRDisplaySummaries } from "../lib/pr-display";
 import type { WorkspaceSession } from "../types/workspace";
 import { DashboardSubhead } from "./DashboardSubhead";
 import { Badge } from "./ui/badge";
@@ -23,9 +24,6 @@ const stateTone: Record<PRState, string> = {
 	merged: "border-accent/40 bg-accent-weak text-accent",
 	closed: "border-error/40 bg-error/10 text-error",
 };
-
-// Order open PRs (actionable) above merged/closed.
-const stateRank: Record<PRState, number> = { open: 0, draft: 1, merged: 2, closed: 3 };
 
 type PRRow = {
 	pr: SessionPRSummary;
@@ -45,8 +43,10 @@ export function PullRequestsPage() {
 		queries: sessions.map((session) => sessionScmSummaryQueryOptions(session.id)),
 	});
 	const rows: PRRow[] = sessions
-		.flatMap((session, index) => (prQueries[index]?.data ?? []).map((pr) => ({ pr, session })))
-		.sort((a, b) => stateRank[a.pr.state] - stateRank[b.pr.state] || a.pr.number - b.pr.number);
+		.flatMap((session, index) =>
+			sessionPRDisplaySummaries(session, prQueries[index]?.data).map((pr) => ({ pr, session })),
+		)
+		.sort((a, b) => comparePRDisplaySummaries(a.pr, b.pr));
 
 	return (
 		<div className="flex h-full min-h-0 flex-col bg-background text-foreground">
