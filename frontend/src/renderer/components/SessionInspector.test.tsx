@@ -125,7 +125,7 @@ describe("SessionInspector PR section", () => {
 		expect(screen.queryByText(/Pull requests \(/)).not.toBeInTheDocument();
 		expect(prSection("Pull request").getByText("PR #7")).toBeInTheDocument();
 		// CI/Merge/Review facts surface per card.
-		expect(prSection("Pull request").getAllByText("passing").length).toBeGreaterThan(0);
+		expect(prSection("Pull request").getAllByText("Passing").length).toBeGreaterThan(0);
 	});
 
 	it("shows the empty state when there are no PRs", () => {

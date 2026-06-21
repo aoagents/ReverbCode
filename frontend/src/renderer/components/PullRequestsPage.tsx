@@ -8,11 +8,12 @@ import {
 	sessionScmSummaryQueryOptions,
 	type SessionPRSummary,
 } from "../hooks/useSessionScmSummary";
-import { comparePRDisplaySummaries, sessionPRDisplaySummaries } from "../lib/pr-display";
+import { comparePRDisplaySummaries, prDiffSummary, sessionPRDisplaySummaries } from "../lib/pr-display";
 import type { WorkspaceSession } from "../types/workspace";
 import { DashboardSubhead } from "./DashboardSubhead";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
+import { PRAttentionPanel, PRStatusStrip } from "./PRSummaryDisplay";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
 import { cn } from "../lib/utils";
 
@@ -135,19 +136,17 @@ function PRRowView({ row, onOpen }: { row: PRRow; onOpen: () => void }) {
 			<TableCell className="max-w-0">
 				<div className="truncate text-[13px] text-foreground">{row.pr.title || row.session.title}</div>
 				<div className="truncate font-mono text-[10px] text-passive">
-					{[row.session.workspaceName, row.pr.sourceBranch || row.session.branch, `CI ${row.pr.ci.state}`]
+					{[
+						row.session.workspaceName,
+						row.pr.sourceBranch || row.session.branch,
+						row.pr.targetBranch ? `-> ${row.pr.targetBranch}` : "",
+						prDiffSummary(row.pr),
+					]
 						.filter(Boolean)
 						.join(" · ")}
 				</div>
-				{row.pr.ci.failingChecks.length > 0 ? (
-					<div className="truncate font-mono text-[10px] text-error">
-						{row.pr.ci.failingChecks.map((check) => check.name).join(", ")}
-					</div>
-				) : row.pr.review.unresolvedBy.length > 0 ? (
-					<div className="truncate font-mono text-[10px] text-warning">
-						{row.pr.review.unresolvedBy.map((reviewer) => reviewer.reviewerId).join(", ")}
-					</div>
-				) : null}
+				<PRStatusStrip className="mt-1" pr={row.pr} />
+				<PRAttentionPanel className="mt-1.5 pt-1.5" maxItems={2} pr={row.pr} />
 			</TableCell>
 			<TableCell>
 				<Badge variant="outline" className={cn("h-5 px-1.5 text-[10px] font-medium", stateTone[row.pr.state])}>

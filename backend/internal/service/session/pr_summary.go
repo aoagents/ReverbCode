@@ -24,6 +24,9 @@ type PRSummary struct {
 	SourceBranch     string
 	TargetBranch     string
 	HeadSHA          string
+	Additions        int
+	Deletions        int
+	ChangedFiles     int
 	CI               PRCISummary
 	Review           PRReviewSummary
 	Mergeability     PRMergeabilitySummary
@@ -127,8 +130,11 @@ func summarizePR(pr domain.PullRequest, checks []domain.PullRequestCheck, thread
 		SourceBranch:     pr.SourceBranch,
 		TargetBranch:     pr.TargetBranch,
 		HeadSHA:          pr.HeadSHA,
-		CI:               summarizeCI(pr.CI, checks),
-		Review:           summarizeReview(pr.Review, comments),
+		Additions:        pr.Additions,
+		Deletions:        pr.Deletions,
+		ChangedFiles:     pr.ChangedFiles,
+		CI:               summarizeCI(pr, checks),
+		Review:           summarizeReview(pr, comments),
 		Mergeability:     summarizeMergeability(pr, threads),
 		UpdatedAt:        pr.UpdatedAt,
 		ObservedAt:       pr.ObservedAt,
@@ -137,10 +143,17 @@ func summarizePR(pr domain.PullRequest, checks []domain.PullRequestCheck, thread
 	}
 }
 
-func summarizeCI(state domain.CIState, checks []domain.PullRequestCheck) PRCISummary {
-	out := PRCISummary{State: ciOrUnknown(state)}
+func summarizeCI(pr domain.PullRequest, checks []domain.PullRequestCheck) PRCISummary {
+	state := ciOrUnknown(pr.CI)
+	out := PRCISummary{State: state}
+	if state != domain.CIFailing || pr.Merged || pr.Closed {
+		return out
+	}
 	for _, ch := range checks {
 		if ch.Status != domain.PRCheckFailed && ch.Status != domain.PRCheckCancelled {
+			continue
+		}
+		if pr.HeadSHA != "" && ch.CommitHash != "" && !strings.EqualFold(ch.CommitHash, pr.HeadSHA) {
 			continue
 		}
 		out.FailingChecks = append(out.FailingChecks, PRFailingCheck{
@@ -153,8 +166,11 @@ func summarizeCI(state domain.CIState, checks []domain.PullRequestCheck) PRCISum
 	return out
 }
 
-func summarizeReview(decision domain.ReviewDecision, comments []domain.PullRequestComment) PRReviewSummary {
-	out := PRReviewSummary{Decision: reviewOrNone(decision)}
+func summarizeReview(pr domain.PullRequest, comments []domain.PullRequestComment) PRReviewSummary {
+	out := PRReviewSummary{Decision: reviewOrNone(pr.Review)}
+	if pr.Merged || pr.Closed {
+		return out
+	}
 	byReviewer := map[string]int{}
 	order := []string{}
 	links := map[string][]PRReviewCommentLink{}
@@ -197,6 +213,12 @@ func summarizeMergeability(pr domain.PullRequest, _ []domain.PullRequestReviewTh
 }
 
 func mergeabilityReasons(pr domain.PullRequest) []string {
+	if pr.Merged || pr.Closed {
+		return nil
+	}
+	if pr.Mergeability != domain.MergeConflicting && pr.Mergeability != domain.MergeBlocked && pr.Mergeability != domain.MergeUnstable {
+		return nil
+	}
 	reasons := map[string]bool{}
 	add := func(reason string) {
 		if reason != "" {

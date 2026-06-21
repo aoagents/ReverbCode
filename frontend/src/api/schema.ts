@@ -678,10 +678,13 @@ export interface components {
             unresolvedBy: components["schemas"]["SessionPRUnresolvedReviewer"][];
         };
         SessionPRSummary: {
+            additions: number;
             author: string;
+            changedFiles: number;
             ci: components["schemas"]["SessionPRCISummary"];
             /** Format: date-time */
             ciObservedAt?: string;
+            deletions: number;
             headSha: string;
             htmlUrl?: string;
             mergeability: components["schemas"]["SessionPRMergeabilitySummary"];

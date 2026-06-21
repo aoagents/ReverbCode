@@ -6,11 +6,12 @@ import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { formatTimeCompact } from "../lib/format-time";
 import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
-import { sessionPRDisplaySummaries } from "../lib/pr-display";
+import { prDiffSummary, sessionPRDisplaySummaries } from "../lib/pr-display";
 import type { SessionStatus, WorkspaceSession } from "../types/workspace";
 import { sortedPRs, workerDisplayStatus } from "../types/workspace";
 import { Badge } from "./ui/badge";
 import { cn } from "../lib/utils";
+import { PRAttentionPanel, PRStatusStrip } from "./PRSummaryDisplay";
 
 type ProjectConfig = components["schemas"]["ProjectConfig"];
 type ReviewRun = components["schemas"]["ReviewRun"];
@@ -127,7 +128,6 @@ function Section({ title, action, children }: { title: string; action?: ReactNod
 function SummaryView({ session }: { session: WorkspaceSession }) {
 	const query = useSessionScmSummary(session.id);
 	const prSummaries = sessionPRDisplaySummaries(session, query.data);
-	const primaryPRSummary = prSummaries[0];
 	const prSectionTitle = prSummaries.length > 1 ? `Pull requests (${prSummaries.length})` : "Pull request";
 	const branchLabel = session.branch || `session/${session.id}`;
 
@@ -144,133 +144,6 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 					</div>
 				)}
 			</Section>
-
-			{primaryPRSummary ? (
-				<>
-					<Section title="CI">
-						<dl className="inspector-kv">
-							<Row k="State" v={primaryPRSummary.ci.state} mono />
-							<Row
-								k="Observed"
-								v={formatTimeCompact(primaryPRSummary.ciObservedAt ?? primaryPRSummary.updatedAt)}
-								mono
-							/>
-						</dl>
-						{primaryPRSummary.ci.failingChecks.length > 0 ? (
-							<div className="mt-2 flex flex-col gap-1.5">
-								{primaryPRSummary.ci.failingChecks.map((check) =>
-									check.url ? (
-										<a
-											key={`${check.name}-${check.url}`}
-											className="truncate font-mono text-[11px] text-error hover:underline"
-											href={check.url}
-											target="_blank"
-											rel="noopener noreferrer"
-										>
-											{check.name} - {check.status}
-										</a>
-									) : (
-										<span key={check.name} className="truncate font-mono text-[11px] text-error">
-											{check.name} - {check.status}
-										</span>
-									),
-								)}
-							</div>
-						) : null}
-					</Section>
-
-					<Section title="Review">
-						<dl className="inspector-kv">
-							<Row k="Decision" v={primaryPRSummary.review.decision} mono />
-							<Row
-								k="Observed"
-								v={formatTimeCompact(primaryPRSummary.reviewObservedAt ?? primaryPRSummary.updatedAt)}
-								mono
-							/>
-						</dl>
-						{primaryPRSummary.review.unresolvedBy.length > 0 ? (
-							<div className="mt-2 flex flex-col gap-2">
-								{primaryPRSummary.review.unresolvedBy.map((reviewer) => (
-									<div key={reviewer.reviewerId} className="text-[11.5px] text-muted-foreground">
-										<span className="font-mono text-foreground">{reviewer.reviewerId}</span>
-										<span className="font-mono"> - {reviewer.count}</span>
-										<div className="mt-1 flex flex-wrap gap-1.5">
-											{reviewer.links.map((link, index) =>
-												link.url ? (
-													<a
-														key={`${reviewer.reviewerId}-${index}`}
-														className="font-mono text-[10.5px] text-accent hover:underline"
-														href={link.url}
-														target="_blank"
-														rel="noopener noreferrer"
-													>
-														{link.file || "comment"}
-														{link.line ? `:${link.line}` : ""}
-													</a>
-												) : (
-													<span
-														key={`${reviewer.reviewerId}-${index}`}
-														className="font-mono text-[10.5px] text-passive"
-													>
-														{link.file || "comment"}
-														{link.line ? `:${link.line}` : ""}
-													</span>
-												),
-											)}
-										</div>
-									</div>
-								))}
-							</div>
-						) : null}
-					</Section>
-
-					<Section
-						title="Mergeability"
-						action={
-							primaryPRSummary.mergeability.prUrl ? (
-								<a
-									href={primaryPRSummary.mergeability.prUrl}
-									target="_blank"
-									rel="noopener noreferrer"
-									className="inspector-section__link"
-								>
-									GitHub
-								</a>
-							) : undefined
-						}
-					>
-						<dl className="inspector-kv">
-							<Row k="State" v={primaryPRSummary.mergeability.state} mono />
-							<Row
-								k="Reasons"
-								v={
-									primaryPRSummary.mergeability.reasons.length ? primaryPRSummary.mergeability.reasons.join(", ") : "-"
-								}
-								mono
-							/>
-						</dl>
-						{primaryPRSummary.mergeability.conflictFiles?.length ? (
-							<div className="mt-2 flex flex-col gap-1">
-								{primaryPRSummary.mergeability.conflictFiles.map((file) =>
-									file.url ? (
-										<a
-											key={file.path}
-											className="truncate font-mono text-[11px] text-accent hover:underline"
-											href={file.url}
-										>
-											{file.path}
-										</a>
-									) : (
-										<span key={file.path} className="truncate font-mono text-[11px] text-muted-foreground">
-											{file.path}
-										</span>
-									),
-								)}
-							</div>
-						) : null}
-					</Section>
-				</>
-			) : null}
 
 			<Section title="Activity">
 				<ActivityTimeline session={session} />
@@ -307,11 +180,13 @@ function PRSummaryCard({ pr }: { pr: SessionPRSummary }) {
 				</a>
 			</div>
 			{pr.title ? <div className="mt-2 text-[12px] font-medium leading-snug text-foreground">{pr.title}</div> : null}
-			<dl className="inspector-kv mt-2">
-				<Row k="CI" v={pr.ci.state} mono />
-				<Row k="Review" v={pr.review.decision} mono />
-				<Row k="Merge" v={pr.mergeability.state} mono />
-			</dl>
+			<div className="mt-1.5 truncate font-mono text-[10.5px] text-passive">
+				{[pr.sourceBranch && `${pr.sourceBranch}${pr.targetBranch ? ` -> ${pr.targetBranch}` : ""}`, pr.author, prDiffSummary(pr)]
+					.filter(Boolean)
+					.join(" · ")}
+			</div>
+			<PRStatusStrip className="mt-2" pr={pr} />
+			<PRAttentionPanel pr={pr} />
 		</div>
 	);
 }

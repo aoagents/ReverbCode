@@ -9,8 +9,9 @@ import { DashboardSubhead } from "./DashboardSubhead";
 import { OrchestratorIcon } from "./icons";
 import { NewTaskDialog } from "./NewTaskDialog";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
-import { sessionPRDisplaySummaries } from "../lib/pr-display";
+import { prDiffSummary, sessionPRDisplaySummaries } from "../lib/pr-display";
 import { cn } from "../lib/utils";
+import { PRAttentionPanel, PRStatusStrip } from "./PRSummaryDisplay";
 
 type SessionsBoardProps = {
 	/** When set, the board shows only this project's sessions. */
@@ -262,8 +263,7 @@ function SessionCard({ session, onOpen }: { session: WorkspaceSession; onOpen: (
 	const branch = session.branch || "";
 	const showBranch = branch !== "" && !sameLabel(branch, session.title) && !sameLabel(branch, session.id);
 	const prSummary = sessionPRDisplaySummaries(session, useSessionScmSummary(session.id).data)[0];
-	const failingChecks = prSummary?.ci.failingChecks.slice(0, 2) ?? [];
-	const reviewers = prSummary?.review.unresolvedBy.slice(0, 2).map((reviewer) => reviewer.reviewerId) ?? [];
+	const diffSummary = prSummary ? prDiffSummary(prSummary) : undefined;
 	return (
 		<button
 			className="w-full rounded-[7px] border border-border bg-surface text-left transition-colors hover:border-border-strong"
@@ -295,16 +295,9 @@ function SessionCard({ session, onOpen }: { session: WorkspaceSession; onOpen: (
 						<span>
 							PR #{prSummary.number} · {prSummary.state}
 						</span>
-						<span>CI {prSummary.ci.state}</span>
-						{failingChecks.length > 0 ? (
-							<span className="truncate text-error">{failingChecks.map((check) => check.name).join(", ")}</span>
-						) : null}
-						{reviewers.length > 0 ? <span className="truncate">review: {reviewers.join(", ")}</span> : null}
-						{prSummary.mergeability.state === "conflicting" || prSummary.mergeability.state === "blocked" ? (
-							<span className="truncate">
-								merge: {prSummary.mergeability.reasons.join(", ") || prSummary.mergeability.state}
-							</span>
-						) : null}
+						{diffSummary ? <span className="truncate">{diffSummary}</span> : null}
+						<PRStatusStrip pr={prSummary} />
+						<PRAttentionPanel className="mt-1.5 pt-1.5" interactiveLinks={false} maxItems={2} pr={prSummary} />
 					</div>
 				) : (
 					"no PR yet"

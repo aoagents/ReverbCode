@@ -233,6 +233,9 @@ type SessionPRSummary struct {
 	SourceBranch     string                       `json:"sourceBranch"`
 	TargetBranch     string                       `json:"targetBranch"`
 	HeadSHA          string                       `json:"headSha"`
+	Additions        int                          `json:"additions"`
+	Deletions        int                          `json:"deletions"`
+	ChangedFiles     int                          `json:"changedFiles"`
 	CI               SessionPRCISummary           `json:"ci"`
 	Review           SessionPRReviewSummary       `json:"review"`
 	Mergeability     SessionPRMergeabilitySummary `json:"mergeability"`
@@ -311,6 +314,9 @@ func NewSessionPRSummary(in sessionsvc.PRSummary) SessionPRSummary {
 		SourceBranch:     in.SourceBranch,
 		TargetBranch:     in.TargetBranch,
 		HeadSHA:          in.HeadSHA,
+		Additions:        in.Additions,
+		Deletions:        in.Deletions,
+		ChangedFiles:     in.ChangedFiles,
 		CI:               newSessionPRCISummary(in.CI),
 		Review:           newSessionPRReviewSummary(in.Review),
 		Mergeability:     newSessionPRMergeabilitySummary(in.Mergeability),

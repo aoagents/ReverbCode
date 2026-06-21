@@ -1896,13 +1896,19 @@ components:
       type: object
     SessionPRSummary:
       properties:
+        additions:
+          type: integer
         author:
           type: string
+        changedFiles:
+          type: integer
         ci:
           $ref: '#/components/schemas/SessionPRCISummary'
         ciObservedAt:
           format: date-time
           type: string
+        deletions:
+          type: integer
         headSha:
           type: string
         htmlUrl:
@@ -1954,6 +1960,9 @@ components:
       - sourceBranch
       - targetBranch
       - headSha
+      - additions
+      - deletions
+      - changedFiles
       - ci
       - review
       - mergeability

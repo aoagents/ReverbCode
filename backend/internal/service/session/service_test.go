@@ -637,6 +637,131 @@ func TestListPRSummariesOmitsRawLogsAndReviewBodies(t *testing.T) {
 	}
 }
 
+func TestListPRSummariesSuppressesFailingChecksUnlessCIFailing(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker}
+	prURL := "https://github.com/acme/repo/pull/8"
+	stList := &multiPRFakeStore{fakeStore: st, prs: []domain.PullRequest{{
+		URL:       prURL,
+		SessionID: "mer-1",
+		Number:    8,
+		CI:        domain.CIPassing,
+		HeadSHA:   "new-sha",
+		UpdatedAt: time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC),
+	}}}
+	stList.checks[prURL] = []domain.PullRequestCheck{
+		{Name: "copy-check", CommitHash: "old-sha", Status: domain.PRCheckFailed, Conclusion: "failure", URL: "https://github.com/acme/repo/actions/runs/1"},
+	}
+
+	got, err := (&Service{store: stList}).ListPRSummaries(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[0].CI.State != domain.CIPassing || len(got[0].CI.FailingChecks) != 0 {
+		t.Fatalf("ci summary = %+v", got[0].CI)
+	}
+}
+
+func TestListPRSummariesFiltersFailedChecksToCurrentHead(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker}
+	prURL := "https://github.com/acme/repo/pull/9"
+	stList := &multiPRFakeStore{fakeStore: st, prs: []domain.PullRequest{{
+		URL:       prURL,
+		SessionID: "mer-1",
+		Number:    9,
+		CI:        domain.CIFailing,
+		HeadSHA:   "new-sha",
+		UpdatedAt: time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC),
+	}}}
+	stList.checks[prURL] = []domain.PullRequestCheck{
+		{Name: "old-copy-check", CommitHash: "old-sha", Status: domain.PRCheckFailed, Conclusion: "failure"},
+		{Name: "current-lint", CommitHash: "new-sha", Status: domain.PRCheckFailed, Conclusion: "failure"},
+	}
+
+	got, err := (&Service{store: stList}).ListPRSummaries(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	checks := got[0].CI.FailingChecks
+	if len(checks) != 1 || checks[0].Name != "current-lint" {
+		t.Fatalf("failing checks = %+v", checks)
+	}
+}
+
+func TestListPRSummariesSuppressesActiveDetailsForClosedOrMergedPRs(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker}
+	prURL := "https://github.com/acme/repo/pull/10"
+	stList := &multiPRFakeStore{fakeStore: st, prs: []domain.PullRequest{{
+		URL:                      prURL,
+		SessionID:                "mer-1",
+		Number:                   10,
+		Merged:                   true,
+		CI:                       domain.CIFailing,
+		Review:                   domain.ReviewChangesRequest,
+		Mergeability:             domain.MergeConflicting,
+		ProviderMergeStateStatus: "dirty",
+		UpdatedAt:                time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC),
+	}}}
+	stList.checks[prURL] = []domain.PullRequestCheck{{Name: "unit", Status: domain.PRCheckFailed}}
+	stList.comments[prURL] = []domain.PullRequestComment{{Author: "reviewer-a", File: "main.go", Line: 12, URL: "https://github.com/acme/repo/pull/10#discussion_r1"}}
+
+	got, err := (&Service{store: stList}).ListPRSummaries(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pr := got[0]
+	if pr.State != domain.PRStateMerged {
+		t.Fatalf("state = %q", pr.State)
+	}
+	if len(pr.CI.FailingChecks) != 0 || len(pr.Review.UnresolvedBy) != 0 || len(pr.Mergeability.Reasons) != 0 {
+		t.Fatalf("active details should be suppressed for merged PR: ci=%+v review=%+v merge=%+v", pr.CI, pr.Review, pr.Mergeability)
+	}
+}
+
+func TestListPRSummariesOnlyEmitsMergeReasonsForBlockedStates(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker}
+	now := time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC)
+	stList := &multiPRFakeStore{fakeStore: st, prs: []domain.PullRequest{
+		{
+			URL:                      "mergeable",
+			SessionID:                "mer-1",
+			Number:                   11,
+			CI:                       domain.CIFailing,
+			Review:                   domain.ReviewRequired,
+			Mergeability:             domain.MergeMergeable,
+			ProviderMergeStateStatus: "behind",
+			UpdatedAt:                now,
+		},
+		{
+			URL:                      "blocked",
+			SessionID:                "mer-1",
+			Number:                   12,
+			Review:                   domain.ReviewRequired,
+			Mergeability:             domain.MergeBlocked,
+			ProviderMergeStateStatus: "behind",
+			UpdatedAt:                now.Add(time.Minute),
+		},
+	}}
+
+	got, err := (&Service{store: stList}).ListPRSummaries(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	byNumber := map[int]PRSummary{}
+	for _, pr := range got {
+		byNumber[pr.Number] = pr
+	}
+	if reasons := byNumber[11].Mergeability.Reasons; len(reasons) != 0 {
+		t.Fatalf("mergeable reasons = %+v", reasons)
+	}
+	if reasons := byNumber[12].Mergeability.Reasons; !containsString(reasons, "behind_base") || !containsString(reasons, "review_required") {
+		t.Fatalf("blocked reasons = %+v", reasons)
+	}
+}
+
 type multiPRFakeStore struct {
 	*fakeStore
 	prs []domain.PullRequest
