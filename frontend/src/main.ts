@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, net, protocol, shell, type OpenDialogOptions } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, net, protocol, shell, WebContentsView, type OpenDialogOptions } from "electron";
 import { updateElectronApp } from "update-electron-app";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -11,6 +11,7 @@ import { createListenPortScanner, defaultRunFilePath, parseRunFile } from "./sha
 import type { DaemonStatus } from "./shared/daemon-status";
 import { DEFAULT_POSTHOG_HOST, DEFAULT_POSTHOG_PROJECT_KEY } from "./shared/posthog-config";
 import { buildTelemetryBootstrap } from "./shared/telemetry";
+import { createBrowserViewHost, type BrowserViewHost } from "./main/browser-view-host";
 
 // Globals injected at compile time by @electron-forge/plugin-vite.
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
@@ -33,6 +34,7 @@ let daemonStoppingProcess: ChildProcessWithoutNullStreams | null = null;
 let daemonStartPromise: Promise<DaemonStatus> | null = null;
 let daemonStartEpoch = 0;
 let daemonStatus: DaemonStatus = { state: "stopped" };
+let browserViewHost: BrowserViewHost | null = null;
 
 const isDev = !app.isPackaged;
 
@@ -89,6 +91,10 @@ function preloadPath(): string {
 	return path.join(__dirname, "preload.js");
 }
 
+function annotatePreloadPath(): string {
+	return path.join(__dirname, "annotate-preload.js");
+}
+
 // Runtime window/taskbar icon for Linux and Windows. macOS ignores this and
 // uses the .app bundle's .icns instead. Packaged: shipped via extraResource to
 // resources/icon.png; dev: the source asset under frontend/assets.
@@ -105,6 +111,8 @@ function setDaemonStatus(nextStatus: DaemonStatus): void {
 }
 
 function createWindow(): void {
+	browserViewHost?.dispose();
+	browserViewHost = null;
 	mainWindow = new BrowserWindow({
 		width: 1320,
 		height: 860,
@@ -143,6 +151,15 @@ function createWindow(): void {
 		}
 	});
 
+	browserViewHost = createBrowserViewHost({
+		mainWindow,
+		ipcMain,
+		shell,
+		WebContentsView,
+		annotatePreloadPath: annotatePreloadPath(),
+		rendererOrigin: RENDERER_ORIGIN,
+	});
+
 	void mainWindow.loadURL(rendererUrl());
 
 	if (isDev && process.env.AO_OPEN_DEVTOOLS === "1") {
@@ -152,6 +169,8 @@ function createWindow(): void {
 	}
 
 	mainWindow.on("closed", () => {
+		browserViewHost?.dispose();
+		browserViewHost = null;
 		mainWindow = null;
 	});
 }
@@ -564,6 +583,8 @@ app.whenReady().then(() => {
 });
 
 app.on("before-quit", () => {
+	browserViewHost?.dispose();
+	browserViewHost = null;
 	if (daemonProcess) {
 		killDaemon(daemonProcess);
 	}
