@@ -30,6 +30,7 @@ const STATUS_PILL: Record<WorkerDisplayStatus, { label: string; tone: string; br
 	working: { label: "Working", tone: "var(--orange)", breathe: true },
 	needs_you: { label: "Needs input", tone: "var(--amber)", breathe: false },
 	ci_failed: { label: "CI failed", tone: "var(--red)", breathe: false },
+	no_signal: { label: "No signal", tone: "var(--fg-muted)", breathe: false },
 	mergeable: { label: "Ready", tone: "var(--green)", breathe: false },
 	done: { label: "Done", tone: "var(--fg-muted)", breathe: false },
 	unknown: { label: "Unknown", tone: "var(--fg-muted)", breathe: false },

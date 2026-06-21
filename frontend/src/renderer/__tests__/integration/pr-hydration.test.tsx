@@ -12,6 +12,7 @@ const { getMock, navigateMock } = vi.hoisted(() => ({ getMock: vi.fn(), navigate
 vi.mock("../../lib/api-client", () => ({
 	apiClient: { GET: getMock, POST: vi.fn() },
 	apiErrorMessage: (e: unknown) => (e instanceof Error ? e.message : "error"),
+	hasTrustedApiBaseUrl: () => true,
 }));
 
 vi.mock("@tanstack/react-router", async (importOriginal) => {

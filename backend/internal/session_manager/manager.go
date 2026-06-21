@@ -32,6 +32,9 @@ var (
 	// adapter. The API maps it to a 400 so a typo'd `--harness` is a validation
 	// error, not an opaque 500.
 	ErrUnknownHarness = errors.New("session: unknown agent harness")
+	// ErrMissingHarness means neither the spawn request nor the project's role
+	// config selected an agent. Worker/orchestrator spawns must be explicit.
+	ErrMissingHarness = errors.New("session: agent harness required")
 )
 
 // Env vars a spawned process reads to learn who it is.
@@ -86,11 +89,7 @@ type Manager struct {
 	messenger ports.AgentMessenger
 	lcm       lifecycleRecorder
 	dataDir   string
-	// defaultHarness is the daemon's configured default agent (AO_AGENT). A spawn
-	// that names no harness resolves to it before the seed row is written, so the
-	// stored/returned harness matches the agent the resolver actually launches.
-	defaultHarness domain.AgentHarness
-	clock          func() time.Time
+	clock     func() time.Time
 	// lookPath is exec.LookPath in production; tests substitute a stub so
 	// they don't need real binaries on PATH. Returns ports.ErrAgentBinaryNotFound
 	// when the binary is missing so the sentinel propagates through toAPIError.
@@ -113,12 +112,7 @@ type Deps struct {
 	// DataDir is exported to spawned agents as AO_DATA_DIR so their hook
 	// commands can open the same store.
 	DataDir string
-	// DefaultHarness is the daemon's configured default agent (AO_AGENT), used to
-	// resolve a spawn that names no harness. Wiring passes config.DefaultAgent;
-	// left empty, an unspecified harness stays empty (the resolver still defaults
-	// it at launch, but the record won't reflect the real agent).
-	DefaultHarness domain.AgentHarness
-	Clock          func() time.Time
+	Clock   func() time.Time
 	// LookPath overrides exec.LookPath for the pre-launch agent-binary check.
 	// Production wiring leaves this nil and the manager defaults to
 	// exec.LookPath; tests inject a stub so they need not seed real binaries.
@@ -136,18 +130,17 @@ type Deps struct {
 // time.Now when Deps.Clock is nil.
 func New(d Deps) *Manager {
 	m := &Manager{
-		runtime:        d.Runtime,
-		agents:         d.Agents,
-		workspace:      d.Workspace,
-		store:          d.Store,
-		messenger:      d.Messenger,
-		lcm:            d.Lifecycle,
-		dataDir:        d.DataDir,
-		defaultHarness: d.DefaultHarness,
-		clock:          d.Clock,
-		lookPath:       d.LookPath,
-		executable:     d.Executable,
-		logger:         d.Logger,
+		runtime:    d.Runtime,
+		agents:     d.Agents,
+		workspace:  d.Workspace,
+		store:      d.Store,
+		messenger:  d.Messenger,
+		lcm:        d.Lifecycle,
+		dataDir:    d.DataDir,
+		clock:      d.Clock,
+		lookPath:   d.LookPath,
+		executable: d.Executable,
+		logger:     d.Logger,
 	}
 	if m.clock == nil {
 		// UTC so spawn-stamped CreatedAt/UpdatedAt match every other session
@@ -179,12 +172,8 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	// A per-project role override picks the harness when the spawn names none,
 	// so a project can default workers to one agent and orchestrators to another.
 	cfg.Harness = effectiveHarness(cfg.Harness, cfg.Kind, project.Config)
-	// Resolve an unspecified harness to the daemon default BEFORE the seed row is
-	// written, so the stored/returned harness matches the agent the resolver
-	// launches (otherwise a default-agent session persists an empty harness and
-	// the UI can't tell which agent is running).
 	if cfg.Harness == "" {
-		cfg.Harness = m.defaultHarness
+		return domain.SessionRecord{}, fmt.Errorf("spawn: %w: configure project %s.agent or pass --harness", ErrMissingHarness, roleConfigName(cfg.Kind))
 	}
 
 	// Reject an unknown harness before any durable state is created. Doing this
@@ -307,8 +296,8 @@ func (m *Manager) loadProject(ctx context.Context, projectID domain.ProjectID) (
 }
 
 // effectiveHarness resolves the harness for a spawn: an explicit harness wins;
-// otherwise the project's role override for the session kind applies; otherwise
-// it stays empty so the daemon's global default (AO_AGENT) is used downstream.
+// otherwise the project's role override for the session kind applies. Empty is
+// invalid for new worker/orchestrator launches and is rejected by Spawn.
 func effectiveHarness(explicit domain.AgentHarness, kind domain.SessionKind, cfg domain.ProjectConfig) domain.AgentHarness {
 	if explicit != "" {
 		return explicit
@@ -317,6 +306,13 @@ func effectiveHarness(explicit domain.AgentHarness, kind domain.SessionKind, cfg
 		return role
 	}
 	return ""
+}
+
+func roleConfigName(kind domain.SessionKind) string {
+	if kind == domain.KindOrchestrator {
+		return "orchestrator"
+	}
+	return "worker"
 }
 
 // effectiveAgentConfig merges the role override's agent config over the
@@ -365,8 +361,6 @@ func (m *Manager) markSpawnFailedTerminated(ctx context.Context, id domain.Sessi
 // don't accumulate terminated rows in session lists. DeleteSession only removes
 // rows still in seed state; if the row has progressed or the delete itself
 // fails, fall back to parking it terminated so a phantom row never looks live.
-// (Kill is not a usable fallback here: it refuses seed rows with
-// ErrIncompleteHandle before recording terminal intent.)
 func (m *Manager) rollbackSpawnSeedRow(ctx context.Context, id domain.SessionID) {
 	if deleted, err := m.store.DeleteSession(ctx, id); err == nil && deleted {
 		return
@@ -409,6 +403,11 @@ func (m *Manager) RollbackSpawn(ctx context.Context, id domain.SessionID) (delet
 // workspace. A workspace teardown refused by the worktree-remove safety
 // (uncommitted work) is never forced: the session still terminates and Kill
 // succeeds with freed=false, signalling the workspace was preserved.
+//
+// A session whose runtime handle or workspace path is missing (e.g. spawn
+// failed partway, handle lost after a crash) is still terminated — the destroy
+// steps are skipped for whatever is absent, but the session record always
+// moves to terminal state so it can be cleaned up from the dashboard.
 func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 	rec, ok, err := m.store.GetSession(ctx, id)
 	if err != nil {
@@ -419,22 +418,31 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 	}
 	handle := runtimeHandle(rec.Metadata)
 	ws := workspaceInfo(rec)
-	if handle.ID == "" || ws.Path == "" {
-		return false, fmt.Errorf("kill %s: %w", id, ErrIncompleteHandle)
-	}
+
+	// Always record terminal intent so the session is marked terminated even
+	// when the runtime/workspace handle is missing.
 	if err := m.lcm.MarkTerminated(ctx, id); err != nil {
 		return false, fmt.Errorf("kill %s: %w", id, err)
 	}
-	if err := m.runtime.Destroy(ctx, handle); err != nil {
-		return false, fmt.Errorf("kill %s: runtime: %w", id, err)
-	}
-	if err := m.workspace.Destroy(ctx, ws); err != nil {
-		if errors.Is(err, ports.ErrWorkspaceDirty) {
-			return false, nil
+
+	// Only tear down what exists. A session may have lost its handle after a
+	// crash or never acquired one if spawn failed partway.
+	if handle.ID != "" {
+		if err := m.runtime.Destroy(ctx, handle); err != nil {
+			return false, fmt.Errorf("kill %s: runtime: %w", id, err)
 		}
-		return false, fmt.Errorf("kill %s: workspace: %w", id, err)
 	}
-	return true, nil
+	freed := false
+	if ws.Path != "" {
+		if err := m.workspace.Destroy(ctx, ws); err != nil {
+			if errors.Is(err, ports.ErrWorkspaceDirty) {
+				return false, nil
+			}
+			return false, fmt.Errorf("kill %s: workspace: %w", id, err)
+		}
+		freed = true
+	}
+	return freed, nil
 }
 
 // Restore relaunches a torn-down session in its workspace. The fallible I/O runs

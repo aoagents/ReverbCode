@@ -72,10 +72,10 @@ describe("workerDisplayStatus", () => {
 
 	it.each([
 		["needs_input", "needs_you"],
-		["no_signal", "needs_you"],
 		["changes_requested", "needs_you"],
 		["review_pending", "needs_you"],
 		["ci_failed", "ci_failed"],
+		["no_signal", "no_signal"],
 		["approved", "mergeable"],
 		["mergeable", "mergeable"],
 		["merged", "done"],
@@ -139,6 +139,10 @@ describe("sessionNeedsAttention", () => {
 		},
 	);
 
+	it("treats no_signal as needing attention", () => {
+		expect(sessionNeedsAttention(sessionWith({ status: "no_signal" }))).toBe(true);
+	});
+
 	it("is false for statuses that don't need the user", () => {
 		expect(sessionNeedsAttention(sessionWith({ status: "working" }))).toBe(false);
 		expect(sessionNeedsAttention(sessionWith({ status: "mergeable" }))).toBe(false);
@@ -150,6 +154,7 @@ describe("workerStatusPulses", () => {
 		expect(workerStatusPulses("working")).toBe(true);
 		expect(workerStatusPulses("needs_you")).toBe(true);
 		expect(workerStatusPulses("mergeable")).toBe(false);
+		expect(workerStatusPulses("no_signal")).toBe(false);
 		expect(workerStatusPulses("done")).toBe(false);
 		expect(workerStatusPulses("unknown")).toBe(false);
 	});

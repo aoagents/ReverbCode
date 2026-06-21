@@ -113,12 +113,14 @@ type CleanupSessionsQuery struct {
 }
 
 // SessionView is the session wire shape: the domain read model plus the
-// session's attributed pull requests in the curated SessionPRFacts shape. One
-// session can own many PRs (e.g. a stack), so prs is a list. The embedded
-// domain.Session.PRs field is json:"-"; this curated prs is what serializes.
+// display-safe branch name and the session's attributed pull requests in the
+// curated SessionPRFacts shape. One session can own many PRs (e.g. a stack), so
+// prs is a list. The embedded domain.Session.Metadata and domain.Session.PRs
+// fields are json:"-"; these curated fields are what serialize.
 type SessionView struct {
 	domain.Session
-	PRs []SessionPRFacts `json:"prs"`
+	Branch string           `json:"branch,omitempty"`
+	PRs    []SessionPRFacts `json:"prs"`
 }
 
 // ListSessionsResponse is the body of GET /api/v1/sessions.

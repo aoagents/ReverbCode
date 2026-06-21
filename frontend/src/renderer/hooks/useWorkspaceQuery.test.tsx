@@ -3,10 +3,14 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 
-const { getMock } = vi.hoisted(() => ({ getMock: vi.fn() }));
+const { getMock, hasTrustedApiBaseUrlMock } = vi.hoisted(() => ({
+	getMock: vi.fn(),
+	hasTrustedApiBaseUrlMock: vi.fn(() => true),
+}));
 
 vi.mock("../lib/api-client", () => ({
 	apiClient: { GET: getMock },
+	hasTrustedApiBaseUrl: hasTrustedApiBaseUrlMock,
 }));
 
 import { useWorkspaceQuery } from "./useWorkspaceQuery";
@@ -30,9 +34,20 @@ function respondWith(payload: {
 
 beforeEach(() => {
 	getMock.mockReset();
+	hasTrustedApiBaseUrlMock.mockReset().mockReturnValue(true);
 });
 
 describe("useWorkspaceQuery", () => {
+	it("returns an empty workspace list while the daemon base URL is untrusted", async () => {
+		hasTrustedApiBaseUrlMock.mockReturnValue(false);
+
+		const { result } = renderHook(() => useWorkspaceQuery(), { wrapper });
+
+		await waitFor(() => expect(result.current.isSuccess).toBe(true));
+		expect(result.current.data).toEqual([]);
+		expect(getMock).not.toHaveBeenCalled();
+	});
+
 	it("maps projects and their sessions, applying provider/status/title fallbacks", async () => {
 		respondWith({
 			projects: {
@@ -48,6 +63,7 @@ describe("useWorkspaceQuery", () => {
 							terminalHandleId: "term-1",
 							displayName: "fix-bug",
 							harness: "claude-code",
+							branch: "qa/modal-worker",
 							status: "mergeable",
 							isTerminated: false,
 							updatedAt: "2026-06-10T16:15:04Z",
@@ -81,6 +97,7 @@ describe("useWorkspaceQuery", () => {
 			terminalHandleId: "term-1",
 			title: "fix-bug",
 			provider: "claude-code",
+			branch: "qa/modal-worker",
 			status: "mergeable",
 		});
 		expect(workspace.sessions[1]).toMatchObject({
@@ -88,6 +105,7 @@ describe("useWorkspaceQuery", () => {
 			title: "sess-2",
 			provider: "codex",
 			status: "unknown",
+			branch: "session/sess-2",
 		});
 	});
 

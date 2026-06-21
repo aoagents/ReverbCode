@@ -1261,6 +1261,8 @@ components:
       properties:
         activity:
           $ref: '#/components/schemas/DomainActivity'
+        branch:
+          type: string
         createdAt:
           format: date-time
           type: string

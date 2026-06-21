@@ -21,7 +21,8 @@ progress (what's shipped vs. in flight) see [`docs/STATUS.md`](docs/STATUS.md).
   `opencode`, `aider`, `amp`, `goose`, `copilot`, `grok`, `qwen`, `kimi`,
   `crush`, `cline`, `droid`, `devin`, `auggie`, `continue`, `kiro`, `kilocode`,
   and more), registered through a shared registry with common
-  activity-dispatch / hook utilities. The default is set by `AO_AGENT`.
+  activity-dispatch / hook utilities. Worker and orchestrator defaults are set
+  per project.
 - **Isolated workspaces.** Worker and orchestrator sessions spawn into their own
   `git worktree` (`backend/internal/adapters/workspace/gitworktree/`), launched
   inside a `zellij` runtime adapter (`backend/internal/adapters/runtime/`) so
@@ -92,9 +93,10 @@ go build -o /tmp/ao ./cmd/ao
 
 # Register a local git repo as a project. The id defaults to the lowercased
 # base of --path; pass --id explicitly when the directory name doesn't match.
-/tmp/ao project add --path /path/to/your/repo --id your-repo --name your-repo
+/tmp/ao project add --path /path/to/your/repo --id your-repo --name your-repo \
+  --worker-agent codex --orchestrator-agent codex
 
-# Spawn a worker session running the default agent.
+# Spawn a worker session running the project's worker agent.
 /tmp/ao spawn --project your-repo --prompt "Refactor the auth module"
 
 # Inspect what's running.
@@ -167,7 +169,7 @@ exposing it beyond loopback would be a security regression.
 | `AO_SHUTDOWN_TIMEOUT` | `10s`                                             | Graceful-shutdown hard cap.                                                 |
 | `AO_RUN_FILE`         | `<UserConfigDir>/agent-orchestrator/running.json` | PID + port handshake path.                                                  |
 | `AO_DATA_DIR`         | `<UserConfigDir>/agent-orchestrator/data`         | SQLite DB, WAL files, managed state.                                        |
-| `AO_AGENT`            | `claude-code`                                     | Default agent adapter id used by `ao spawn`.                                |
+| `AO_AGENT`            | `claude-code`                                     | Compatibility agent adapter id validated at daemon startup.                 |
 | `AO_SESSION_ID`       | _(unset)_                                         | Set inside spawned sessions; read by `ao send` and `ao hooks`.              |
 | `GITHUB_TOKEN`        | _(unset)_                                         | Used by the GitHub SCM and tracker adapters. Falls back to `gh auth token`. |
 

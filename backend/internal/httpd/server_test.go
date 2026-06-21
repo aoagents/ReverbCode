@@ -2,10 +2,12 @@ package httpd
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -35,6 +37,43 @@ func TestHealthProbes(t *testing.T) {
 		}
 		if ct := resp.Header.Get("Content-Type"); ct != "application/json; charset=utf-8" {
 			t.Errorf("GET %s Content-Type = %q, want JSON", path, ct)
+		}
+	}
+}
+
+func TestHealthProbesIncludeDaemonIdentity(t *testing.T) {
+	router := newTestRouter(config.Config{}, discardLogger(), nil)
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	wantExe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantCWD, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	client := &http.Client{Timeout: 2 * time.Second}
+	for _, path := range []string{"/healthz", "/readyz"} {
+		resp, err := client.Get(srv.URL + path)
+		if err != nil {
+			t.Fatalf("GET %s: %v", path, err)
+		}
+		defer resp.Body.Close()
+		var body struct {
+			ExecutablePath   string `json:"executablePath"`
+			WorkingDirectory string `json:"workingDirectory"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+			t.Fatalf("decode %s: %v", path, err)
+		}
+		if body.ExecutablePath != wantExe {
+			t.Errorf("GET %s executablePath = %q, want %q", path, body.ExecutablePath, wantExe)
+		}
+		if body.WorkingDirectory != wantCWD {
+			t.Errorf("GET %s workingDirectory = %q, want %q", path, body.WorkingDirectory, wantCWD)
 		}
 	}
 }

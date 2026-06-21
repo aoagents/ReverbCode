@@ -9,9 +9,9 @@ export type SessionStatus =
 	| "mergeable"
 	| "merged"
 	| "needs_input"
+	| "no_signal"
 	| "idle"
 	| "terminated"
-	| "no_signal"
 	| "unknown";
 
 const sessionStatuses = new Set<SessionStatus>([
@@ -25,9 +25,9 @@ const sessionStatuses = new Set<SessionStatus>([
 	"mergeable",
 	"merged",
 	"needs_input",
+	"no_signal",
 	"idle",
 	"terminated",
-	"no_signal",
 ]);
 
 export function toSessionStatus(status?: string, isTerminated = false): SessionStatus {
@@ -122,18 +122,26 @@ export type WorkspaceSession = {
 };
 
 /** Glanceable worker status. Maps 1:1 to the accent colors in DESIGN.md. */
-export type WorkerDisplayStatus = "working" | "needs_you" | "mergeable" | "ci_failed" | "done" | "unknown";
+export type WorkerDisplayStatus =
+	| "working"
+	| "needs_you"
+	| "mergeable"
+	| "ci_failed"
+	| "no_signal"
+	| "done"
+	| "unknown";
 
 export function workerDisplayStatus(session: WorkspaceSession): WorkerDisplayStatus {
 	if (session.displayStatus) return session.displayStatus;
 	switch (session.status) {
 		case "needs_input":
-		case "no_signal":
 		case "changes_requested":
 		case "review_pending":
 			return "needs_you";
 		case "ci_failed":
 			return "ci_failed";
+		case "no_signal":
+			return "no_signal";
 		case "approved":
 		case "mergeable":
 			return "mergeable";
@@ -212,6 +220,7 @@ export const workerStatusLabel: Record<WorkerDisplayStatus, string> = {
 	needs_you: "needs you",
 	mergeable: "mergeable",
 	ci_failed: "ci failed",
+	no_signal: "no signal",
 	done: "done",
 	unknown: "unknown",
 };

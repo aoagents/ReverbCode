@@ -45,9 +45,11 @@ type daemonStatus struct {
 }
 
 type probeResult struct {
-	Status  string `json:"status"`
-	Service string `json:"service"`
-	PID     int    `json:"pid"`
+	Status           string `json:"status"`
+	Service          string `json:"service"`
+	PID              int    `json:"pid"`
+	ExecutablePath   string `json:"executablePath,omitempty"`
+	WorkingDirectory string `json:"workingDirectory,omitempty"`
 }
 
 func newStatusCommand(ctx *commandContext) *cobra.Command {

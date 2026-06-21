@@ -446,6 +446,7 @@ export interface components {
         };
         ControllersSessionView: {
             activity: components["schemas"]["DomainActivity"];
+            branch?: string;
             /** Format: date-time */
             createdAt: string;
             displayName?: string;

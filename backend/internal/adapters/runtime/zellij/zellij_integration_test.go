@@ -30,7 +30,7 @@ func TestRuntimeIntegration(t *testing.T) {
 	}
 	r := New(opts)
 	_ = r.Destroy(ctx, ports.RuntimeHandle{ID: id})
-	argv := []string{"sh", "-c", "echo ready-$AO_SESSION_ID"}
+	argv := []string{"sh", "-lc", "printf ready-$AO_SESSION_ID\\n; exec sh -i"}
 	sendCommand := "echo hello-from-zellij"
 	if runtime.GOOS == "windows" {
 		argv = []string{"cmd.exe", "/D", "/Q", "/K", "echo ready-%AO_SESSION_ID%"}
@@ -117,7 +117,11 @@ func buildAOForIntegration(t *testing.T) string {
 
 func tempSocketDir(t *testing.T, pattern string) string {
 	t.Helper()
-	socketDir, err := os.MkdirTemp(os.TempDir(), pattern)
+	parent := os.TempDir()
+	if runtime.GOOS != "windows" {
+		parent = "/tmp"
+	}
+	socketDir, err := os.MkdirTemp(parent, pattern)
 	if err != nil {
 		t.Fatalf("mkdir socket dir: %v", err)
 	}
@@ -144,7 +148,7 @@ func TestRuntimeIntegrationUsesExactSessionParsing(t *testing.T) {
 	h, err := r.Create(ctx, ports.RuntimeConfig{
 		SessionID:     "ao_zj_exact_long",
 		WorkspacePath: t.TempDir(),
-		Argv:          []string{"printf", "ready\n"},
+		Argv:          []string{"sh", "-lc", "printf ready\\n; exec sh -i"},
 	})
 	if err != nil {
 		t.Fatalf("Create: %v", err)

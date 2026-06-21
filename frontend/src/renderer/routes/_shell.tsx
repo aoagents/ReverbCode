@@ -8,8 +8,10 @@ import { TitlebarNav } from "../components/TitlebarNav";
 import { useDaemonStatus } from "../hooks/useDaemonStatus";
 import { useWorkspaceQuery, workspaceQueryKey, workspaceQueryOptions } from "../hooks/useWorkspaceQuery";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
+import { refreshDaemonStatus } from "../lib/daemon-status";
 import { captureRendererEvent, captureRendererException } from "../lib/telemetry";
 import { ShellProvider } from "../lib/shell-context";
+import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { readStoredTheme, type Theme, useUiStore } from "../stores/ui-store";
 import type { WorkspaceSummary } from "../types/workspace";
 
@@ -17,7 +19,10 @@ export const Route = createFileRoute("/_shell")({
 	// Prefetch the workspace list for the whole shell (parent loaders run before
 	// children); pairs with the router's defaultPreload: "intent" so a hovered
 	// nav target is warm before the click.
-	loader: ({ context }) => context.queryClient.ensureQueryData(workspaceQueryOptions),
+	loader: async ({ context }) => {
+		await refreshDaemonStatus().catch(() => undefined);
+		return context.queryClient.ensureQueryData(workspaceQueryOptions);
+	},
 	component: ShellLayout,
 });
 
@@ -51,9 +56,17 @@ function ShellLayout() {
 	);
 
 	const createProject = useCallback(
-		async (input: { path: string }) => {
+		async (input: { path: string; workerAgent: string; orchestratorAgent: string }) => {
 			void captureRendererEvent("ao.renderer.project_add_requested");
-			const { data, error } = await apiClient.POST("/api/v1/projects", { body: { path: input.path } });
+			const { data, error } = await apiClient.POST("/api/v1/projects", {
+				body: {
+					path: input.path,
+					config: {
+						worker: { agent: input.workerAgent },
+						orchestrator: { agent: input.orchestratorAgent },
+					},
+				},
+			});
 			if (error) {
 				const failure = new Error(apiErrorMessage(error));
 				void captureRendererException(failure, { source: "project-add" });
@@ -70,9 +83,20 @@ function ShellLayout() {
 			};
 			void captureRendererEvent("ao.renderer.project_add_succeeded", { project_id: workspace.id });
 			updateWorkspaces((current) => [workspace, ...current.filter((item) => item.id !== workspace.id)]);
-			void navigate({ to: "/projects/$projectId", params: { projectId: workspace.id } });
+			try {
+				const sessionId = await spawnOrchestrator(workspace.id);
+				await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+				void navigate({
+					to: "/projects/$projectId/sessions/$sessionId",
+					params: { projectId: workspace.id, sessionId },
+				});
+			} catch (spawnError) {
+				void navigate({ to: "/projects/$projectId", params: { projectId: workspace.id } });
+				const message = spawnError instanceof Error ? spawnError.message : "Could not start orchestrator";
+				throw new Error(`Project added, but orchestrator did not start: ${message}`);
+			}
 		},
-		[navigate, updateWorkspaces],
+		[navigate, queryClient, updateWorkspaces],
 	);
 
 	const removeProject = useCallback(
