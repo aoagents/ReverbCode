@@ -99,6 +99,35 @@ describe("BrowserPanel", () => {
 		});
 	});
 
+	it("rechecks the session preview after worker activity when no preview existed yet", async () => {
+		hookState.previewGet
+			.mockResolvedValueOnce({ data: { previewUrl: "" } })
+			.mockResolvedValueOnce({
+				data: { previewUrl: "http://127.0.0.1:3001/api/v1/sessions/sess-1/preview/files/index.html" },
+			});
+		const { rerender } = render(
+			<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />,
+		);
+
+		await waitFor(() => expect(hookState.previewGet).toHaveBeenCalledTimes(1));
+		expect(hookState.navigate).not.toHaveBeenCalled();
+
+		rerender(
+			<BrowserPanel
+				active
+				onTogglePopOut={() => undefined}
+				poppedOut={false}
+				session={{ ...session, updatedAt: "2026-06-15T00:01:00Z" }}
+			/>,
+		);
+
+		await waitFor(() =>
+			expect(hookState.navigate).toHaveBeenCalledWith(
+				"http://127.0.0.1:3001/api/v1/sessions/sess-1/preview/files/index.html",
+			),
+		);
+	});
+
 	it("binds navigation controls to nav state", async () => {
 		hookState.navState = {
 			viewId: "42:sess-1",
