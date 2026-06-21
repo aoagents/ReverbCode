@@ -128,32 +128,32 @@ The CLI is intentionally thin: every product command resolves to a daemon HTTP
 route. Run `ao <command> --help` for the authoritative flag shape; the table
 below groups what's on `main` today.
 
-| Lane         | Command                              | Purpose                                                      |
-| ------------ | ------------------------------------ | ------------------------------------------------------------ |
-| Daemon       | `ao start`                           | Start the daemon in the background and wait for `/readyz`.   |
-| Daemon       | `ao stop`                            | Graceful shutdown via loopback `POST /shutdown`.             |
-| Daemon       | `ao status`                          | Report PID/port/health/readiness from `running.json`.        |
-| Daemon       | `ao daemon`                          | Hidden internal entrypoint used by `ao start`.               |
-| Project      | `ao project add`                     | Register a local git repo as a project.                      |
-| Project      | `ao project ls`                      | List registered projects.                                    |
-| Project      | `ao project get <id>`                | Fetch one project.                                           |
-| Project      | `ao project set-config <id>`         | Update per-project config.                                   |
-| Project      | `ao project rm <id>`                 | Remove a project.                                            |
-| Session      | `ao spawn`                           | Spawn a worker session in a registered project.              |
-| Session      | `ao session ls`                      | List sessions (filter by project, include terminated).       |
-| Session      | `ao session get <id>`                | Fetch one session.                                           |
-| Session      | `ao session kill <id>`               | Terminate a session.                                         |
-| Session      | `ao session rename <id> <name>`      | Rename a session.                                            |
-| Session      | `ao session restore <id>`            | Relaunch a terminated session.                               |
-| Session      | `ao session cleanup`                 | Reclaim eligible workspaces for terminated sessions.         |
-| Session      | `ao session claim-pr <session> <pr>` | Attach an existing PR to a session.                          |
-| Orchestrator | `ao orchestrator ls`                 | List orchestrator sessions.                                  |
-| Messaging    | `ao send`                            | Send a message to a running agent session.                   |
+| Lane         | Command                              | Purpose                                                                            |
+| ------------ | ------------------------------------ | ---------------------------------------------------------------------------------- |
+| Daemon       | `ao start`                           | Start the daemon in the background and wait for `/readyz`.                         |
+| Daemon       | `ao stop`                            | Graceful shutdown via loopback `POST /shutdown`.                                   |
+| Daemon       | `ao status`                          | Report PID/port/health/readiness from `running.json`.                              |
+| Daemon       | `ao daemon`                          | Hidden internal entrypoint used by `ao start`.                                     |
+| Project      | `ao project add`                     | Register a local git repo as a project.                                            |
+| Project      | `ao project ls`                      | List registered projects.                                                          |
+| Project      | `ao project get <id>`                | Fetch one project.                                                                 |
+| Project      | `ao project set-config <id>`         | Update per-project config.                                                         |
+| Project      | `ao project rm <id>`                 | Remove a project.                                                                  |
+| Session      | `ao spawn`                           | Spawn a worker session in a registered project.                                    |
+| Session      | `ao session ls`                      | List sessions (filter by project, include terminated).                             |
+| Session      | `ao session get <id>`                | Fetch one session.                                                                 |
+| Session      | `ao session kill <id>`               | Terminate a session.                                                               |
+| Session      | `ao session rename <id> <name>`      | Rename a session.                                                                  |
+| Session      | `ao session restore <id>`            | Relaunch a terminated session.                                                     |
+| Session      | `ao session cleanup`                 | Reclaim eligible workspaces for terminated sessions.                               |
+| Session      | `ao session claim-pr <session> <pr>` | Attach an existing PR to a session.                                                |
+| Orchestrator | `ao orchestrator ls`                 | List orchestrator sessions.                                                        |
+| Messaging    | `ao send`                            | Send a message to a running agent session.                                         |
 | Preview      | `ao preview [url]`                   | Open a URL (or the workspace `index.html`) in the session's desktop browser panel. |
-| Utility      | `ao doctor`                          | Local health checks (config, data dir, DB, `git`, `zellij`). |
-| Utility      | `ao completion <shell>`              | Generate bash/zsh/fish/powershell completions.               |
-| Utility      | `ao version`                         | Print build metadata.                                        |
-| Internal     | `ao hooks <agent> <event>`           | Hidden adapter hook callback.                                |
+| Utility      | `ao doctor`                          | Local health checks (config, data dir, DB, `git`, `zellij`).                       |
+| Utility      | `ao completion <shell>`              | Generate bash/zsh/fish/powershell completions.                                     |
+| Utility      | `ao version`                         | Print build metadata.                                                              |
+| Internal     | `ao hooks <agent> <event>`           | Hidden adapter hook callback.                                                      |
 
 See [`docs/cli/`](docs/cli/) for the daemon-control intent and command shape.
 
