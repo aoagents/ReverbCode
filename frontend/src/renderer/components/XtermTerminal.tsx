@@ -346,18 +346,29 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		const terminalInput = term.onData((data) => emitUserInput(data, "terminal"));
 
 		// Translate wheel motion into SGR wheel reports for zellij (see
-		// sgrWheelReport). Pixel deltas accumulate so a full cell-height of scroll
-		// emits one line of wheel, matching xterm's native getLinesScrolled feel.
-		// Returning false suppresses xterm's arrow-key wheel fallback. Ctrl/Cmd
-		// wheel is the font-size zoom (CenterPane), so leave it for that handler.
+		// sgrWheelReport), one report per scrolled line. WheelEvent.deltaMode
+		// varies by platform/device: trackpads and normalized wheels report
+		// pixels (mode 0, the macOS case), while many Linux/Windows mouse wheels
+		// report whole lines (mode 1) or pages (mode 2). Mirror xterm's native
+		// getLinesScrolled across all three so scroll works everywhere; pixel
+		// deltas accumulate so a full cell-height emits one line. Returning false
+		// suppresses xterm's arrow-key wheel fallback. Ctrl/Cmd wheel is the
+		// font-size zoom (CenterPane), so leave it for that handler.
 		let wheelAccumPx = 0;
 		term.attachCustomWheelEventHandler((event) => {
 			if (event.ctrlKey || event.metaKey) return false;
-			const rowHeight = (term.options.fontSize ?? 12) * (term.options.lineHeight ?? 1);
-			wheelAccumPx += event.deltaY;
-			const lines = Math.trunc(wheelAccumPx / rowHeight);
+			let lines: number;
+			if (event.deltaMode === 1 /* DOM_DELTA_LINE */) {
+				lines = Math.trunc(event.deltaY) || Math.sign(event.deltaY);
+			} else if (event.deltaMode === 2 /* DOM_DELTA_PAGE */) {
+				lines = (Math.trunc(event.deltaY) || Math.sign(event.deltaY)) * term.rows;
+			} else {
+				const rowHeight = (term.options.fontSize ?? 12) * (term.options.lineHeight ?? 1);
+				wheelAccumPx += event.deltaY;
+				lines = Math.trunc(wheelAccumPx / rowHeight);
+				wheelAccumPx -= lines * rowHeight;
+			}
 			if (lines === 0) return false;
-			wheelAccumPx -= lines * rowHeight;
 			const button = lines < 0 ? SGR_WHEEL_UP : SGR_WHEEL_DOWN;
 			emitUserInput(sgrWheelReport(button, Math.abs(lines)), "terminal");
 			return false;

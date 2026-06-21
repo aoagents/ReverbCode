@@ -213,6 +213,20 @@ describe("XtermTerminal", () => {
 		expect(onInput).toHaveBeenCalledWith("\x1b[<64;1;1M\x1b[<64;1;1M\x1b[<64;1;1M", "terminal");
 	});
 
+	it("handles line- and page-mode wheels (Linux/Windows mice), not just pixel deltas", () => {
+		const onInput = vi.fn();
+		render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
+
+		// DOM_DELTA_LINE: deltaY is already in lines, so one notch up => one report.
+		expect(state.lastTerminal!.wheelHandler!({ deltaY: -1, deltaMode: 1 } as WheelEvent)).toBe(false);
+		expect(onInput).toHaveBeenLastCalledWith("\x1b[<64;1;1M", "terminal");
+
+		// DOM_DELTA_PAGE: one page down => rows (24) line reports down.
+		onInput.mockClear();
+		expect(state.lastTerminal!.wheelHandler!({ deltaY: 1, deltaMode: 2 } as WheelEvent)).toBe(false);
+		expect(onInput).toHaveBeenLastCalledWith("\x1b[<65;1;1M".repeat(24), "terminal");
+	});
+
 	it("scrolls down on positive wheel delta and leaves zoom (ctrl/meta) wheel alone", () => {
 		const onInput = vi.fn();
 		render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
