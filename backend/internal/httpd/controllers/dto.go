@@ -242,11 +242,13 @@ type SessionPRSummary struct {
 	ReviewObservedAt time.Time                    `json:"reviewObservedAt,omitempty"`
 }
 
+// SessionPRCISummary is the CI status block for a session PR summary.
 type SessionPRCISummary struct {
 	State         domain.CIState          `json:"state" enum:"unknown,pending,passing,failing"`
 	FailingChecks []SessionPRFailingCheck `json:"failingChecks"`
 }
 
+// SessionPRFailingCheck is one failed or cancelled CI check for a PR.
 type SessionPRFailingCheck struct {
 	Name       string               `json:"name"`
 	Status     domain.PRCheckStatus `json:"status" enum:"failed,cancelled"`
@@ -254,24 +256,28 @@ type SessionPRFailingCheck struct {
 	URL        string               `json:"url,omitempty"`
 }
 
+// SessionPRReviewSummary is the review state block for a session PR summary.
 type SessionPRReviewSummary struct {
 	Decision                   domain.ReviewDecision         `json:"decision" enum:"none,approved,changes_requested,review_required"`
 	HasUnresolvedHumanComments bool                          `json:"hasUnresolvedHumanComments"`
 	UnresolvedBy               []SessionPRUnresolvedReviewer `json:"unresolvedBy"`
 }
 
+// SessionPRUnresolvedReviewer groups unresolved human comments by reviewer.
 type SessionPRUnresolvedReviewer struct {
 	ReviewerID string                       `json:"reviewerId"`
 	Count      int                          `json:"count"`
 	Links      []SessionPRReviewCommentLink `json:"links"`
 }
 
+// SessionPRReviewCommentLink points to one unresolved review comment.
 type SessionPRReviewCommentLink struct {
 	URL  string `json:"url,omitempty"`
 	File string `json:"file,omitempty"`
 	Line int    `json:"line,omitempty"`
 }
 
+// SessionPRMergeabilitySummary is the mergeability block for a session PR summary.
 type SessionPRMergeabilitySummary struct {
 	State         domain.Mergeability     `json:"state" enum:"unknown,mergeable,conflicting,blocked,unstable"`
 	Reasons       []string                `json:"reasons"`
@@ -279,6 +285,7 @@ type SessionPRMergeabilitySummary struct {
 	ConflictFiles []SessionPRConflictFile `json:"conflictFiles,omitempty"`
 }
 
+// SessionPRConflictFile is one file involved in a PR merge conflict.
 type SessionPRConflictFile struct {
 	Path string `json:"path"`
 	URL  string `json:"url,omitempty"`
@@ -290,6 +297,7 @@ type ListSessionPRsResponse struct {
 	PRs       []SessionPRSummary `json:"prs"`
 }
 
+// NewSessionPRSummary maps the service PR summary model to its HTTP DTO.
 func NewSessionPRSummary(in sessionsvc.PRSummary) SessionPRSummary {
 	return SessionPRSummary{
 		URL:              in.URL,

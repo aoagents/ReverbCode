@@ -33,11 +33,13 @@ type PRSummary struct {
 	ReviewObservedAt time.Time
 }
 
+// PRCISummary describes the latest CI status and failing checks for a PR.
 type PRCISummary struct {
 	State         domain.CIState
 	FailingChecks []PRFailingCheck
 }
 
+// PRFailingCheck is one failed or cancelled CI check for a PR.
 type PRFailingCheck struct {
 	Name       string
 	Status     domain.PRCheckStatus
@@ -45,24 +47,28 @@ type PRFailingCheck struct {
 	URL        string
 }
 
+// PRReviewSummary describes the latest review decision and unresolved comments.
 type PRReviewSummary struct {
 	Decision                   domain.ReviewDecision
 	HasUnresolvedHumanComments bool
 	UnresolvedBy               []PRUnresolvedReviewer
 }
 
+// PRUnresolvedReviewer groups unresolved human comments by reviewer.
 type PRUnresolvedReviewer struct {
 	ReviewerID string
 	Count      int
 	Links      []PRReviewCommentLink
 }
 
+// PRReviewCommentLink points to one unresolved review comment.
 type PRReviewCommentLink struct {
 	URL  string
 	File string
 	Line int
 }
 
+// PRMergeabilitySummary describes whether a PR can be merged and why.
 type PRMergeabilitySummary struct {
 	State         domain.Mergeability
 	Reasons       []string
@@ -70,6 +76,7 @@ type PRMergeabilitySummary struct {
 	ConflictFiles []PRConflictFile
 }
 
+// PRConflictFile is one file involved in a PR merge conflict.
 type PRConflictFile struct {
 	Path string
 	URL  string
