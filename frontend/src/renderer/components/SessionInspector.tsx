@@ -18,10 +18,7 @@ import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSession
 import { prStatusRows, sessionPRDisplaySummaries, type PRDisplayTone } from "../lib/pr-display";
 import type { SessionStatus, WorkspaceSession } from "../types/workspace";
 import { sortedPRs, workerDisplayStatus } from "../types/workspace";
-import { BrowserPanelView } from "./BrowserPanel";
-import type { BrowserViewModel } from "../hooks/useBrowserView";
 import { Badge } from "./ui/badge";
-import { Button } from "./ui/button";
 import { cn } from "../lib/utils";
 import { PRAttentionPanel, PRSummaryMeta } from "./PRSummaryDisplay";
 
@@ -30,7 +27,7 @@ type ReviewRun = components["schemas"]["ReviewRun"];
 type ReviewsResponse = components["schemas"]["ListReviewsResponse"];
 type OpenReviewerTerminal = (target: { handleId: string; harness: string }) => void;
 
-export type InspectorView = "summary" | "reviews" | "browser";
+type InspectorView = "summary" | "reviews" | "browser";
 
 const VIEWS: { id: InspectorView; label: string; icon: ReactNode }[] = [
 	{
@@ -82,29 +79,11 @@ const prStateTone: Record<SessionPRSummary["state"], string> = {
 export function SessionInspector({
 	session,
 	onOpenReviewerTerminal,
-	browserPoppedOut = false,
-	isInspectorVisible = true,
-	onToggleBrowserPopOut,
-	browserView,
-	view: viewProp,
-	onViewChange,
 }: {
 	session?: WorkspaceSession;
 	onOpenReviewerTerminal?: OpenReviewerTerminal;
-	browserPoppedOut?: boolean;
-	isInspectorVisible?: boolean;
-	onToggleBrowserPopOut?: (next: boolean) => void;
-	browserView?: BrowserViewModel;
-	/** Controlled active tab. Omit to let the inspector own its own selection. */
-	view?: InspectorView;
-	onViewChange?: (view: InspectorView) => void;
 }) {
-	const [internalView, setInternalView] = useState<InspectorView>("summary");
-	const view = viewProp ?? internalView;
-	const setView = (next: InspectorView) => {
-		setInternalView(next);
-		onViewChange?.(next);
-	};
+	const [view, setView] = useState<InspectorView>("summary");
 
 	if (!session) {
 		return (
@@ -137,15 +116,7 @@ export function SessionInspector({
 			<div className="session-inspector__body">
 				{view === "summary" ? <SummaryView session={session} /> : null}
 				{view === "reviews" ? <ReviewsView onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} /> : null}
-				{view === "browser" ? (
-					<BrowserView
-						browserPoppedOut={browserPoppedOut}
-						browserView={browserView}
-						isActive={isInspectorVisible && !browserPoppedOut}
-						onTogglePopOut={onToggleBrowserPopOut}
-						session={session}
-					/>
-				) : null}
+				{view === "browser" ? <BrowserView /> : null}
 			</div>
 		</aside>
 	);
@@ -592,44 +563,19 @@ function reviewStatus(review?: ReviewRun): {
 	return { label: "Complete", tone: "success", icon: <CheckCircle2 aria-hidden="true" /> };
 }
 
-function BrowserView({
-	session,
-	isActive,
-	browserPoppedOut,
-	onTogglePopOut,
-	browserView,
-}: {
-	session: WorkspaceSession;
-	isActive: boolean;
-	browserPoppedOut: boolean;
-	onTogglePopOut?: (next: boolean) => void;
-	browserView?: BrowserViewModel;
-}) {
-	if (browserPoppedOut) {
-		return (
-			<div role="tabpanel">
-				<div className="inspector-empty inspector-empty--browser">
-					<p>Browser preview is in the center pane.</p>
-					<Button onClick={() => onTogglePopOut?.(false)} size="sm" type="button" variant="outline">
-						Return to panel
-					</Button>
-				</div>
-			</div>
-		);
-	}
-
-	if (!browserView) {
-		return null;
-	}
-
+function BrowserView() {
 	return (
-		<BrowserPanelView
-			active={isActive}
-			browserView={browserView}
-			onTogglePopOut={(next) => onTogglePopOut?.(next)}
-			poppedOut={false}
-			session={session}
-		/>
+		<div role="tabpanel">
+			<div className="inspector-empty inspector-empty--browser">
+				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+					<circle cx="12" cy="12" r="9" />
+					<line x1="3" y1="12" x2="21" y2="12" />
+					<path d="M12 3a14 14 0 0 1 0 18 14 14 0 0 1 0-18" />
+				</svg>
+				<p>No live browser preview.</p>
+				<span>A browser plugin will render what the agent is viewing here.</span>
+			</div>
+		</div>
 	);
 }
 

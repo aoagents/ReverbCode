@@ -56,24 +56,6 @@ func (s *Store) RenameSession(ctx context.Context, id domain.SessionID, displayN
 	return rows > 0, nil
 }
 
-// SetSessionPreviewURL updates only the browser preview URL for an existing
-// session. It returns ok=false when the session id does not exist. The
-// sessions_cdc_update trigger fans out a session_updated CDC event when the
-// preview URL actually changes.
-func (s *Store) SetSessionPreviewURL(ctx context.Context, id domain.SessionID, previewURL string, updatedAt time.Time) (bool, error) {
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
-	rows, err := s.qw.SetSessionPreviewURL(ctx, gen.SetSessionPreviewURLParams{
-		ID:         id,
-		PreviewURL: previewURL,
-		UpdatedAt:  updatedAt,
-	})
-	if err != nil {
-		return false, fmt.Errorf("set preview url for session %s: %w", id, err)
-	}
-	return rows > 0, nil
-}
-
 // DeleteSession removes a session row, but only if it is still in seed state
 // (no workspace, no runtime handle, no agent session id, no prompt, and not
 // already terminated). Rows that have observable spawn output are immutable
@@ -206,7 +188,6 @@ func rowToRecord(row gen.Session) domain.SessionRecord {
 			RuntimeHandleID: row.RuntimeHandleID,
 			AgentSessionID:  row.AgentSessionID,
 			Prompt:          row.Prompt,
-			PreviewURL:      row.PreviewURL,
 		},
 		CreatedAt: row.CreatedAt,
 		UpdatedAt: row.UpdatedAt,
@@ -232,7 +213,6 @@ func recordToInsert(rec domain.SessionRecord, num int64) gen.InsertSessionParams
 		RuntimeHandleID: rec.Metadata.RuntimeHandleID,
 		AgentSessionID:  rec.Metadata.AgentSessionID,
 		Prompt:          rec.Metadata.Prompt,
-		PreviewURL:      rec.Metadata.PreviewURL,
 		CreatedAt:       rec.CreatedAt,
 		UpdatedAt:       rec.UpdatedAt,
 	}
@@ -255,7 +235,6 @@ func recordToUpdate(rec domain.SessionRecord) gen.UpdateSessionParams {
 		RuntimeHandleID: rec.Metadata.RuntimeHandleID,
 		AgentSessionID:  rec.Metadata.AgentSessionID,
 		Prompt:          rec.Metadata.Prompt,
-		PreviewURL:      rec.Metadata.PreviewURL,
 		UpdatedAt:       rec.UpdatedAt,
 	}
 }

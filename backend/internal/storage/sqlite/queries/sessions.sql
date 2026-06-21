@@ -6,41 +6,38 @@ INSERT INTO sessions (
     id, project_id, num, issue_id, kind, harness, display_name,
     activity_state, activity_last_at, first_signal_at, is_terminated,
     branch, workspace_path, runtime_handle_id, agent_session_id, prompt,
-    preview_url, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    created_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: UpdateSession :exec
 UPDATE sessions SET
     issue_id = ?, kind = ?, harness = ?, display_name = ?,
     activity_state = ?, activity_last_at = ?, first_signal_at = ?, is_terminated = ?,
     branch = ?, workspace_path = ?, runtime_handle_id = ?, agent_session_id = ?, prompt = ?,
-    preview_url = ?, updated_at = ?
+    updated_at = ?
 WHERE id = ?;
 
 -- name: GetSession :one
 SELECT id, project_id, num, issue_id, kind, harness,
     activity_state, activity_last_at, is_terminated, branch, workspace_path,
-    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at, preview_url
+    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at
 FROM sessions WHERE id = ?;
 
 -- name: ListSessionsByProject :many
 SELECT id, project_id, num, issue_id, kind, harness,
     activity_state, activity_last_at, is_terminated, branch, workspace_path,
-    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at, preview_url
+    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at
 FROM sessions WHERE project_id = ? ORDER BY num;
 
 -- name: ListAllSessions :many
 SELECT id, project_id, num, issue_id, kind, harness,
     activity_state, activity_last_at, is_terminated, branch, workspace_path,
-    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at, preview_url
+    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at
 FROM sessions ORDER BY project_id, num;
 
 
 -- name: RenameSession :execrows
 UPDATE sessions SET display_name = ?, updated_at = ? WHERE id = ?;
-
--- name: SetSessionPreviewURL :execrows
-UPDATE sessions SET preview_url = ?, updated_at = ? WHERE id = ?;
 
 -- name: SessionIsSeed :one
 -- SessionIsSeed reports whether the session id matches a row still in seed

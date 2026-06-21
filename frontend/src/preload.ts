@@ -1,18 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { BrowserNavState, BrowserRect } from "./main/browser-view-host";
 import type { DaemonStatus } from "./shared/daemon-status";
 import type { TelemetryBootstrap } from "./shared/telemetry";
-
-export type BrowserBoundsInput = {
-	viewId: string;
-	rect: BrowserRect;
-	visible: boolean;
-};
-
-export type BrowserNavigateInput = {
-	viewId: string;
-	url: string;
-};
 
 const api = {
 	app: {
@@ -37,24 +25,6 @@ const api = {
 	},
 	telemetry: {
 		getBootstrap: () => ipcRenderer.invoke("telemetry:getBootstrap") as Promise<TelemetryBootstrap | null>,
-	},
-	browser: {
-		ensure: (sessionId: string) => ipcRenderer.invoke("browser:ensure", sessionId) as Promise<BrowserNavState>,
-		setBounds: (input: BrowserBoundsInput) => ipcRenderer.send("browser:setBounds", input),
-		navigate: (input: BrowserNavigateInput) =>
-			ipcRenderer.invoke("browser:navigate", input) as Promise<BrowserNavState>,
-		goBack: (viewId: string) => ipcRenderer.invoke("browser:goBack", viewId) as Promise<BrowserNavState>,
-		goForward: (viewId: string) => ipcRenderer.invoke("browser:goForward", viewId) as Promise<BrowserNavState>,
-		reload: (viewId: string) => ipcRenderer.invoke("browser:reload", viewId) as Promise<BrowserNavState>,
-		stop: (viewId: string) => ipcRenderer.invoke("browser:stop", viewId) as Promise<BrowserNavState>,
-		destroy: (viewId: string) => ipcRenderer.send("browser:destroy", viewId),
-		onNavState: (listener: (state: BrowserNavState) => void) => {
-			const wrapped = (_event: Electron.IpcRendererEvent, state: BrowserNavState) => listener(state);
-			ipcRenderer.on("browser:navState", wrapped);
-			return () => {
-				ipcRenderer.off("browser:navState", wrapped);
-			};
-		},
 	},
 	notifications: {
 		show: (notification: { id: string; title: string; body?: string }) =>

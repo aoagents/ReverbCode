@@ -167,7 +167,6 @@ type Session struct {
 	UpdatedAt       time.Time
 	DisplayName     string
 	FirstSignalAt   sql.NullTime
-	PreviewURL      string
 }
 
 type SessionWorktree struct {

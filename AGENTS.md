@@ -41,8 +41,6 @@ npm run typecheck
 npm run build
 ```
 
-When showing or demoing frontend changes, run `ao preview [url]` from inside the session so the change renders in the desktop browser panel (the inspector rail's Browser tab); do not just describe it.
-
 ## Where to look first
 
 - `README.md` — current run/config/test quickstart.

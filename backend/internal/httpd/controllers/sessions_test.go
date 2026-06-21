@@ -6,10 +6,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
-	"os"
-	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -82,21 +78,7 @@ func (f *fakeSessionService) SpawnOrchestrator(ctx context.Context, projectID do
 }
 
 func (f *fakeSessionService) Get(_ context.Context, id domain.SessionID) (domain.Session, error) {
-	s, ok := f.sessions[id]
-	if !ok {
-		return domain.Session{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
-	}
-	return s, nil
-}
-
-func (f *fakeSessionService) SetPreview(_ context.Context, id domain.SessionID, previewURL string) (domain.Session, error) {
-	s, ok := f.sessions[id]
-	if !ok {
-		return domain.Session{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
-	}
-	s.Metadata.PreviewURL = previewURL
-	f.sessions[id] = s
-	return s, nil
+	return f.sessions[id], nil
 }
 
 func (f *fakeSessionService) Restore(_ context.Context, id domain.SessionID) (domain.Session, error) {
@@ -325,124 +307,6 @@ func TestSessionsAPI_ListSpawnGetAndActions(t *testing.T) {
 	if status != http.StatusCreated {
 		t.Fatalf("orchestrator = %d, want 201; body=%s", status, body)
 	}
-}
-
-func TestSessionsAPI_PreviewDiscoversAndServesStaticIndex(t *testing.T) {
-	svc := newFakeSessionService()
-	workspace := t.TempDir()
-	if err := os.WriteFile(filepath.Join(workspace, "index.html"), []byte(`<link rel="stylesheet" href="styles.css"><script src="app.js"></script>`), 0o644); err != nil {
-		t.Fatalf("write index: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(workspace, "styles.css"), []byte(`body { color: red; }`), 0o644); err != nil {
-		t.Fatalf("write css: %v", err)
-	}
-	s := svc.sessions["ao-1"]
-	s.Metadata = domain.SessionMetadata{WorkspacePath: workspace}
-	svc.sessions["ao-1"] = s
-	srv := newSessionTestServer(t, svc)
-
-	body, status, _ := doRequest(t, srv, "GET", "/api/v1/sessions/ao-1/preview", "")
-	if status != http.StatusOK {
-		t.Fatalf("preview = %d, want 200; body=%s", status, body)
-	}
-	var preview struct {
-		SessionID  string `json:"sessionId"`
-		PreviewURL string `json:"previewUrl"`
-		Entry      string `json:"entry"`
-	}
-	mustJSON(t, body, &preview)
-	if preview.SessionID != "ao-1" || preview.Entry != "index.html" || preview.PreviewURL == "" {
-		t.Fatalf("preview response = %#v", preview)
-	}
-	if strings.Contains(preview.PreviewURL, workspace) {
-		t.Fatalf("preview leaked workspace path: %s", preview.PreviewURL)
-	}
-	if !strings.Contains(preview.PreviewURL, "/index.html") {
-		t.Fatalf("preview URL = %q, want index.html asset path", preview.PreviewURL)
-	}
-	parsed, err := url.Parse(preview.PreviewURL)
-	if err != nil {
-		t.Fatalf("parse preview URL: %v", err)
-	}
-	body, status, headers := doRequest(t, srv, "GET", parsed.RequestURI(), "")
-	if status != http.StatusOK {
-		t.Fatalf("preview file = %d, want 200; body=%s", status, body)
-	}
-	if !strings.Contains(headers.Get("Content-Type"), "text/html") {
-		t.Fatalf("content type = %q, want text/html", headers.Get("Content-Type"))
-	}
-	if !strings.Contains(string(body), "styles.css") {
-		t.Fatalf("preview body did not serve index: %s", body)
-	}
-}
-
-func TestSessionsAPI_SetPreviewExplicitURLPersists(t *testing.T) {
-	svc := newFakeSessionService()
-	srv := newSessionTestServer(t, svc)
-
-	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/preview", `{"url":"http://localhost:5173/"}`)
-	if status != http.StatusOK {
-		t.Fatalf("set preview = %d, want 200; body=%s", status, body)
-	}
-	var resp struct {
-		Session struct {
-			PreviewURL string `json:"previewUrl"`
-		} `json:"session"`
-	}
-	mustJSON(t, body, &resp)
-	if resp.Session.PreviewURL != "http://localhost:5173/" {
-		t.Fatalf("response previewUrl = %q, want explicit url", resp.Session.PreviewURL)
-	}
-	if got := svc.sessions["ao-1"].Metadata.PreviewURL; got != "http://localhost:5173/" {
-		t.Fatalf("persisted previewUrl = %q, want explicit url", got)
-	}
-}
-
-func TestSessionsAPI_SetPreviewEmptyURLAutodetectsIndex(t *testing.T) {
-	svc := newFakeSessionService()
-	workspace := t.TempDir()
-	if err := os.WriteFile(filepath.Join(workspace, "index.html"), []byte(`<html></html>`), 0o644); err != nil {
-		t.Fatalf("write index: %v", err)
-	}
-	s := svc.sessions["ao-1"]
-	s.Metadata = domain.SessionMetadata{WorkspacePath: workspace}
-	svc.sessions["ao-1"] = s
-	srv := newSessionTestServer(t, svc)
-
-	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/preview", `{}`)
-	if status != http.StatusOK {
-		t.Fatalf("set preview = %d, want 200; body=%s", status, body)
-	}
-	var resp struct {
-		Session struct {
-			PreviewURL string `json:"previewUrl"`
-		} `json:"session"`
-	}
-	mustJSON(t, body, &resp)
-	if !strings.Contains(resp.Session.PreviewURL, "/index.html") {
-		t.Fatalf("response previewUrl = %q, want autodetected index.html URL", resp.Session.PreviewURL)
-	}
-	if strings.Contains(resp.Session.PreviewURL, workspace) {
-		t.Fatalf("preview leaked workspace path: %s", resp.Session.PreviewURL)
-	}
-}
-
-func TestSessionsAPI_SetPreviewEmptyURLNoEntry(t *testing.T) {
-	svc := newFakeSessionService()
-	s := svc.sessions["ao-1"]
-	s.Metadata = domain.SessionMetadata{WorkspacePath: t.TempDir()}
-	svc.sessions["ao-1"] = s
-	srv := newSessionTestServer(t, svc)
-
-	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/preview", `{}`)
-	assertErrorCode(t, body, status, http.StatusNotFound, "NO_PREVIEW_ENTRY")
-}
-
-func TestSessionsAPI_SetPreviewNotFound(t *testing.T) {
-	srv := newSessionTestServer(t, newFakeSessionService())
-
-	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/missing-1/preview", `{"url":"http://x"}`)
-	assertErrorCode(t, body, status, http.StatusNotFound, "SESSION_NOT_FOUND")
 }
 
 func TestSessionsAPI_SpawnBranchNotFetchedReturnsTypedError(t *testing.T) {

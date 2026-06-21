@@ -45,48 +45,8 @@ const { workspaces, panels } = vi.hoisted(() => {
 
 // The terminal and inspector body pull in xterm/SSE machinery irrelevant to
 // the split under test. (The topbar is shell-owned — see ShellTopbar.)
-vi.mock("./CenterPane", () => ({ CenterPane: () => <div>terminal center</div> }));
-vi.mock("./BrowserPanel", () => ({
-	BrowserPanelView: ({
-		poppedOut,
-		onTogglePopOut,
-	}: {
-		poppedOut: boolean;
-		onTogglePopOut: (next: boolean) => void;
-	}) => (
-		<button type="button" onClick={() => onTogglePopOut(!poppedOut)}>
-			{poppedOut ? "browser center" : "browser rail"}
-		</button>
-	),
-}));
-const browserDestroy = vi.hoisted(() => vi.fn());
-vi.mock("../hooks/useBrowserView", () => ({
-	useBrowserView: () => ({
-		viewId: "browser:sess-1",
-		navState: {
-			viewId: "browser:sess-1",
-			url: "http://127.0.0.1:4173/",
-			title: "Calculator",
-			canGoBack: false,
-			canGoForward: false,
-			isLoading: false,
-		},
-		slotRef: vi.fn(),
-		navigate: vi.fn(),
-		goBack: vi.fn(),
-		goForward: vi.fn(),
-		reload: vi.fn(),
-		stop: vi.fn(),
-		destroy: browserDestroy,
-	}),
-}));
-vi.mock("./SessionInspector", () => ({
-	SessionInspector: ({ onToggleBrowserPopOut, view }: { onToggleBrowserPopOut?: () => void; view?: string }) => (
-		<button type="button" data-view={view} onClick={onToggleBrowserPopOut}>
-			pop browser
-		</button>
-	),
-}));
+vi.mock("./CenterPane", () => ({ CenterPane: () => <div /> }));
+vi.mock("./SessionInspector", () => ({ SessionInspector: () => <div /> }));
 vi.mock("../lib/shell-context", () => ({
 	useShell: () => ({ daemonStatus: { state: "ready" } }),
 }));
@@ -169,7 +129,6 @@ describe("SessionView", () => {
 		window.localStorage.clear();
 		useUiStore.setState({ isInspectorOpen: true });
 		panels.clear();
-		browserDestroy.mockReset();
 	});
 
 	// Regression: react-resizable-panels v4 treats bare numeric sizes as PIXELS
@@ -299,37 +258,5 @@ describe("SessionView", () => {
 		// The shortcut is inactive without an inspector.
 		fireEvent.keyDown(window, { key: "B", metaKey: true, shiftKey: true });
 		expect(useUiStore.getState().isInspectorOpen).toBe(true);
-	});
-
-	it("lets the browser take over the center pane and return to the rail", () => {
-		render(<SessionView sessionId="sess-1" />);
-
-		expect(screen.getByText("terminal center")).toBeInTheDocument();
-		fireEvent.click(screen.getByRole("button", { name: "pop browser" }));
-
-		expect(screen.queryByText("terminal center")).not.toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "browser center" })).toBeInTheDocument();
-
-		fireEvent.click(screen.getByRole("button", { name: "browser center" }));
-		expect(screen.getByText("terminal center")).toBeInTheDocument();
-		expect(browserDestroy).not.toHaveBeenCalled();
-	});
-
-	it("reveals an `ao preview` URL in the inspector Browser tab, not the center pane", () => {
-		const worker = workspaces[0].sessions[0];
-		worker.previewUrl = "http://localhost:5173/";
-		try {
-			useUiStore.setState({ isInspectorOpen: false });
-			render(<SessionView sessionId="sess-1" />);
-
-			// Center pane keeps the terminal — the preview must not pop out over it.
-			expect(screen.getByText("terminal center")).toBeInTheDocument();
-			expect(screen.queryByRole("button", { name: "browser center" })).not.toBeInTheDocument();
-			// Rail opened and switched to the Browser tab.
-			expect(useUiStore.getState().isInspectorOpen).toBe(true);
-			expect(screen.getByRole("button", { name: "pop browser" })).toHaveAttribute("data-view", "browser");
-		} finally {
-			delete worker.previewUrl;
-		}
 	});
 });

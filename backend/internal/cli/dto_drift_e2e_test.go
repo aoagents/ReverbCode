@@ -90,10 +90,6 @@ func (f *fakeSessionService) Rename(context.Context, domain.SessionID, string) e
 	return nil
 }
 
-func (f *fakeSessionService) SetPreview(context.Context, domain.SessionID, string) (domain.Session, error) {
-	return domain.Session{}, nil
-}
-
 func (f *fakeSessionService) Send(context.Context, domain.SessionID, string) error {
 	return nil
 }

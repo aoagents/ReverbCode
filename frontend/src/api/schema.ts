@@ -315,41 +315,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/sessions/{sessionId}/preview": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Discover a browser preview URL for a session workspace */
-        get: operations["getSessionPreview"];
-        put?: never;
-        /** Set (or autodetect) the browser preview URL for a session */
-        post: operations["setSessionPreview"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/sessions/{sessionId}/preview/files/*": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Serve a static browser preview file from a session workspace */
-        get: operations["getSessionPreviewFile"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/sessions/{sessionId}/restore": {
         parameters: {
             query?: never;
@@ -524,7 +489,6 @@ export interface components {
             isTerminated: boolean;
             issueId?: string;
             kind: string;
-            previewUrl?: string;
             projectId: string;
             prs: components["schemas"]["SessionPRFacts"][];
             /** @enum {string} */
@@ -795,11 +759,6 @@ export interface components {
             links: components["schemas"]["SessionPRReviewCommentLink"][];
             reviewerId: string;
         };
-        SessionPreviewResponse: {
-            entry?: string;
-            previewUrl?: string;
-            sessionId: string;
-        };
         SessionResponse: {
             session: components["schemas"]["ControllersSessionView"];
         };
@@ -817,10 +776,6 @@ export interface components {
         };
         SetProjectConfigInput: {
             config: components["schemas"]["ProjectConfig"];
-        };
-        SetSessionPreviewRequest: {
-            /** @description Preview target URL. When empty, the daemon autodetects a static entry point in the session workspace. */
-            url?: string;
         };
         SpawnOrchestratorRequest: {
             clean?: boolean;
@@ -2026,169 +1981,6 @@ export interface operations {
             };
             /** @description Service Unavailable */
             503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["APIError"];
-                };
-            };
-        };
-    };
-    getSessionPreview: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Session identifier, e.g. project-1. */
-                sessionId: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SessionPreviewResponse"];
-                };
-            };
-            /** @description Not Found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["APIError"];
-                };
-            };
-            /** @description Internal Server Error */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["APIError"];
-                };
-            };
-            /** @description Not Implemented */
-            501: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["APIError"];
-                };
-            };
-        };
-    };
-    setSessionPreview: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Session identifier, e.g. project-1. */
-                sessionId: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SetSessionPreviewRequest"];
-            };
-        };
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SessionResponse"];
-                };
-            };
-            /** @description Bad Request */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["APIError"];
-                };
-            };
-            /** @description Not Found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["APIError"];
-                };
-            };
-            /** @description Internal Server Error */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["APIError"];
-                };
-            };
-            /** @description Not Implemented */
-            501: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["APIError"];
-                };
-            };
-        };
-    };
-    getSessionPreviewFile: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Session identifier, e.g. project-1. */
-                sessionId: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "text/html": string;
-                };
-            };
-            /** @description Not Found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["APIError"];
-                };
-            };
-            /** @description Internal Server Error */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["APIError"];
-                };
-            };
-            /** @description Not Implemented */
-            501: {
                 headers: {
                     [name: string]: unknown;
                 };
