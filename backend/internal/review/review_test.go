@@ -23,6 +23,10 @@ type fakeStore struct {
 	// winner (so a follow-up GetReviewRunBySessionAndSHA finds it) and returns
 	// insertErr instead of recording the caller's run.
 	insertErr error
+	// beforeUpdate, when set, runs at the start of UpdateReviewRunResult. Tests
+	// use it to model a concurrent Submit landing on a run between the
+	// idempotency lookup and the supersede update (the CAS race).
+	beforeUpdate func(s *fakeStore, id string)
 }
 
 func (f *fakeStore) UpsertReview(_ context.Context, r domain.Review) error {
@@ -47,6 +51,9 @@ func (f *fakeStore) InsertReviewRun(_ context.Context, r domain.ReviewRun) error
 	return nil
 }
 func (f *fakeStore) UpdateReviewRunResult(_ context.Context, id string, status domain.ReviewRunStatus, verdict domain.ReviewVerdict, body string) (bool, error) {
+	if f.beforeUpdate != nil {
+		f.beforeUpdate(f, id)
+	}
 	for i := range f.runs {
 		if f.runs[i].ID == id {
 			if f.runs[i].Status != domain.ReviewRunRunning {
@@ -239,13 +246,15 @@ func TestTriggerFallsBackToExistingRunOnUniqueConflict(t *testing.T) {
 }
 
 func TestTriggerIsIdempotentForSameCommit(t *testing.T) {
-	// A verdict was actually recorded for this commit (via Submit) — this is
-	// the only state that counts as genuinely done.
+	// A Complete pass is the only state that blocks re-review: Status Complete
+	// is set exclusively by Submit, after it records a verdict. The body is
+	// deliberately empty here — an approved review may carry none, yet a
+	// finished pass still blocks. The block is gated on Status, not the body.
 	store := &fakeStore{
 		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", ReviewerHandleID: "review-mer-1"},
 		runs: []domain.ReviewRun{{
 			ID: "run-1", SessionID: "mer-1", TargetSHA: "sha1",
-			Status: domain.ReviewRunComplete, Verdict: domain.VerdictApproved,
+			Status: domain.ReviewRunComplete, Verdict: domain.VerdictApproved, Body: "",
 		}},
 	}
 	launcher := &fakeLauncher{alive: true}
@@ -260,6 +269,43 @@ func TestTriggerIsIdempotentForSameCommit(t *testing.T) {
 	}
 	if launcher.spawned || launcher.notified {
 		t.Fatalf("should not launch for an already-reviewed commit: %+v", launcher)
+	}
+	if len(store.runs) != 1 {
+		t.Fatalf("should not insert another run: %+v", store.runs)
+	}
+}
+
+func TestTriggerReturnsCompletedRunWhenSubmitWinsSupersedeRace(t *testing.T) {
+	// A retry finds a Running pass and moves to supersede it, but a concurrent
+	// Submit lands first and marks that pass Complete. The CAS supersede then
+	// no-ops (the row is no longer Running), so Trigger must re-read and return
+	// the now-Complete pass rather than starting a redundant one.
+	store := &fakeStore{
+		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", ReviewerHandleID: "review-mer-1"},
+		runs:   []domain.ReviewRun{{ID: "run-1", SessionID: "mer-1", TargetSHA: "sha1", Status: domain.ReviewRunRunning}},
+	}
+	// Model the concurrent Submit: the moment Trigger tries to supersede run-1,
+	// flip it Complete with a verdict, exactly as Submit would have.
+	store.beforeUpdate = func(s *fakeStore, id string) {
+		for i := range s.runs {
+			if s.runs[i].ID == id && s.runs[i].Status == domain.ReviewRunRunning {
+				s.runs[i].Status = domain.ReviewRunComplete
+				s.runs[i].Verdict = domain.VerdictApproved
+			}
+		}
+	}
+	launcher := &fakeLauncher{alive: true, handle: "review-mer-1"}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
+
+	res, err := eng.Trigger(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatalf("Trigger: %v", err)
+	}
+	if res.Created || res.Run.ID != "run-1" || res.Run.Status != domain.ReviewRunComplete {
+		t.Fatalf("expected the Submit-completed run returned as-is, got %+v", res)
+	}
+	if launcher.spawned || launcher.notified {
+		t.Fatalf("should not start a redundant pass after losing to Submit: %+v", launcher)
 	}
 	if len(store.runs) != 1 {
 		t.Fatalf("should not insert another run: %+v", store.runs)

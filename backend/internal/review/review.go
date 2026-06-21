@@ -184,17 +184,20 @@ func (e *Engine) Trigger(ctx context.Context, workerID domain.SessionID) (Trigge
 		return TriggerResult{}, err
 	}
 
-	// Idempotency: a pass only counts as done once it actually carries a
-	// verdict (set exclusively by Submit). Status alone isn't enough — a
-	// Running pass with no verdict may have been interrupted (its execution
-	// stopped, or its pane killed) without ever calling Submit, and pane
-	// liveness can't distinguish "still working" from "pane open, work
-	// stopped." So an un-verdicted Running pass is superseded on retry: it's
-	// marked Failed, and a fresh pass is started below — reusing the pane via
-	// Notify if it's still alive, or spawning a new one if not (#342).
+	// Idempotency: a commit only counts as reviewed once a pass actually
+	// finished — Status Complete, which only Submit sets, and only after
+	// recording a verdict. Any non-Complete pass is retryable:
+	//   - A Failed pass (launch error, or one superseded below) falls through to
+	//     a fresh retry.
+	//   - A Running pass may have been interrupted (its execution stopped, or
+	//     its pane killed) without ever calling Submit, and pane liveness can't
+	//     distinguish "still working" from "pane open, work stopped." So it's
+	//     superseded on retry: marked Failed, then a fresh pass starts below —
+	//     reusing the pane via Notify if it's still alive, or spawning a new one
+	//     if not (#342).
 	if existing, ok, err := e.store.GetReviewRunBySessionAndSHA(ctx, workerID, targetSHA); err != nil {
 		return TriggerResult{}, err
-	} else if ok && existing.Verdict != domain.VerdictNone {
+	} else if ok && existing.Status == domain.ReviewRunComplete {
 		return TriggerResult{Run: existing, ReviewerHandleID: review.ReviewerHandleID, Created: false}, nil
 	} else if ok && existing.Status == domain.ReviewRunRunning {
 		superseded, err := e.store.UpdateReviewRunResult(ctx, existing.ID, domain.ReviewRunFailed, domain.VerdictNone, "superseded by a new review trigger")
@@ -202,8 +205,8 @@ func (e *Engine) Trigger(ctx context.Context, workerID domain.SessionID) (Trigge
 			return TriggerResult{}, err
 		}
 		if !superseded {
-			// Lost the race to a concurrent Submit: re-read and trust its verdict
-			// rather than starting a redundant pass.
+			// Lost the race to a concurrent Submit: that pass is now Complete, so
+			// re-read and return it instead of starting a redundant pass.
 			if latest, ok, err := e.store.GetReviewRun(ctx, existing.ID); err != nil {
 				return TriggerResult{}, err
 			} else if ok {
