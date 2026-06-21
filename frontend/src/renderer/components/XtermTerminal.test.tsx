@@ -8,6 +8,7 @@ const state = vi.hoisted(() => ({
 		selection: string;
 		options: Record<string, unknown>;
 		modes: { bracketedPasteMode: boolean };
+		dataListeners: Set<(data: string) => void>;
 		selectionListeners: Set<() => void>;
 	},
 }));
@@ -20,6 +21,7 @@ vi.mock("@xterm/xterm", () => ({
 		selection = "";
 		keyHandler?: (event: KeyboardEvent) => boolean;
 		modes = { bracketedPasteMode: false };
+		dataListeners = new Set<(data: string) => void>();
 		selectionListeners = new Set<() => void>();
 
 		constructor(options: Record<string, unknown>) {
@@ -34,8 +36,9 @@ vi.mock("@xterm/xterm", () => ({
 		write() {}
 		writeln() {}
 		dispose() {}
-		onData() {
-			return { dispose: () => undefined };
+		onData(listener: (data: string) => void) {
+			this.dataListeners.add(listener);
+			return { dispose: () => this.dataListeners.delete(listener) };
 		}
 		onResize() {
 			return { dispose: () => undefined };
@@ -170,6 +173,15 @@ describe("XtermTerminal", () => {
 		expect(allowed).toBe(false);
 		expect(writeText).toHaveBeenCalledTimes(2);
 		expect(writeText).toHaveBeenLastCalledWith("retry me");
+	});
+
+	it("forwards generated xterm input data such as wheel scroll reports", () => {
+		const onInput = vi.fn();
+		render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
+
+		state.lastTerminal!.dataListeners.forEach((listener) => listener("\x1b[A"));
+
+		expect(onInput).toHaveBeenCalledWith("\x1b[A", "terminal");
 	});
 
 	it("enables xterm's modifier selection without overriding mouse mode", () => {

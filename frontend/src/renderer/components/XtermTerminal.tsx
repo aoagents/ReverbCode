@@ -307,7 +307,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			if (data.length === 0) return;
 			userInputListeners.forEach((listener) => listener(data, source));
 		};
-		const keyInput = term.onKey(({ key }) => emitUserInput(key, "keyboard"));
+		const terminalInput = term.onData((data) => emitUserInput(data, "terminal"));
 		const pasteInput = (event: ClipboardEvent) => {
 			event.preventDefault();
 			event.stopPropagation();
@@ -355,7 +355,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			selectionChange.dispose();
 			host.removeEventListener("paste", pasteInput, true);
 			host.removeEventListener("compositionend", compositionInput, true);
-			keyInput.dispose();
+			terminalInput.dispose();
 			userInputListeners.clear();
 			try {
 				term.dispose();
