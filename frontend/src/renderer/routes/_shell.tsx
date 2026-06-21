@@ -117,11 +117,7 @@ function ShellLayout() {
 					prs: [],
 				};
 				updateWorkspaces((current) =>
-					current.map((w) =>
-						w.id === workspace.id
-							? { ...w, sessions: [orchestratorSession, ...w.sessions] }
-							: w,
-					),
+					current.map((w) => (w.id === workspace.id ? { ...w, sessions: [orchestratorSession, ...w.sessions] } : w)),
 				);
 				await queryClient.refetchQueries({ queryKey: workspaceQueryKey });
 				void navigate({
