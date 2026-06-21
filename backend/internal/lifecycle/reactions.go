@@ -3,15 +3,40 @@ package lifecycle
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 const reviewMaxNudge = 3
+
+// ReviewDeliveryOutcome reports what ApplyReviewResult did with a completed
+// AO-internal review pass.
+type ReviewDeliveryOutcome string
+
+const (
+	ReviewDeliveryNoop ReviewDeliveryOutcome = "no_op"
+	ReviewDeliverySent ReviewDeliveryOutcome = "sent"
+)
+
+// ReviewResult is the already-persisted result of an AO-internal review pass.
+// Lifecycle treats it as input to the reaction reducer; it does not write the
+// review_run row.
+type ReviewResult struct {
+	RunID          string
+	WorkerID       domain.SessionID
+	PRURL          string
+	TargetSHA      string
+	Verdict        domain.ReviewVerdict
+	Body           string
+	GithubReviewID string
+	DeliveredAt    *time.Time
+}
 
 type reactionState struct {
 	mu       sync.Mutex
@@ -75,20 +100,26 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 					// terminal (the dedup signature stays on the raw bytes).
 					msg += "\n\nFailing output:\n" + domain.SanitizeControlChars(ch.LogTail)
 				}
-				return m.sendOnce(ctx, id, o.URL, "ci:"+o.URL+":"+ch.Name, ch.CommitHash+":"+ch.LogTail, msg, 0)
+				_, err := m.sendOnce(ctx, id, o.URL, "ci:"+o.URL+":"+ch.Name, ch.CommitHash+":"+ch.LogTail, msg, 0)
+				return err
 			}
 		}
 	}
 	if o.Review == domain.ReviewChangesRequest || hasUnresolvedComments(o.Comments) {
 		comments, sig := reviewContent(o.Comments)
-		msg := "A reviewer left feedback on your PR. Address it and push."
+		msg := "[PR reviewer]"
+		if author := firstReviewAuthor(o.Comments); author != "" {
+			msg = "[PR reviewer @" + domain.SanitizeControlChars(author) + "]"
+		}
+		msg += " A reviewer left feedback on your PR. Address it and push."
 		if comments != "" {
 			msg += "\n\n" + comments
 		}
 		if sig == "" {
 			sig = string(o.Review)
 		}
-		return m.sendOnce(ctx, id, o.URL, "review:"+o.URL, sig, msg, reviewMaxNudge)
+		_, err := m.sendOnce(ctx, id, o.URL, "review:"+o.URL, sig, msg, reviewMaxNudge)
+		return err
 	}
 	if o.Mergeability == domain.MergeConflicting {
 		// Only the bottom of a stack is eligible for the rebase nudge. A PR
@@ -103,9 +134,47 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 		if blocked {
 			return nil
 		}
-		return m.sendOnce(ctx, id, o.URL, "merge-conflict:"+o.URL, string(o.Mergeability), "Your PR has merge conflicts. Rebase onto the base branch and resolve them.", 0)
+		_, err = m.sendOnce(ctx, id, o.URL, "merge-conflict:"+o.URL, string(o.Mergeability), "Your PR has merge conflicts. Rebase onto the base branch and resolve them.", 0)
+		return err
 	}
 	return nil
+}
+
+// ApplyReviewResult reacts to a completed AO-internal review pass after the
+// review service has persisted the run result. It mirrors ApplyPRObservation:
+// no change_log reads, no review_run writes, only lifecycle side effects.
+func (m *Manager) ApplyReviewResult(ctx context.Context, workerID domain.SessionID, r ReviewResult) (ReviewDeliveryOutcome, error) {
+	if r.Verdict != domain.VerdictChangesRequested || r.DeliveredAt != nil {
+		return ReviewDeliveryNoop, nil
+	}
+	rec, ok, err := m.store.GetSession(ctx, workerID)
+	if err != nil || !ok {
+		return ReviewDeliveryNoop, err
+	}
+	if rec.IsTerminated || rec.Activity.State == domain.ActivityWaitingInput {
+		return ReviewDeliveryNoop, nil
+	}
+	if m.messenger == nil {
+		return ReviewDeliveryNoop, nil
+	}
+	msg := "[AO reviewer] AO's internal code reviewer requested changes on your PR. Review the feedback below and address it."
+	if r.GithubReviewID != "" {
+		safeReviewID := domain.SanitizeControlChars(r.GithubReviewID)
+		msg += fmt.Sprintf(" This feedback is GitHub review %s. Once you have addressed it, reply on that review referencing id %s with how you addressed it, then resolve the review comment threads you addressed.", safeReviewID, safeReviewID)
+	}
+	if r.Body != "" {
+		msg += "\n\n" + domain.SanitizeControlChars(r.Body)
+	}
+	key := "review:" + r.PRURL + ":ao:" + r.RunID
+	sig := strings.Join([]string{r.TargetSHA, r.RunID, r.GithubReviewID, r.Body}, "\x00")
+	sent, err := m.sendOnce(ctx, workerID, r.PRURL, key, sig, msg, reviewMaxNudge)
+	if err != nil {
+		return ReviewDeliveryNoop, err
+	}
+	if !sent {
+		return ReviewDeliverySent, nil
+	}
+	return ReviewDeliverySent, nil
 }
 
 // sessionComplete reports whether the session has reached the multi-PR
@@ -353,7 +422,8 @@ func (m *Manager) ApplyTrackerFacts(ctx context.Context, id domain.SessionID, o 
 			// the PR-row signature load/persist is skipped, so the dedup
 			// survives only for the lifetime of this Manager. Cross-restart
 			// persistence ships with #35.
-			return m.sendOnce(ctx, id, "", "tracker-bot:"+o.Issue.URL, strings.Join(ids, ","), msg, 0)
+			_, err := m.sendOnce(ctx, id, "", "tracker-bot:"+o.Issue.URL, strings.Join(ids, ","), msg, 0)
+			return err
 		}
 	}
 	return nil
@@ -417,29 +487,38 @@ func reviewContent(comments []ports.PRCommentObservation) (string, string) {
 	return strings.Join(bodies, "\n\n"), strings.Join(ids, ",")
 }
 
-func (m *Manager) sendOnce(ctx context.Context, id domain.SessionID, prURL, key, sig, msg string, maxAttempts int) error {
+func firstReviewAuthor(comments []ports.PRCommentObservation) string {
+	for _, c := range comments {
+		if strings.TrimSpace(c.Author) != "" {
+			return strings.TrimPrefix(strings.TrimSpace(c.Author), "@")
+		}
+	}
+	return ""
+}
+
+func (m *Manager) sendOnce(ctx context.Context, id domain.SessionID, prURL, key, sig, msg string, maxAttempts int) (bool, error) {
 	if m.messenger == nil {
-		return nil
+		return false, nil
 	}
 	m.react.mu.Lock()
 	defer m.react.mu.Unlock()
 
 	if prURL != "" && !m.react.loaded[prURL] {
 		if err := m.loadPRSignaturesLocked(ctx, prURL); err != nil {
-			return err
+			return false, err
 		}
 		m.react.loaded[prURL] = true
 	}
 
 	if m.react.seen[key] == sig {
-		return nil
+		return false, nil
 	}
 	attempts := m.react.attempts[key]
 	if maxAttempts > 0 && attempts >= maxAttempts {
-		return nil
+		return false, nil
 	}
 	if err := m.messenger.Send(ctx, id, msg); err != nil {
-		return err
+		return false, err
 	}
 	// Order: Send → in-memory mutation → durable persist. Sending first means a
 	// transient persist failure does NOT swallow a real send (the agent saw the
@@ -451,10 +530,10 @@ func (m *Manager) sendOnce(ctx context.Context, id domain.SessionID, prURL, key,
 	m.react.attempts[key] = attempts + 1
 	if prURL != "" {
 		if err := m.persistPRSignaturesLocked(ctx, prURL); err != nil {
-			return err
+			return true, err
 		}
 	}
-	return nil
+	return true, nil
 }
 
 // loadPRSignaturesLocked merges any previously persisted reaction-dedup state

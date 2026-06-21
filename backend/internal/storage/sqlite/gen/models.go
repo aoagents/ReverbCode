@@ -146,6 +146,7 @@ type ReviewRun struct {
 	Body           string
 	CreatedAt      time.Time
 	GithubReviewID string
+	DeliveredAt    sql.NullTime
 }
 
 type Session struct {

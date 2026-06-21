@@ -1651,6 +1651,11 @@ components:
         createdAt:
           format: date-time
           type: string
+        deliveredAt:
+          format: date-time
+          type:
+          - "null"
+          - string
         githubReviewId:
           type: string
         harness:
