@@ -10,7 +10,7 @@ import { expect, test } from "@playwright/test";
 // the real rrp + CSS pipeline, which the mocked unit tests can't exercise.
 test("topbar button collapses and reopens the inspector rail", async ({ page }) => {
 	await page.goto("/");
-	await page.getByRole("button", { name: "Open refactor-mux" }).click();
+	await page.getByRole("button", { name: "Open Split terminal mux responsibilities" }).click();
 	await expect(page).toHaveURL(/sessions\/refactor-mux/);
 
 	// Fresh profile: the rail must mount open, not get toggled shut by

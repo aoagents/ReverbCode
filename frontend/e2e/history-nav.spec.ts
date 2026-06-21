@@ -7,7 +7,7 @@ test("titlebar back/forward arrows traverse history", async ({ page }) => {
 	await expect(page.getByText("Projects")).toBeVisible();
 
 	// Navigate: home → session view (in-app push).
-	await page.getByRole("button", { name: "Open refactor-mux" }).click();
+	await page.getByRole("button", { name: "Open Split terminal mux responsibilities" }).click();
 	await expect(page).toHaveURL(/sessions\/refactor-mux/);
 
 	const back = page.getByRole("button", { name: "Go back" });
