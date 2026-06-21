@@ -38,10 +38,11 @@ type submitReviewRequest struct {
 }
 
 type reviewSubmitOptions struct {
-	session string
-	runID   string
-	verdict string
-	body    string
+	session  string
+	runID    string
+	verdict  string
+	body     string
+	bodyText string
 }
 
 func newReviewCommand(ctx *commandContext) *cobra.Command {
@@ -67,6 +68,7 @@ func newReviewSubmitCommand(ctx *commandContext) *cobra.Command {
 	cmd.Flags().StringVar(&opts.runID, "run", "", "Review run id (required)")
 	cmd.Flags().StringVar(&opts.verdict, "verdict", "", "Review verdict: approved or changes_requested (required)")
 	cmd.Flags().StringVar(&opts.body, "body", "", "Path to a Markdown file with the review body")
+	cmd.Flags().StringVar(&opts.bodyText, "body-text", "", "Review body as inline Markdown (use instead of --body when no file should be written)")
 	return cmd
 }
 
@@ -86,17 +88,24 @@ func (c *commandContext) submitReview(cmd *cobra.Command, args []string, opts re
 	if verdict == "" {
 		return usageError{errors.New("usage: --verdict is required (approved or changes_requested)")}
 	}
+	path := strings.TrimSpace(opts.body)
+	if path != "" && opts.bodyText != "" {
+		return usageError{errors.New("usage: pass either --body or --body-text, not both")}
+	}
 	var body string
-	if path := strings.TrimSpace(opts.body); path != "" {
+	switch {
+	case opts.bodyText != "":
+		body = opts.bodyText
+	case path != "":
 		raw, err := os.ReadFile(path)
 		if err != nil {
 			return usageError{fmt.Errorf("read body file: %w", err)}
 		}
 		body = string(raw)
 	}
-	path := "sessions/" + url.PathEscape(session) + "/reviews/submit"
+	reqPath := "sessions/" + url.PathEscape(session) + "/reviews/submit"
 	var res reviewRunResponse
-	if err := c.postJSON(cmd.Context(), path, submitReviewRequest{RunID: runID, Verdict: verdict, Body: body}, &res); err != nil {
+	if err := c.postJSON(cmd.Context(), reqPath, submitReviewRequest{RunID: runID, Verdict: verdict, Body: body}, &res); err != nil {
 		return err
 	}
 	_, err := fmt.Fprintf(cmd.OutOrStdout(), "recorded %s review for %s\n", res.Review.Verdict, session)

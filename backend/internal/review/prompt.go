@@ -21,14 +21,15 @@ Post your review on the pull request using the available review tooling (request
 	prompt = fmt.Sprintf(`Review pull request %s (head commit %s).
 
 Do these steps in order:
-1. Post your review on the pull request with `+"`gh`"+`, with inline comments for specific findings:
+1. You are read-only: you can read the checkout and run gh, git diff/log/show, and ao. You cannot write or edit files, so do not write a review file.
+2. Post your review on the pull request with `+"`gh`"+`, with inline comments for specific findings:
    - If changes are needed, request changes.
-   - If it is ready, approve it. GitHub does not let you approve a PR you opened — if the approval is rejected because you are the PR author, post the same review as a regular comment instead (a COMMENT-event review whose body states it is an approval).
-2. Write your full review to review.md and record the result with AO by running exactly:
+   - If it is ready, approve it. GitHub does not let you approve a PR you opened; if the approval is rejected because you are the PR author, post the same review as a regular comment instead (a COMMENT-event review whose body states it is an approval).
+3. Record the result with AO by passing your full review inline:
 
-    ao review submit --session %s --run %s --verdict <approved|changes_requested> --body review.md
+    ao review submit --session %s --run %s --verdict <approved|changes_requested> --body-text "<your full review as Markdown>"
 
-Only if step 1 genuinely fails on the provider, still run step 2 so the result is recorded.`,
+Only if step 2 genuinely fails on the provider, still run step 3 so the result is recorded.`,
 		spec.PRURL, spec.TargetSHA, spec.WorkerID, spec.RunID)
 	return prompt, systemPrompt
 }
