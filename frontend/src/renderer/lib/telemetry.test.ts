@@ -69,13 +69,18 @@ describe("telemetry sanitizers", () => {
 			properties: {
 				$current_url: "app://renderer/index.html?token=secret",
 				$initial_current_url: "file:///Users/alice/private/index.html",
-				message: "open /Users/alice/reverb/file.txt failed",
+				message:
+					"failed to fetch http://localhost:3037/api/v1/projects?token=secret from app://renderer/index.html?token=secret and open /Users/alice/reverb/file.txt",
 				$exception_list: [
 					{
 						type: "TypeError",
-						value: "failed to load /home/alice/.config/reverb/settings.json",
+						value:
+							"failed to load /home/alice/.config/reverb/settings.json via http://127.0.0.1:3037/api/v1/projects?token=secret",
 						stacktrace: {
-							frames: [{ filename: "file:///Users/alice/reverb/dist/main.js" }],
+							frames: [
+								{ filename: "file:///Users/alice/reverb/dist/main.js" },
+								{ filename: "http://[::1]:3037/api/v1/projects?token=secret" },
+							],
 						},
 					},
 				],
@@ -84,16 +89,24 @@ describe("telemetry sanitizers", () => {
 		const props = event.properties as Record<string, unknown>;
 		expect(props.$current_url).toBe("[redacted-local-url]");
 		expect(props.$initial_current_url).toBe("[redacted-local-url]");
-		expect(props.message).toBe("open [redacted-local-path] failed");
+		expect(props.message).toBe(
+			"failed to fetch [redacted-local-url] from [redacted-local-url] and open [redacted-local-path]",
+		);
 		const exceptionList = props.$exception_list as Array<Record<string, unknown>>;
-		expect(exceptionList[0].value).toBe("failed to load [redacted-local-path]");
-		expect((exceptionList[0].stacktrace as { frames: Array<{ filename: string }> }).frames[0].filename).toBe(
+		expect(exceptionList[0].value).toBe("failed to load [redacted-local-path] via [redacted-local-url]");
+		expect(((exceptionList[0].stacktrace as { frames: Array<{ filename: string }> }).frames[0]).filename).toBe(
+			"[redacted-local-url]",
+		);
+		expect(((exceptionList[0].stacktrace as { frames: Array<{ filename: string }> }).frames[1]).filename).toBe(
 			"[redacted-local-url]",
 		);
 	});
 
 	it("redacts replay request names before they leave the renderer", () => {
 		expect(sanitizeReplayRequestName("file:///Users/alice/private/index.html?token=secret")).toBe(
+			"[redacted-local-url]",
+		);
+		expect(sanitizeReplayRequestName("http://[::1]:3037/api/v1/projects?token=secret")).toBe(
 			"[redacted-local-url]",
 		);
 		expect(sanitizeReplayRequestName("https://api.example.com/endpoint?token=secret")).toBe(

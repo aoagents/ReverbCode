@@ -7,6 +7,8 @@ const POSTHOG_HOST = import.meta.env.VITE_AO_POSTHOG_HOST?.trim() || DEFAULT_POS
 const RELEASE_TAG = "2026-01-30";
 const REDACTED_LOCAL_URL = "[redacted-local-url]";
 const REDACTED_LOCAL_PATH = "[redacted-local-path]";
+const EMBEDDED_LOCAL_URL_PATTERN =
+	/(?:\bfile:\/\/\/\S+|\bapp:\/\/renderer\/\S+|\bhttps?:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?\S*)/gi;
 
 let initPromise: Promise<boolean> | null = null;
 let errorHandlersBound = false;
@@ -53,12 +55,13 @@ async function hashedTelemetryID(value: unknown): Promise<string | undefined> {
 function isLocalURL(value: string): boolean {
 	try {
 		const url = new URL(value);
+		const hostname = url.hostname.replace(/^\[(.*)\]$/, "$1");
 		return (
 			url.protocol === "file:" ||
 			(url.protocol === "app:" && url.host === "renderer") ||
-			url.hostname === "localhost" ||
-			url.hostname === "127.0.0.1" ||
-			url.hostname === "::1"
+			hostname === "localhost" ||
+			hostname === "127.0.0.1" ||
+			hostname === "::1"
 		);
 	} catch {
 		return false;
@@ -66,7 +69,7 @@ function isLocalURL(value: string): boolean {
 }
 
 function redactEmbeddedLocalURLs(value: string): string {
-	return value.replace(/\bfile:\/\/\/\S+/gi, REDACTED_LOCAL_URL);
+	return value.replace(EMBEDDED_LOCAL_URL_PATTERN, REDACTED_LOCAL_URL);
 }
 
 function redactEmbeddedAbsolutePaths(value: string): string {
