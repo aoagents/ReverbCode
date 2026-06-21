@@ -235,6 +235,20 @@ func TestTeardownProjectStopsOnKillError(t *testing.T) {
 	}
 }
 
+func TestTeardownProjectContinuesOnIncompleteHandle(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer"}
+	fc := &fakeCommander{killErr: sessionmanager.ErrIncompleteHandle}
+	svc := &Service{manager: fc, store: st}
+
+	if err := svc.TeardownProject(context.Background(), "mer"); err != nil {
+		t.Fatalf("TeardownProject: %v", err)
+	}
+	if len(fc.cleanupProjects) != 1 || fc.cleanupProjects[0] != "mer" {
+		t.Fatalf("cleanup projects = %#v, want [mer]", fc.cleanupProjects)
+	}
+}
+
 func TestSpawnOrchestratorCleanKillsActiveOrchestratorsBeforeSpawn(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}

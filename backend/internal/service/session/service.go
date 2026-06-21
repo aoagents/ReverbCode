@@ -366,11 +366,22 @@ func (s *Service) TeardownProject(ctx context.Context, project domain.ProjectID)
 			continue
 		}
 		if _, err := s.Kill(ctx, rec.ID); err != nil {
+			if isIncompleteHandleError(err) {
+				continue
+			}
 			return err
 		}
 	}
 	_, err = s.Cleanup(ctx, project)
 	return err
+}
+
+func isIncompleteHandleError(err error) bool {
+	if errors.Is(err, sessionmanager.ErrIncompleteHandle) {
+		return true
+	}
+	var apiErr *apierr.Error
+	return errors.As(err, &apiErr) && apiErr.Code == "SESSION_INCOMPLETE_HANDLE"
 }
 
 // List returns sessions as enriched display models after applying API filters.
