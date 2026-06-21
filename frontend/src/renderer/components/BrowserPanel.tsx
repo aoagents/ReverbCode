@@ -39,7 +39,7 @@ export function BrowserPanelView({
 }: BrowserPanelProps & { browserView: BrowserViewModel }) {
 	const { viewId, navState, slotRef, navigate, goBack, goForward, reload, stop } = browserView;
 	const [urlInput, setUrlInput] = useState(navState.url);
-	const autoPreviewSessionRef = useRef<string | null>(null);
+	const autoPreviewViewRef = useRef<string | null>(null);
 	const previewCheckKeyRef = useRef<string | null>(null);
 
 	useEffect(() => {
@@ -47,12 +47,13 @@ export function BrowserPanelView({
 	}, [navState.url]);
 
 	useEffect(() => {
-		const previewCheckKey = `${session.id}:${session.updatedAt}`;
+		const previewViewKey = `${session.id}:${viewId}`;
+		const previewCheckKey = `${previewViewKey}:${session.updatedAt}`;
 		if (
 			!active ||
 			!viewId ||
 			navState.url ||
-			autoPreviewSessionRef.current === session.id ||
+			autoPreviewViewRef.current === previewViewKey ||
 			previewCheckKeyRef.current === previewCheckKey
 		) {
 			return;
@@ -66,7 +67,7 @@ export function BrowserPanelView({
 			.then(({ data }) => {
 				const previewUrl = data?.previewUrl?.trim();
 				if (!cancelled && previewUrl) {
-					autoPreviewSessionRef.current = session.id;
+					autoPreviewViewRef.current = previewViewKey;
 					void navigate(previewUrl);
 				}
 			})

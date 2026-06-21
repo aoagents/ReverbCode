@@ -177,6 +177,66 @@ describe("BrowserPanel", () => {
 		);
 	});
 
+	it("auto-opens again when returning to a session whose native browser view was recreated", async () => {
+		const otherSession = { ...session, id: "sess-2", updatedAt: "2026-06-15T00:02:00Z" };
+		hookState.previewGet.mockImplementation((_path, options) => {
+			const sessionId = options.params.path.sessionId;
+			return Promise.resolve({
+				data: {
+					previewUrl:
+						sessionId === "sess-1"
+							? "http://127.0.0.1:3001/api/v1/sessions/sess-1/preview/files/index.html"
+							: "",
+				},
+			});
+		});
+		const { rerender } = render(
+			<BrowserPanelView
+				active
+				browserView={browserView({ viewId: "42:sess-1" })}
+				onTogglePopOut={() => undefined}
+				poppedOut={false}
+				session={session}
+			/>,
+		);
+		await waitFor(() =>
+			expect(hookState.navigate).toHaveBeenCalledWith(
+				"http://127.0.0.1:3001/api/v1/sessions/sess-1/preview/files/index.html",
+			),
+		);
+
+		hookState.navigate.mockClear();
+		rerender(
+			<BrowserPanelView
+				active
+				browserView={browserView({ viewId: "42:sess-2" })}
+				onTogglePopOut={() => undefined}
+				poppedOut={false}
+				session={otherSession}
+			/>,
+		);
+		await waitFor(() => expect(hookState.previewGet).toHaveBeenCalledWith(
+			"/api/v1/sessions/{sessionId}/preview",
+			{ params: { path: { sessionId: "sess-2" } } },
+		));
+
+		rerender(
+			<BrowserPanelView
+				active
+				browserView={browserView({ viewId: "43:sess-1" })}
+				onTogglePopOut={() => undefined}
+				poppedOut={false}
+				session={session}
+			/>,
+		);
+
+		await waitFor(() =>
+			expect(hookState.navigate).toHaveBeenCalledWith(
+				"http://127.0.0.1:3001/api/v1/sessions/sess-1/preview/files/index.html",
+			),
+		);
+	});
+
 	it("binds navigation controls to nav state", async () => {
 		hookState.navState = {
 			viewId: "42:sess-1",
