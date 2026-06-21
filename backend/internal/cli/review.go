@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 // reviewRun mirrors the daemon's domain.ReviewRun for the CLI client.
@@ -66,6 +67,11 @@ func newReviewSubmitCommand(ctx *commandContext) *cobra.Command {
 			return ctx.submitReview(cmd, args, opts)
 		},
 	}
+	// Reviewer agents routinely spell flags with underscores (--review_id) rather
+	// than hyphens (--review-id); normalize so both resolve to the same flag.
+	cmd.Flags().SetNormalizeFunc(func(_ *pflag.FlagSet, name string) pflag.NormalizedName {
+		return pflag.NormalizedName(strings.ReplaceAll(name, "_", "-"))
+	})
 	cmd.Flags().StringVar(&opts.session, "session", "", "Worker session id (or pass it as the positional argument)")
 	cmd.Flags().StringVar(&opts.runID, "run", "", "Review run id (required)")
 	cmd.Flags().StringVar(&opts.verdict, "verdict", "", "Review verdict: approved or changes_requested (required)")
