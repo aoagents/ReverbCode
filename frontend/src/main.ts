@@ -1,4 +1,14 @@
-import { app, BrowserWindow, dialog, ipcMain, net, protocol, shell, WebContentsView, type OpenDialogOptions } from "electron";
+import {
+	app,
+	BrowserWindow,
+	dialog,
+	ipcMain,
+	net,
+	protocol,
+	shell,
+	WebContentsView,
+	type OpenDialogOptions,
+} from "electron";
 import { updateElectronApp } from "update-electron-app";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync } from "node:fs";

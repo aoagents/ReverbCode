@@ -22,10 +22,7 @@ describe("normalizeBrowserURL", () => {
 describe("clampBoundsToWindow", () => {
 	it("rounds and clamps bounds to the window content area", () => {
 		expect(
-			clampBoundsToWindow(
-				{ x: -10.4, y: 20.6, width: 900.2, height: 700.8 },
-				{ width: 800, height: 600 },
-			),
+			clampBoundsToWindow({ x: -10.4, y: 20.6, width: 900.2, height: 700.8 }, { width: 800, height: 600 }),
 		).toEqual({ x: 0, y: 21, width: 800, height: 579 });
 	});
 
