@@ -48,12 +48,7 @@ export function BrowserPanelView({
 	useEffect(() => {
 		const previewViewKey = `${session.id}:${viewId}`;
 		const previewCheckKey = `${previewViewKey}:${session.updatedAt}`;
-		if (
-			!active ||
-			!viewId ||
-			navState.url ||
-			previewCheckKeyRef.current === previewCheckKey
-		) {
+		if (!active || !viewId || navState.url || previewCheckKeyRef.current === previewCheckKey) {
 			return;
 		}
 		previewCheckKeyRef.current = previewCheckKey;

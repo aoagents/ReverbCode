@@ -115,11 +115,9 @@ describe("BrowserPanel", () => {
 	});
 
 	it("rechecks the session preview after worker activity when no preview existed yet", async () => {
-		hookState.previewGet
-			.mockResolvedValueOnce({ data: { previewUrl: "" } })
-			.mockResolvedValueOnce({
-				data: { previewUrl: "http://127.0.0.1:3001/api/v1/sessions/sess-1/preview/files/index.html" },
-			});
+		hookState.previewGet.mockResolvedValueOnce({ data: { previewUrl: "" } }).mockResolvedValueOnce({
+			data: { previewUrl: "http://127.0.0.1:3001/api/v1/sessions/sess-1/preview/files/index.html" },
+		});
 		const { rerender } = render(
 			<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />,
 		);
@@ -184,9 +182,7 @@ describe("BrowserPanel", () => {
 			return Promise.resolve({
 				data: {
 					previewUrl:
-						sessionId === "sess-1"
-							? "http://127.0.0.1:3001/api/v1/sessions/sess-1/preview/files/index.html"
-							: "",
+						sessionId === "sess-1" ? "http://127.0.0.1:3001/api/v1/sessions/sess-1/preview/files/index.html" : "",
 				},
 			});
 		});
@@ -215,10 +211,11 @@ describe("BrowserPanel", () => {
 				session={otherSession}
 			/>,
 		);
-		await waitFor(() => expect(hookState.previewGet).toHaveBeenCalledWith(
-			"/api/v1/sessions/{sessionId}/preview",
-			{ params: { path: { sessionId: "sess-2" } } },
-		));
+		await waitFor(() =>
+			expect(hookState.previewGet).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/preview", {
+				params: { path: { sessionId: "sess-2" } },
+			}),
+		);
 
 		rerender(
 			<BrowserPanelView

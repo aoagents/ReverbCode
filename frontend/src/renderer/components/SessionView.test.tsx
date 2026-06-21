@@ -63,7 +63,14 @@ const browserDestroy = vi.hoisted(() => vi.fn());
 vi.mock("../hooks/useBrowserView", () => ({
 	useBrowserView: () => ({
 		viewId: "browser:sess-1",
-		navState: { viewId: "browser:sess-1", url: "http://127.0.0.1:4173/", title: "Calculator", canGoBack: false, canGoForward: false, isLoading: false },
+		navState: {
+			viewId: "browser:sess-1",
+			url: "http://127.0.0.1:4173/",
+			title: "Calculator",
+			canGoBack: false,
+			canGoForward: false,
+			isLoading: false,
+		},
 		slotRef: vi.fn(),
 		navigate: vi.fn(),
 		goBack: vi.fn(),
