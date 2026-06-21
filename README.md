@@ -149,6 +149,7 @@ below groups what's on `main` today.
 | Session      | `ao session claim-pr <session> <pr>` | Attach an existing PR to a session.                          |
 | Orchestrator | `ao orchestrator ls`                 | List orchestrator sessions.                                  |
 | Messaging    | `ao send`                            | Send a message to a running agent session.                   |
+| Preview      | `ao preview [url]`                   | Open a URL (or the workspace `index.html`) in the session's desktop browser panel. |
 | Utility      | `ao doctor`                          | Local health checks (config, data dir, DB, `git`, `zellij`). |
 | Utility      | `ao completion <shell>`              | Generate bash/zsh/fish/powershell completions.               |
 | Utility      | `ao version`                         | Print build metadata.                                        |
