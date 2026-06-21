@@ -94,10 +94,10 @@ describe("telemetry sanitizers", () => {
 		);
 		const exceptionList = props.$exception_list as Array<Record<string, unknown>>;
 		expect(exceptionList[0].value).toBe("failed to load [redacted-local-path] via [redacted-local-url]");
-		expect(((exceptionList[0].stacktrace as { frames: Array<{ filename: string }> }).frames[0]).filename).toBe(
+		expect((exceptionList[0].stacktrace as { frames: Array<{ filename: string }> }).frames[0].filename).toBe(
 			"[redacted-local-url]",
 		);
-		expect(((exceptionList[0].stacktrace as { frames: Array<{ filename: string }> }).frames[1]).filename).toBe(
+		expect((exceptionList[0].stacktrace as { frames: Array<{ filename: string }> }).frames[1].filename).toBe(
 			"[redacted-local-url]",
 		);
 	});
@@ -106,9 +106,7 @@ describe("telemetry sanitizers", () => {
 		expect(sanitizeReplayRequestName("file:///Users/alice/private/index.html?token=secret")).toBe(
 			"[redacted-local-url]",
 		);
-		expect(sanitizeReplayRequestName("http://[::1]:3037/api/v1/projects?token=secret")).toBe(
-			"[redacted-local-url]",
-		);
+		expect(sanitizeReplayRequestName("http://[::1]:3037/api/v1/projects?token=secret")).toBe("[redacted-local-url]");
 		expect(sanitizeReplayRequestName("https://api.example.com/endpoint?token=secret")).toBe(
 			"https://api.example.com/endpoint",
 		);
