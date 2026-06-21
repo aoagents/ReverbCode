@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
-import { Bell, GitBranch, LayoutDashboard, PanelRightClose, PanelRightOpen, Plus, Square, Trash2 } from "lucide-react";
+import { GitBranch, LayoutDashboard, PanelRightClose, PanelRightOpen, Plus, Square, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { NotificationCenter } from "./NotificationCenter";
 import {
@@ -189,9 +189,7 @@ export function ShellTopbar() {
 									Kanban
 								</button>
 							</>
-						) : (
-							<TopbarNotificationButton />
-						)}
+						) : null}
 						{/* Kill control sits beside the orchestrator link for active workers —
 						    moved here from the inspector's Summary "Danger zone". */}
 						{!isOrchestrator && session && sessionIsActive(session) ? <TopbarKillButton session={session} /> : null}
@@ -236,20 +234,6 @@ export function ShellTopbar() {
 				onOpenChange={setIsNewTaskOpen}
 			/>
 		</header>
-	);
-}
-
-function TopbarNotificationButton() {
-	return (
-		<button
-			aria-label="Notifications"
-			className="dashboard-app-header__icon-btn dashboard-app-header__icon-btn--quiet"
-			style={noDragStyle}
-			title="Notifications"
-			type="button"
-		>
-			<Bell className="h-[15px] w-[15px]" aria-hidden="true" />
-		</button>
 	);
 }
 

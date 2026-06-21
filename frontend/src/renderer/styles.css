@@ -383,13 +383,6 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	color: var(--fg);
 }
 
-.dashboard-app-header__icon-btn--quiet {
-	width: 30px;
-	height: 30px;
-	border-radius: 6px;
-	color: var(--fg-muted);
-}
-
 .dashboard-app-header__kill-btn {
 	display: inline-flex;
 	height: 30px;
