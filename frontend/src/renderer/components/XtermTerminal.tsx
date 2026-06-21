@@ -105,6 +105,21 @@ type XtermInternal = Terminal & {
 	};
 };
 
+// zellij (started with `--mouse-mode true`, see backend embeddedClientOptions)
+// acts on SGR mouse-wheel reports written to its stdin and scrolls the focused
+// pane, but it does NOT enable host mouse reporting, so xterm's own mouse
+// protocol stays NONE and it never reports the wheel itself. With scrollback:0
+// xterm would instead convert the wheel into cursor-arrow keys (its alt-buffer
+// fallback), which move the agent's cursor/history rather than scrolling. So we
+// synthesize the SGR wheel reports here. SGR button 64 = wheel up, 65 = down;
+// reports are 1-based and a single cell is enough for a borderless single pane.
+const SGR_WHEEL_UP = 64;
+const SGR_WHEEL_DOWN = 65;
+
+function sgrWheelReport(button: number, count: number): string {
+	return `\x1b[<${button};1;1M`.repeat(count);
+}
+
 function forceSelectionMode(term: Terminal): void {
 	const internal = term as XtermInternal;
 	const selectionService = internal._core?._selectionService;
@@ -329,6 +344,24 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			userInputListeners.forEach((listener) => listener(data, source));
 		};
 		const terminalInput = term.onData((data) => emitUserInput(data, "terminal"));
+
+		// Translate wheel motion into SGR wheel reports for zellij (see
+		// sgrWheelReport). Pixel deltas accumulate so a full cell-height of scroll
+		// emits one line of wheel, matching xterm's native getLinesScrolled feel.
+		// Returning false suppresses xterm's arrow-key wheel fallback. Ctrl/Cmd
+		// wheel is the font-size zoom (CenterPane), so leave it for that handler.
+		let wheelAccumPx = 0;
+		term.attachCustomWheelEventHandler((event) => {
+			if (event.ctrlKey || event.metaKey) return false;
+			const rowHeight = (term.options.fontSize ?? 12) * (term.options.lineHeight ?? 1);
+			wheelAccumPx += event.deltaY;
+			const lines = Math.trunc(wheelAccumPx / rowHeight);
+			if (lines === 0) return false;
+			wheelAccumPx -= lines * rowHeight;
+			const button = lines < 0 ? SGR_WHEEL_UP : SGR_WHEEL_DOWN;
+			emitUserInput(sgrWheelReport(button, Math.abs(lines)), "terminal");
+			return false;
+		});
 		const pasteInput = (event: ClipboardEvent) => {
 			event.preventDefault();
 			event.stopPropagation();

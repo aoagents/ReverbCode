@@ -5,6 +5,7 @@ import { XtermTerminal } from "./XtermTerminal";
 const state = vi.hoisted(() => ({
 	lastTerminal: null as null | {
 		keyHandler?: (event: KeyboardEvent) => boolean;
+		wheelHandler?: (event: WheelEvent) => boolean;
 		selection: string;
 		options: Record<string, unknown>;
 		modes: { bracketedPasteMode: boolean };
@@ -27,6 +28,7 @@ vi.mock("@xterm/xterm", () => ({
 		rows = 24;
 		selection = "";
 		keyHandler?: (event: KeyboardEvent) => boolean;
+		wheelHandler?: (event: WheelEvent) => boolean;
 		modes = { bracketedPasteMode: false };
 		dataListeners = new Set<(data: string) => void>();
 		selectionListeners = new Set<() => void>();
@@ -75,6 +77,9 @@ vi.mock("@xterm/xterm", () => ({
 		}
 		attachCustomKeyEventHandler(listener: (event: KeyboardEvent) => boolean) {
 			this.keyHandler = listener;
+		}
+		attachCustomWheelEventHandler(listener: (event: WheelEvent) => boolean) {
+			this.wheelHandler = listener;
 		}
 		unicode = { activeVersion: "" };
 	},
@@ -196,6 +201,28 @@ describe("XtermTerminal", () => {
 		state.lastTerminal!.dataListeners.forEach((listener) => listener("\x1b[A"));
 
 		expect(onInput).toHaveBeenCalledWith("\x1b[A", "terminal");
+	});
+
+	it("translates wheel motion into SGR wheel reports for zellij scrollback", () => {
+		const onInput = vi.fn();
+		render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
+		// rowHeight = fontSize(12) * lineHeight(1.35) = 16.2px; -50px => 3 lines up.
+		const suppressed = state.lastTerminal!.wheelHandler!({ deltaY: -50 } as WheelEvent);
+
+		expect(suppressed).toBe(false);
+		expect(onInput).toHaveBeenCalledWith("\x1b[<64;1;1M\x1b[<64;1;1M\x1b[<64;1;1M", "terminal");
+	});
+
+	it("scrolls down on positive wheel delta and leaves zoom (ctrl/meta) wheel alone", () => {
+		const onInput = vi.fn();
+		render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
+
+		expect(state.lastTerminal!.wheelHandler!({ deltaY: 20 } as WheelEvent)).toBe(false);
+		expect(onInput).toHaveBeenCalledWith("\x1b[<65;1;1M", "terminal");
+
+		onInput.mockClear();
+		expect(state.lastTerminal!.wheelHandler!({ deltaY: -50, ctrlKey: true } as WheelEvent)).toBe(false);
+		expect(onInput).not.toHaveBeenCalled();
 	});
 
 	it("forces plain drag selection while preserving xterm data forwarding", () => {
