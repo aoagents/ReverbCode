@@ -10,9 +10,9 @@ type PermissionMode string
 
 // The permission modes adapters map onto their agent's native approval flags.
 const (
-	// PermissionModeDefault is special: adapters emit no flag for it so the
-	// agent resolves its starting mode from the user's own config (e.g.
-	// Claude's TUI reading ~/.claude/settings.json defaultMode).
+	// PermissionModeDefault is special: adapters choose their own baseline
+	// behavior for it. Most defer to the agent's own config; some managed
+	// adapters may map it to a safer non-interactive default.
 	PermissionModeDefault           PermissionMode = "default"
 	PermissionModeAcceptEdits       PermissionMode = "accept-edits"
 	PermissionModeAuto              PermissionMode = "auto"
@@ -25,8 +25,8 @@ const (
 type AgentConfig struct {
 	// Model overrides the agent's default model (e.g. claude-opus-4-5).
 	Model string `json:"model,omitempty"`
-	// Permissions sets the agent's starting permission mode. Empty defers to
-	// the agent's own configuration.
+	// Permissions sets the agent's starting permission mode. Empty is treated
+	// like the adapter's default mode.
 	Permissions PermissionMode `json:"permissions,omitempty"`
 }
 
