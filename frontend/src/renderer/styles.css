@@ -485,13 +485,6 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	color: var(--fg);
 }
 
-.dashboard-app-header__icon-btn--quiet {
-	width: 30px;
-	height: 30px;
-	border-radius: 6px;
-	color: var(--fg-muted);
-}
-
 .dashboard-app-header__kill-btn {
 	display: inline-flex;
 	height: 30px;
@@ -890,6 +883,11 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 
 .inspector-section {
 	margin-bottom: 22px;
+}
+
+.inspector-section--separated {
+	border-top: 1px solid var(--border);
+	padding-top: 18px;
 }
 
 .inspector-section__head {

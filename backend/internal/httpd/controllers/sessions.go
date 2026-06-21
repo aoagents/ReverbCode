@@ -33,7 +33,7 @@ type SessionService interface {
 	Cleanup(ctx context.Context, project domain.ProjectID) (sessionsvc.CleanupOutcome, error)
 	Rename(ctx context.Context, id domain.SessionID, displayName string) error
 	Send(ctx context.Context, id domain.SessionID, message string) error
-	ListPRs(ctx context.Context, id domain.SessionID) ([]domain.PRFacts, error)
+	ListPRSummaries(ctx context.Context, id domain.SessionID) ([]sessionsvc.PRSummary, error)
 	ClaimPR(ctx context.Context, id domain.SessionID, ref string, opts sessionsvc.ClaimPROptions) (sessionsvc.ClaimPRResult, error)
 }
 
@@ -137,12 +137,12 @@ func (c *SessionsController) listPRs(w http.ResponseWriter, r *http.Request) {
 		apispec.NotImplemented(w, r, "GET", "/api/v1/sessions/{sessionId}/pr")
 		return
 	}
-	prs, err := c.Svc.ListPRs(r.Context(), sessionID(r))
+	prs, err := c.Svc.ListPRSummaries(r.Context(), sessionID(r))
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return
 	}
-	envelope.WriteJSON(w, http.StatusOK, ListSessionPRsResponse{SessionID: sessionID(r), PRs: sessionPRFacts(prs)})
+	envelope.WriteJSON(w, http.StatusOK, ListSessionPRsResponse{SessionID: sessionID(r), PRs: sessionPRSummaries(prs)})
 }
 
 func (c *SessionsController) claimPR(w http.ResponseWriter, r *http.Request) {
@@ -442,6 +442,14 @@ func sessionPRFacts(prs []domain.PRFacts) []SessionPRFacts {
 	out := make([]SessionPRFacts, 0, len(prs))
 	for _, pr := range prs {
 		out = append(out, SessionPRFacts{URL: pr.URL, Number: pr.Number, State: prState(pr), CI: pr.CI, Review: pr.Review, Mergeability: pr.Mergeability, ReviewComments: pr.ReviewComments, UpdatedAt: pr.UpdatedAt})
+	}
+	return out
+}
+
+func sessionPRSummaries(prs []sessionsvc.PRSummary) []SessionPRSummary {
+	out := make([]SessionPRSummary, 0, len(prs))
+	for _, pr := range prs {
+		out = append(out, NewSessionPRSummary(pr))
 	}
 	return out
 }

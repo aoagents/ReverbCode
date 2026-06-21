@@ -1,14 +1,26 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
-import { AlertCircle, CheckCircle2, CircleMinus, GitPullRequest, Play, Shield, Terminal } from "lucide-react";
+import {
+	AlertCircle,
+	ArrowUpRight,
+	CheckCircle2,
+	CircleMinus,
+	GitPullRequest,
+	Play,
+	Shield,
+	Terminal,
+} from "lucide-react";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { formatTimeCompact } from "../lib/format-time";
-import type { PRState, PullRequestFacts, SessionStatus, WorkspaceSession } from "../types/workspace";
+import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
+import { prStatusRows, sessionPRDisplaySummaries, type PRDisplayTone } from "../lib/pr-display";
+import type { SessionStatus, WorkspaceSession } from "../types/workspace";
 import { sortedPRs, workerDisplayStatus } from "../types/workspace";
 import { Badge } from "./ui/badge";
 import { cn } from "../lib/utils";
+import { PRAttentionPanel, PRSummaryMeta } from "./PRSummaryDisplay";
 
 type ProjectConfig = components["schemas"]["ProjectConfig"];
 type ReviewRun = components["schemas"]["ReviewRun"];
@@ -54,7 +66,7 @@ const VIEWS: { id: InspectorView; label: string; icon: ReactNode }[] = [
 	},
 ];
 
-const prStateTone: Record<PRState, string> = {
+const prStateTone: Record<SessionPRSummary["state"], string> = {
 	open: "border-success/40 bg-success/10 text-success",
 	draft: "border-border bg-raised text-muted-foreground",
 	merged: "border-accent/40 bg-accent-weak text-accent",
@@ -110,9 +122,19 @@ export function SessionInspector({
 	);
 }
 
-function Section({ title, action, children }: { title: string; action?: ReactNode; children: ReactNode }) {
+function Section({
+	action,
+	children,
+	className,
+	title,
+}: {
+	action?: ReactNode;
+	children: ReactNode;
+	className?: string;
+	title: string;
+}) {
 	return (
-		<section className="inspector-section">
+		<section className={cn("inspector-section", className)}>
 			<div className="inspector-section__head">
 				<span>{title}</span>
 				{action ?? null}
@@ -123,18 +145,20 @@ function Section({ title, action, children }: { title: string; action?: ReactNod
 }
 
 function SummaryView({ session }: { session: WorkspaceSession }) {
-	const prs = sortedPRs(session);
+	const query = useSessionScmSummary(session.id);
+	const prSummaries = sessionPRDisplaySummaries(session, query.data);
+	const prSectionTitle = prSummaries.length > 1 ? `Pull requests (${prSummaries.length})` : "Pull request";
 	const branchLabel = session.branch || `session/${session.id}`;
 
 	return (
 		<div role="tabpanel">
-			<Section title={prs.length > 1 ? `Pull requests (${prs.length})` : "Pull request"}>
-				{prs.length === 0 ? (
+			<Section title={prSectionTitle}>
+				{prSummaries.length === 0 ? (
 					<p className="inspector-empty">No pull request opened yet.</p>
 				) : (
-					<div className="flex flex-col gap-2.5">
-						{prs.map((pr) => (
-							<PRCard key={pr.url} pr={pr} />
+					<div className="flex flex-col gap-2">
+						{prSummaries.map((pr) => (
+							<PRSummaryCard key={pr.number} pr={pr} />
 						))}
 					</div>
 				)}
@@ -144,7 +168,7 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 				<ActivityTimeline session={session} />
 			</Section>
 
-			<Section title="Overview">
+			<Section className="inspector-section--separated" title="Overview">
 				<dl className="inspector-kv">
 					<Row k="Agent" v={session.provider} mono />
 					<Row k="Branch" v={branchLabel} mono />
@@ -156,31 +180,59 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 	);
 }
 
-// One PR per card; a session's PRs stack vertically. Mirrors the minimal
-// single-PR rail the parallel-agent tools converged on (emdash, conductor),
-// repeated per PR rather than collapsed into one aggregate widget.
-function PRCard({ pr }: { pr: PullRequestFacts }) {
+function PRSummaryCard({ pr }: { pr: SessionPRSummary }) {
 	return (
-		<div className="flex flex-col gap-2 rounded-[7px] border border-border bg-surface p-2.5">
+		<div className="rounded-[7px] border border-border bg-surface px-3 py-2.5">
 			<div className="flex items-center gap-2">
 				<GitPullRequest className="h-3.5 w-3.5 shrink-0 text-passive" aria-hidden="true" />
 				<span className="text-[12.5px] font-medium text-foreground">PR #{pr.number}</span>
-				<Badge variant="outline" className={cn("ml-auto h-5 px-1.5 text-[10px] font-medium", prStateTone[pr.state])}>
+				<Badge variant="outline" className={cn("h-5 px-1.5 text-[10px] font-medium", prStateTone[pr.state])}>
 					{pr.state}
 				</Badge>
-				{pr.url ? (
-					<a href={pr.url} target="_blank" rel="noopener noreferrer" className="inspector-section__link">
-						Open ↗
-					</a>
-				) : null}
+				<a
+					href={pr.htmlUrl || pr.url}
+					target="_blank"
+					rel="noopener noreferrer"
+					className="ml-auto inline-flex items-center gap-0.5 text-[11px] font-medium text-accent hover:underline"
+				>
+					<span>Open</span>
+					<ArrowUpRight aria-hidden="true" className="h-3 w-3" strokeWidth={2} />
+				</a>
 			</div>
-			<dl className="inspector-kv">
-				<Row k="CI" v={pr.ci || "—"} mono />
-				<Row k="Merge" v={pr.mergeability || "—"} mono />
-				<Row k="Review" v={pr.review || "—"} mono />
-			</dl>
+			{pr.title ? <div className="mt-2 text-[12px] font-medium leading-snug text-foreground">{pr.title}</div> : null}
+			<PRSummaryMeta className="mt-1.5" pr={pr} />
+			<PRStatusStack className="mt-2" pr={pr} />
+			<PRAttentionPanel pr={pr} />
 		</div>
 	);
+}
+
+function PRStatusStack({ className, pr }: { className?: string; pr: SessionPRSummary }) {
+	return (
+		<div className={cn("flex flex-col gap-0.5 font-mono text-[10.5px] leading-4", className)}>
+			{prStatusRows(pr).map((row) => (
+				<div key={row.key} className="min-w-0 truncate">
+					<span className="text-passive">{row.label}</span>{" "}
+					<span className={cn("font-medium", inspectorStatusToneClass(row.tone))}>{row.value}</span>
+				</div>
+			))}
+		</div>
+	);
+}
+
+function inspectorStatusToneClass(tone: PRDisplayTone): string {
+	switch (tone) {
+		case "success":
+			return "text-success";
+		case "warning":
+			return "text-warning";
+		case "error":
+			return "text-error";
+		case "neutral":
+			return "text-muted-foreground";
+		case "passive":
+			return "text-passive";
+	}
 }
 
 type TimelineTone = "now" | "good" | "warn" | "neutral";
@@ -266,6 +318,7 @@ const STATUS_PILL: Record<
 	no_signal: { label: "No signal", tone: "var(--fg-muted)", breathe: false },
 	mergeable: { label: "Ready", tone: "var(--green)", breathe: false },
 	done: { label: "Done", tone: "var(--fg-muted)", breathe: false },
+	unknown: { label: "Unknown", tone: "var(--fg-muted)", breathe: false },
 	idle: { label: "Idle", tone: "var(--fg-muted)", breathe: false },
 };
 

@@ -139,6 +139,49 @@ func (f *fakeSessionService) ListPRs(_ context.Context, id domain.SessionID) ([]
 	return []domain.PRFacts{{URL: "https://github.com/aoagents/agent-orchestrator/pull/142", Number: 142, CI: domain.CIPassing, Review: domain.ReviewRequired, Mergeability: domain.MergeMergeable, UpdatedAt: time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC)}}, nil
 }
 
+func (f *fakeSessionService) ListPRSummaries(_ context.Context, id domain.SessionID) ([]sessionsvc.PRSummary, error) {
+	if f.listPRErr != nil {
+		return nil, f.listPRErr
+	}
+	if _, ok := f.sessions[id]; !ok {
+		return nil, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	return []sessionsvc.PRSummary{{
+		URL:          "https://github.com/aoagents/agent-orchestrator/pull/142",
+		HTMLURL:      "https://github.com/aoagents/agent-orchestrator/pull/142",
+		Number:       142,
+		Title:        "Wire SCM summaries",
+		State:        domain.PRStateOpen,
+		Provider:     "github",
+		Repo:         "aoagents/agent-orchestrator",
+		Author:       "ada",
+		SourceBranch: "codex/scm-observer-v1",
+		TargetBranch: "main",
+		HeadSHA:      "abc123",
+		CI: sessionsvc.PRCISummary{State: domain.CIFailing, FailingChecks: []sessionsvc.PRFailingCheck{{
+			Name:       "unit",
+			Status:     domain.PRCheckFailed,
+			Conclusion: "failure",
+			URL:        "https://github.com/aoagents/agent-orchestrator/actions/runs/1",
+		}}},
+		Review: sessionsvc.PRReviewSummary{
+			Decision:                   domain.ReviewChangesRequest,
+			HasUnresolvedHumanComments: true,
+			UnresolvedBy: []sessionsvc.PRUnresolvedReviewer{{
+				ReviewerID: "reviewer-a",
+				Count:      1,
+				Links:      []sessionsvc.PRReviewCommentLink{{URL: "https://github.com/aoagents/agent-orchestrator/pull/142#discussion_r1", File: "main.go", Line: 12}},
+			}},
+		},
+		Mergeability: sessionsvc.PRMergeabilitySummary{
+			State:   domain.MergeConflicting,
+			Reasons: []string{"conflicts"},
+			PRURL:   "https://github.com/aoagents/agent-orchestrator/pull/142",
+		},
+		UpdatedAt: time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC),
+	}}, nil
+}
+
 func (f *fakeSessionService) ClaimPR(_ context.Context, id domain.SessionID, ref string, opts sessionsvc.ClaimPROptions) (sessionsvc.ClaimPRResult, error) {
 	if f.claimErr != nil {
 		return sessionsvc.ClaimPRResult{}, f.claimErr
@@ -422,15 +465,55 @@ func TestSessionsAPI_PRRoutes(t *testing.T) {
 	var listed struct {
 		SessionID string `json:"sessionId"`
 		PRs       []struct {
-			URL       string `json:"url"`
-			Number    int    `json:"number"`
-			State     string `json:"state"`
-			UpdatedAt string `json:"updatedAt"`
+			URL    string `json:"url"`
+			Number int    `json:"number"`
+			Title  string `json:"title"`
+			State  string `json:"state"`
+			CI     struct {
+				State         string `json:"state"`
+				FailingChecks []struct {
+					Name       string `json:"name"`
+					Status     string `json:"status"`
+					Conclusion string `json:"conclusion"`
+					URL        string `json:"url"`
+					LogTail    string `json:"logTail"`
+				} `json:"failingChecks"`
+			} `json:"ci"`
+			Review struct {
+				Decision     string `json:"decision"`
+				UnresolvedBy []struct {
+					ReviewerID string `json:"reviewerId"`
+					Count      int    `json:"count"`
+					Links      []struct {
+						URL  string `json:"url"`
+						File string `json:"file"`
+						Line int    `json:"line"`
+						Body string `json:"body"`
+					} `json:"links"`
+				} `json:"unresolvedBy"`
+			} `json:"review"`
+			Mergeability struct {
+				State         string   `json:"state"`
+				Reasons       []string `json:"reasons"`
+				PRURL         string   `json:"prUrl"`
+				ConflictFiles []struct {
+					Path string `json:"path"`
+				} `json:"conflictFiles"`
+			} `json:"mergeability"`
 		} `json:"prs"`
 	}
 	mustJSON(t, body, &listed)
-	if listed.SessionID != "ao-1" || len(listed.PRs) != 1 || listed.PRs[0].State != "open" {
+	if listed.SessionID != "ao-1" || len(listed.PRs) != 1 || listed.PRs[0].State != "open" || listed.PRs[0].Title == "" {
 		t.Fatalf("GET shape = %#v", listed)
+	}
+	if checks := listed.PRs[0].CI.FailingChecks; len(checks) != 1 || checks[0].Name != "unit" || checks[0].LogTail != "" {
+		t.Fatalf("failing checks = %#v", checks)
+	}
+	if reviewers := listed.PRs[0].Review.UnresolvedBy; len(reviewers) != 1 || reviewers[0].ReviewerID != "reviewer-a" || reviewers[0].Links[0].Body != "" {
+		t.Fatalf("reviewers = %#v", reviewers)
+	}
+	if merge := listed.PRs[0].Mergeability; merge.State != "conflicting" || len(merge.ConflictFiles) != 0 || merge.PRURL == "" {
+		t.Fatalf("mergeability = %#v", merge)
 	}
 
 	body, status, _ = doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/pr/claim", `{"pr":"142"}`)

@@ -26,6 +26,17 @@ const api = {
 	telemetry: {
 		getBootstrap: () => ipcRenderer.invoke("telemetry:getBootstrap") as Promise<TelemetryBootstrap | null>,
 	},
+	notifications: {
+		show: (notification: { id: string; title: string; body?: string }) =>
+			ipcRenderer.invoke("notifications:show", notification) as Promise<void>,
+		onClick: (listener: (id: string) => void) => {
+			const wrapped = (_event: Electron.IpcRendererEvent, id: string) => listener(id);
+			ipcRenderer.on("notifications:click", wrapped);
+			return () => {
+				ipcRenderer.off("notifications:click", wrapped);
+			};
+		},
+	},
 };
 
 contextBridge.exposeInMainWorld("ao", api);

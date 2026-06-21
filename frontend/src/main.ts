@@ -1,4 +1,15 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, net, protocol, shell, type OpenDialogOptions } from "electron";
+import {
+	app,
+	BrowserWindow,
+	clipboard,
+	dialog,
+	ipcMain,
+	net,
+	Notification as ElectronNotification,
+	protocol,
+	shell,
+	type OpenDialogOptions,
+} from "electron";
 import { updateElectronApp } from "update-electron-app";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -547,6 +558,22 @@ ipcMain.handle("clipboard:writeText", (_event, text: string) => {
 	}
 });
 ipcMain.handle("clipboard:readText", () => clipboard.readText());
+
+ipcMain.handle("notifications:show", (_event, notification: { id: string; title: string; body?: string }) => {
+	if (!notification.id || !notification.title || !ElectronNotification.isSupported()) return;
+	const toast = new ElectronNotification({
+		title: notification.title,
+		body: notification.body,
+	});
+	toast.on("click", () => {
+		if (!mainWindow) return;
+		if (mainWindow.isMinimized()) mainWindow.restore();
+		mainWindow.show();
+		mainWindow.focus();
+		mainWindow.webContents.send("notifications:click", notification.id);
+	});
+	toast.show();
+});
 
 // Auto-update only runs for packaged builds reading the GitHub Releases feed
 // (see forge.config.ts publishers). In dev there is no feed, so it is skipped.
