@@ -74,7 +74,11 @@ function ShellLayout() {
 			});
 			if (error) {
 				const failure = new Error(apiErrorMessage(error));
-				void captureRendererException(failure, { source: "project-add", operation: "project_add", surface: "project_board" });
+				void captureRendererException(failure, {
+					source: "project-add",
+					operation: "project_add",
+					surface: "project_board",
+				});
 				throw failure;
 			}
 			if (!data?.project) throw new Error("Project creation returned no project");

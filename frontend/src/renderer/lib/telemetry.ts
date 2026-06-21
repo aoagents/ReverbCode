@@ -86,9 +86,7 @@ function sanitizePostHogValue(value: unknown): unknown {
 	if (typeof value === "string") return sanitizeSensitiveString(value);
 	if (Array.isArray(value)) return value.map((item) => sanitizePostHogValue(item));
 	if (value && typeof value === "object") {
-		return Object.fromEntries(
-			Object.entries(value).map(([key, nested]) => [key, sanitizePostHogValue(nested)]),
-		);
+		return Object.fromEntries(Object.entries(value).map(([key, nested]) => [key, sanitizePostHogValue(nested)]));
 	}
 	return value;
 }

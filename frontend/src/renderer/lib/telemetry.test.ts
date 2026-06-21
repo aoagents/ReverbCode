@@ -87,7 +87,7 @@ describe("telemetry sanitizers", () => {
 		expect(props.message).toBe("open [redacted-local-path] failed");
 		const exceptionList = props.$exception_list as Array<Record<string, unknown>>;
 		expect(exceptionList[0].value).toBe("failed to load [redacted-local-path]");
-		expect(((exceptionList[0].stacktrace as { frames: Array<{ filename: string }> }).frames[0]).filename).toBe(
+		expect((exceptionList[0].stacktrace as { frames: Array<{ filename: string }> }).frames[0].filename).toBe(
 			"[redacted-local-url]",
 		);
 	});
