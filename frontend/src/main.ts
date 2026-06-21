@@ -19,6 +19,14 @@ declare const MAIN_WINDOW_VITE_NAME: string;
 // Must run before app ready so the About panel and default-menu role labels use it.
 app.setName("Agent Orchestrator");
 
+// Pin ALL Electron-owned state (Chromium cache, cookies, local/session storage,
+// crash dumps) under the canonical AO home at ~/.ao instead of Electron's macOS
+// default ~/Library/Application Support/<name>. Keeps the app's entire footprint
+// inside ~/.ao alongside the daemon's data dir and running.json. sessionData and
+// crashDumps derive from userData, so this one override reparents them all.
+// Must run before app ready.
+app.setPath("userData", path.join(os.homedir(), ".ao", "electron"));
+
 let mainWindow: BrowserWindow | null = null;
 let daemonProcess: ChildProcessWithoutNullStreams | null = null;
 let daemonStoppingProcess: ChildProcessWithoutNullStreams | null = null;
