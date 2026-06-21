@@ -11,7 +11,8 @@ export type SessionStatus =
 	| "needs_input"
 	| "no_signal"
 	| "idle"
-	| "terminated";
+	| "terminated"
+	| "unknown";
 
 const sessionStatuses = new Set<SessionStatus>([
 	"working",
@@ -30,8 +31,8 @@ const sessionStatuses = new Set<SessionStatus>([
 ]);
 
 export function toSessionStatus(status?: string, isTerminated = false): SessionStatus {
-	if (isTerminated) return "terminated";
-	return status && sessionStatuses.has(status as SessionStatus) ? (status as SessionStatus) : "working";
+	if (status && sessionStatuses.has(status as SessionStatus)) return status as SessionStatus;
+	return isTerminated ? "terminated" : "unknown";
 }
 
 export type AgentProvider =
@@ -121,7 +122,14 @@ export type WorkspaceSession = {
 };
 
 /** Glanceable worker status. Maps 1:1 to the accent colors in DESIGN.md. */
-export type WorkerDisplayStatus = "working" | "needs_you" | "mergeable" | "ci_failed" | "no_signal" | "done";
+export type WorkerDisplayStatus =
+	| "working"
+	| "needs_you"
+	| "mergeable"
+	| "ci_failed"
+	| "no_signal"
+	| "done"
+	| "unknown";
 
 export function workerDisplayStatus(session: WorkspaceSession): WorkerDisplayStatus {
 	if (session.displayStatus) return session.displayStatus;
@@ -140,6 +148,8 @@ export function workerDisplayStatus(session: WorkspaceSession): WorkerDisplaySta
 		case "merged":
 		case "terminated":
 			return "done";
+		case "unknown":
+			return "unknown";
 		default:
 			return "working";
 	}
@@ -212,6 +222,7 @@ export const workerStatusLabel: Record<WorkerDisplayStatus, string> = {
 	ci_failed: "ci failed",
 	no_signal: "no signal",
 	done: "done",
+	unknown: "unknown",
 };
 
 /** Whether a status should breathe (alive/working). */
@@ -260,6 +271,7 @@ export function attentionZone(session: WorkspaceSession): AttentionZone {
 		case "review_pending":
 		case "pr_open":
 		case "draft":
+		case "unknown":
 			return "pending";
 		// Agents doing their thing — don't interrupt.
 		case "working":

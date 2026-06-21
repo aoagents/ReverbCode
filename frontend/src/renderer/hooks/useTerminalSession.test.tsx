@@ -115,7 +115,7 @@ function createFakeTerminal(): FakeTerminal {
 			resizeListeners.add(listener);
 			return { dispose: () => resizeListeners.delete(listener) };
 		},
-		typeKeys: (data) => inputListeners.forEach((listener) => listener(data, "keyboard")),
+		typeKeys: (data) => inputListeners.forEach((listener) => listener(data, "terminal")),
 		paste: (data) => inputListeners.forEach((listener) => listener(data, "paste")),
 		emitResize: (cols, rows) => resizeListeners.forEach((listener) => listener({ cols, rows })),
 	};

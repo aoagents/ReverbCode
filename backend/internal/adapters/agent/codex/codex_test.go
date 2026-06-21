@@ -98,19 +98,21 @@ func TestGetLaunchCommandMapsApprovalModes(t *testing.T) {
 		notExpected string
 	}{
 		{
-			name:        "default",
-			permission:  ports.PermissionModeDefault,
-			notExpected: "--ask-for-approval",
+			name:       "default",
+			permission: ports.PermissionModeDefault,
+			want:       []string{"--dangerously-bypass-approvals-and-sandbox"},
 		},
 		{
-			name:       "accept-edits",
-			permission: ports.PermissionModeAcceptEdits,
-			want:       []string{"--ask-for-approval", "on-request"},
+			name:        "accept-edits",
+			permission:  ports.PermissionModeAcceptEdits,
+			want:        []string{"--ask-for-approval", "on-request"},
+			notExpected: "--dangerously-bypass-approvals-and-sandbox",
 		},
 		{
-			name:       "auto",
-			permission: ports.PermissionModeAuto,
-			want:       []string{"--ask-for-approval", "on-request", "-c", `approvals_reviewer="auto_review"`},
+			name:        "auto",
+			permission:  ports.PermissionModeAuto,
+			want:        []string{"--ask-for-approval", "on-request", "-c", `approvals_reviewer="auto_review"`},
+			notExpected: "--dangerously-bypass-approvals-and-sandbox",
 		},
 		{
 			name:       "bypass-permissions",
@@ -118,9 +120,9 @@ func TestGetLaunchCommandMapsApprovalModes(t *testing.T) {
 			want:       []string{"--dangerously-bypass-approvals-and-sandbox"},
 		},
 		{
-			name:        "empty",
-			permission:  "",
-			notExpected: "--ask-for-approval",
+			name:       "empty",
+			permission: "",
+			want:       []string{"--dangerously-bypass-approvals-and-sandbox"},
 		},
 	}
 

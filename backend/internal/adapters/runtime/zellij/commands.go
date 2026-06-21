@@ -86,7 +86,10 @@ func attachArgs(id string) []string {
 func embeddedClientOptions() []string {
 	return []string{
 		"--pane-frames", "false",
-		"--mouse-mode", "false",
+		// The dashboard terminal disables xterm local scrollback and lets the
+		// embedded zellij client own scrollback. Keep mouse mode on so wheel
+		// reports reach zellij, while leaving richer pointer behaviors off.
+		"--mouse-mode", "true",
 		"--advanced-mouse-actions", "false",
 		"--mouse-hover-effects", "false",
 		"--focus-follows-mouse", "false",

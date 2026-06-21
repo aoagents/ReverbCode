@@ -19,6 +19,10 @@ const api = {
 		getVersion: () => ipcRenderer.invoke("app:getVersion") as Promise<string>,
 		chooseDirectory: () => ipcRenderer.invoke("app:chooseDirectory") as Promise<string | null>,
 	},
+	clipboard: {
+		writeText: (text: string) => ipcRenderer.invoke("clipboard:writeText", text) as Promise<void>,
+		readText: () => ipcRenderer.invoke("clipboard:readText") as Promise<string>,
+	},
 	daemon: {
 		getStatus: () => ipcRenderer.invoke("daemon:getStatus") as Promise<DaemonStatus>,
 		start: () => ipcRenderer.invoke("daemon:start") as Promise<DaemonStatus>,
@@ -49,6 +53,17 @@ const api = {
 			ipcRenderer.on("browser:navState", wrapped);
 			return () => {
 				ipcRenderer.off("browser:navState", wrapped);
+			};
+		},
+	},
+	notifications: {
+		show: (notification: { id: string; title: string; body?: string }) =>
+			ipcRenderer.invoke("notifications:show", notification) as Promise<void>,
+		onClick: (listener: (id: string) => void) => {
+			const wrapped = (_event: Electron.IpcRendererEvent, id: string) => listener(id);
+			ipcRenderer.on("notifications:click", wrapped);
+			return () => {
+				ipcRenderer.off("notifications:click", wrapped);
 			};
 		},
 	},

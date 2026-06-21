@@ -13,16 +13,20 @@ type TerminalPaneProps = {
 	theme: Theme;
 	daemonReady: boolean;
 	terminalTarget?: TerminalTarget;
+	fontSize: number;
 };
 
-export function TerminalPane({ session, theme, daemonReady, terminalTarget }: TerminalPaneProps) {
+export function TerminalPane({ session, theme, daemonReady, terminalTarget, fontSize }: TerminalPaneProps) {
 	const terminalKey =
 		terminalTarget?.kind === "reviewer" ? terminalTarget.handleId : (session?.terminalHandleId ?? "empty");
 
 	if (!window.ao) {
 		const provider = terminalTarget?.kind === "reviewer" ? terminalTarget.harness : (session?.provider ?? "claude");
 		return (
-			<pre className="h-full overflow-auto bg-terminal p-4 font-mono text-[13px] leading-relaxed text-[var(--term-fg)]">
+			<pre
+				className="h-full overflow-auto bg-terminal p-4 font-mono leading-relaxed text-[var(--term-fg)]"
+				style={{ fontSize }}
+			>
 				<span className="text-[var(--term-dim)]">~/{session?.workspaceName ?? "reverbcode"}</span>{" "}
 				<span className="text-[var(--term-blue)]">{session?.branch || "main"}</span> $ {provider}
 				{"\n"}
@@ -41,6 +45,7 @@ export function TerminalPane({ session, theme, daemonReady, terminalTarget }: Te
 			session={session}
 			theme={theme}
 			daemonReady={daemonReady}
+			fontSize={fontSize}
 			terminalTarget={terminalTarget}
 		/>
 	);
@@ -52,7 +57,7 @@ function bannerText(state: TerminalSessionState, error?: string): string | undef
 	return undefined;
 }
 
-function AttachedTerminal({ session, theme, daemonReady, terminalTarget }: TerminalPaneProps) {
+function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSize }: TerminalPaneProps) {
 	const attachSession =
 		session && terminalTarget?.kind === "reviewer"
 			? { ...session, terminalHandleId: terminalTarget.handleId }
@@ -135,7 +140,13 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget }: Termi
 				/>
 			)}
 			<div className="relative min-h-0 flex-1">
-				<XtermTerminal ariaLabel="Session terminal" onError={handleInitError} onReady={handleReady} theme={theme} />
+				<XtermTerminal
+					ariaLabel="Session terminal"
+					fontSize={fontSize}
+					onError={handleInitError}
+					onReady={handleReady}
+					theme={theme}
+				/>
 				{showEmptyState && (
 					<div className="absolute inset-0 grid place-items-center bg-terminal font-mono text-[13px]">
 						<div className="text-center">

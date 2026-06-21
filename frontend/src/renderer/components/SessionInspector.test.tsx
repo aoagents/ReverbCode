@@ -108,7 +108,7 @@ describe("SessionInspector PR section", () => {
 		within(screen.getByText(title).closest("section.inspector-section") as HTMLElement);
 
 	it("renders one card per PR, ordered actionable-first, when a session owns a stack", () => {
-		render(<SessionInspector session={session([pr(40, "merged"), pr(41, "open"), pr(42, "draft")])} />);
+		renderWithQuery(<SessionInspector session={session([pr(40, "merged"), pr(41, "open"), pr(42, "draft")])} />);
 
 		expect(screen.getByText("Pull requests (3)")).toBeInTheDocument();
 		const cards = prSection("Pull requests (3)")
@@ -119,22 +119,22 @@ describe("SessionInspector PR section", () => {
 	});
 
 	it("uses the singular heading and shows enriched facts for a single PR", () => {
-		render(<SessionInspector session={session([pr(7, "open")])} />);
+		renderWithQuery(<SessionInspector session={session([pr(7, "open")])} />);
 
 		expect(screen.getByText("Pull request")).toBeInTheDocument();
 		expect(screen.queryByText(/Pull requests \(/)).not.toBeInTheDocument();
 		expect(prSection("Pull request").getByText("PR #7")).toBeInTheDocument();
 		// CI/Merge/Review facts surface per card.
-		expect(prSection("Pull request").getAllByText("passing").length).toBeGreaterThan(0);
+		expect(prSection("Pull request").getAllByText("Passing").length).toBeGreaterThan(0);
 	});
 
 	it("shows the empty state when there are no PRs", () => {
-		render(<SessionInspector session={session([])} />);
+		renderWithQuery(<SessionInspector session={session([])} />);
 		expect(screen.getByText("No pull request opened yet.")).toBeInTheDocument();
 	});
 
 	it("links each PR to its url", () => {
-		render(<SessionInspector session={session([pr(41, "open"), pr(42, "draft")])} />);
+		renderWithQuery(<SessionInspector session={session([pr(41, "open"), pr(42, "draft")])} />);
 		const links = screen.getAllByRole("link", { name: /Open/ });
 		expect(links.map((a) => a.getAttribute("href"))).toEqual([
 			"https://example.com/pr/41",
@@ -145,7 +145,7 @@ describe("SessionInspector PR section", () => {
 
 describe("SessionInspector tabs", () => {
 	it("exposes Summary, Reviews, and Browser as the three inspector tabs", () => {
-		render(<SessionInspector session={session([pr(1, "open")])} />);
+		renderWithQuery(<SessionInspector session={session([pr(1, "open")])} />);
 		const tabs = screen.getAllByRole("tab").map((el) => el.textContent?.trim());
 		expect(tabs).toEqual(["Summary", "Reviews", "Browser"]);
 	});
