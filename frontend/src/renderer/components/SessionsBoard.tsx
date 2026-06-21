@@ -3,7 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { Plus } from "lucide-react";
 import { type AttentionZone, type WorkspaceSession, attentionZone, workerSessions } from "../types/workspace";
-import { useSessionScmSummary } from "../hooks/useSessionScmSummary";
+import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { DashboardSubhead } from "./DashboardSubhead";
 import { OrchestratorIcon } from "./icons";
@@ -262,8 +262,7 @@ function SessionCard({ session, onOpen }: { session: WorkspaceSession; onOpen: (
 	const badge = sessionBadge(session);
 	const branch = session.branch || "";
 	const showBranch = branch !== "" && !sameLabel(branch, session.title) && !sameLabel(branch, session.id);
-	const prSummary = sessionPRDisplaySummaries(session, useSessionScmSummary(session.id).data)[0];
-	const diffSummary = prSummary ? prDiffSummary(prSummary) : undefined;
+	const prSummaries = sessionPRDisplaySummaries(session, useSessionScmSummary(session.id).data);
 	return (
 		<button
 			className="w-full rounded-[7px] border border-border bg-surface text-left transition-colors hover:border-border-strong"
@@ -290,20 +289,35 @@ function SessionCard({ session, onOpen }: { session: WorkspaceSession; onOpen: (
 			</div>
 			{showBranch && <div className="px-[13px] pb-2.5 font-mono text-[10.5px] text-passive">{branch}</div>}
 			<div className="border-t border-border px-[13px] py-2 font-mono text-[10.5px] text-passive">
-				{prSummary ? (
-					<div className="flex flex-col gap-1">
-						<span>
-							PR #{prSummary.number} · {prSummary.state}
-						</span>
-						{diffSummary ? <span className="truncate">{diffSummary}</span> : null}
-						<PRStatusStrip pr={prSummary} />
-						<PRAttentionPanel className="mt-1.5 pt-1.5" interactiveLinks={false} maxItems={2} pr={prSummary} />
+				{prSummaries.length > 0 ? (
+					<div className="flex flex-col gap-2">
+						{prSummaries.map((prSummary, index) => (
+							<BoardPRSummary
+								className={cn(index > 0 && "border-t border-border pt-2")}
+								key={prSummary.number}
+								pr={prSummary}
+							/>
+						))}
 					</div>
 				) : (
 					"no PR yet"
 				)}
 			</div>
 		</button>
+	);
+}
+
+function BoardPRSummary({ className, pr }: { className?: string; pr: SessionPRSummary }) {
+	const diffSummary = prDiffSummary(pr);
+	return (
+		<div className={cn("flex min-w-0 flex-col gap-1", className)}>
+			<span>
+				PR #{pr.number} · {pr.state}
+			</span>
+			{diffSummary ? <span className="truncate">{diffSummary}</span> : null}
+			<PRStatusStrip pr={pr} />
+			<PRAttentionPanel className="mt-1.5 pt-1.5" interactiveLinks={false} maxItems={2} pr={pr} />
+		</div>
 	);
 }
 
