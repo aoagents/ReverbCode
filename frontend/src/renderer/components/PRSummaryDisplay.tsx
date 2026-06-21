@@ -61,16 +61,14 @@ function PRDiffMeta({ pr }: { pr: SessionPRSummary }) {
 	if (pr.additions > 0) {
 		parts.push(
 			<span className="inline-flex items-center gap-0.5 text-success" key="additions">
-				<ArrowUp aria-hidden="true" className="h-2.5 w-2.5 shrink-0" strokeWidth={2.2} />
-				+{pr.additions}
+				<ArrowUp aria-hidden="true" className="h-2.5 w-2.5 shrink-0" strokeWidth={2.2} />+{pr.additions}
 			</span>,
 		);
 	}
 	if (pr.deletions > 0) {
 		parts.push(
 			<span className="inline-flex items-center gap-0.5 text-error" key="deletions">
-				<ArrowDown aria-hidden="true" className="h-2.5 w-2.5 shrink-0" strokeWidth={2.2} />
-				-{pr.deletions}
+				<ArrowDown aria-hidden="true" className="h-2.5 w-2.5 shrink-0" strokeWidth={2.2} />-{pr.deletions}
 			</span>,
 		);
 	}
