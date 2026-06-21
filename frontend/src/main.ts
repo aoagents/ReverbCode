@@ -341,6 +341,7 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 	const directDaemon = await resolveDaemonFromPort({
 		expectedPort: expectedDaemonPort(process.env),
 		probe: readDaemonProbe,
+		identityError: (probe) => daemonIdentityError(launch, probe),
 	});
 	if (startEpoch !== daemonStartEpoch) {
 		return daemonStatus;

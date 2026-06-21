@@ -90,13 +90,60 @@ export async function resolveDaemonFromRunFile(deps: RunFileResolveDeps): Promis
 	if (!info || !isProcessAlive(info.pid)) return null;
 
 	const health = await probe(info.port, "healthz");
+	// The recorded PID must match the live daemon; otherwise the run-file points
+	// at the wrong process — return null so the caller falls through to the port
+	// probe rather than trusting a stale handshake.
 	if (!health || health.pid !== info.pid) return null;
-	const ready = await probe(info.port, "readyz");
-	if (!ready || ready.pid !== info.pid) {
+	return readinessStatus(info.port, info.pid, health, probe, identityError);
+}
+
+export type PortProbeResolveDeps = {
+	expectedPort: number;
+	probe: DaemonProber;
+	/** Foreign-daemon check (dev/bundled identity); returns a message, or null when it is ours. */
+	identityError: (probe: DaemonProbe) => string | null;
+};
+
+/**
+ * Attach decision driven by a direct /healthz probe of the expected port,
+ * independent of the run-file (issue #367 backstop). Returns:
+ *   - a "ready" status  → attach to the daemon serving the port,
+ *   - an "error" status → a daemon serves the port but is unusable (not ready, or
+ *                         a foreign binary the identity check refuses); surface it
+ *                         rather than spawn (spawning would only collide and die),
+ *   - null              → nothing genuine answers the port; the caller should spawn.
+ *
+ * This mirrors {@link resolveDaemonFromRunFile}'s post-handshake validation
+ * (/readyz + identity), anchoring on the PID /healthz reports instead of the
+ * run-file's, so attaching via the port is no laxer than attaching via the file.
+ */
+export async function resolveDaemonFromPort(deps: PortProbeResolveDeps): Promise<DaemonStatus | null> {
+	const { expectedPort, probe, identityError } = deps;
+	const health = await probe(expectedPort, "healthz");
+	if (!health) return null;
+	return readinessStatus(expectedPort, health.pid, health, probe, identityError);
+}
+
+/**
+ * Shared tail of both attach paths: given a daemon confirmed serving /healthz on
+ * `port` with PID `pid`, confirm it is ready and is the daemon we expect, and
+ * build the resulting DaemonStatus. Returns an "error" status (never null) — by
+ * here a daemon is definitely occupying the port, so spawning is never the right
+ * move.
+ */
+async function readinessStatus(
+	port: number,
+	pid: number,
+	health: DaemonProbe,
+	probe: DaemonProber,
+	identityError: (probe: DaemonProbe) => string | null,
+): Promise<DaemonStatus> {
+	const ready = await probe(port, "readyz");
+	if (!ready || ready.pid !== pid) {
 		return {
 			state: "error",
-			port: info.port,
-			pid: info.pid,
+			port,
+			pid,
 			executablePath: health.executablePath,
 			workingDirectory: health.workingDirectory,
 			message: "An AO daemon is already running, but it is not ready yet.",
@@ -107,8 +154,8 @@ export async function resolveDaemonFromRunFile(deps: RunFileResolveDeps): Promis
 	if (message) {
 		return {
 			state: "error",
-			port: info.port,
-			pid: info.pid,
+			port,
+			pid,
 			executablePath: ready.executablePath,
 			workingDirectory: ready.workingDirectory,
 			message,
@@ -117,33 +164,9 @@ export async function resolveDaemonFromRunFile(deps: RunFileResolveDeps): Promis
 
 	return {
 		state: "ready",
-		port: info.port,
-		pid: info.pid,
+		port,
+		pid,
 		executablePath: ready.executablePath,
 		workingDirectory: ready.workingDirectory,
-	};
-}
-
-export type PortProbeResolveDeps = {
-	expectedPort: number;
-	probe: DaemonProber;
-};
-
-/**
- * Attach decision driven by a direct /healthz probe of the expected port,
- * independent of the run-file (issue #367 backstop). Returns a "ready" status to
- * attach to whatever genuine daemon answers, or null when nothing does (the
- * caller should then spawn).
- */
-export async function resolveDaemonFromPort(deps: PortProbeResolveDeps): Promise<DaemonStatus | null> {
-	const { expectedPort, probe } = deps;
-	const health = await probe(expectedPort, "healthz");
-	if (!health) return null;
-	return {
-		state: "ready",
-		port: expectedPort,
-		pid: health.pid,
-		executablePath: health.executablePath,
-		workingDirectory: health.workingDirectory,
 	};
 }

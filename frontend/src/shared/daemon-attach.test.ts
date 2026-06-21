@@ -223,22 +223,28 @@ describe("resolveDaemonFromRunFile", () => {
 
 describe("resolveDaemonFromPort", () => {
 	it("returns null when nothing valid answers the port (caller spawns)", async () => {
-		const result = await resolveDaemonFromPort({ expectedPort: 3001, probe: fakeProbe({}) });
+		const result = await resolveDaemonFromPort({
+			expectedPort: 3001,
+			probe: fakeProbe({}),
+			identityError: NO_IDENTITY_ERROR,
+		});
 		expect(result).toBeNull();
 	});
 
-	it("attaches (ready) to whatever genuine daemon answers /healthz on the expected port", async () => {
+	it("attaches (ready) when a daemon answers /healthz and /readyz on the expected port", async () => {
 		const result = await resolveDaemonFromPort({
 			expectedPort: 3001,
 			probe: fakeProbe({
-				"3001:healthz": {
-					status: "ok",
+				"3001:healthz": { status: "ok", service: DAEMON_SERVICE_NAME, pid: 777 },
+				"3001:readyz": {
+					status: "ready",
 					service: DAEMON_SERVICE_NAME,
 					pid: 777,
 					executablePath: "/bin/ao",
 					workingDirectory: "/work",
 				},
 			}),
+			identityError: NO_IDENTITY_ERROR,
 		});
 		expect(result).toEqual({
 			state: "ready",
@@ -249,9 +255,46 @@ describe("resolveDaemonFromPort", () => {
 		});
 	});
 
+	it("reports an error (not a spawn) when the serving daemon is not ready yet", async () => {
+		const result = await resolveDaemonFromPort({
+			expectedPort: 3001,
+			probe: fakeProbe({
+				"3001:healthz": { status: "ok", service: DAEMON_SERVICE_NAME, pid: 777 },
+				"3001:readyz": null,
+			}),
+			identityError: NO_IDENTITY_ERROR,
+		});
+		expect(result).toEqual({
+			state: "error",
+			port: 3001,
+			pid: 777,
+			executablePath: undefined,
+			workingDirectory: undefined,
+			message: "An AO daemon is already running, but it is not ready yet.",
+		});
+	});
+
+	it("reports an identity error (not a silent attach) for a foreign daemon binary on the port", async () => {
+		const result = await resolveDaemonFromPort({
+			expectedPort: 3001,
+			probe: fakeProbe({
+				"3001:healthz": { status: "ok", service: DAEMON_SERVICE_NAME, pid: 777 },
+				"3001:readyz": { status: "ready", service: DAEMON_SERVICE_NAME, pid: 777, executablePath: "/old/ao" },
+			}),
+			identityError: (probe) =>
+				probe.executablePath === "/new/ao" ? null : `Another AO daemon is already running from ${probe.executablePath}.`,
+		});
+		expect(result).toMatchObject({
+			state: "error",
+			port: 3001,
+			pid: 777,
+			message: "Another AO daemon is already running from /old/ao.",
+		});
+	});
+
 	it("probes exactly the expected port", async () => {
 		const probe = vi.fn<DaemonProber>().mockResolvedValue(null);
-		await resolveDaemonFromPort({ expectedPort: 4317, probe });
+		await resolveDaemonFromPort({ expectedPort: 4317, probe, identityError: NO_IDENTITY_ERROR });
 		expect(probe).toHaveBeenCalledWith(4317, "healthz");
 	});
 });
@@ -329,19 +372,20 @@ describe("end-to-end against a real daemon server", () => {
 		expectedPort: number;
 		identityError?: (probe: DaemonProbe) => string | null;
 	}) {
+		const identityError = opts.identityError ?? NO_IDENTITY_ERROR;
 		const fromRunFile = await resolveDaemonFromRunFile({
 			runFileContents: opts.runFileContents,
 			isProcessAlive: opts.isProcessAlive,
 			probe: realProbe,
-			identityError: opts.identityError ?? NO_IDENTITY_ERROR,
+			identityError,
 		});
 		if (fromRunFile) return fromRunFile;
-		return resolveDaemonFromPort({ expectedPort: opts.expectedPort, probe: realProbe });
+		return resolveDaemonFromPort({ expectedPort: opts.expectedPort, probe: realProbe, identityError });
 	}
 
 	it("attaches to a genuinely serving daemon via the direct port probe", async () => {
 		const port = await startServer({ pid: 555 });
-		const result = await resolveDaemonFromPort({ expectedPort: port, probe: realProbe });
+		const result = await resolveDaemonFromPort({ expectedPort: port, probe: realProbe, identityError: NO_IDENTITY_ERROR });
 		expect(result).toEqual({
 			state: "ready",
 			port,
@@ -355,14 +399,34 @@ describe("end-to-end against a real daemon server", () => {
 		const port = await startServer({ pid: 1 });
 		// Close the only server so the port is now refused.
 		await Promise.all(servers.splice(0).map((s) => new Promise<void>((r) => s.close(() => r()))));
-		const result = await resolveDaemonFromPort({ expectedPort: port, probe: realProbe });
+		const result = await resolveDaemonFromPort({ expectedPort: port, probe: realProbe, identityError: NO_IDENTITY_ERROR });
 		expect(result).toBeNull();
 	});
 
 	it("does NOT attach to a foreign (non-AO) server squatting on the port", async () => {
 		const port = await startServer({ pid: 1, service: "some-other-service" });
-		const result = await resolveDaemonFromPort({ expectedPort: port, probe: realProbe });
+		const result = await resolveDaemonFromPort({ expectedPort: port, probe: realProbe, identityError: NO_IDENTITY_ERROR });
 		expect(result).toBeNull();
+	});
+
+	// A foreign AO daemon (correct service, wrong binary) serving the port. The
+	// identity check must surface an error rather than silently attach — the same
+	// guard the run-file path enforces, now enforced on the port-probe path too.
+	it("surfaces an identity error for a foreign AO binary serving the port (does not silently attach)", async () => {
+		const port = await startServer({ pid: 909, executablePath: "/old/build/ao", workingDirectory: "/old/build" });
+		const result = await startupDecision({
+			runFileContents: null, // run-file diverged, so we reach the port probe
+			isProcessAlive: ALIVE,
+			expectedPort: port,
+			identityError: (probe) =>
+				probe.executablePath === "/expected/ao" ? null : `Another AO daemon is already running from ${probe.executablePath}.`,
+		});
+		expect(result).toMatchObject({
+			state: "error",
+			port,
+			pid: 909,
+			message: "Another AO daemon is already running from /old/build/ao.",
+		});
 	});
 
 	// THE #367 SCENARIO: a standalone `ao daemon` is serving the port, but the
