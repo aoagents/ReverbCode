@@ -95,27 +95,6 @@ function terminalHasFocus(host: HTMLElement): boolean {
 	return !!activeElement && host.contains(activeElement);
 }
 
-type XtermInternal = Terminal & {
-	_core?: {
-		element?: HTMLElement;
-		_selectionService?: {
-			enable: () => void;
-			disable: () => void;
-			shouldForceSelection: (event: MouseEvent) => boolean;
-		};
-	};
-};
-
-function forceSelectionMode(term: Terminal): void {
-	const internal = term as XtermInternal;
-	const selectionService = internal._core?._selectionService;
-	const element = internal._core?.element;
-	if (!selectionService || !element) return;
-	selectionService.shouldForceSelection = () => true;
-	selectionService.enable();
-	element.classList.remove("enable-mouse-events");
-}
-
 export function XtermTerminal(props: XtermTerminalProps) {
 	const hostRef = useRef<HTMLDivElement | null>(null);
 	const termRef = useRef<Terminal | null>(null);
@@ -198,7 +177,6 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		term.open(host);
 		loadRenderer(term);
 		term.options.macOptionClickForcesSelection = true;
-		forceSelectionMode(term);
 
 		let lastCopiedSelection = "";
 		const copySelection = (options?: { clipboardData?: DataTransfer | null; dedupe?: boolean }) => {
