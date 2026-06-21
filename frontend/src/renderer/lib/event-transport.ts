@@ -16,6 +16,10 @@ const SSE_RETRY_MS = 5_000;
 // constants still work.
 const EVENTSOURCE_CLOSED = 2;
 
+function usesDeterministicPreviewData(): boolean {
+	return import.meta.env.VITE_NO_ELECTRON === "1";
+}
+
 // CDC event types the daemon pushes over the SSE stream (see
 // backend/internal/cdc/event.go). The SSE writer tags each frame with
 // `event: <type>`, so named events bypass EventSource.onmessage and must be
@@ -42,6 +46,13 @@ const CDC_EVENT_TYPES = [
 export function createEventTransport(queryClient: QueryClient): EventTransport {
 	return {
 		connect() {
+			if (usesDeterministicPreviewData()) {
+				setEventsConnectionState("idle");
+				return () => {
+					setEventsConnectionState("idle");
+				};
+			}
+
 			let debounce: ReturnType<typeof setTimeout> | undefined;
 			let retryTimer: ReturnType<typeof setTimeout> | undefined;
 			let source: EventSource | undefined;

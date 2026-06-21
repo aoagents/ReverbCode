@@ -70,10 +70,25 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+	vi.unstubAllEnvs();
 	delete (globalThis as unknown as { EventSource?: unknown }).EventSource;
 });
 
 describe("createEventTransport", () => {
+	it("skips the SSE stream in deterministic browser preview mode", () => {
+		vi.stubEnv("VITE_NO_ELECTRON", "1");
+
+		const disconnect = createEventTransport(fakeQueryClient()).connect();
+
+		expect(EventSourceStub.instances).toHaveLength(0);
+		expect(onStatusMock).not.toHaveBeenCalled();
+		expect(subscribeApiBaseUrlMock).not.toHaveBeenCalled();
+		expect(getEventsConnectionState()).toBe("idle");
+
+		disconnect();
+		expect(getEventsConnectionState()).toBe("idle");
+	});
+
 	it("opens a single SSE connection to the current base URL on connect", () => {
 		createEventTransport(fakeQueryClient()).connect();
 
