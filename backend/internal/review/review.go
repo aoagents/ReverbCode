@@ -194,7 +194,7 @@ func (e *Engine) Trigger(ctx context.Context, workerID domain.SessionID) (Trigge
 	// Notify if it's still alive, or spawning a new one if not (#342).
 	if existing, ok, err := e.store.GetReviewRunBySessionAndSHA(ctx, workerID, targetSHA); err != nil {
 		return TriggerResult{}, err
-	} else if ok && existing.Verdict != domain.VerdictNone {
+	} else if ok && existing.Verdict != domain.VerdictO {
 		return TriggerResult{Run: existing, ReviewerHandleID: review.ReviewerHandleID, Created: false}, nil
 	} else if ok && existing.Status == domain.ReviewRunRunning {
 		superseded, err := e.store.UpdateReviewRunResult(ctx, existing.ID, domain.ReviewRunFailed, domain.VerdictNone, "superseded by a new review trigger")
