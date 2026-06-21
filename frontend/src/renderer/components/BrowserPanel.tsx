@@ -40,14 +40,23 @@ export function BrowserPanelView({
 	const { navState, slotRef, navigate, goBack, goForward, reload, stop } = browserView;
 	const [urlInput, setUrlInput] = useState(navState.url);
 	const autoPreviewSessionRef = useRef<string | null>(null);
+	const previewCheckKeyRef = useRef<string | null>(null);
 
 	useEffect(() => {
 		setUrlInput(navState.url);
 	}, [navState.url]);
 
 	useEffect(() => {
-		if (!active || navState.url || autoPreviewSessionRef.current === session.id) return;
-		autoPreviewSessionRef.current = session.id;
+		const previewCheckKey = `${session.id}:${session.updatedAt}`;
+		if (
+			!active ||
+			navState.url ||
+			autoPreviewSessionRef.current === session.id ||
+			previewCheckKeyRef.current === previewCheckKey
+		) {
+			return;
+		}
+		previewCheckKeyRef.current = previewCheckKey;
 		let cancelled = false;
 		void apiClient
 			.GET("/api/v1/sessions/{sessionId}/preview", {
@@ -56,6 +65,7 @@ export function BrowserPanelView({
 			.then(({ data }) => {
 				const previewUrl = data?.previewUrl?.trim();
 				if (!cancelled && previewUrl) {
+					autoPreviewSessionRef.current = session.id;
 					void navigate(previewUrl);
 				}
 			})
@@ -63,7 +73,7 @@ export function BrowserPanelView({
 		return () => {
 			cancelled = true;
 		};
-	}, [active, navigate, navState.url, session.id]);
+	}, [active, navigate, navState.url, session.id, session.updatedAt]);
 
 	const submit = (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
