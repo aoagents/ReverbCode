@@ -62,9 +62,7 @@ describe("parseDaemonProbe", () => {
 	});
 
 	it("accepts a well-formed readyz body and carries identity fields", () => {
-		expect(
-			parseDaemonProbe("readyz", { ...readyBody, executablePath: "/bin/ao", workingDirectory: "/work" }),
-		).toEqual({
+		expect(parseDaemonProbe("readyz", { ...readyBody, executablePath: "/bin/ao", workingDirectory: "/work" })).toEqual({
 			status: "ready",
 			service: DAEMON_SERVICE_NAME,
 			pid: 4242,
@@ -279,7 +277,12 @@ describe("end-to-end against a real daemon server", () => {
 		const service = opts.service ?? DAEMON_SERVICE_NAME;
 		const server = createServer((req, res) => {
 			const url = req.url ?? "";
-			const base = { service, pid: opts.pid, executablePath: opts.executablePath, workingDirectory: opts.workingDirectory };
+			const base = {
+				service,
+				pid: opts.pid,
+				executablePath: opts.executablePath,
+				workingDirectory: opts.workingDirectory,
+			};
 			if (url === "/healthz") {
 				res.writeHead(200, { "content-type": "application/json" });
 				res.end(JSON.stringify({ status: "ok", ...base }));
@@ -395,7 +398,11 @@ describe("end-to-end against a real daemon server", () => {
 	});
 
 	it("still attaches via the run-file path when everything agrees (no regression)", async () => {
-		const port = await startServer({ pid: 4242, executablePath: "/work/backend/ao", workingDirectory: "/work/backend" });
+		const port = await startServer({
+			pid: 4242,
+			executablePath: "/work/backend/ao",
+			workingDirectory: "/work/backend",
+		});
 		const result = await startupDecision({
 			runFileContents: runFile(4242, port),
 			isProcessAlive: ALIVE,
