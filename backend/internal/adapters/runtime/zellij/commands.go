@@ -86,7 +86,15 @@ func attachArgs(id string) []string {
 func embeddedClientOptions() []string {
 	return []string{
 		"--pane-frames", "false",
-		"--mouse-mode", "false",
+		// Mouse mode MUST be on. The terminal runs `zellij attach` in the
+		// alternate screen buffer, and xterm.js is configured with
+		// scrollback: 0 (XtermTerminal.tsx), so there is no local scrollback
+		// to fall back on. With mouse mode off, zellij never enables mouse
+		// tracking — wheel events reach neither xterm (no buffer) nor zellij
+		// (no tracking) and scroll is completely dead. Enabling mouse mode
+		// makes zellij intercept wheel events and scroll its own scrollback.
+		// Text selection still works via shift-drag (xterm.js built-in bypass).
+		"--mouse-mode", "true",
 		"--advanced-mouse-actions", "false",
 		"--mouse-hover-effects", "false",
 		"--focus-follows-mouse", "false",

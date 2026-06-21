@@ -130,9 +130,12 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				// The mux PTY runs `zellij attach` (backend AttachCommand), a
 				// full-screen alt-buffer app that owns scrollback itself — same as
 				// yyork. xterm's own buffer never accumulates history (the alt screen
-				// doesn't feed scrollback), and wheel events reach zellij as mouse
-				// reports instead of scrolling locally. 0 also stops FitAddon
-				// reserving ~14px on the right for a scrollbar that can never appear.
+				// doesn't feed scrollback). The backend enables zellij mouse mode
+				// (--mouse-mode true in embeddedClientOptions), so wheel events reach
+				// zellij as SGR mouse reports and scroll zellij's internal scrollback.
+				// 0 also stops FitAddon reserving ~14px on the right for a scrollbar
+				// that can never appear. Text selection still works via shift-drag
+				// (xterm.js built-in mouse-tracking bypass).
 				scrollback: 0,
 				theme: props.theme === "dark" ? terminalThemes.dark : terminalThemes.light,
 			});
