@@ -48,6 +48,7 @@ describe("useWorkspaceQuery", () => {
 							terminalHandleId: "term-1",
 							displayName: "fix-bug",
 							harness: "claude-code",
+							branch: "qa/modal-worker",
 							status: "mergeable",
 							isTerminated: false,
 							updatedAt: "2026-06-10T16:15:04Z",
@@ -81,12 +82,14 @@ describe("useWorkspaceQuery", () => {
 			terminalHandleId: "term-1",
 			title: "fix-bug",
 			provider: "claude-code",
+			branch: "qa/modal-worker",
 			status: "mergeable",
 		});
 		expect(workspace.sessions[1]).toMatchObject({
 			id: "sess-2",
 			title: "sess-2",
 			provider: "codex",
+			branch: "session/sess-2",
 			status: "working",
 		});
 	});
