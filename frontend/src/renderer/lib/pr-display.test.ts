@@ -1,0 +1,115 @@
+import { describe, expect, it } from "vitest";
+import type { SessionPRSummary } from "../hooks/useSessionScmSummary";
+import { prAttentionItems, prDiffSummary, prStatusRows } from "./pr-display";
+
+const summary = (overrides: Partial<SessionPRSummary> = {}): SessionPRSummary => ({
+	url: "https://github.com/acme/repo/pull/7",
+	htmlUrl: "https://github.com/acme/repo/pull/7",
+	number: 7,
+	title: "Fix dashboard",
+	state: "open",
+	provider: "github",
+	repo: "acme/repo",
+	author: "ada",
+	sourceBranch: "fix/dashboard",
+	targetBranch: "main",
+	headSha: "abc123",
+	additions: 10,
+	deletions: 3,
+	changedFiles: 2,
+	ci: { state: "passing", failingChecks: [] },
+	review: { decision: "approved", hasUnresolvedHumanComments: false, unresolvedBy: [] },
+	mergeability: { state: "mergeable", reasons: [], prUrl: "https://github.com/acme/repo/pull/7" },
+	updatedAt: "2026-06-15T00:00:00Z",
+	observedAt: "2026-06-15T00:00:00Z",
+	ciObservedAt: "2026-06-15T00:00:00Z",
+	reviewObservedAt: "2026-06-15T00:00:00Z",
+	...overrides,
+});
+
+describe("prStatusRows", () => {
+	it("formats the three PR states without exposing raw unknown", () => {
+		const rows = prStatusRows(
+			summary({
+				ci: { state: "unknown", failingChecks: [] },
+				review: { decision: "none", hasUnresolvedHumanComments: false, unresolvedBy: [] },
+				mergeability: { state: "unknown", reasons: [], prUrl: "https://github.com/acme/repo/pull/7" },
+			}),
+		);
+
+		expect(rows.map((row) => `${row.label}:${row.value}`)).toEqual(["CI:Checking", "Review:None", "Merge:Checking"]);
+	});
+
+	it("includes minimal diff detail on the merge row", () => {
+		const rows = prStatusRows(summary({ changedFiles: 4, additions: 25, deletions: 2 }));
+		expect(rows.find((row) => row.key === "merge")?.detail).toBe("4 files");
+	});
+});
+
+describe("prDiffSummary", () => {
+	it("formats file and line delta metadata", () => {
+		expect(prDiffSummary(summary({ changedFiles: 6, additions: 42, deletions: 8 }))).toBe("6 files · +42 -8");
+	});
+
+	it("omits the diff label when no diff metadata is available", () => {
+		expect(prDiffSummary(summary({ changedFiles: 0, additions: 0, deletions: 0 }))).toBeUndefined();
+	});
+});
+
+describe("prAttentionItems", () => {
+	it("returns no attention for clean open PRs", () => {
+		expect(prAttentionItems(summary())).toEqual([]);
+	});
+
+	it("details active CI, review, and merge blockers", () => {
+		const items = prAttentionItems(
+			summary({
+				ci: {
+					state: "failing",
+					failingChecks: [
+						{ name: "copy-check", status: "failed", conclusion: "failure", url: "https://checks.example/copy" },
+					],
+				},
+				review: {
+					decision: "changes_requested",
+					hasUnresolvedHumanComments: true,
+					unresolvedBy: [
+						{
+							reviewerId: "alice",
+							count: 6,
+							links: [{ url: "https://github.com/acme/repo/pull/7#discussion_r1", file: "main.go", line: 12 }],
+						},
+					],
+				},
+				mergeability: {
+					state: "blocked",
+					reasons: ["behind_base"],
+					prUrl: "https://github.com/acme/repo/pull/7",
+				},
+			}),
+		);
+
+		expect(items.map((item) => item.kind)).toEqual(["merge_blocked", "ci_failing", "review_changes_requested"]);
+		expect(items.find((item) => item.kind === "ci_failing")?.links[0]).toMatchObject({
+			label: "copy-check",
+			href: "https://checks.example/copy",
+		});
+		expect(items.find((item) => item.kind === "review_changes_requested")?.links[0]).toMatchObject({
+			label: "alice +5",
+			href: "https://github.com/acme/repo/pull/7#discussion_r1",
+		});
+	});
+
+	it("suppresses attention once the PR is closed or merged", () => {
+		expect(
+			prAttentionItems(
+				summary({
+					state: "merged",
+					ci: { state: "failing", failingChecks: [{ name: "unit", status: "failed", conclusion: "failure" }] },
+					review: { decision: "changes_requested", hasUnresolvedHumanComments: true, unresolvedBy: [] },
+					mergeability: { state: "conflicting", reasons: ["conflicts"], prUrl: "https://github.com/acme/repo/pull/7" },
+				}),
+			),
+		).toEqual([]);
+	});
+});

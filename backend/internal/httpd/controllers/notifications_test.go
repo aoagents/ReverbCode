@@ -14,14 +14,18 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd"
+	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/controllers"
 	notificationsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/notification"
 )
 
 type fakeNotificationService struct {
-	gotFilter notificationsvc.ListFilter
-	items     []notificationsvc.Notification
-	err       error
+	gotFilter    notificationsvc.ListFilter
+	gotMarkID    string
+	items        []notificationsvc.Notification
+	markItem     notificationsvc.Notification
+	markAllItems []notificationsvc.Notification
+	err          error
 }
 
 type fakeNotificationStream struct {
@@ -32,6 +36,15 @@ type fakeNotificationStream struct {
 func (f *fakeNotificationService) ListUnread(_ context.Context, filter notificationsvc.ListFilter) ([]notificationsvc.Notification, error) {
 	f.gotFilter = filter
 	return f.items, f.err
+}
+
+func (f *fakeNotificationService) MarkRead(_ context.Context, id string) (notificationsvc.Notification, bool, error) {
+	f.gotMarkID = id
+	return f.markItem, f.err == nil, f.err
+}
+
+func (f *fakeNotificationService) MarkAllRead(context.Context) ([]notificationsvc.Notification, error) {
+	return f.markAllItems, f.err
 }
 
 func (f *fakeNotificationStream) Subscribe(projectID domain.ProjectID) (<-chan domain.NotificationRecord, func()) {
@@ -53,6 +66,10 @@ func newNotificationStreamTestServer(t *testing.T, svc controllers.NotificationS
 	srv := httptest.NewServer(httpd.NewRouterWithControl(config.Config{}, log, nil, httpd.APIDeps{Notifications: svc, NotificationStream: stream}, httpd.ControlDeps{}))
 	t.Cleanup(srv.Close)
 	return srv
+}
+
+func notificationsvcNotFound() error {
+	return apierr.NotFound("NOTIFICATION_NOT_FOUND", "Unknown unread notification")
 }
 
 func TestNotificationsAPI_ListUnread(t *testing.T) {
@@ -107,6 +124,77 @@ func TestNotificationsAPI_RejectsUnsupportedStatus(t *testing.T) {
 
 	body, status, _ := doRequest(t, srv, "GET", "/api/v1/notifications?status=read", "")
 	assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_QUERY")
+}
+
+func TestNotificationsAPI_MarkRead(t *testing.T) {
+	now := time.Date(2026, 6, 11, 10, 0, 0, 0, time.UTC)
+	svc := &fakeNotificationService{markItem: notificationsvc.Notification{
+		NotificationRecord: domain.NotificationRecord{
+			ID: "ntf_1", SessionID: "mer-1", ProjectID: "mer", Type: domain.NotificationNeedsInput,
+			Title: "checkout-flow needs input", Status: domain.NotificationRead, CreatedAt: now,
+		},
+		Target: notificationsvc.Target{Kind: notificationsvc.TargetSession, SessionID: "mer-1"},
+	}}
+	srv := newNotificationTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "PATCH", "/api/v1/notifications/ntf_1", `{"status":"read"}`)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", status, body)
+	}
+	if svc.gotMarkID != "ntf_1" {
+		t.Fatalf("gotMarkID = %q", svc.gotMarkID)
+	}
+	var resp struct {
+		Notification struct {
+			ID     string `json:"id"`
+			Status string `json:"status"`
+			Target struct {
+				Kind string `json:"kind"`
+			} `json:"target"`
+		} `json:"notification"`
+	}
+	mustJSON(t, body, &resp)
+	if resp.Notification.ID != "ntf_1" || resp.Notification.Status != "read" || resp.Notification.Target.Kind != "session" {
+		t.Fatalf("resp = %+v", resp)
+	}
+}
+
+func TestNotificationsAPI_MarkReadRejectsUnsupportedStatus(t *testing.T) {
+	srv := newNotificationTestServer(t, &fakeNotificationService{})
+
+	body, status, _ := doRequest(t, srv, "PATCH", "/api/v1/notifications/ntf_1", `{"status":"unread"}`)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_NOTIFICATION_STATUS")
+}
+
+func TestNotificationsAPI_MarkReadUnknownNotification(t *testing.T) {
+	srv := newNotificationTestServer(t, &fakeNotificationService{err: notificationsvcNotFound()})
+
+	body, status, _ := doRequest(t, srv, "PATCH", "/api/v1/notifications/missing", `{"status":"read"}`)
+	assertErrorCode(t, body, status, http.StatusNotFound, "NOTIFICATION_NOT_FOUND")
+}
+
+func TestNotificationsAPI_MarkAllRead(t *testing.T) {
+	now := time.Date(2026, 6, 11, 10, 0, 0, 0, time.UTC)
+	svc := &fakeNotificationService{markAllItems: []notificationsvc.Notification{{
+		NotificationRecord: domain.NotificationRecord{ID: "ntf_1", SessionID: "mer-1", ProjectID: "mer", Type: domain.NotificationNeedsInput, Title: "needs", Status: domain.NotificationRead, CreatedAt: now},
+		Target:             notificationsvc.Target{Kind: notificationsvc.TargetSession, SessionID: "mer-1"},
+	}}}
+	srv := newNotificationTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/notifications/read-all", "")
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", status, body)
+	}
+	var resp struct {
+		Notifications []struct {
+			ID     string `json:"id"`
+			Status string `json:"status"`
+		} `json:"notifications"`
+	}
+	mustJSON(t, body, &resp)
+	if len(resp.Notifications) != 1 || resp.Notifications[0].ID != "ntf_1" || resp.Notifications[0].Status != "read" {
+		t.Fatalf("resp = %+v", resp)
+	}
 }
 
 func TestNotificationsAPI_WithoutServiceIs501(t *testing.T) {

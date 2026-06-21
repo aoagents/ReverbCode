@@ -11,6 +11,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
+	"github.com/aoagents/agent-orchestrator/backend/internal/telemetrymeta"
 )
 
 // Store is the read-only persistence surface needed to assemble controller-facing session read models.
@@ -22,6 +23,8 @@ type Store interface {
 	GetDisplayPRFactsForSession(ctx context.Context, id domain.SessionID) (domain.PRFacts, bool, error)
 	ListPRFactsForSession(ctx context.Context, id domain.SessionID) ([]domain.PRFacts, error)
 	ListPRsBySession(ctx context.Context, sessionID domain.SessionID) ([]domain.PullRequest, error)
+	ListChecks(ctx context.Context, prURL string) ([]domain.PullRequestCheck, error)
+	ListPRReviewThreads(ctx context.Context, prURL string) ([]domain.PullRequestReviewThread, error)
 	ListPRComments(ctx context.Context, prURL string) ([]domain.PullRequestComment, error)
 	GetProject(ctx context.Context, id string) (domain.ProjectRecord, bool, error)
 }
@@ -229,18 +232,15 @@ func (s *Service) emitSpawnFailed(cfg ports.SpawnConfig, err error, durationMs i
 	}
 	projectID := cfg.ProjectID
 	apiErr := toAPIError(err)
-	errorKind := "internal"
-	errorCode := ""
-	var typedErr *apierr.Error
-	if errors.As(apiErr, &typedErr) {
-		errorKind = telemetryErrorKind(typedErr.Kind)
-		errorCode = typedErr.Code
-	}
+	errorKind, errorCode := telemetrymeta.ErrorKindAndCode(apiErr)
 	payload := map[string]any{
+		"component":   "session_service",
+		"operation":   "spawn_session",
 		"kind":        string(cfg.Kind),
 		"harness":     string(cfg.Harness),
 		"duration_ms": durationMs,
 		"error_kind":  errorKind,
+		"fingerprint": telemetrymeta.Fingerprint("session_service", "spawn_session", string(cfg.Kind), string(cfg.Harness), errorKind, errorCode),
 	}
 	if errorCode != "" {
 		payload["error_code"] = errorCode
@@ -253,19 +253,6 @@ func (s *Service) emitSpawnFailed(cfg ports.SpawnConfig, err error, durationMs i
 		ProjectID:  &projectID,
 		Payload:    payload,
 	})
-}
-
-func telemetryErrorKind(kind apierr.Kind) string {
-	switch kind {
-	case apierr.KindInvalid:
-		return "invalid"
-	case apierr.KindNotFound:
-		return "not_found"
-	case apierr.KindConflict:
-		return "conflict"
-	default:
-		return "internal"
-	}
 }
 
 // SpawnOrchestrator spawns an orchestrator session for a project. When clean is

@@ -70,7 +70,7 @@ describe("useWorkspaceQuery", () => {
 						},
 						{
 							// Unknown harness/status and no displayName/issueId: falls back
-							// to codex / working / the session id.
+							// to codex / unknown / the session id.
 							id: "sess-2",
 							projectId: "proj-1",
 							harness: "mystery-agent",
@@ -104,8 +104,8 @@ describe("useWorkspaceQuery", () => {
 			id: "sess-2",
 			title: "sess-2",
 			provider: "codex",
+			status: "unknown",
 			branch: "session/sess-2",
-			status: "working",
 		});
 	});
 
@@ -167,7 +167,7 @@ describe("useWorkspaceQuery", () => {
 		expect(sessions[1].prs).toEqual([]);
 	});
 
-	it("marks terminated sessions regardless of their reported status", async () => {
+	it("preserves backend merged status for terminated merged sessions", async () => {
 		respondWith({
 			projects: { data: { projects: [{ id: "proj-1", name: "my-app", path: "/p" }] }, error: undefined },
 			sessions: {
@@ -176,7 +176,32 @@ describe("useWorkspaceQuery", () => {
 						{
 							id: "sess-1",
 							projectId: "proj-1",
-							status: "working",
+							status: "merged",
+							isTerminated: true,
+							updatedAt: "2026-06-10T16:15:04Z",
+						},
+					],
+				},
+				error: undefined,
+			},
+		});
+
+		const { result } = renderHook(() => useWorkspaceQuery(), { wrapper });
+		await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+		expect(result.current.data?.[0].sessions[0].status).toBe("merged");
+	});
+
+	it("falls back to terminated for terminated sessions without a known backend status", async () => {
+		respondWith({
+			projects: { data: { projects: [{ id: "proj-1", name: "my-app", path: "/p" }] }, error: undefined },
+			sessions: {
+				data: {
+					sessions: [
+						{
+							id: "sess-1",
+							projectId: "proj-1",
+							status: "bogus",
 							isTerminated: true,
 							updatedAt: "2026-06-10T16:15:04Z",
 						},

@@ -23,8 +23,8 @@ vi.mock("@tanstack/react-router", async (importOriginal) => {
 import { SessionsBoard } from "../../components/SessionsBoard";
 import { PullRequestsPage } from "../../components/PullRequestsPage";
 
-// One ordinary project with one worker session that has an open PR (#278).
-function respondWithProjectAndPR() {
+// One ordinary project with one worker session that has multiple PRs.
+function respondWithProjectAndPRs() {
 	getMock.mockImplementation(async (url: string) => {
 		if (url === "/api/v1/projects") {
 			return { data: { projects: [{ id: "proj-1", name: "my-app", path: "/repo/my-app" }] }, error: undefined };
@@ -52,6 +52,16 @@ function respondWithProjectAndPR() {
 									reviewComments: false,
 									updatedAt: "2026-06-10T16:15:04Z",
 								},
+								{
+									number: 279,
+									state: "draft",
+									url: "https://github.com/aoagents/ReverbCode/pull/279",
+									ci: "pending",
+									review: "pending",
+									mergeability: "unknown",
+									reviewComments: false,
+									updatedAt: "2026-06-10T16:20:04Z",
+								},
 							],
 						},
 					],
@@ -71,22 +81,24 @@ function renderWithProviders(node: ReactNode) {
 beforeEach(() => {
 	getMock.mockReset();
 	navigateMock.mockReset();
-	respondWithProjectAndPR();
+	respondWithProjectAndPRs();
 });
 
 describe("PR hydration for a normal project (#251)", () => {
-	it("renders the PR on the Board card instead of 'no PR yet'", async () => {
+	it("renders every session PR on the Board card instead of 'no PR yet'", async () => {
 		renderWithProviders(<SessionsBoard />);
 
 		expect(await screen.findByText("PR #278 · open")).toBeInTheDocument();
+		expect(screen.getByText("PR #279 · draft")).toBeInTheDocument();
 		expect(screen.queryByText("no PR yet")).not.toBeInTheDocument();
 	});
 
-	it("lists the session on the PR page instead of being empty", async () => {
+	it("lists every session PR on the PR page instead of being empty", async () => {
 		renderWithProviders(<PullRequestsPage />);
 
 		expect(await screen.findByText("#278")).toBeInTheDocument();
+		expect(screen.getByText("#279")).toBeInTheDocument();
 		expect(screen.queryByText("No open pull requests.")).not.toBeInTheDocument();
-		expect(screen.getByText("fix the bug")).toBeInTheDocument();
+		expect(screen.getAllByText("fix the bug")).toHaveLength(2);
 	});
 });

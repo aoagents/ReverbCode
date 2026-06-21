@@ -1,9 +1,11 @@
 import {
 	app,
 	BrowserWindow,
+	clipboard,
 	dialog,
 	ipcMain,
 	net,
+	Notification as ElectronNotification,
 	protocol,
 	shell,
 	WebContentsView,
@@ -29,6 +31,14 @@ declare const MAIN_WINDOW_VITE_NAME: string;
 
 // Must run before app ready so the About panel and default-menu role labels use it.
 app.setName("Agent Orchestrator");
+
+// Pin ALL Electron-owned state (Chromium cache, cookies, local/session storage,
+// crash dumps) under the canonical AO home at ~/.ao instead of Electron's macOS
+// default ~/Library/Application Support/<name>. Keeps the app's entire footprint
+// inside ~/.ao alongside the daemon's data dir and running.json. sessionData and
+// crashDumps derive from userData, so this one override reparents them all.
+// Must run before app ready.
+app.setPath("userData", path.join(os.homedir(), ".ao", "electron"));
 
 let mainWindow: BrowserWindow | null = null;
 let daemonProcess: ChildProcessWithoutNullStreams | null = null;
@@ -560,6 +570,29 @@ ipcMain.handle("app:chooseDirectory", async () => {
 
 	if (result.canceled) return null;
 	return result.filePaths[0] ?? null;
+});
+ipcMain.handle("clipboard:writeText", (_event, text: string) => {
+	clipboard.writeText(text, "clipboard");
+	if (process.platform === "linux") {
+		clipboard.writeText(text, "selection");
+	}
+});
+ipcMain.handle("clipboard:readText", () => clipboard.readText());
+
+ipcMain.handle("notifications:show", (_event, notification: { id: string; title: string; body?: string }) => {
+	if (!notification.id || !notification.title || !ElectronNotification.isSupported()) return;
+	const toast = new ElectronNotification({
+		title: notification.title,
+		body: notification.body,
+	});
+	toast.on("click", () => {
+		if (!mainWindow) return;
+		if (mainWindow.isMinimized()) mainWindow.restore();
+		mainWindow.show();
+		mainWindow.focus();
+		mainWindow.webContents.send("notifications:click", notification.id);
+	});
+	toast.show();
 });
 
 // Auto-update only runs for packaged builds reading the GitHub Releases feed

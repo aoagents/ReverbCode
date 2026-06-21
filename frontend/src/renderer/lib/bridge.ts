@@ -7,6 +7,14 @@ export const aoBridge: AoBridge =
 			getVersion: async () => "0.0.0-preview",
 			chooseDirectory: async () => null,
 		},
+		clipboard: {
+			writeText: async (text: string) => {
+				if (navigator.clipboard?.writeText) {
+					await navigator.clipboard.writeText(text);
+				}
+			},
+			readText: async () => (navigator.clipboard?.readText ? navigator.clipboard.readText() : ""),
+		},
 		daemon: {
 			getStatus: async () => ({
 				state: "stopped",
@@ -71,5 +79,9 @@ export const aoBridge: AoBridge =
 			}),
 			destroy: () => undefined,
 			onNavState: () => () => undefined,
+		},
+		notifications: {
+			show: async () => undefined,
+			onClick: () => () => undefined,
 		},
 	} satisfies AoBridge);

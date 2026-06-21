@@ -55,6 +55,10 @@ window.ao = {
 		getVersion: async () => "0.0.0-test",
 		chooseDirectory: async () => null,
 	},
+	clipboard: {
+		writeText: async () => undefined,
+		readText: async () => "",
+	},
 	daemon: {
 		getStatus: async () => ({ state: "stopped" }),
 		start: async () => ({ state: "starting" }),
@@ -116,5 +120,9 @@ window.ao = {
 		}),
 		destroy: () => undefined,
 		onNavState: () => () => undefined,
+	},
+	notifications: {
+		show: async () => undefined,
+		onClick: () => () => undefined,
 	},
 };

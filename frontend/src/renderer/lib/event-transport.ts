@@ -3,6 +3,7 @@ import { aoBridge } from "./bridge";
 import { getApiBaseUrl, hasTrustedApiBaseUrl, subscribeApiBaseUrl } from "./api-client";
 import { setEventsConnectionState } from "./events-connection";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { sessionScmSummaryQueryKey } from "../hooks/useSessionScmSummary";
 
 export type EventTransport = {
 	connect: () => () => void;
@@ -50,6 +51,7 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 				if (debounce) clearTimeout(debounce);
 				debounce = setTimeout(() => {
 					void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+					void queryClient.invalidateQueries({ queryKey: sessionScmSummaryQueryKey() });
 				}, INVALIDATE_DEBOUNCE_MS);
 			};
 

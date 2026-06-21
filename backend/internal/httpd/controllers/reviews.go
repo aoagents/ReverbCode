@@ -30,9 +30,10 @@ type ReviewRunResponse struct {
 
 // SubmitReviewInput is the body of POST /api/v1/sessions/{sessionId}/reviews/submit.
 type SubmitReviewInput struct {
-	RunID   string `json:"runId" description:"Review run id being completed."`
-	Verdict string `json:"verdict" description:"Review verdict: approved or changes_requested."`
-	Body    string `json:"body" description:"Review body recorded by AO. Required for changes_requested."`
+	RunID          string `json:"runId" description:"Review run id being completed."`
+	Verdict        string `json:"verdict" description:"Review verdict: approved or changes_requested."`
+	Body           string `json:"body" description:"Review body recorded by AO. Required for changes_requested."`
+	GithubReviewID string `json:"githubReviewId" description:"Id of the GitHub PR review the reviewer posted, if any."`
 }
 
 // ReviewsController owns the session-scoped /reviews routes. A nil Svc returns 501.
@@ -93,7 +94,7 @@ func (c *ReviewsController) submit(w http.ResponseWriter, r *http.Request) {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_BODY", "Invalid request body", nil)
 		return
 	}
-	run, err := c.Svc.Submit(r.Context(), sessionID(r), in.RunID, domain.ReviewVerdict(in.Verdict), in.Body)
+	run, err := c.Svc.Submit(r.Context(), sessionID(r), in.RunID, domain.ReviewVerdict(in.Verdict), in.Body, in.GithubReviewID)
 	if err != nil {
 		writeReviewError(w, r, err)
 		return

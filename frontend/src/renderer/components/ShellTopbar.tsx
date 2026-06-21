@@ -1,7 +1,8 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
-import { Bell, GitBranch, LayoutDashboard, PanelRightClose, PanelRightOpen, Plus, Square, Trash2 } from "lucide-react";
+import { GitBranch, LayoutDashboard, PanelRightClose, PanelRightOpen, Plus, Square, Trash2 } from "lucide-react";
 import { useState } from "react";
+import { NotificationCenter } from "./NotificationCenter";
 import {
 	findProjectOrchestrator,
 	isOrchestratorSession,
@@ -13,7 +14,7 @@ import {
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
-import { captureRendererEvent, captureRendererException } from "../lib/telemetry";
+import { addRendererExceptionStep, captureRendererEvent, captureRendererException } from "../lib/telemetry";
 import { useUiStore } from "../stores/ui-store";
 import { OrchestratorIcon } from "./icons";
 import { NewTaskDialog } from "./NewTaskDialog";
@@ -33,6 +34,7 @@ const STATUS_PILL: Record<WorkerDisplayStatus, { label: string; tone: string; br
 	no_signal: { label: "No signal", tone: "var(--fg-muted)", breathe: false },
 	mergeable: { label: "Ready", tone: "var(--green)", breathe: false },
 	done: { label: "Done", tone: "var(--fg-muted)", breathe: false },
+	unknown: { label: "Unknown", tone: "var(--fg-muted)", breathe: false },
 };
 
 // The one app topbar (.dashboard-app-header), rendered by the shell layout
@@ -92,6 +94,12 @@ export function ShellTopbar() {
 
 	const openOrchestrator = async () => {
 		if (!projectId) return;
+		void addRendererExceptionStep("Orchestrator open requested", {
+			source: "orchestrator-open",
+			operation: "open_orchestrator",
+			surface: isSessionRoute ? "session_detail" : "project_board",
+			project_id: projectId,
+		});
 		void captureRendererEvent("ao.renderer.orchestrator_open_requested", { project_id: projectId });
 		if (orchestrator) {
 			void navigate({
@@ -109,7 +117,12 @@ export function ShellTopbar() {
 				params: { projectId, sessionId },
 			});
 		} catch (error) {
-			void captureRendererException(error, { source: "orchestrator-open", project_id: projectId });
+			void captureRendererException(error, {
+				source: "orchestrator-open",
+				operation: "open_orchestrator",
+				surface: isSessionRoute ? "session_detail" : "project_board",
+				project_id: projectId,
+			});
 			console.error("Failed to spawn orchestrator:", error);
 		} finally {
 			setIsSpawning(false);
@@ -150,6 +163,7 @@ export function ShellTopbar() {
 			<div className="dashboard-app-header__spacer" />
 
 			<div className="dashboard-app-header__actions">
+				<NotificationCenter style={noDragStyle} />
 				{isSessionRoute ? (
 					<>
 						{isOrchestrator ? (
@@ -175,9 +189,7 @@ export function ShellTopbar() {
 									Kanban
 								</button>
 							</>
-						) : (
-							<TopbarNotificationButton />
-						)}
+						) : null}
 						{/* Kill control sits beside the orchestrator link for active workers —
 						    moved here from the inspector's Summary "Danger zone". */}
 						{!isOrchestrator && session && sessionIsActive(session) ? <TopbarKillButton session={session} /> : null}
@@ -222,20 +234,6 @@ export function ShellTopbar() {
 				onOpenChange={setIsNewTaskOpen}
 			/>
 		</header>
-	);
-}
-
-function TopbarNotificationButton() {
-	return (
-		<button
-			aria-label="Notifications"
-			className="dashboard-app-header__icon-btn dashboard-app-header__icon-btn--quiet"
-			style={noDragStyle}
-			title="Notifications"
-			type="button"
-		>
-			<Bell className="h-[15px] w-[15px]" aria-hidden="true" />
-		</button>
 	);
 }
 
