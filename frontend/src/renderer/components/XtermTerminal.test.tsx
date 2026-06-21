@@ -167,10 +167,7 @@ describe("XtermTerminal", () => {
 
 	it("auto-copies new selections and retries explicit copy if the auto-copy failed", async () => {
 		render(<XtermTerminal theme="dark" />);
-		const writeText = vi
-			.fn()
-			.mockRejectedValueOnce(new Error("clipboard failed"))
-			.mockResolvedValueOnce(undefined);
+		const writeText = vi.fn().mockRejectedValueOnce(new Error("clipboard failed")).mockResolvedValueOnce(undefined);
 		window.ao!.clipboard.writeText = writeText;
 
 		state.lastTerminal!.selection = "retry me";
