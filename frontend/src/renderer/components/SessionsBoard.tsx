@@ -257,7 +257,6 @@ function ZoneColumn({
 	);
 }
 
-
 function SessionCard({ session, onOpen }: { session: WorkspaceSession; onOpen: () => void }) {
 	const badge = sessionBadge(session);
 	const branch = session.branch || "";

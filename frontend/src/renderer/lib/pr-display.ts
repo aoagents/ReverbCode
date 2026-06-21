@@ -1,10 +1,5 @@
 import type { SessionPRSummary } from "../hooks/useSessionScmSummary";
-import {
-	sortedPRs,
-	type PRState,
-	type PullRequestFacts,
-	type WorkspaceSession,
-} from "../types/workspace";
+import { sortedPRs, type PRState, type PullRequestFacts, type WorkspaceSession } from "../types/workspace";
 
 const prStateRank: Record<PRState, number> = { open: 0, draft: 1, merged: 2, closed: 3 };
 const ciStates = new Set<SessionPRSummary["ci"]["state"]>(["unknown", "pending", "passing", "failing"]);

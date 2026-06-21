@@ -128,8 +128,7 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 	const query = useSessionScmSummary(session.id);
 	const prSummaries = sessionPRDisplaySummaries(session, query.data);
 	const primaryPRSummary = prSummaries[0];
-	const prSectionTitle =
-		prSummaries.length > 1 ? `Pull requests (${prSummaries.length})` : "Pull request";
+	const prSectionTitle = prSummaries.length > 1 ? `Pull requests (${prSummaries.length})` : "Pull request";
 	const branchLabel = session.branch || `session/${session.id}`;
 
 	return (
@@ -245,9 +244,7 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 							<Row
 								k="Reasons"
 								v={
-									primaryPRSummary.mergeability.reasons.length
-										? primaryPRSummary.mergeability.reasons.join(", ")
-										: "-"
+									primaryPRSummary.mergeability.reasons.length ? primaryPRSummary.mergeability.reasons.join(", ") : "-"
 								}
 								mono
 							/>
@@ -318,7 +315,6 @@ function PRSummaryCard({ pr }: { pr: SessionPRSummary }) {
 		</div>
 	);
 }
-
 
 type TimelineTone = "now" | "good" | "warn" | "neutral";
 
