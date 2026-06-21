@@ -89,7 +89,7 @@ func containsKey(values []string, key string) bool {
 func TestCommandBuilders(t *testing.T) {
 	embeddedOptions := []string{
 		"--pane-frames", "false",
-		"--mouse-mode", "false",
+		"--mouse-mode", "true",
 		"--advanced-mouse-actions", "false",
 		"--mouse-hover-effects", "false",
 		"--focus-follows-mouse", "false",
@@ -441,7 +441,7 @@ func TestAttachCommandUsesEmbeddedClientOptions(t *testing.T) {
 	}
 	embeddedOptions := []string{
 		"--pane-frames", "false",
-		"--mouse-mode", "false",
+		"--mouse-mode", "true",
 		"--advanced-mouse-actions", "false",
 		"--mouse-hover-effects", "false",
 		"--focus-follows-mouse", "false",

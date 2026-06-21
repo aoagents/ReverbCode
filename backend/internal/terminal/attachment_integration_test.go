@@ -53,8 +53,9 @@ func TestAttachmentStreamsRealZellijPane(t *testing.T) {
 	eventually(t, 5*time.Second, func() bool { return strings.Contains(got.string(), "AO_MARKER_42") })
 
 	// A fresh attach must carry zellij's alt-screen init handshake. Mouse
-	// reporting is deliberately disabled for AO's embedded client, so this test
-	// should not require SGR mouse mode.
+	// mode is enabled (--mouse-mode true) so wheel events reach zellij and
+	// scroll its internal scrollback; the attach enables SGR mouse tracking
+	// as part of that handshake.
 	eventually(t, 5*time.Second, func() bool {
 		out := got.string()
 		return strings.Contains(out, "\x1b[?1049h")
