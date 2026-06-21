@@ -427,7 +427,7 @@ func writeSessionPRError(w http.ResponseWriter, r *http.Request, err error) {
 }
 
 func sessionView(s domain.Session) SessionView {
-	return SessionView{Session: s, PRs: sessionPRFacts(s.PRs)}
+	return SessionView{Session: s, Branch: s.Metadata.Branch, PRs: sessionPRFacts(s.PRs)}
 }
 
 func sessionViews(sessions []domain.Session) []SessionView {

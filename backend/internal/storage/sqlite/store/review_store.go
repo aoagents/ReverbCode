@@ -46,16 +46,17 @@ func (s *Store) InsertReviewRun(ctx context.Context, r domain.ReviewRun) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	err := s.qw.InsertReviewRun(ctx, gen.InsertReviewRunParams{
-		ID:        r.ID,
-		ReviewID:  r.ReviewID,
-		SessionID: r.SessionID,
-		Harness:   r.Harness,
-		PRURL:     r.PRURL,
-		TargetSha: r.TargetSHA,
-		Status:    r.Status,
-		Verdict:   r.Verdict,
-		Body:      r.Body,
-		CreatedAt: r.CreatedAt,
+		ID:             r.ID,
+		ReviewID:       r.ReviewID,
+		SessionID:      r.SessionID,
+		Harness:        r.Harness,
+		PRURL:          r.PRURL,
+		TargetSha:      r.TargetSHA,
+		Status:         r.Status,
+		Verdict:        r.Verdict,
+		Body:           r.Body,
+		GithubReviewID: r.GithubReviewID,
+		CreatedAt:      r.CreatedAt,
 	})
 	if isSQLiteUnique(err) {
 		return fmt.Errorf("insert review run for session %s sha %s: %w", r.SessionID, r.TargetSHA, domain.ErrDuplicateReviewRun)
@@ -63,15 +64,17 @@ func (s *Store) InsertReviewRun(ctx context.Context, r domain.ReviewRun) error {
 	return err
 }
 
-// UpdateReviewRunResult sets the status/verdict/body of a running review pass.
-func (s *Store) UpdateReviewRunResult(ctx context.Context, id string, status domain.ReviewRunStatus, verdict domain.ReviewVerdict, body string) (bool, error) {
+// UpdateReviewRunResult sets the status/verdict/body and the GitHub review id of
+// a running review pass.
+func (s *Store) UpdateReviewRunResult(ctx context.Context, id string, status domain.ReviewRunStatus, verdict domain.ReviewVerdict, body, githubReviewID string) (bool, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	n, err := s.qw.UpdateReviewRunResult(ctx, gen.UpdateReviewRunResultParams{
-		Status:  status,
-		Verdict: verdict,
-		Body:    body,
-		ID:      id,
+		Status:         status,
+		Verdict:        verdict,
+		Body:           body,
+		GithubReviewID: githubReviewID,
+		ID:             id,
 	})
 	if err != nil {
 		return false, err
@@ -133,15 +136,16 @@ func reviewFromRow(r gen.Review) domain.Review {
 
 func reviewRunFromRow(r gen.ReviewRun) domain.ReviewRun {
 	return domain.ReviewRun{
-		ID:        r.ID,
-		ReviewID:  r.ReviewID,
-		SessionID: r.SessionID,
-		Harness:   r.Harness,
-		PRURL:     r.PRURL,
-		TargetSHA: r.TargetSha,
-		Status:    r.Status,
-		Verdict:   r.Verdict,
-		Body:      r.Body,
-		CreatedAt: r.CreatedAt,
+		ID:             r.ID,
+		ReviewID:       r.ReviewID,
+		SessionID:      r.SessionID,
+		Harness:        r.Harness,
+		PRURL:          r.PRURL,
+		TargetSHA:      r.TargetSha,
+		Status:         r.Status,
+		Verdict:        r.Verdict,
+		Body:           r.Body,
+		GithubReviewID: r.GithubReviewID,
+		CreatedAt:      r.CreatedAt,
 	}
 }

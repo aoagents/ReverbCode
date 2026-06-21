@@ -48,6 +48,7 @@ const pr = (overrides: Partial<PullRequestFacts> & { number: number; state: PRSt
 describe("toSessionStatus", () => {
 	it("passes through a known status", () => {
 		expect(toSessionStatus("mergeable")).toBe("mergeable");
+		expect(toSessionStatus("no_signal")).toBe("no_signal");
 	});
 
 	it("overrides to terminated when the session is terminated", () => {
@@ -73,6 +74,7 @@ describe("workerDisplayStatus", () => {
 		["changes_requested", "needs_you"],
 		["review_pending", "needs_you"],
 		["ci_failed", "ci_failed"],
+		["no_signal", "no_signal"],
 		["approved", "mergeable"],
 		["mergeable", "mergeable"],
 		["merged", "done"],
@@ -132,6 +134,10 @@ describe("sessionNeedsAttention", () => {
 		expect(sessionNeedsAttention(sessionWith({ status }))).toBe(true);
 	});
 
+	it("treats no_signal as needing attention", () => {
+		expect(sessionNeedsAttention(sessionWith({ status: "no_signal" }))).toBe(true);
+	});
+
 	it("is false for statuses that don't need the user", () => {
 		expect(sessionNeedsAttention(sessionWith({ status: "working" }))).toBe(false);
 		expect(sessionNeedsAttention(sessionWith({ status: "mergeable" }))).toBe(false);
@@ -143,6 +149,7 @@ describe("workerStatusPulses", () => {
 		expect(workerStatusPulses("working")).toBe(true);
 		expect(workerStatusPulses("needs_you")).toBe(true);
 		expect(workerStatusPulses("mergeable")).toBe(false);
+		expect(workerStatusPulses("no_signal")).toBe(false);
 		expect(workerStatusPulses("done")).toBe(false);
 	});
 });
@@ -199,6 +206,7 @@ describe("attentionZone", () => {
 		["approved", "merge"],
 		["needs_input", "action"],
 		["ci_failed", "action"],
+		["no_signal", "action"],
 		["changes_requested", "action"],
 		["review_pending", "pending"],
 		["pr_open", "pending"],

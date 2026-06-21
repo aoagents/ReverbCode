@@ -16,6 +16,9 @@ type TerminalPaneProps = {
 };
 
 export function TerminalPane({ session, theme, daemonReady, terminalTarget }: TerminalPaneProps) {
+	const terminalKey =
+		terminalTarget?.kind === "reviewer" ? terminalTarget.handleId : (session?.terminalHandleId ?? "empty");
+
 	if (!window.ao) {
 		const provider = terminalTarget?.kind === "reviewer" ? terminalTarget.harness : (session?.provider ?? "claude");
 		return (
@@ -32,7 +35,15 @@ export function TerminalPane({ session, theme, daemonReady, terminalTarget }: Te
 		);
 	}
 
-	return <AttachedTerminal session={session} theme={theme} daemonReady={daemonReady} terminalTarget={terminalTarget} />;
+	return (
+		<AttachedTerminal
+			key={terminalKey}
+			session={session}
+			theme={theme}
+			daemonReady={daemonReady}
+			terminalTarget={terminalTarget}
+		/>
+	);
 }
 
 function bannerText(state: TerminalSessionState, error?: string): string | undefined {
@@ -46,10 +57,9 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget }: Termi
 		session && terminalTarget?.kind === "reviewer"
 			? { ...session, terminalHandleId: terminalTarget.handleId }
 			: session;
-	// One terminal instance per pane lifetime (yyork's core rule): switching
-	// sessions never remounts XtermTerminal — the attachment effect re-points
-	// the mux and clears the screen instead. A keyed remount would tear down the
-	// renderer mid-switch and lose the warm GPU surface.
+	// One terminal instance per handle-scoped pane lifetime. TerminalPane keys this
+	// component by terminal handle, so session switches get a fresh xterm + mux
+	// hook state instead of reusing a potentially stale screen/input binding.
 	const [terminal, setTerminal] = useState<AttachableTerminal | null>(null);
 	const [initFailed, setInitFailed] = useState(false);
 	const [isRestoring, setIsRestoring] = useState(false);
@@ -60,7 +70,9 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget }: Termi
 	const hadAttachmentRef = useRef(false);
 	const canRestoreSession = terminalTarget?.kind !== "reviewer" && session?.status === "terminated";
 
-	const handleReady = useCallback((handle: AttachableTerminal) => setTerminal(handle), []);
+	const handleReady = useCallback((handle: AttachableTerminal) => {
+		setTerminal(handle);
+	}, []);
 	const handleInitError = useCallback((err: unknown) => {
 		console.error("xterm failed to initialize", err);
 		setInitFailed(true);
@@ -97,7 +109,7 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget }: Termi
 		}
 		hadAttachmentRef.current = true;
 		return attach(terminal);
-	}, [terminal, handleId, attach]);
+	}, [terminal, handleId, attach, attachSession?.id]);
 
 	if (initFailed) {
 		return (

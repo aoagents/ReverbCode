@@ -9,6 +9,7 @@ export type SessionStatus =
 	| "mergeable"
 	| "merged"
 	| "needs_input"
+	| "no_signal"
 	| "idle"
 	| "terminated";
 
@@ -23,6 +24,7 @@ const sessionStatuses = new Set<SessionStatus>([
 	"mergeable",
 	"merged",
 	"needs_input",
+	"no_signal",
 	"idle",
 	"terminated",
 ]);
@@ -119,7 +121,7 @@ export type WorkspaceSession = {
 };
 
 /** Glanceable worker status. Maps 1:1 to the accent colors in DESIGN.md. */
-export type WorkerDisplayStatus = "working" | "needs_you" | "mergeable" | "ci_failed" | "done";
+export type WorkerDisplayStatus = "working" | "needs_you" | "mergeable" | "ci_failed" | "no_signal" | "done";
 
 export function workerDisplayStatus(session: WorkspaceSession): WorkerDisplayStatus {
 	if (session.displayStatus) return session.displayStatus;
@@ -130,6 +132,8 @@ export function workerDisplayStatus(session: WorkspaceSession): WorkerDisplaySta
 			return "needs_you";
 		case "ci_failed":
 			return "ci_failed";
+		case "no_signal":
+			return "no_signal";
 		case "approved":
 		case "mergeable":
 			return "mergeable";
@@ -194,6 +198,7 @@ export function sessionIsActive(session: WorkspaceSession): boolean {
 export function sessionNeedsAttention(session: WorkspaceSession): boolean {
 	return (
 		session.status === "needs_input" ||
+		session.status === "no_signal" ||
 		session.status === "changes_requested" ||
 		session.status === "review_pending" ||
 		session.status === "ci_failed"
@@ -205,6 +210,7 @@ export const workerStatusLabel: Record<WorkerDisplayStatus, string> = {
 	needs_you: "needs you",
 	mergeable: "mergeable",
 	ci_failed: "ci failed",
+	no_signal: "no signal",
 	done: "done",
 };
 
@@ -246,6 +252,7 @@ export function attentionZone(session: WorkspaceSession): AttentionZone {
 		// Agent waiting on a human (respond) or a problem to investigate (review);
 		// agent-orchestrator collapses these into one "action" zone by default.
 		case "needs_input":
+		case "no_signal":
 		case "ci_failed":
 		case "changes_requested":
 			return "action";

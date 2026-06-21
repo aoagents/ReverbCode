@@ -40,8 +40,14 @@ type ReviewRun struct {
 	Verdict   ReviewVerdict   `json:"verdict"`
 	// Body is the review text the reviewer submitted. It is recorded for AO's
 	// own tracking; the reviewer also posts the review to the PR itself.
-	Body      string    `json:"body"`
-	CreatedAt time.Time `json:"createdAt"`
+	Body string `json:"body"`
+	// GithubReviewID is the id of the GitHub PR review the reviewer posted for
+	// this pass (the `gh api .../pulls/{n}/reviews` object id), recorded at
+	// submit time. It is empty when the reviewer could not post to the provider.
+	// When the pass requests changes, AO includes it in the message to the
+	// worker so the worker knows exactly which review to address and reply to.
+	GithubReviewID string    `json:"githubReviewId"`
+	CreatedAt      time.Time `json:"createdAt"`
 }
 
 // ReviewRunStatus is the lifecycle state of a single review pass.

@@ -328,6 +328,8 @@ function sessionBadge(session: WorkspaceSession): { label: string; className: st
 	switch (session.status) {
 		case "needs_input":
 			return { label: "Input needed", className: "text-warning" };
+		case "no_signal":
+			return { label: "No signal", className: "text-passive" };
 		case "ci_failed":
 			return { label: "CI failed", className: "text-error" };
 		case "changes_requested":

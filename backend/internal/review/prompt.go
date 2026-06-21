@@ -16,19 +16,28 @@ func reviewTexts(spec LaunchSpec) (prompt, systemPrompt string) {
 
 You are an AO code reviewer. You review a single pull request's changes in the current checkout — do not start unrelated work. Inspect what the PR changed by diffing the checkout against the PR's base branch, and review for correctness bugs, missing error handling, security issues, test coverage, and clear deviations from the surrounding code's conventions. Prefer a few high-confidence findings over nitpicks.
 
-Post your review on the pull request using the available review tooling (request changes if it needs work, approve if it is ready), with inline comments for specific findings. Do not push commits, edit files, or modify the branch — review only.`
+Post your review as a comment on the pull request, stating clearly whether it needs changes or is ready, with inline comments for specific findings. Do not push commits, edit files, or modify the branch — review only.`
 
 	prompt = fmt.Sprintf(`Review pull request %s (head commit %s).
 
 Do these steps in order:
-1. Post your review on the pull request with `+"`gh`"+`, with inline comments for specific findings:
-   - If changes are needed, request changes.
-   - If it is ready, approve it. GitHub does not let you approve a PR you opened — if the approval is rejected because you are the PR author, post the same review as a regular comment instead (a COMMENT-event review whose body states it is an approval).
-2. Write your full review to review.md and record the result with AO by running exactly:
+1. Post your review on the pull request and capture its id in one call. Post with `+"`gh api`"+` rather than `+"`gh pr review`"+`: it is the only way to attach inline comments, and its response carries the created review's id, so AO can tell the worker exactly which review to address. Send the review as a JSON body so the inline comments form a proper array of objects:
 
-    ao review submit --session %s --run %s --verdict <approved|changes_requested> --body review.md
+    gh api --method POST repos/{owner}/{repo}/pulls/{number}/reviews --input - --jq '.id' <<'JSON'
+    { "event": "COMMENT", "body": "<summary>",
+      "comments": [ { "path": "<file>", "line": <n>, "body": "<finding>" } ] }
+    JSON
 
-Only if step 1 genuinely fails on the provider, still run step 2 so the result is recorded.`,
+   - Substitute the PR's owner/repo/number. Add one object to "comments" per inline finding; omit the field for a review with no inline comments.
+   - Always use "event": "COMMENT": reviews are posted from the PR author's own account, and GitHub rejects both APPROVE and REQUEST_CHANGES on your own PR. State in the body whether you are requesting changes or approving; the machine-readable verdict goes to AO in step 2.
+   - The printed number is the review id. If the call fails on the provider, leave the id empty.
+2. Record the result with AO, passing your full review on stdin with --body - so nothing is ever written into the worktree (a file there could be committed onto the worker's branch):
+
+    ao review submit --session %s --run %s --verdict <approved|changes_requested> --review-id <id-from-step-1> --body - <<'MD'
+    <your full review markdown>
+    MD
+
+Only if step 1 genuinely fails on the provider, still run step 2 (without --review-id) so the result is recorded.`,
 		spec.PRURL, spec.TargetSHA, spec.WorkerID, spec.RunID)
 	return prompt, systemPrompt
 }

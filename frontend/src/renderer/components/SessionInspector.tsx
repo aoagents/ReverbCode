@@ -247,6 +247,8 @@ function activityDetail(status: SessionStatus): string | null {
 			return "Session idle";
 		case "needs_input":
 			return "Waiting for your input";
+		case "no_signal":
+			return "No recent agent signal";
 		case "working":
 			return null;
 		default:
@@ -261,6 +263,7 @@ const STATUS_PILL: Record<
 	working: { label: "Working", tone: "var(--orange)", breathe: true },
 	needs_you: { label: "Input needed", tone: "var(--amber)", breathe: false },
 	ci_failed: { label: "CI failed", tone: "var(--red)", breathe: false },
+	no_signal: { label: "No signal", tone: "var(--fg-muted)", breathe: false },
 	mergeable: { label: "Ready", tone: "var(--green)", breathe: false },
 	done: { label: "Done", tone: "var(--fg-muted)", breathe: false },
 	idle: { label: "Idle", tone: "var(--fg-muted)", breathe: false },

@@ -87,7 +87,7 @@ type ConnectionListener = (state: MuxConnectionState) => void;
 export type TerminalMux = {
 	/** Open a PTY pane for the given runtime/session id at an initial size. */
 	open: (id: string, cols: number, rows: number) => void;
-	/** Forward a keystroke string (xterm `onData`) to the pane. */
+	/** Forward user-originated keyboard/paste data to the pane. */
 	sendInput: (id: string, input: string) => void;
 	resize: (id: string, cols: number, rows: number) => void;
 	close: (id: string) => void;
@@ -166,8 +166,12 @@ export function createTerminalMux(url: string, WebSocketImpl: typeof WebSocket =
 		setConnectionState("open");
 	});
 
-	socket.addEventListener("close", () => setConnectionState("closed"));
-	socket.addEventListener("error", () => setConnectionState("closed"));
+	socket.addEventListener("close", () => {
+		setConnectionState("closed");
+	});
+	socket.addEventListener("error", () => {
+		setConnectionState("closed");
+	});
 
 	socket.addEventListener("message", (event: MessageEvent) => {
 		if (typeof event.data !== "string") return;
@@ -214,10 +218,19 @@ export function createTerminalMux(url: string, WebSocketImpl: typeof WebSocket =
 	};
 
 	return {
-		open: (id, cols, rows) => send(openFrame(id, cols, rows)),
-		sendInput: (id, input) => send(dataFrame(id, encoder.encode(input))),
-		resize: (id, cols, rows) => send(resizeFrame(id, cols, rows)),
-		close: (id) => send(closeFrame(id)),
+		open: (id, cols, rows) => {
+			send(openFrame(id, cols, rows));
+		},
+		sendInput: (id, input) => {
+			const bytes = encoder.encode(input);
+			send(dataFrame(id, bytes));
+		},
+		resize: (id, cols, rows) => {
+			send(resizeFrame(id, cols, rows));
+		},
+		close: (id) => {
+			send(closeFrame(id));
+		},
 		onData: (id, listener) => subscribeById(dataListeners, id, listener),
 		onExit: (id, listener) => subscribeById(exitListeners, id, listener),
 		onOpened: (id, listener) => subscribeById(openedListeners, id, listener),

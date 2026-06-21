@@ -3,12 +3,14 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 // reviewRun mirrors the daemon's domain.ReviewRun for the CLI client.
@@ -32,16 +34,18 @@ type reviewRunResponse struct {
 
 // submitReviewRequest mirrors controllers.SubmitReviewInput.
 type submitReviewRequest struct {
-	RunID   string `json:"runId"`
-	Verdict string `json:"verdict"`
-	Body    string `json:"body"`
+	RunID          string `json:"runId"`
+	Verdict        string `json:"verdict"`
+	Body           string `json:"body"`
+	GithubReviewID string `json:"githubReviewId"`
 }
 
 type reviewSubmitOptions struct {
-	session string
-	runID   string
-	verdict string
-	body    string
+	session  string
+	runID    string
+	verdict  string
+	body     string
+	reviewID string
 }
 
 func newReviewCommand(ctx *commandContext) *cobra.Command {
@@ -63,10 +67,16 @@ func newReviewSubmitCommand(ctx *commandContext) *cobra.Command {
 			return ctx.submitReview(cmd, args, opts)
 		},
 	}
+	// Reviewer agents routinely spell flags with underscores (--review_id) rather
+	// than hyphens (--review-id); normalize so both resolve to the same flag.
+	cmd.Flags().SetNormalizeFunc(func(_ *pflag.FlagSet, name string) pflag.NormalizedName {
+		return pflag.NormalizedName(strings.ReplaceAll(name, "_", "-"))
+	})
 	cmd.Flags().StringVar(&opts.session, "session", "", "Worker session id (or pass it as the positional argument)")
 	cmd.Flags().StringVar(&opts.runID, "run", "", "Review run id (required)")
 	cmd.Flags().StringVar(&opts.verdict, "verdict", "", "Review verdict: approved or changes_requested (required)")
-	cmd.Flags().StringVar(&opts.body, "body", "", "Path to a Markdown file with the review body")
+	cmd.Flags().StringVar(&opts.body, "body", "", "Review body: a path to a Markdown file, or - to read from stdin (so nothing is written into the worktree)")
+	cmd.Flags().StringVar(&opts.reviewID, "review-id", "", "Id of the GitHub PR review just posted (the .id from the gh api POST that created the review)")
 	return cmd
 }
 
@@ -88,15 +98,24 @@ func (c *commandContext) submitReview(cmd *cobra.Command, args []string, opts re
 	}
 	var body string
 	if path := strings.TrimSpace(opts.body); path != "" {
-		raw, err := os.ReadFile(path)
+		var raw []byte
+		var err error
+		if path == "-" {
+			// Read the review from stdin so the reviewer never has to write a file
+			// into its checkout (where it could be committed onto the worker branch).
+			raw, err = io.ReadAll(cmd.InOrStdin())
+		} else {
+			raw, err = os.ReadFile(path)
+		}
 		if err != nil {
-			return usageError{fmt.Errorf("read body file: %w", err)}
+			return usageError{fmt.Errorf("read review body: %w", err)}
 		}
 		body = string(raw)
 	}
+	reviewID := strings.TrimSpace(opts.reviewID)
 	path := "sessions/" + url.PathEscape(session) + "/reviews/submit"
 	var res reviewRunResponse
-	if err := c.postJSON(cmd.Context(), path, submitReviewRequest{RunID: runID, Verdict: verdict, Body: body}, &res); err != nil {
+	if err := c.postJSON(cmd.Context(), path, submitReviewRequest{RunID: runID, Verdict: verdict, Body: body, GithubReviewID: reviewID}, &res); err != nil {
 		return err
 	}
 	_, err := fmt.Fprintf(cmd.OutOrStdout(), "recorded %s review for %s\n", res.Review.Verdict, session)

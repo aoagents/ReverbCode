@@ -12,7 +12,7 @@ import {
 	Sun,
 	Trash2,
 } from "lucide-react";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import {
 	attentionZone,
 	isOrchestratorSession,
@@ -55,6 +55,7 @@ import { OrchestratorIcon } from "./icons";
 import aoLogo from "../assets/ao-logo.png";
 import { cn } from "../lib/utils";
 import { useUiStore } from "../stores/ui-store";
+import { CreateProjectAgentSheet, type CreateProjectAgentSelection } from "./CreateProjectAgentSheet";
 
 // The macOS hiddenInset traffic lights and the fixed TitlebarNav overlay live
 // in the full-width topbar's left inset (_shell renders the bar above the
@@ -74,7 +75,7 @@ type SidebarProps = {
 	underTopbar?: boolean;
 	workspaceError?: string;
 	workspaces: WorkspaceSummary[];
-	onCreateProject: (input: { path: string }) => Promise<void>;
+	onCreateProject: (input: { path: string; workerAgent: string; orchestratorAgent: string }) => Promise<void>;
 	onRemoveProject: (projectId: string) => Promise<void>;
 };
 
@@ -465,10 +466,9 @@ function ProjectItem({
 					"before:absolute before:top-2 before:bottom-2 before:left-0 before:w-px before:rounded-full before:bg-transparent",
 					"hover:bg-interactive-hover hover:text-foreground active:bg-interactive-hover active:text-foreground",
 					"data-[active=true]:bg-interactive-active data-[active=true]:font-semibold data-[active=true]:text-foreground data-[active=true]:before:bg-accent",
-					// Make room for the hover actions (dashboard, orchestrator, kebab)
-					// when the row is hovered, focused, or its menu is open (the
-					// absolutely-positioned cluster replaces the count).
-					"group-hover/menu-item:pr-[78px] group-focus-within/menu-item:pr-[78px] group-has-data-[state=open]/menu-item:pr-[78px]",
+					// Always reserve room for the action cluster (dashboard,
+					// orchestrator, kebab) — icons are always visible, not hover-gated.
+					"pr-[84px]",
 					// Icon rail: the old 36px letter tile.
 					"group-data-[collapsible=icon]:size-9! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:p-0! group-data-[collapsible=icon]:font-semibold",
 				)}
@@ -483,18 +483,16 @@ function ProjectItem({
 				/>
 				<span className="hidden group-data-[collapsible=icon]:block">{workspace.name.charAt(0).toUpperCase()}</span>
 				<span className="min-w-0 flex-1 truncate group-data-[collapsible=icon]:hidden">{workspace.name}</span>
-				<span className="grid h-4 min-w-4 shrink-0 place-items-center rounded bg-interactive-hover px-1 font-mono text-[10px] leading-none text-passive group-hover/menu-item:opacity-0 group-focus-within/menu-item:opacity-0 group-has-data-[state=open]/menu-item:opacity-0 group-data-[collapsible=icon]:hidden">
+				<span className="hidden h-4 min-w-4 shrink-0 place-items-center rounded bg-interactive-hover px-1 font-mono text-[10px] leading-none text-passive">
 					{sessions.length}
 				</span>
 			</SidebarMenuButton>
-			{/* Per-project hover actions: dashboard board, orchestrator, and a kebab
-          menu. The cluster reveals on row hover/focus (or while the kebab is
-          open), replacing the session count, and stays hidden in the icon rail. */}
+			{/* Per-project actions: dashboard board, orchestrator, and a kebab
+			menu. Always visible (not hover-gated) to avoid CSS :hover group
+			propagation issues in Electron's Chromium. Hidden in the icon rail. */}
 			<div
 				className={cn(
-					"absolute top-0 right-1 flex h-9 items-center gap-px",
-					"opacity-0 transition-opacity",
-					"group-hover/menu-item:opacity-100 group-focus-within/menu-item:opacity-100 group-has-data-[state=open]/menu-item:opacity-100",
+					"absolute top-0 right-1 z-10 flex h-9 items-center gap-px",
 					"group-data-[collapsible=icon]:hidden",
 				)}
 			>
@@ -594,15 +592,70 @@ function ProjectItem({
 }
 
 function CreateProjectButton({ onCreateProject }: Pick<SidebarProps, "onCreateProject">) {
+	return (
+		<CreateProjectFlow onCreateProject={onCreateProject}>
+			{({ disabled, choosePath, label }) => (
+				<Tooltip>
+					<TooltipTrigger asChild>
+						<button
+							aria-label="New project"
+							className="grid h-[18px] w-[18px] place-items-center rounded-[4px] text-passive transition-colors hover:bg-interactive-hover hover:text-muted-foreground"
+							disabled={disabled}
+							onClick={choosePath}
+							type="button"
+						>
+							<Plus className="h-[13px] w-[13px]" aria-hidden="true" />
+						</button>
+					</TooltipTrigger>
+					<TooltipContent>{label}</TooltipContent>
+				</Tooltip>
+			)}
+		</CreateProjectFlow>
+	);
+}
+
+function CreateProjectListItem({ onCreateProject }: Pick<SidebarProps, "onCreateProject">) {
+	return (
+		<CreateProjectFlow onCreateProject={onCreateProject}>
+			{({ disabled, choosePath, label }) => (
+				<SidebarMenuItem className="mb-px group-data-[collapsible=icon]:mb-0">
+					<Tooltip>
+						<TooltipTrigger asChild>
+							<button
+								aria-label="New project"
+								className="grid h-9 w-full place-items-center rounded-[5px] text-passive transition-colors hover:bg-interactive-hover hover:text-muted-foreground"
+								disabled={disabled}
+								onClick={choosePath}
+								type="button"
+							>
+								<Plus className="h-[13px] w-[13px]" aria-hidden="true" />
+							</button>
+						</TooltipTrigger>
+						<TooltipContent>{label}</TooltipContent>
+					</Tooltip>
+				</SidebarMenuItem>
+			)}
+		</CreateProjectFlow>
+	);
+}
+
+function CreateProjectFlow({
+	children,
+	onCreateProject,
+}: Pick<SidebarProps, "onCreateProject"> & {
+	children: (state: { choosePath: () => void; disabled: boolean; label: string }) => ReactNode;
+}) {
 	const [error, setError] = useState<string | null>(null);
+	const [selectedPath, setSelectedPath] = useState<string | null>(null);
 	const [isChoosingPath, setIsChoosingPath] = useState(false);
+	const [isCreating, setIsCreating] = useState(false);
 
 	const choosePath = async () => {
 		setError(null);
 		setIsChoosingPath(true);
 		try {
-			const selectedPath = await aoBridge.app.chooseDirectory();
-			if (selectedPath) await onCreateProject({ path: selectedPath });
+			const path = await aoBridge.app.chooseDirectory();
+			if (path) setSelectedPath(path);
 		} catch (err) {
 			setError(err instanceof Error ? err.message : "Could not add project");
 		} finally {
@@ -610,69 +663,43 @@ function CreateProjectButton({ onCreateProject }: Pick<SidebarProps, "onCreatePr
 		}
 	};
 
+	const createProject = async (selection: CreateProjectAgentSelection) => {
+		if (!selectedPath) return;
+		setError(null);
+		setIsCreating(true);
+		try {
+			await onCreateProject({ path: selectedPath, ...selection });
+			setSelectedPath(null);
+		} catch (err) {
+			setError(err instanceof Error ? err.message : "Could not add project");
+		} finally {
+			setIsCreating(false);
+		}
+	};
+
+	const label = isChoosingPath ? "Opening..." : isCreating ? "Creating..." : "New project";
+
 	return (
 		<>
-			<Tooltip>
-				<TooltipTrigger asChild>
-					<button
-						aria-label="New project"
-						className="grid h-[18px] w-[18px] place-items-center rounded-[4px] text-passive transition-colors hover:bg-interactive-hover hover:text-muted-foreground"
-						disabled={isChoosingPath}
-						onClick={choosePath}
-						type="button"
-					>
-						<Plus className="h-[13px] w-[13px]" aria-hidden="true" />
-					</button>
-				</TooltipTrigger>
-				<TooltipContent>{isChoosingPath ? "Opening…" : "New project"}</TooltipContent>
-			</Tooltip>
+			{children({ choosePath: () => void choosePath(), disabled: isChoosingPath || isCreating, label })}
+			<CreateProjectAgentSheet
+				error={error}
+				isCreating={isCreating}
+				onOpenChange={(open) => {
+					if (!open) {
+						setSelectedPath(null);
+						setError(null);
+					}
+				}}
+				onSubmit={createProject}
+				open={selectedPath !== null}
+				path={selectedPath}
+			/>
 			{error && (
 				<span className="sr-only" role="status">
 					{error}
 				</span>
 			)}
 		</>
-	);
-}
-
-function CreateProjectListItem({ onCreateProject }: Pick<SidebarProps, "onCreateProject">) {
-	const [error, setError] = useState<string | null>(null);
-	const [isChoosingPath, setIsChoosingPath] = useState(false);
-
-	const choosePath = async () => {
-		setError(null);
-		setIsChoosingPath(true);
-		try {
-			const selectedPath = await aoBridge.app.chooseDirectory();
-			if (selectedPath) await onCreateProject({ path: selectedPath });
-		} catch (err) {
-			setError(err instanceof Error ? err.message : "Could not add project");
-		} finally {
-			setIsChoosingPath(false);
-		}
-	};
-
-	return (
-		<SidebarMenuItem className="mb-px group-data-[collapsible=icon]:mb-0">
-			<Tooltip>
-				<TooltipTrigger asChild>
-					<button
-						aria-label="New project"
-						className="grid h-9 w-full place-items-center rounded-[5px] text-passive transition-colors hover:bg-interactive-hover hover:text-muted-foreground"
-						disabled={isChoosingPath}
-						onClick={choosePath}
-						type="button"
-					>
-						<Plus className="h-[13px] w-[13px]" aria-hidden="true" />
-					</button>
-				</TooltipTrigger>
-				<TooltipContent>{isChoosingPath ? "Opening…" : "New project"}</TooltipContent>
-			</Tooltip>
-			{error && (
-				<span className="sr-only" role="status">
-					{error}
-				</span>
-			)}
-		</SidebarMenuItem>
 	);
 }

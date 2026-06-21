@@ -1261,6 +1261,8 @@ components:
       properties:
         activity:
           $ref: '#/components/schemas/DomainActivity'
+        branch:
+          type: string
         createdAt:
           format: date-time
           type: string
@@ -1649,6 +1651,8 @@ components:
         createdAt:
           format: date-time
           type: string
+        githubReviewId:
+          type: string
         harness:
           type: string
         id:
@@ -1675,6 +1679,7 @@ components:
       - status
       - verdict
       - body
+      - githubReviewId
       - createdAt
       type: object
     ReviewRunResponse:
@@ -1870,6 +1875,9 @@ components:
         body:
           description: Review body recorded by AO. Required for changes_requested.
           type: string
+        githubReviewId:
+          description: Id of the GitHub PR review the reviewer posted, if any.
+          type: string
         runId:
           description: Review run id being completed.
           type: string
@@ -1880,6 +1888,7 @@ components:
       - runId
       - verdict
       - body
+      - githubReviewId
       type: object
     WorkspaceRepo:
       properties:

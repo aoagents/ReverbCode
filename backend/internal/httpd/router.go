@@ -17,6 +17,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/daemonmeta"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	"github.com/aoagents/agent-orchestrator/backend/internal/telemetrymeta"
 	"github.com/aoagents/agent-orchestrator/backend/internal/terminal"
 )
 
@@ -187,9 +188,12 @@ func mountTelemetry(r chi.Router, sink ports.EventSink) {
 			Level:      ports.TelemetryLevelWarn,
 			RequestID:  middleware.GetReqID(req.Context()),
 			Payload: map[string]any{
+				"component":    "cli",
+				"operation":    "command_parse",
 				"command":      body.Command,
 				"command_path": body.CommandPath,
 				"error_kind":   "usage",
+				"fingerprint":  telemetrymeta.Fingerprint("cli", "command_parse", body.CommandPath, "usage"),
 			},
 		})
 		w.WriteHeader(http.StatusAccepted)
@@ -222,19 +226,26 @@ func localControlRequest(r *http.Request) bool {
 // handleHealthz is the liveness probe: it answers 200 as long as the process is
 // up and serving. It does no dependency checks by design.
 func handleHealthz(w http.ResponseWriter, _ *http.Request) {
-	envelope.WriteJSON(w, http.StatusOK, map[string]any{
-		"status":  "ok",
-		"service": daemonmeta.ServiceName,
-		"pid":     os.Getpid(),
-	})
+	envelope.WriteJSON(w, http.StatusOK, daemonProbePayload("ok"))
 }
 
 // handleReadyz is the readiness probe. Dependency initialization happens before
 // the server is constructed, so a listening daemon is ready to answer requests.
 func handleReadyz(w http.ResponseWriter, _ *http.Request) {
-	envelope.WriteJSON(w, http.StatusOK, map[string]any{
-		"status":  "ready",
+	envelope.WriteJSON(w, http.StatusOK, daemonProbePayload("ready"))
+}
+
+func daemonProbePayload(status string) map[string]any {
+	payload := map[string]any{
+		"status":  status,
 		"service": daemonmeta.ServiceName,
 		"pid":     os.Getpid(),
-	})
+	}
+	if exe, err := os.Executable(); err == nil && exe != "" {
+		payload["executablePath"] = exe
+	}
+	if cwd, err := os.Getwd(); err == nil && cwd != "" {
+		payload["workingDirectory"] = cwd
+	}
+	return payload
 }
