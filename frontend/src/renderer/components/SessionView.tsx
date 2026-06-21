@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { PanelImperativeHandle, PanelSize } from "react-resizable-panels";
 import { BrowserPanelView } from "./BrowserPanel";
 import { CenterPane } from "./CenterPane";
-import { SessionInspector } from "./SessionInspector";
+import { SessionInspector, type InspectorView } from "./SessionInspector";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "./ui/resizable";
 import { useUiStore } from "../stores/ui-store";
 import { useShell } from "../lib/shell-context";
@@ -47,6 +47,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const inspectorSeparatorRef = useRef<HTMLDivElement | null>(null);
 	const [terminalTarget, setTerminalTarget] = useState<TerminalTarget>({ kind: "worker" });
 	const [browserPoppedOut, setBrowserPoppedOut] = useState(false);
+	const [inspectorView, setInspectorView] = useState<InspectorView>("summary");
 
 	const session = workspaces.flatMap((workspace) => workspace.sessions).find((s) => s.id === sessionId);
 	const isOrchestrator = session ? isOrchestratorSession(session) : false;
@@ -64,18 +65,20 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	useEffect(() => {
 		setTerminalTarget({ kind: "worker" });
 		setBrowserPoppedOut(false);
+		setInspectorView("summary");
 		revealedPreviewRef.current = null;
 	}, [sessionId]);
 
 	// `ao preview` sets session.previewUrl (streamed over CDC); surface the result
-	// by swapping the center pane to the browser. Tracked per URL so re-revealing
-	// fires on a fresh target but a manual "Return to panel" sticks while the URL
-	// is unchanged.
+	// in the inspector rail's Browser tab (opening the rail if collapsed), not the
+	// center pane. Tracked per URL so re-revealing fires on a fresh target but a
+	// manual tab switch sticks while the URL is unchanged.
 	useEffect(() => {
 		if (!previewUrl || revealedPreviewRef.current === previewUrl) return;
 		revealedPreviewRef.current = previewUrl;
-		setBrowserPoppedOut(true);
-	}, [previewUrl]);
+		setInspectorView("browser");
+		if (!useUiStore.getState().isInspectorOpen) toggleInspector();
+	}, [previewUrl, toggleInspector]);
 
 	// Computed when the inspector panel mounts and frozen while it stays
 	// mounted: rrp re-registers the panel (a layout effect keyed on defaultSize,
@@ -220,6 +223,8 @@ export function SessionView({ sessionId }: SessionViewProps) {
 										setTerminalTarget({ kind: "reviewer", handleId, harness })
 									}
 									onToggleBrowserPopOut={setBrowserPoppedOut}
+									onViewChange={setInspectorView}
+									view={inspectorView}
 									browserView={browserView}
 									session={session}
 								/>
