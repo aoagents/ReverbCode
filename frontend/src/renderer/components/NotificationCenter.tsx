@@ -152,6 +152,7 @@ function NotificationItem({
 	onOpen: (notification: NotificationDTO) => void;
 }) {
 	const Icon = notificationIcon(notification.type);
+	const typeLabel = notificationTypeLabel(notification.type);
 	return (
 		<div className="grid grid-cols-[26px_minmax(0,1fr)_auto] gap-2 rounded-md px-2 py-2.5">
 			<div
@@ -170,9 +171,10 @@ function NotificationItem({
 					<p className="truncate text-[13px] font-medium leading-5 text-foreground">{notification.title}</p>
 					<span className="shrink-0 text-[11px] text-passive">{formatTimeCompact(notification.createdAt)}</span>
 				</div>
-				{notification.body ? (
-					<p className="mt-0.5 line-clamp-2 text-[12px] leading-5 text-muted-foreground">{notification.body}</p>
-				) : null}
+				<p className="mt-0.5 line-clamp-2 text-[12px] leading-5 text-muted-foreground">
+					<span className="font-medium text-foreground/70">{typeLabel}</span>
+					{notification.body ? ` · ${notification.body}` : null}
+				</p>
 			</div>
 			<div className="flex items-start gap-1">
 				<button
@@ -211,5 +213,20 @@ function notificationIcon(type: string) {
 			return XCircle;
 		default:
 			return Bell;
+	}
+}
+
+function notificationTypeLabel(type: string) {
+	switch (type) {
+		case "needs_input":
+			return "Needs input";
+		case "ready_to_merge":
+			return "Ready to merge";
+		case "pr_merged":
+			return "PR merged";
+		case "pr_closed_unmerged":
+			return "PR closed without merge";
+		default:
+			return type.split("_").join(" ");
 	}
 }
