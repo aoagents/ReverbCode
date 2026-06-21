@@ -1,8 +1,8 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { BrowserPanel } from "./BrowserPanel";
-import type { BrowserNavState } from "../hooks/useBrowserView";
+import { BrowserPanel, BrowserPanelView } from "./BrowserPanel";
+import type { BrowserNavState, BrowserViewModel } from "../hooks/useBrowserView";
 import type { WorkspaceSession } from "../types/workspace";
 
 const hookState = vi.hoisted(() => ({
@@ -53,6 +53,21 @@ const session: WorkspaceSession = {
 	updatedAt: "2026-06-15T00:00:00Z",
 	prs: [],
 };
+
+function browserView(overrides: Partial<BrowserViewModel> = {}): BrowserViewModel {
+	return {
+		viewId: "42:sess-1",
+		navState: hookState.navState,
+		slotRef: vi.fn(),
+		navigate: hookState.navigate,
+		goBack: hookState.goBack,
+		goForward: hookState.goForward,
+		reload: hookState.reload,
+		stop: hookState.stop,
+		destroy: vi.fn(),
+		...overrides,
+	};
+}
 
 describe("BrowserPanel", () => {
 	beforeEach(() => {
@@ -118,6 +133,40 @@ describe("BrowserPanel", () => {
 				onTogglePopOut={() => undefined}
 				poppedOut={false}
 				session={{ ...session, updatedAt: "2026-06-15T00:01:00Z" }}
+			/>,
+		);
+
+		await waitFor(() =>
+			expect(hookState.navigate).toHaveBeenCalledWith(
+				"http://127.0.0.1:3001/api/v1/sessions/sess-1/preview/files/index.html",
+			),
+		);
+	});
+
+	it("waits for the native browser view before auto-opening a preview", async () => {
+		hookState.previewGet.mockResolvedValue({
+			data: { previewUrl: "http://127.0.0.1:3001/api/v1/sessions/sess-1/preview/files/index.html" },
+		});
+		const { rerender } = render(
+			<BrowserPanelView
+				active
+				browserView={browserView({ viewId: "" })}
+				onTogglePopOut={() => undefined}
+				poppedOut={false}
+				session={session}
+			/>,
+		);
+
+		expect(hookState.previewGet).not.toHaveBeenCalled();
+		expect(hookState.navigate).not.toHaveBeenCalled();
+
+		rerender(
+			<BrowserPanelView
+				active
+				browserView={browserView({ viewId: "42:sess-1" })}
+				onTogglePopOut={() => undefined}
+				poppedOut={false}
+				session={session}
 			/>,
 		);
 

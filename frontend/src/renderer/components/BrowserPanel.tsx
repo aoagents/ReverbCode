@@ -37,7 +37,7 @@ export function BrowserPanelView({
 	onTogglePopOut,
 	browserView,
 }: BrowserPanelProps & { browserView: BrowserViewModel }) {
-	const { navState, slotRef, navigate, goBack, goForward, reload, stop } = browserView;
+	const { viewId, navState, slotRef, navigate, goBack, goForward, reload, stop } = browserView;
 	const [urlInput, setUrlInput] = useState(navState.url);
 	const autoPreviewSessionRef = useRef<string | null>(null);
 	const previewCheckKeyRef = useRef<string | null>(null);
@@ -50,6 +50,7 @@ export function BrowserPanelView({
 		const previewCheckKey = `${session.id}:${session.updatedAt}`;
 		if (
 			!active ||
+			!viewId ||
 			navState.url ||
 			autoPreviewSessionRef.current === session.id ||
 			previewCheckKeyRef.current === previewCheckKey
@@ -73,7 +74,7 @@ export function BrowserPanelView({
 		return () => {
 			cancelled = true;
 		};
-	}, [active, navigate, navState.url, session.id, session.updatedAt]);
+	}, [active, navigate, navState.url, session.id, session.updatedAt, viewId]);
 
 	const submit = (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
