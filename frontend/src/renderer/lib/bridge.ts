@@ -19,4 +19,8 @@ export const aoBridge: AoBridge =
 		telemetry: {
 			getBootstrap: async () => null,
 		},
+		notifications: {
+			show: async () => undefined,
+			onClick: () => () => undefined,
+		},
 	} satisfies AoBridge);

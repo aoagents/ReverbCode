@@ -416,6 +416,11 @@ type NotificationStreamQuery struct {
 	ProjectID string `query:"projectId,omitempty" description:"Optional project id filter for live notifications."`
 }
 
+// NotificationIDParam is the {id} path parameter shared by notification routes.
+type NotificationIDParam struct {
+	ID string `path:"id" description:"Notification identifier."`
+}
+
 // NotificationTarget is the dashboard navigation target for a notification.
 type NotificationTarget struct {
 	Kind      string `json:"kind" enum:"session,pr"`
@@ -439,6 +444,21 @@ type NotificationResponse struct {
 
 // ListNotificationsResponse is the body of GET /api/v1/notifications.
 type ListNotificationsResponse struct {
+	Notifications []NotificationResponse `json:"notifications"`
+}
+
+// MarkNotificationReadRequest is the body of PATCH /api/v1/notifications/{id}.
+type MarkNotificationReadRequest struct {
+	Status string `json:"status" enum:"read" description:"V1 supports only marking an unread notification read."`
+}
+
+// NotificationEnvelope is the { notification } response body for notification mutations.
+type NotificationEnvelope struct {
+	Notification NotificationResponse `json:"notification"`
+}
+
+// MarkAllNotificationsReadResponse is the body of POST /api/v1/notifications/read-all.
+type MarkAllNotificationsReadResponse struct {
 	Notifications []NotificationResponse `json:"notifications"`
 }
 

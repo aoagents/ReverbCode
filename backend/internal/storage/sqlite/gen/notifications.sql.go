@@ -128,3 +128,67 @@ func (q *Queries) ListUnreadNotifications(ctx context.Context, limit int64) ([]N
 	}
 	return items, nil
 }
+
+const markAllNotificationsRead = `-- name: MarkAllNotificationsRead :many
+UPDATE notifications
+SET status = 'read'
+WHERE status = 'unread'
+RETURNING id, session_id, project_id, pr_url, type, title, body, status, created_at
+`
+
+func (q *Queries) MarkAllNotificationsRead(ctx context.Context) ([]Notification, error) {
+	rows, err := q.db.QueryContext(ctx, markAllNotificationsRead)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Notification{}
+	for rows.Next() {
+		var i Notification
+		if err := rows.Scan(
+			&i.ID,
+			&i.SessionID,
+			&i.ProjectID,
+			&i.PRURL,
+			&i.Type,
+			&i.Title,
+			&i.Body,
+			&i.Status,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const markNotificationRead = `-- name: MarkNotificationRead :one
+UPDATE notifications
+SET status = 'read'
+WHERE id = ? AND status = 'unread'
+RETURNING id, session_id, project_id, pr_url, type, title, body, status, created_at
+`
+
+func (q *Queries) MarkNotificationRead(ctx context.Context, id string) (Notification, error) {
+	row := q.db.QueryRowContext(ctx, markNotificationRead, id)
+	var i Notification
+	err := row.Scan(
+		&i.ID,
+		&i.SessionID,
+		&i.ProjectID,
+		&i.PRURL,
+		&i.Type,
+		&i.Title,
+		&i.Body,
+		&i.Status,
+		&i.CreatedAt,
+	)
+	return i, err
+}

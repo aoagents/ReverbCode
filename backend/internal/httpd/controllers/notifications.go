@@ -18,6 +18,8 @@ import (
 // NotificationService is the controller-facing notification service contract.
 type NotificationService interface {
 	ListUnread(ctx context.Context, filter notificationsvc.ListFilter) ([]notificationsvc.Notification, error)
+	MarkRead(ctx context.Context, id string) (notificationsvc.Notification, bool, error)
+	MarkAllRead(ctx context.Context) ([]notificationsvc.Notification, error)
 }
 
 // NotificationStream is the live notification stream used by SSE clients.
@@ -34,6 +36,8 @@ type NotificationsController struct {
 // Register mounts bounded notification REST routes on the supplied router.
 func (c *NotificationsController) Register(r chi.Router) {
 	r.Get("/notifications", c.list)
+	r.Post("/notifications/read-all", c.markAllRead)
+	r.Patch("/notifications/{id}", c.markRead)
 }
 
 // RegisterStream mounts long-lived notification stream routes on the supplied router.
@@ -57,6 +61,41 @@ func (c *NotificationsController) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	envelope.WriteJSON(w, http.StatusOK, ListNotificationsResponse{Notifications: notificationResponses(notifications)})
+}
+
+func (c *NotificationsController) markRead(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "PATCH", "/api/v1/notifications/{id}")
+		return
+	}
+	var req MarkNotificationReadRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+		return
+	}
+	if req.Status != string(domain.NotificationRead) {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_NOTIFICATION_STATUS", "Notification status must be read", nil)
+		return
+	}
+	notification, _, err := c.Svc.MarkRead(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, NotificationEnvelope{Notification: notificationResponse(notification)})
+}
+
+func (c *NotificationsController) markAllRead(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "POST", "/api/v1/notifications/read-all")
+		return
+	}
+	notifications, err := c.Svc.MarkAllRead(r.Context())
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, MarkAllNotificationsReadResponse{Notifications: notificationResponses(notifications)})
 }
 
 func (c *NotificationsController) stream(w http.ResponseWriter, r *http.Request) {
@@ -142,24 +181,28 @@ func (e notificationQueryError) Error() string { return string(e) }
 func notificationResponses(in []notificationsvc.Notification) []NotificationResponse {
 	out := make([]NotificationResponse, 0, len(in))
 	for _, n := range in {
-		out = append(out, NotificationResponse{
-			ID:        n.ID,
-			SessionID: string(n.SessionID),
-			ProjectID: string(n.ProjectID),
-			PRURL:     n.PRURL,
-			Type:      string(n.Type),
-			Title:     n.Title,
-			Body:      n.Body,
-			Status:    string(n.Status),
-			CreatedAt: n.CreatedAt,
-			Target: NotificationTarget{
-				Kind:      string(n.Target.Kind),
-				SessionID: string(n.Target.SessionID),
-				PRURL:     n.Target.PRURL,
-			},
-		})
+		out = append(out, notificationResponse(n))
 	}
 	return out
+}
+
+func notificationResponse(n notificationsvc.Notification) NotificationResponse {
+	return NotificationResponse{
+		ID:        n.ID,
+		SessionID: string(n.SessionID),
+		ProjectID: string(n.ProjectID),
+		PRURL:     n.PRURL,
+		Type:      string(n.Type),
+		Title:     n.Title,
+		Body:      n.Body,
+		Status:    string(n.Status),
+		CreatedAt: n.CreatedAt,
+		Target: NotificationTarget{
+			Kind:      string(n.Target.Kind),
+			SessionID: string(n.Target.SessionID),
+			PRURL:     n.Target.PRURL,
+		},
+	}
 }
 
 func notificationResponseFromRecord(rec domain.NotificationRecord) NotificationResponse {

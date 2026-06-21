@@ -64,4 +64,8 @@ window.ao = {
 	telemetry: {
 		getBootstrap: async () => null,
 	},
+	notifications: {
+		show: async () => undefined,
+		onClick: () => () => undefined,
+	},
 };

@@ -100,6 +100,82 @@ paths:
       summary: List unread notifications
       tags:
       - notifications
+  /api/v1/notifications/{id}:
+    patch:
+      operationId: markNotificationRead
+      parameters:
+      - description: Notification identifier.
+        in: path
+        name: id
+        required: true
+        schema:
+          description: Notification identifier.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MarkNotificationReadRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationEnvelope'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Mark a notification read
+      tags:
+      - notifications
+  /api/v1/notifications/read-all:
+    post:
+      operationId: markAllNotificationsRead
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MarkAllNotificationsReadResponse'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Mark all unread notifications read
+      tags:
+      - notifications
   /api/v1/notifications/stream:
     get:
       operationId: streamNotifications
@@ -1416,6 +1492,25 @@ components:
       required:
       - sessions
       type: object
+    MarkAllNotificationsReadResponse:
+      properties:
+        notifications:
+          items:
+            $ref: '#/components/schemas/NotificationResponse'
+          type: array
+      required:
+      - notifications
+      type: object
+    MarkNotificationReadRequest:
+      properties:
+        status:
+          description: V1 supports only marking an unread notification read.
+          enum:
+          - read
+          type: string
+      required:
+      - status
+      type: object
     MergePRResponse:
       properties:
         method:
@@ -1428,6 +1523,13 @@ components:
       - ok
       - prNumber
       - method
+      type: object
+    NotificationEnvelope:
+      properties:
+        notification:
+          $ref: '#/components/schemas/NotificationResponse'
+      required:
+      - notification
       type: object
     NotificationResponse:
       properties:

@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 )
 
 const (
@@ -36,6 +37,40 @@ func (m *Manager) ListUnread(ctx context.Context, filter ListFilter) ([]Notifica
 	}
 	limit := normalizeLimit(filter.Limit)
 	rows, err := m.store.ListUnreadNotifications(ctx, limit)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Notification, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, notificationFromRecord(row))
+	}
+	return out, nil
+}
+
+// MarkRead marks one unread notification read.
+func (m *Manager) MarkRead(ctx context.Context, id string) (Notification, bool, error) {
+	if m == nil || m.store == nil {
+		return Notification{}, false, errors.New("notification: store is required")
+	}
+	if id == "" {
+		return Notification{}, false, apierr.Invalid("INVALID_NOTIFICATION_ID", "Notification id is required", nil)
+	}
+	row, ok, err := m.store.MarkNotificationRead(ctx, id)
+	if err != nil {
+		return Notification{}, false, err
+	}
+	if !ok {
+		return Notification{}, false, apierr.NotFound("NOTIFICATION_NOT_FOUND", "Unknown unread notification")
+	}
+	return notificationFromRecord(row), true, nil
+}
+
+// MarkAllRead marks all unread notifications read.
+func (m *Manager) MarkAllRead(ctx context.Context) ([]Notification, error) {
+	if m == nil || m.store == nil {
+		return nil, errors.New("notification: store is required")
+	}
+	rows, err := m.store.MarkAllNotificationsRead(ctx)
 	if err != nil {
 		return nil, err
 	}
