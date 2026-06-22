@@ -55,6 +55,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/notifications/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Mark a notification read */
+        patch: operations["markNotificationRead"];
+        trace?: never;
+    };
+    "/api/v1/notifications/read-all": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Mark all unread notifications read */
+        post: operations["markAllNotificationsRead"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/notifications/stream": {
         parameters: {
             query?: never;
@@ -298,6 +332,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sessions/{sessionId}/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Discover a browser preview URL for a session workspace */
+        get: operations["getSessionPreview"];
+        put?: never;
+        /** Set (or autodetect) the browser preview URL for a session */
+        post: operations["setSessionPreview"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sessions/{sessionId}/preview/files/*": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Serve a static browser preview file from a session workspace */
+        get: operations["getSessionPreviewFile"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sessions/{sessionId}/restore": {
         parameters: {
             query?: never;
@@ -478,9 +547,11 @@ export interface components {
             isTerminated: boolean;
             issueId?: string;
             kind: string;
+            previewUrl?: string;
             projectId: string;
             prs: components["schemas"]["SessionPRFacts"][];
-            status: string;
+            /** @enum {string} */
+            status: "working" | "pr_open" | "draft" | "ci_failed" | "review_pending" | "changes_requested" | "approved" | "mergeable" | "merged" | "needs_input" | "idle" | "terminated" | "no_signal";
             terminalHandleId?: string;
             /** Format: date-time */
             updatedAt: string;
@@ -521,16 +592,29 @@ export interface components {
             reviews: components["schemas"]["ReviewRun"][];
         };
         ListSessionPRsResponse: {
-            prs: components["schemas"]["SessionPRFacts"][];
+            prs: components["schemas"]["SessionPRSummary"][];
             sessionId: string;
         };
         ListSessionsResponse: {
             sessions: components["schemas"]["ControllersSessionView"][];
         };
+        MarkAllNotificationsReadResponse: {
+            notifications: components["schemas"]["NotificationResponse"][];
+        };
+        MarkNotificationReadRequest: {
+            /**
+             * @description V1 supports only marking an unread notification read.
+             * @enum {string}
+             */
+            status: "read";
+        };
         MergePRResponse: {
             method: string;
             ok: boolean;
             prNumber: number;
+        };
+        NotificationEnvelope: {
+            notification: components["schemas"]["NotificationResponse"];
         };
         NotificationResponse: {
             body: string;
@@ -656,17 +740,93 @@ export interface components {
             ok: boolean;
             sessionId: string;
         };
+        SessionPRCISummary: {
+            failingChecks: components["schemas"]["SessionPRFailingCheck"][];
+            /** @enum {string} */
+            state: "unknown" | "pending" | "passing" | "failing";
+        };
+        SessionPRConflictFile: {
+            path: string;
+            url?: string;
+        };
         SessionPRFacts: {
-            ci: string;
-            mergeability: string;
+            /** @enum {string} */
+            ci: "unknown" | "pending" | "passing" | "failing";
+            /** @enum {string} */
+            mergeability: "unknown" | "mergeable" | "conflicting" | "blocked" | "unstable";
             number: number;
-            review: string;
+            /** @enum {string} */
+            review: "none" | "approved" | "changes_requested" | "review_required";
             reviewComments: boolean;
             /** @enum {string} */
             state: "draft" | "open" | "merged" | "closed";
             /** Format: date-time */
             updatedAt: string;
             url: string;
+        };
+        SessionPRFailingCheck: {
+            conclusion: string;
+            name: string;
+            /** @enum {string} */
+            status: "failed" | "cancelled";
+            url?: string;
+        };
+        SessionPRMergeabilitySummary: {
+            conflictFiles?: components["schemas"]["SessionPRConflictFile"][];
+            prUrl: string;
+            reasons: string[];
+            /** @enum {string} */
+            state: "unknown" | "mergeable" | "conflicting" | "blocked" | "unstable";
+        };
+        SessionPRReviewCommentLink: {
+            file?: string;
+            line?: number;
+            url?: string;
+        };
+        SessionPRReviewSummary: {
+            /** @enum {string} */
+            decision: "none" | "approved" | "changes_requested" | "review_required";
+            hasUnresolvedHumanComments: boolean;
+            unresolvedBy: components["schemas"]["SessionPRUnresolvedReviewer"][];
+        };
+        SessionPRSummary: {
+            additions: number;
+            author: string;
+            changedFiles: number;
+            ci: components["schemas"]["SessionPRCISummary"];
+            /** Format: date-time */
+            ciObservedAt?: string;
+            deletions: number;
+            headSha: string;
+            htmlUrl?: string;
+            mergeability: components["schemas"]["SessionPRMergeabilitySummary"];
+            number: number;
+            /** Format: date-time */
+            observedAt?: string;
+            /** @enum {string} */
+            provider: "github";
+            repo: string;
+            review: components["schemas"]["SessionPRReviewSummary"];
+            /** Format: date-time */
+            reviewObservedAt?: string;
+            sourceBranch: string;
+            /** @enum {string} */
+            state: "draft" | "open" | "merged" | "closed";
+            targetBranch: string;
+            title: string;
+            /** Format: date-time */
+            updatedAt: string;
+            url: string;
+        };
+        SessionPRUnresolvedReviewer: {
+            count: number;
+            links: components["schemas"]["SessionPRReviewCommentLink"][];
+            reviewerId: string;
+        };
+        SessionPreviewResponse: {
+            entry?: string;
+            previewUrl?: string;
+            sessionId: string;
         };
         SessionResponse: {
             session: components["schemas"]["ControllersSessionView"];
@@ -685,6 +845,10 @@ export interface components {
         };
         SetProjectConfigInput: {
             config: components["schemas"]["ProjectConfig"];
+        };
+        SetSessionPreviewRequest: {
+            /** @description Preview target URL. When empty, the daemon autodetects a static entry point in the session workspace. */
+            url?: string;
         };
         SpawnOrchestratorRequest: {
             clean?: boolean;
@@ -845,6 +1009,107 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    markNotificationRead: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Notification identifier. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MarkNotificationReadRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationEnvelope"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    markAllNotificationsRead: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MarkAllNotificationsReadResponse"];
                 };
             };
             /** @description Internal Server Error */
@@ -1827,6 +2092,169 @@ export interface operations {
             };
             /** @description Service Unavailable */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    getSessionPreview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionPreviewResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    setSessionPreview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetSessionPreviewRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    getSessionPreviewFile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
                 headers: {
                     [name: string]: unknown;
                 };

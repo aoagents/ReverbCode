@@ -1,4 +1,16 @@
-import { app, BrowserWindow, dialog, ipcMain, net, protocol, shell, type OpenDialogOptions } from "electron";
+import {
+	app,
+	BrowserWindow,
+	clipboard,
+	dialog,
+	ipcMain,
+	net,
+	Notification as ElectronNotification,
+	protocol,
+	shell,
+	WebContentsView,
+	type OpenDialogOptions,
+} from "electron";
 import { updateElectronApp } from "update-electron-app";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -9,8 +21,16 @@ import { pathToFileURL } from "node:url";
 import { type DaemonLaunchSpec, resolveDaemonLaunch } from "./shared/daemon-launch";
 import { createListenPortScanner, defaultRunFilePath, parseRunFile } from "./shared/daemon-discovery";
 import type { DaemonStatus } from "./shared/daemon-status";
+import {
+	type DaemonProbe,
+	expectedDaemonPort,
+	parseDaemonProbe,
+	resolveDaemonFromPort,
+	resolveDaemonFromRunFile,
+} from "./shared/daemon-attach";
 import { DEFAULT_POSTHOG_HOST, DEFAULT_POSTHOG_PROJECT_KEY } from "./shared/posthog-config";
 import { buildTelemetryBootstrap } from "./shared/telemetry";
+import { createBrowserViewHost, type BrowserViewHost } from "./main/browser-view-host";
 
 // Globals injected at compile time by @electron-forge/plugin-vite.
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
@@ -33,6 +53,7 @@ let daemonStoppingProcess: ChildProcessWithoutNullStreams | null = null;
 let daemonStartPromise: Promise<DaemonStatus> | null = null;
 let daemonStartEpoch = 0;
 let daemonStatus: DaemonStatus = { state: "stopped" };
+let browserViewHost: BrowserViewHost | null = null;
 
 const isDev = !app.isPackaged;
 
@@ -89,6 +110,10 @@ function preloadPath(): string {
 	return path.join(__dirname, "preload.js");
 }
 
+function annotatePreloadPath(): string {
+	return path.join(__dirname, "annotate-preload.js");
+}
+
 // Runtime window/taskbar icon for Linux and Windows. macOS ignores this and
 // uses the .app bundle's .icns instead. Packaged: shipped via extraResource to
 // resources/icon.png; dev: the source asset under frontend/assets.
@@ -105,6 +130,8 @@ function setDaemonStatus(nextStatus: DaemonStatus): void {
 }
 
 function createWindow(): void {
+	browserViewHost?.dispose();
+	browserViewHost = null;
 	mainWindow = new BrowserWindow({
 		width: 1320,
 		height: 860,
@@ -143,6 +170,15 @@ function createWindow(): void {
 		}
 	});
 
+	browserViewHost = createBrowserViewHost({
+		mainWindow,
+		ipcMain,
+		shell,
+		WebContentsView,
+		annotatePreloadPath: annotatePreloadPath(),
+		rendererOrigin: RENDERER_ORIGIN,
+	});
+
 	void mainWindow.loadURL(rendererUrl());
 
 	if (isDev && process.env.AO_OPEN_DEVTOOLS === "1") {
@@ -152,6 +188,8 @@ function createWindow(): void {
 	}
 
 	mainWindow.on("closed", () => {
+		browserViewHost?.dispose();
+		browserViewHost = null;
 		mainWindow = null;
 	});
 }
@@ -165,15 +203,6 @@ const RUN_FILE_POLL_MS = 300;
 // clock reading and ours race within normal scheduling jitter.
 const RUN_FILE_FRESHNESS_SKEW_MS = 2_000;
 const DAEMON_PROBE_TIMEOUT_MS = 2_000;
-const DAEMON_SERVICE_NAME = "agent-orchestrator-daemon";
-
-type DaemonProbe = {
-	status: string;
-	service: string;
-	pid: number;
-	executablePath?: string;
-	workingDirectory?: string;
-};
 
 function runFilePath(): string | null {
 	if (process.env.AO_RUN_FILE) return process.env.AO_RUN_FILE;
@@ -221,17 +250,7 @@ async function readDaemonProbe(port: number, endpoint: "healthz" | "readyz"): Pr
 	try {
 		const response = await net.fetch(`http://127.0.0.1:${port}/${endpoint}`, { signal: controller.signal });
 		if (!response.ok) return null;
-		const body = (await response.json()) as Partial<DaemonProbe>;
-		if (body.status !== (endpoint === "healthz" ? "ok" : "ready")) return null;
-		if (body.service !== DAEMON_SERVICE_NAME) return null;
-		if (typeof body.pid !== "number" || !Number.isInteger(body.pid)) return null;
-		return {
-			status: body.status,
-			service: body.service,
-			pid: body.pid,
-			executablePath: typeof body.executablePath === "string" ? body.executablePath : undefined,
-			workingDirectory: typeof body.workingDirectory === "string" ? body.workingDirectory : undefined,
-		};
+		return parseDaemonProbe(endpoint, await response.json());
 	} catch {
 		return null;
 	} finally {
@@ -266,49 +285,20 @@ function daemonIdentityError(launch: DaemonLaunchSpec, probe: DaemonProbe): stri
 
 async function inspectExistingDaemon(launch: DaemonLaunchSpec): Promise<DaemonStatus | null> {
 	const handshakePath = runFilePath();
-	if (!handshakePath) return null;
-	let contents: string;
-	try {
-		contents = await readFile(handshakePath, "utf8");
-	} catch {
-		return null;
+	let runFileContents: string | null = null;
+	if (handshakePath) {
+		try {
+			runFileContents = await readFile(handshakePath, "utf8");
+		} catch {
+			runFileContents = null;
+		}
 	}
-	const info = parseRunFile(contents);
-	if (!info || !processAlive(info.pid)) return null;
-
-	const health = await readDaemonProbe(info.port, "healthz");
-	if (!health || health.pid !== info.pid) return null;
-	const ready = await readDaemonProbe(info.port, "readyz");
-	if (!ready || ready.pid !== info.pid) {
-		return {
-			state: "error",
-			port: info.port,
-			pid: info.pid,
-			executablePath: health.executablePath,
-			workingDirectory: health.workingDirectory,
-			message: "An AO daemon is already running, but it is not ready yet.",
-		};
-	}
-
-	const identityError = daemonIdentityError(launch, ready);
-	if (identityError) {
-		return {
-			state: "error",
-			port: info.port,
-			pid: info.pid,
-			executablePath: ready.executablePath,
-			workingDirectory: ready.workingDirectory,
-			message: identityError,
-		};
-	}
-
-	return {
-		state: "ready",
-		port: info.port,
-		pid: info.pid,
-		executablePath: ready.executablePath,
-		workingDirectory: ready.workingDirectory,
-	};
+	return resolveDaemonFromRunFile({
+		runFileContents,
+		isProcessAlive: processAlive,
+		probe: readDaemonProbe,
+		identityError: (probe) => daemonIdentityError(launch, probe),
+	});
 }
 
 async function refreshDaemonStatus(): Promise<DaemonStatus> {
@@ -378,6 +368,27 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 	}
 	if (existing) {
 		setDaemonStatus(existing);
+		return daemonStatus;
+	}
+
+	// Defensive: inspectExistingDaemon only attaches when the run-file agrees with
+	// a live daemon. Any divergence (missing/stale/unparseable run-file, dead PID,
+	// health.pid mismatch) makes it return null — yet a daemon may still be serving
+	// the port. Spawning then would just make the Go child refuse and exit 1. Probe
+	// the expected port directly, independent of the run-file, and attach if a
+	// daemon answers. The expected port (AO_PORT or the default) is exactly the
+	// port the Go child would bind and collide on — probing a hardcoded 3001 would
+	// miss an AO_PORT override.
+	const directDaemon = await resolveDaemonFromPort({
+		expectedPort: expectedDaemonPort(process.env),
+		probe: readDaemonProbe,
+		identityError: (probe) => daemonIdentityError(launch, probe),
+	});
+	if (startEpoch !== daemonStartEpoch) {
+		return daemonStatus;
+	}
+	if (directDaemon) {
+		setDaemonStatus(directDaemon);
 		return daemonStatus;
 	}
 
@@ -540,6 +551,29 @@ ipcMain.handle("app:chooseDirectory", async () => {
 	if (result.canceled) return null;
 	return result.filePaths[0] ?? null;
 });
+ipcMain.handle("clipboard:writeText", (_event, text: string) => {
+	clipboard.writeText(text, "clipboard");
+	if (process.platform === "linux") {
+		clipboard.writeText(text, "selection");
+	}
+});
+ipcMain.handle("clipboard:readText", () => clipboard.readText());
+
+ipcMain.handle("notifications:show", (_event, notification: { id: string; title: string; body?: string }) => {
+	if (!notification.id || !notification.title || !ElectronNotification.isSupported()) return;
+	const toast = new ElectronNotification({
+		title: notification.title,
+		body: notification.body,
+	});
+	toast.on("click", () => {
+		if (!mainWindow) return;
+		if (mainWindow.isMinimized()) mainWindow.restore();
+		mainWindow.show();
+		mainWindow.focus();
+		mainWindow.webContents.send("notifications:click", notification.id);
+	});
+	toast.show();
+});
 
 // Auto-update only runs for packaged builds reading the GitHub Releases feed
 // (see forge.config.ts publishers). In dev there is no feed, so it is skipped.
@@ -564,6 +598,8 @@ app.whenReady().then(() => {
 });
 
 app.on("before-quit", () => {
+	browserViewHost?.dispose();
+	browserViewHost = null;
 	if (daemonProcess) {
 		killDaemon(daemonProcess);
 	}

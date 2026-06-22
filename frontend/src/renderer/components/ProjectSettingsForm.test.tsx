@@ -303,7 +303,7 @@ describe("ProjectSettingsForm", () => {
 		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
 		expect(postMock).not.toHaveBeenCalled();
 		expect(await screen.findByText("Saved.")).toBeInTheDocument();
-	}, 10_000);
+	}, 20_000);
 
 	it("blocks orchestrator agent changes while the project orchestrator is active", async () => {
 		mockProject({

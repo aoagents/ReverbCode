@@ -6,12 +6,15 @@ import { agentsQueryKey, useAgentsQuery } from "../hooks/useAgentsQuery";
 import { DashboardSubhead } from "./DashboardSubhead";
 import { Button } from "./ui/button";
 import { Plus } from "lucide-react";
-import { type AttentionZone, type WorkspaceSession, attentionZone, openPRs, workerSessions } from "../types/workspace";
+import { type AttentionZone, type WorkspaceSession, attentionZone, workerSessions } from "../types/workspace";
+import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { OrchestratorIcon } from "./icons";
 import { NewTaskDialog } from "./NewTaskDialog";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
+import { prDiffSummary, sessionPRDisplaySummaries } from "../lib/pr-display";
 import { cn } from "../lib/utils";
+import { PRAttentionPanel, PRStatusStrip } from "./PRSummaryDisplay";
 
 type SessionsBoardProps = {
 	/** When set, the board shows only this project's sessions. */
@@ -290,23 +293,11 @@ function ZoneColumn({
 	);
 }
 
-// One-line PR summary for the card footer. A session can own several PRs, so
-// collapse to a count once past one; detail lives in the inspector stack.
-function prSummary(session: WorkspaceSession): string {
-	const total = session.prs.length;
-	if (total === 0) return "no PR yet";
-	if (total === 1) {
-		const pr = session.prs[0];
-		return `PR #${pr.number} · ${pr.state}`;
-	}
-	const open = openPRs(session).length;
-	return open > 0 ? `${total} PRs · ${open} open` : `${total} PRs`;
-}
-
 function SessionCard({ session, onOpen }: { session: WorkspaceSession; onOpen: () => void }) {
 	const badge = sessionBadge(session);
 	const branch = session.branch || "";
 	const showBranch = branch !== "" && !sameLabel(branch, session.title) && !sameLabel(branch, session.id);
+	const prSummaries = sessionPRDisplaySummaries(session, useSessionScmSummary(session.id).data);
 	return (
 		<button
 			className="w-full rounded-[7px] border border-border bg-surface text-left transition-colors hover:border-border-strong"
@@ -333,9 +324,35 @@ function SessionCard({ session, onOpen }: { session: WorkspaceSession; onOpen: (
 			</div>
 			{showBranch && <div className="px-[13px] pb-2.5 font-mono text-[10.5px] text-passive">{branch}</div>}
 			<div className="border-t border-border px-[13px] py-2 font-mono text-[10.5px] text-passive">
-				{prSummary(session)}
+				{prSummaries.length > 0 ? (
+					<div className="flex flex-col gap-2">
+						{prSummaries.map((prSummary, index) => (
+							<BoardPRSummary
+								className={cn(index > 0 && "border-t border-border pt-2")}
+								key={prSummary.number}
+								pr={prSummary}
+							/>
+						))}
+					</div>
+				) : (
+					"no PR yet"
+				)}
 			</div>
 		</button>
+	);
+}
+
+function BoardPRSummary({ className, pr }: { className?: string; pr: SessionPRSummary }) {
+	const diffSummary = prDiffSummary(pr);
+	return (
+		<div className={cn("flex min-w-0 flex-col gap-1", className)}>
+			<span>
+				PR #{pr.number} · {pr.state}
+			</span>
+			{diffSummary ? <span className="truncate">{diffSummary}</span> : null}
+			<PRStatusStrip pr={pr} />
+			<PRAttentionPanel className="mt-1.5 pt-1.5" interactiveLinks={false} maxItems={2} pr={pr} />
+		</div>
 	);
 }
 

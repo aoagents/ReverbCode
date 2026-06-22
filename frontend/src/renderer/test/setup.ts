@@ -55,6 +55,10 @@ window.ao = {
 		getVersion: async () => "0.0.0-test",
 		chooseDirectory: async () => null,
 	},
+	clipboard: {
+		writeText: async () => undefined,
+		readText: async () => "",
+	},
 	daemon: {
 		getStatus: async () => ({ state: "stopped" }),
 		start: async () => ({ state: "starting" }),
@@ -63,5 +67,62 @@ window.ao = {
 	},
 	telemetry: {
 		getBootstrap: async () => null,
+	},
+	browser: {
+		ensure: async (sessionId: string) => ({
+			viewId: `test:${sessionId}`,
+			url: "",
+			title: "",
+			canGoBack: false,
+			canGoForward: false,
+			isLoading: false,
+		}),
+		setBounds: () => undefined,
+		navigate: async ({ viewId }: { viewId: string }) => ({
+			viewId,
+			url: "",
+			title: "",
+			canGoBack: false,
+			canGoForward: false,
+			isLoading: false,
+		}),
+		goBack: async (viewId: string) => ({
+			viewId,
+			url: "",
+			title: "",
+			canGoBack: false,
+			canGoForward: false,
+			isLoading: false,
+		}),
+		goForward: async (viewId: string) => ({
+			viewId,
+			url: "",
+			title: "",
+			canGoBack: false,
+			canGoForward: false,
+			isLoading: false,
+		}),
+		reload: async (viewId: string) => ({
+			viewId,
+			url: "",
+			title: "",
+			canGoBack: false,
+			canGoForward: false,
+			isLoading: false,
+		}),
+		stop: async (viewId: string) => ({
+			viewId,
+			url: "",
+			title: "",
+			canGoBack: false,
+			canGoForward: false,
+			isLoading: false,
+		}),
+		destroy: () => undefined,
+		onNavState: () => () => undefined,
+	},
+	notifications: {
+		show: async () => undefined,
+		onClick: () => () => undefined,
 	},
 };

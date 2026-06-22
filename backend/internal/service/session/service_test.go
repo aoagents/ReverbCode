@@ -26,11 +26,21 @@ type fakeStore struct {
 	sessions map[domain.SessionID]domain.SessionRecord
 	pr       map[domain.SessionID]domain.PRFacts
 	projects map[string]domain.ProjectRecord
+	checks   map[string][]domain.PullRequestCheck
+	threads  map[string][]domain.PullRequestReviewThread
+	comments map[string][]domain.PullRequestComment
 	num      int
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{sessions: map[domain.SessionID]domain.SessionRecord{}, pr: map[domain.SessionID]domain.PRFacts{}, projects: map[string]domain.ProjectRecord{}}
+	return &fakeStore{
+		sessions: map[domain.SessionID]domain.SessionRecord{},
+		pr:       map[domain.SessionID]domain.PRFacts{},
+		projects: map[string]domain.ProjectRecord{},
+		checks:   map[string][]domain.PullRequestCheck{},
+		threads:  map[string][]domain.PullRequestReviewThread{},
+		comments: map[string][]domain.PullRequestComment{},
+	}
 }
 
 func (f *fakeStore) CreateSession(_ context.Context, rec domain.SessionRecord) (domain.SessionRecord, error) {
@@ -74,6 +84,17 @@ func (f *fakeStore) RenameSession(_ context.Context, id domain.SessionID, displa
 	return true, nil
 }
 
+func (f *fakeStore) SetSessionPreviewURL(_ context.Context, id domain.SessionID, previewURL string, updatedAt time.Time) (bool, error) {
+	r, ok := f.sessions[id]
+	if !ok {
+		return false, nil
+	}
+	r.Metadata.PreviewURL = previewURL
+	r.UpdatedAt = updatedAt
+	f.sessions[id] = r
+	return true, nil
+}
+
 func (f *fakeStore) GetDisplayPRFactsForSession(_ context.Context, id domain.SessionID) (domain.PRFacts, bool, error) {
 	pr, ok := f.pr[id]
 	return pr, ok, nil
@@ -95,8 +116,16 @@ func (f *fakeStore) ListPRFactsForSession(_ context.Context, id domain.SessionID
 	return []domain.PRFacts{pr}, nil
 }
 
-func (f *fakeStore) ListPRComments(context.Context, string) ([]domain.PullRequestComment, error) {
-	return nil, nil
+func (f *fakeStore) ListChecks(_ context.Context, prURL string) ([]domain.PullRequestCheck, error) {
+	return append([]domain.PullRequestCheck(nil), f.checks[prURL]...), nil
+}
+
+func (f *fakeStore) ListPRReviewThreads(_ context.Context, prURL string) ([]domain.PullRequestReviewThread, error) {
+	return append([]domain.PullRequestReviewThread(nil), f.threads[prURL]...), nil
+}
+
+func (f *fakeStore) ListPRComments(_ context.Context, prURL string) ([]domain.PullRequestComment, error) {
+	return append([]domain.PullRequestComment(nil), f.comments[prURL]...), nil
 }
 
 func (f *fakeStore) GetProject(_ context.Context, id string) (domain.ProjectRecord, bool, error) {
@@ -128,6 +157,29 @@ func TestSessionRenameUpdatesDisplayName(t *testing.T) {
 	}
 	if got := st.sessions["mer-1"].DisplayName; got != "Fix issue #90" {
 		t.Fatalf("display name = %q, want trimmed rename", got)
+	}
+}
+
+func TestSessionSetPreviewPersistsURL(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer"}
+
+	sess, err := (&Service{store: st, clock: time.Now}).SetPreview(context.Background(), "mer-1", "file:///tmp/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.Metadata.PreviewURL != "file:///tmp/index.html" {
+		t.Fatalf("returned preview url = %q, want set value", sess.Metadata.PreviewURL)
+	}
+	if got := st.sessions["mer-1"].Metadata.PreviewURL; got != "file:///tmp/index.html" {
+		t.Fatalf("persisted preview url = %q, want set value", got)
+	}
+}
+
+func TestSessionSetPreviewUnknownSession(t *testing.T) {
+	st := newFakeStore()
+	if _, err := (&Service{store: st}).SetPreview(context.Background(), "ghost-1", "http://x"); err == nil {
+		t.Fatal("want error for unknown session")
 	}
 }
 
@@ -809,6 +861,192 @@ func TestListPRsOrdersActiveBeforeClosedThenUpdatedDesc(t *testing.T) {
 	}
 }
 
+func TestListPRSummariesOmitsRawLogsAndReviewBodies(t *testing.T) {
+	st := newFakeStore()
+	now := time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC)
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker}
+	prURL := "https://github.com/acme/repo/pull/7"
+	stList := &multiPRFakeStore{fakeStore: st, prs: []domain.PullRequest{{
+		URL:                      prURL,
+		HTMLURL:                  prURL,
+		SessionID:                "mer-1",
+		Number:                   7,
+		CI:                       domain.CIFailing,
+		Review:                   domain.ReviewChangesRequest,
+		Mergeability:             domain.MergeConflicting,
+		Provider:                 "github",
+		Repo:                     "acme/repo",
+		Title:                    "Fix dashboard",
+		Author:                   "ada",
+		SourceBranch:             "fix/dashboard",
+		TargetBranch:             "main",
+		HeadSHA:                  "abc123",
+		ProviderMergeStateStatus: "dirty",
+		UpdatedAt:                now,
+		ObservedAt:               now.Add(-time.Minute),
+		CIObservedAt:             now.Add(-time.Minute),
+		ReviewObservedAt:         now.Add(-time.Minute),
+	}}}
+	stList.checks[prURL] = []domain.PullRequestCheck{
+		{Name: "unit", Status: domain.PRCheckFailed, Conclusion: "failure", URL: "https://github.com/acme/repo/actions/runs/1", LogTail: "panic: secret"},
+		{Name: "lint", Status: domain.PRCheckPassed, Conclusion: "success", URL: "https://github.com/acme/repo/actions/runs/2"},
+	}
+	stList.comments[prURL] = []domain.PullRequestComment{
+		{Author: "reviewer-a", File: "main.go", Line: 12, Body: "raw body must stay private", URL: "https://github.com/acme/repo/pull/7#discussion_r1"},
+		{Author: "ci-bot", File: "main.go", Line: 13, Body: "bot body", URL: "https://github.com/acme/repo/pull/7#discussion_r2", IsBot: true},
+		{Author: "reviewer-a", File: "test.go", Line: 22, Body: "another raw body", URL: "https://github.com/acme/repo/pull/7#discussion_r3"},
+	}
+
+	got, err := (&Service{store: stList}).ListPRSummaries(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("summaries = %+v", got)
+	}
+	pr := got[0]
+	if pr.Title != "Fix dashboard" || pr.State != domain.PRStateOpen || pr.Provider != "github" || pr.Repo != "acme/repo" || pr.HeadSHA != "abc123" {
+		t.Fatalf("metadata = %+v", pr)
+	}
+	if len(pr.CI.FailingChecks) != 1 || pr.CI.FailingChecks[0].Name != "unit" || pr.CI.FailingChecks[0].URL == "" {
+		t.Fatalf("failing checks = %+v", pr.CI.FailingChecks)
+	}
+	if pr.Review.Decision != domain.ReviewChangesRequest || !pr.Review.HasUnresolvedHumanComments || len(pr.Review.UnresolvedBy) != 1 {
+		t.Fatalf("review = %+v", pr.Review)
+	}
+	if reviewer := pr.Review.UnresolvedBy[0]; reviewer.ReviewerID != "reviewer-a" || reviewer.Count != 2 || len(reviewer.Links) != 2 {
+		t.Fatalf("reviewer = %+v", reviewer)
+	}
+	if pr.Mergeability.State != domain.MergeConflicting || len(pr.Mergeability.ConflictFiles) != 0 || !containsString(pr.Mergeability.Reasons, "conflicts") {
+		t.Fatalf("mergeability = %+v", pr.Mergeability)
+	}
+}
+
+func TestListPRSummariesSuppressesFailingChecksUnlessCIFailing(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker}
+	prURL := "https://github.com/acme/repo/pull/8"
+	stList := &multiPRFakeStore{fakeStore: st, prs: []domain.PullRequest{{
+		URL:       prURL,
+		SessionID: "mer-1",
+		Number:    8,
+		CI:        domain.CIPassing,
+		HeadSHA:   "new-sha",
+		UpdatedAt: time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC),
+	}}}
+	stList.checks[prURL] = []domain.PullRequestCheck{
+		{Name: "copy-check", CommitHash: "old-sha", Status: domain.PRCheckFailed, Conclusion: "failure", URL: "https://github.com/acme/repo/actions/runs/1"},
+	}
+
+	got, err := (&Service{store: stList}).ListPRSummaries(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[0].CI.State != domain.CIPassing || len(got[0].CI.FailingChecks) != 0 {
+		t.Fatalf("ci summary = %+v", got[0].CI)
+	}
+}
+
+func TestListPRSummariesFiltersFailedChecksToCurrentHead(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker}
+	prURL := "https://github.com/acme/repo/pull/9"
+	stList := &multiPRFakeStore{fakeStore: st, prs: []domain.PullRequest{{
+		URL:       prURL,
+		SessionID: "mer-1",
+		Number:    9,
+		CI:        domain.CIFailing,
+		HeadSHA:   "new-sha",
+		UpdatedAt: time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC),
+	}}}
+	stList.checks[prURL] = []domain.PullRequestCheck{
+		{Name: "old-copy-check", CommitHash: "old-sha", Status: domain.PRCheckFailed, Conclusion: "failure"},
+		{Name: "current-lint", CommitHash: "new-sha", Status: domain.PRCheckFailed, Conclusion: "failure"},
+	}
+
+	got, err := (&Service{store: stList}).ListPRSummaries(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	checks := got[0].CI.FailingChecks
+	if len(checks) != 1 || checks[0].Name != "current-lint" {
+		t.Fatalf("failing checks = %+v", checks)
+	}
+}
+
+func TestListPRSummariesSuppressesActiveDetailsForClosedOrMergedPRs(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker}
+	prURL := "https://github.com/acme/repo/pull/10"
+	stList := &multiPRFakeStore{fakeStore: st, prs: []domain.PullRequest{{
+		URL:                      prURL,
+		SessionID:                "mer-1",
+		Number:                   10,
+		Merged:                   true,
+		CI:                       domain.CIFailing,
+		Review:                   domain.ReviewChangesRequest,
+		Mergeability:             domain.MergeConflicting,
+		ProviderMergeStateStatus: "dirty",
+		UpdatedAt:                time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC),
+	}}}
+	stList.checks[prURL] = []domain.PullRequestCheck{{Name: "unit", Status: domain.PRCheckFailed}}
+	stList.comments[prURL] = []domain.PullRequestComment{{Author: "reviewer-a", File: "main.go", Line: 12, URL: "https://github.com/acme/repo/pull/10#discussion_r1"}}
+
+	got, err := (&Service{store: stList}).ListPRSummaries(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pr := got[0]
+	if pr.State != domain.PRStateMerged {
+		t.Fatalf("state = %q", pr.State)
+	}
+	if len(pr.CI.FailingChecks) != 0 || len(pr.Review.UnresolvedBy) != 0 || len(pr.Mergeability.Reasons) != 0 {
+		t.Fatalf("active details should be suppressed for merged PR: ci=%+v review=%+v merge=%+v", pr.CI, pr.Review, pr.Mergeability)
+	}
+}
+
+func TestListPRSummariesOnlyEmitsMergeReasonsForBlockedStates(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker}
+	now := time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC)
+	stList := &multiPRFakeStore{fakeStore: st, prs: []domain.PullRequest{
+		{
+			URL:                      "mergeable",
+			SessionID:                "mer-1",
+			Number:                   11,
+			CI:                       domain.CIFailing,
+			Review:                   domain.ReviewRequired,
+			Mergeability:             domain.MergeMergeable,
+			ProviderMergeStateStatus: "behind",
+			UpdatedAt:                now,
+		},
+		{
+			URL:                      "blocked",
+			SessionID:                "mer-1",
+			Number:                   12,
+			Review:                   domain.ReviewRequired,
+			Mergeability:             domain.MergeBlocked,
+			ProviderMergeStateStatus: "behind",
+			UpdatedAt:                now.Add(time.Minute),
+		},
+	}}
+
+	got, err := (&Service{store: stList}).ListPRSummaries(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	byNumber := map[int]PRSummary{}
+	for _, pr := range got {
+		byNumber[pr.Number] = pr
+	}
+	if reasons := byNumber[11].Mergeability.Reasons; len(reasons) != 0 {
+		t.Fatalf("mergeable reasons = %+v", reasons)
+	}
+	if reasons := byNumber[12].Mergeability.Reasons; !containsString(reasons, "behind_base") || !containsString(reasons, "review_required") {
+		t.Fatalf("blocked reasons = %+v", reasons)
+	}
+}
+
 type multiPRFakeStore struct {
 	*fakeStore
 	prs []domain.PullRequest
@@ -816,4 +1054,13 @@ type multiPRFakeStore struct {
 
 func (f *multiPRFakeStore) ListPRsBySession(context.Context, domain.SessionID) ([]domain.PullRequest, error) {
 	return f.prs, nil
+}
+
+func containsString(values []string, want string) bool {
+	for _, got := range values {
+		if got == want {
+			return true
+		}
+	}
+	return false
 }

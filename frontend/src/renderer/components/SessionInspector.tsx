@@ -1,21 +1,36 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
-import { AlertCircle, CheckCircle2, CircleMinus, GitPullRequest, Play, Shield, Terminal } from "lucide-react";
+import {
+	AlertCircle,
+	ArrowUpRight,
+	CheckCircle2,
+	CircleMinus,
+	GitPullRequest,
+	Play,
+	Shield,
+	Terminal,
+} from "lucide-react";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { formatTimeCompact } from "../lib/format-time";
-import type { PRState, PullRequestFacts, SessionStatus, WorkspaceSession } from "../types/workspace";
+import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
+import { prStatusRows, sessionPRDisplaySummaries, type PRDisplayTone } from "../lib/pr-display";
+import type { SessionStatus, WorkspaceSession } from "../types/workspace";
 import { sortedPRs, workerDisplayStatus } from "../types/workspace";
+import { BrowserPanelView } from "./BrowserPanel";
+import type { BrowserViewModel } from "../hooks/useBrowserView";
 import { Badge } from "./ui/badge";
+import { Button } from "./ui/button";
 import { cn } from "../lib/utils";
+import { PRAttentionPanel, PRSummaryMeta } from "./PRSummaryDisplay";
 
 type ProjectConfig = components["schemas"]["ProjectConfig"];
 type ReviewRun = components["schemas"]["ReviewRun"];
 type ReviewsResponse = components["schemas"]["ListReviewsResponse"];
 type OpenReviewerTerminal = (target: { handleId: string; harness: string }) => void;
 
-type InspectorView = "summary" | "reviews" | "browser";
+export type InspectorView = "summary" | "reviews" | "browser";
 
 const VIEWS: { id: InspectorView; label: string; icon: ReactNode }[] = [
 	{
@@ -54,7 +69,7 @@ const VIEWS: { id: InspectorView; label: string; icon: ReactNode }[] = [
 	},
 ];
 
-const prStateTone: Record<PRState, string> = {
+const prStateTone: Record<SessionPRSummary["state"], string> = {
 	open: "border-success/40 bg-success/10 text-success",
 	draft: "border-border bg-raised text-muted-foreground",
 	merged: "border-accent/40 bg-accent-weak text-accent",
@@ -67,11 +82,29 @@ const prStateTone: Record<PRState, string> = {
 export function SessionInspector({
 	session,
 	onOpenReviewerTerminal,
+	browserPoppedOut = false,
+	isInspectorVisible = true,
+	onToggleBrowserPopOut,
+	browserView,
+	view: viewProp,
+	onViewChange,
 }: {
 	session?: WorkspaceSession;
 	onOpenReviewerTerminal?: OpenReviewerTerminal;
+	browserPoppedOut?: boolean;
+	isInspectorVisible?: boolean;
+	onToggleBrowserPopOut?: (next: boolean) => void;
+	browserView?: BrowserViewModel;
+	/** Controlled active tab. Omit to let the inspector own its own selection. */
+	view?: InspectorView;
+	onViewChange?: (view: InspectorView) => void;
 }) {
-	const [view, setView] = useState<InspectorView>("summary");
+	const [internalView, setInternalView] = useState<InspectorView>("summary");
+	const view = viewProp ?? internalView;
+	const setView = (next: InspectorView) => {
+		setInternalView(next);
+		onViewChange?.(next);
+	};
 
 	if (!session) {
 		return (
@@ -104,15 +137,33 @@ export function SessionInspector({
 			<div className="session-inspector__body">
 				{view === "summary" ? <SummaryView session={session} /> : null}
 				{view === "reviews" ? <ReviewsView onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} /> : null}
-				{view === "browser" ? <BrowserView /> : null}
+				{view === "browser" ? (
+					<BrowserView
+						browserPoppedOut={browserPoppedOut}
+						browserView={browserView}
+						isActive={isInspectorVisible && !browserPoppedOut}
+						onTogglePopOut={onToggleBrowserPopOut}
+						session={session}
+					/>
+				) : null}
 			</div>
 		</aside>
 	);
 }
 
-function Section({ title, action, children }: { title: string; action?: ReactNode; children: ReactNode }) {
+function Section({
+	action,
+	children,
+	className,
+	title,
+}: {
+	action?: ReactNode;
+	children: ReactNode;
+	className?: string;
+	title: string;
+}) {
 	return (
-		<section className="inspector-section">
+		<section className={cn("inspector-section", className)}>
 			<div className="inspector-section__head">
 				<span>{title}</span>
 				{action ?? null}
@@ -123,18 +174,20 @@ function Section({ title, action, children }: { title: string; action?: ReactNod
 }
 
 function SummaryView({ session }: { session: WorkspaceSession }) {
-	const prs = sortedPRs(session);
+	const query = useSessionScmSummary(session.id);
+	const prSummaries = sessionPRDisplaySummaries(session, query.data);
+	const prSectionTitle = prSummaries.length > 1 ? `Pull requests (${prSummaries.length})` : "Pull request";
 	const branchLabel = session.branch || `session/${session.id}`;
 
 	return (
 		<div role="tabpanel">
-			<Section title={prs.length > 1 ? `Pull requests (${prs.length})` : "Pull request"}>
-				{prs.length === 0 ? (
+			<Section title={prSectionTitle}>
+				{prSummaries.length === 0 ? (
 					<p className="inspector-empty">No pull request opened yet.</p>
 				) : (
-					<div className="flex flex-col gap-2.5">
-						{prs.map((pr) => (
-							<PRCard key={pr.url} pr={pr} />
+					<div className="flex flex-col gap-2">
+						{prSummaries.map((pr) => (
+							<PRSummaryCard key={pr.number} pr={pr} />
 						))}
 					</div>
 				)}
@@ -144,7 +197,7 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 				<ActivityTimeline session={session} />
 			</Section>
 
-			<Section title="Overview">
+			<Section className="inspector-section--separated" title="Overview">
 				<dl className="inspector-kv">
 					<Row k="Agent" v={session.provider} mono />
 					<Row k="Branch" v={branchLabel} mono />
@@ -156,31 +209,59 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 	);
 }
 
-// One PR per card; a session's PRs stack vertically. Mirrors the minimal
-// single-PR rail the parallel-agent tools converged on (emdash, conductor),
-// repeated per PR rather than collapsed into one aggregate widget.
-function PRCard({ pr }: { pr: PullRequestFacts }) {
+function PRSummaryCard({ pr }: { pr: SessionPRSummary }) {
 	return (
-		<div className="flex flex-col gap-2 rounded-[7px] border border-border bg-surface p-2.5">
+		<div className="rounded-[7px] border border-border bg-surface px-3 py-2.5">
 			<div className="flex items-center gap-2">
 				<GitPullRequest className="h-3.5 w-3.5 shrink-0 text-passive" aria-hidden="true" />
 				<span className="text-[12.5px] font-medium text-foreground">PR #{pr.number}</span>
-				<Badge variant="outline" className={cn("ml-auto h-5 px-1.5 text-[10px] font-medium", prStateTone[pr.state])}>
+				<Badge variant="outline" className={cn("h-5 px-1.5 text-[10px] font-medium", prStateTone[pr.state])}>
 					{pr.state}
 				</Badge>
-				{pr.url ? (
-					<a href={pr.url} target="_blank" rel="noopener noreferrer" className="inspector-section__link">
-						Open ↗
-					</a>
-				) : null}
+				<a
+					href={pr.htmlUrl || pr.url}
+					target="_blank"
+					rel="noopener noreferrer"
+					className="ml-auto inline-flex items-center gap-0.5 text-[11px] font-medium text-accent hover:underline"
+				>
+					<span>Open</span>
+					<ArrowUpRight aria-hidden="true" className="h-3 w-3" strokeWidth={2} />
+				</a>
 			</div>
-			<dl className="inspector-kv">
-				<Row k="CI" v={pr.ci || "—"} mono />
-				<Row k="Merge" v={pr.mergeability || "—"} mono />
-				<Row k="Review" v={pr.review || "—"} mono />
-			</dl>
+			{pr.title ? <div className="mt-2 text-[12px] font-medium leading-snug text-foreground">{pr.title}</div> : null}
+			<PRSummaryMeta className="mt-1.5" pr={pr} />
+			<PRStatusStack className="mt-2" pr={pr} />
+			<PRAttentionPanel pr={pr} />
 		</div>
 	);
+}
+
+function PRStatusStack({ className, pr }: { className?: string; pr: SessionPRSummary }) {
+	return (
+		<div className={cn("flex flex-col gap-0.5 font-mono text-[10.5px] leading-4", className)}>
+			{prStatusRows(pr).map((row) => (
+				<div key={row.key} className="min-w-0 truncate">
+					<span className="text-passive">{row.label}</span>{" "}
+					<span className={cn("font-medium", inspectorStatusToneClass(row.tone))}>{row.value}</span>
+				</div>
+			))}
+		</div>
+	);
+}
+
+function inspectorStatusToneClass(tone: PRDisplayTone): string {
+	switch (tone) {
+		case "success":
+			return "text-success";
+		case "warning":
+			return "text-warning";
+		case "error":
+			return "text-error";
+		case "neutral":
+			return "text-muted-foreground";
+		case "passive":
+			return "text-passive";
+	}
 }
 
 type TimelineTone = "now" | "good" | "warn" | "neutral";
@@ -266,6 +347,7 @@ const STATUS_PILL: Record<
 	no_signal: { label: "No signal", tone: "var(--fg-muted)", breathe: false },
 	mergeable: { label: "Ready", tone: "var(--green)", breathe: false },
 	done: { label: "Done", tone: "var(--fg-muted)", breathe: false },
+	unknown: { label: "Unknown", tone: "var(--fg-muted)", breathe: false },
 	idle: { label: "Idle", tone: "var(--fg-muted)", breathe: false },
 };
 
@@ -510,19 +592,44 @@ function reviewStatus(review?: ReviewRun): {
 	return { label: "Complete", tone: "success", icon: <CheckCircle2 aria-hidden="true" /> };
 }
 
-function BrowserView() {
-	return (
-		<div role="tabpanel">
-			<div className="inspector-empty inspector-empty--browser">
-				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
-					<circle cx="12" cy="12" r="9" />
-					<line x1="3" y1="12" x2="21" y2="12" />
-					<path d="M12 3a14 14 0 0 1 0 18 14 14 0 0 1 0-18" />
-				</svg>
-				<p>No live browser preview.</p>
-				<span>A browser plugin will render what the agent is viewing here.</span>
+function BrowserView({
+	session,
+	isActive,
+	browserPoppedOut,
+	onTogglePopOut,
+	browserView,
+}: {
+	session: WorkspaceSession;
+	isActive: boolean;
+	browserPoppedOut: boolean;
+	onTogglePopOut?: (next: boolean) => void;
+	browserView?: BrowserViewModel;
+}) {
+	if (browserPoppedOut) {
+		return (
+			<div role="tabpanel">
+				<div className="inspector-empty inspector-empty--browser">
+					<p>Browser preview is in the center pane.</p>
+					<Button onClick={() => onTogglePopOut?.(false)} size="sm" type="button" variant="outline">
+						Return to panel
+					</Button>
+				</div>
 			</div>
-		</div>
+		);
+	}
+
+	if (!browserView) {
+		return null;
+	}
+
+	return (
+		<BrowserPanelView
+			active={isActive}
+			browserView={browserView}
+			onTogglePopOut={(next) => onTogglePopOut?.(next)}
+			poppedOut={false}
+			session={session}
+		/>
 	);
 }
 

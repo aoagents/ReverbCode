@@ -342,7 +342,10 @@ func appendTerminalCompatibilityFlags(cmd *[]string) {
 func appendApprovalFlags(cmd *[]string, permissions ports.PermissionMode) {
 	switch normalizePermissionMode(permissions) {
 	case ports.PermissionModeDefault:
-		// No flag: defer to the user's Codex config/default behavior.
+		// Codex sessions are AO-managed and run headlessly inside a terminal
+		// mux pane; default to no approval prompts unless project settings
+		// explicitly choose a more restrictive mode.
+		*cmd = append(*cmd, "--dangerously-bypass-approvals-and-sandbox")
 	case ports.PermissionModeAcceptEdits:
 		*cmd = append(*cmd, "--ask-for-approval", "on-request")
 	case ports.PermissionModeAuto:

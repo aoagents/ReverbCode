@@ -28,12 +28,14 @@ import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import type { AttachableTerminal, TerminalUserInputSource } from "../hooks/useTerminalSession";
+import { aoBridge } from "../lib/bridge";
 import { buildTerminalThemes } from "../lib/terminal-themes";
 import type { Theme } from "../stores/ui-store";
 
 export type XtermTerminalProps = {
 	ariaLabel?: string;
 	className?: string;
+	fontSize?: number;
 	theme: Theme;
 	/** Terminal construction failed; the owner decides how to surface it. */
 	onError?: (error: unknown) => void;
@@ -82,9 +84,56 @@ function bracketPastedText(text: string, bracketedPasteMode: boolean): string {
 	return bracketedPasteMode ? `\x1b[200~${text}\x1b[201~` : text;
 }
 
+function isTerminalCopyShortcut(event: KeyboardEvent): boolean {
+	if (event.key.toLowerCase() !== "c") return false;
+	if (event.metaKey) return true;
+	return event.ctrlKey && event.shiftKey;
+}
+
+function terminalHasFocus(host: HTMLElement): boolean {
+	const activeElement = document.activeElement;
+	return !!activeElement && host.contains(activeElement);
+}
+
+type XtermInternal = Terminal & {
+	_core?: {
+		element?: HTMLElement;
+		_selectionService?: {
+			enable: () => void;
+			shouldForceSelection: (event: MouseEvent) => boolean;
+		};
+	};
+};
+
+// zellij (started with `--mouse-mode true`, see backend embeddedClientOptions)
+// acts on SGR mouse-wheel reports written to its stdin and scrolls the focused
+// pane, but it does NOT enable host mouse reporting, so xterm's own mouse
+// protocol stays NONE and it never reports the wheel itself. With scrollback:0
+// xterm would instead convert the wheel into cursor-arrow keys (its alt-buffer
+// fallback), which move the agent's cursor/history rather than scrolling. So we
+// synthesize the SGR wheel reports here. SGR button 64 = wheel up, 65 = down;
+// reports are 1-based and a single cell is enough for a borderless single pane.
+const SGR_WHEEL_UP = 64;
+const SGR_WHEEL_DOWN = 65;
+
+function sgrWheelReport(button: number, count: number): string {
+	return `\x1b[<${button};1;1M`.repeat(count);
+}
+
+function forceSelectionMode(term: Terminal): void {
+	const internal = term as XtermInternal;
+	const selectionService = internal._core?._selectionService;
+	const element = internal._core?.element;
+	if (!selectionService || !element) return;
+	selectionService.shouldForceSelection = () => true;
+	selectionService.enable();
+	element.classList.remove("enable-mouse-events");
+}
+
 export function XtermTerminal(props: XtermTerminalProps) {
 	const hostRef = useRef<HTMLDivElement | null>(null);
 	const termRef = useRef<Terminal | null>(null);
+	const fitRef = useRef<(() => void) | null>(null);
 	// Latest callbacks in a ref so the mount effect stays dependency-free — we
 	// never tear down and recreate the terminal because a handler identity
 	// changed between renders.
@@ -99,6 +148,15 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		if (!term) return;
 		term.options.theme = props.theme === "dark" ? terminalThemes.dark : terminalThemes.light;
 	}, [props.theme]);
+
+	useEffect(() => {
+		const term = termRef.current;
+		if (!term || !props.fontSize) return undefined;
+		term.options.fontSize = props.fontSize;
+		fitRef.current?.();
+		const timer = window.setTimeout(() => fitRef.current?.(), 50);
+		return () => window.clearTimeout(timer);
+	}, [props.fontSize]);
 
 	useEffect(() => {
 		const host = hostRef.current;
@@ -118,7 +176,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				fontFamily:
 					getComputedStyle(host).getPropertyValue("--font-mono").trim() ||
 					'ui-monospace, Menlo, Monaco, "Courier New", monospace',
-				fontSize: 13,
+				fontSize: props.fontSize ?? 12,
 				lineHeight: 1.35,
 				// Agent TUIs leave SGR bold active while using ANSI black for
 				// separators; keep bold weight-only so black stays black.
@@ -153,6 +211,50 @@ export function XtermTerminal(props: XtermTerminalProps) {
 
 		term.open(host);
 		loadRenderer(term);
+		term.options.macOptionClickForcesSelection = true;
+		forceSelectionMode(term);
+
+		let lastCopiedSelection = "";
+		const copySelection = (options?: { clipboardData?: DataTransfer | null; dedupe?: boolean }) => {
+			const selection = term.getSelection();
+			if (!selection || (options?.dedupe && selection === lastCopiedSelection)) return false;
+			options?.clipboardData?.setData("text/plain", selection);
+			void aoBridge.clipboard
+				.writeText(selection)
+				.then(() => {
+					lastCopiedSelection = selection;
+				})
+				.catch((error) => {
+					console.warn("Unable to copy terminal selection", error);
+				});
+			return true;
+		};
+		const clearCopiedSelection = () => {
+			lastCopiedSelection = "";
+		};
+		term.attachCustomKeyEventHandler((event) => {
+			if (!isTerminalCopyShortcut(event) || !copySelection()) return true;
+			event.preventDefault();
+			return false;
+		});
+		const copyInput = (event: ClipboardEvent) => {
+			if (!copySelection({ clipboardData: event.clipboardData })) return;
+			event.preventDefault();
+		};
+		const copyShortcut = (event: KeyboardEvent) => {
+			if (!isTerminalCopyShortcut(event) || !terminalHasFocus(host) || !copySelection()) return;
+			event.preventDefault();
+			event.stopPropagation();
+		};
+		host.addEventListener("copy", copyInput);
+		window.addEventListener("keydown", copyShortcut, true);
+		const selectionChange = term.onSelectionChange(() => {
+			if (!term.hasSelection()) {
+				clearCopiedSelection();
+				return;
+			}
+			window.setTimeout(() => copySelection({ dedupe: true }), 0);
+		});
 
 		const fitTerminal = () => {
 			try {
@@ -162,6 +264,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				// trigger retries.
 			}
 		};
+		fitRef.current = fitTerminal;
 
 		const raf = requestAnimationFrame(fitTerminal);
 		// 50/250ms catch the common settle; 600/1200ms are a session-bounded
@@ -240,7 +343,36 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			if (data.length === 0) return;
 			userInputListeners.forEach((listener) => listener(data, source));
 		};
-		const keyInput = term.onKey(({ key }) => emitUserInput(key, "keyboard"));
+		const terminalInput = term.onData((data) => emitUserInput(data, "terminal"));
+
+		// Translate wheel motion into SGR wheel reports for zellij (see
+		// sgrWheelReport), one report per scrolled line. WheelEvent.deltaMode
+		// varies by platform/device: trackpads and normalized wheels report
+		// pixels (mode 0, the macOS case), while many Linux/Windows mouse wheels
+		// report whole lines (mode 1) or pages (mode 2). Mirror xterm's native
+		// getLinesScrolled across all three so scroll works everywhere; pixel
+		// deltas accumulate so a full cell-height emits one line. Returning false
+		// suppresses xterm's arrow-key wheel fallback. Ctrl/Cmd wheel is the
+		// font-size zoom (CenterPane), so leave it for that handler.
+		let wheelAccumPx = 0;
+		term.attachCustomWheelEventHandler((event) => {
+			if (event.ctrlKey || event.metaKey) return false;
+			let lines: number;
+			if (event.deltaMode === 1 /* DOM_DELTA_LINE */) {
+				lines = Math.trunc(event.deltaY) || Math.sign(event.deltaY);
+			} else if (event.deltaMode === 2 /* DOM_DELTA_PAGE */) {
+				lines = (Math.trunc(event.deltaY) || Math.sign(event.deltaY)) * term.rows;
+			} else {
+				const rowHeight = (term.options.fontSize ?? 12) * (term.options.lineHeight ?? 1);
+				wheelAccumPx += event.deltaY;
+				lines = Math.trunc(wheelAccumPx / rowHeight);
+				wheelAccumPx -= lines * rowHeight;
+			}
+			if (lines === 0) return false;
+			const button = lines < 0 ? SGR_WHEEL_UP : SGR_WHEEL_DOWN;
+			emitUserInput(sgrWheelReport(button, Math.abs(lines)), "terminal");
+			return false;
+		});
 		const pasteInput = (event: ClipboardEvent) => {
 			event.preventDefault();
 			event.stopPropagation();
@@ -277,14 +409,18 @@ export function XtermTerminal(props: XtermTerminalProps) {
 
 		return () => {
 			termRef.current = null;
+			fitRef.current = null;
 			cancelAnimationFrame(raf);
 			for (const timer of settleTimers) window.clearTimeout(timer);
 			observer.disconnect();
 			stabilizer.dispose();
 			window.removeEventListener("resize", fitTerminal);
+			host.removeEventListener("copy", copyInput);
+			window.removeEventListener("keydown", copyShortcut, true);
+			selectionChange.dispose();
 			host.removeEventListener("paste", pasteInput, true);
 			host.removeEventListener("compositionend", compositionInput, true);
-			keyInput.dispose();
+			terminalInput.dispose();
 			userInputListeners.clear();
 			try {
 				term.dispose();
