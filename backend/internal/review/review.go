@@ -187,9 +187,9 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID) (Trigger
 	}
 
 	// Idempotency: a pass for this commit is reusable while it is still running
-	// or once it carries a verdict. A non-running pass with no verdict may have
-	// been interrupted without ever calling Submit, so it is superseded on retry
-	// and a fresh pass starts below (#342).
+	// or once it carries a verdict. The fallback branch below is defensive for
+	// any non-running, non-failed row that somehow lacks a verdict; normal
+	// Submit paths complete a run only with a valid verdict (#342).
 	if existing, ok, err := e.store.GetReviewRunBySessionAndSHA(ctx, workerID, targetSHA); err != nil {
 		return TriggerResult{}, err
 	} else if ok && (existing.Status == domain.ReviewRunRunning || existing.Verdict != domain.VerdictNone) {
