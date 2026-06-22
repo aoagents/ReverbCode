@@ -28,6 +28,7 @@ import {
 	resolveDaemonFromPort,
 	resolveDaemonFromRunFile,
 } from "./shared/daemon-attach";
+import { buildDaemonEnv, resolveShellEnv, type ShellRunner } from "./shared/shell-env";
 import { DEFAULT_POSTHOG_HOST, DEFAULT_POSTHOG_PROJECT_KEY } from "./shared/posthog-config";
 import { buildTelemetryBootstrap } from "./shared/telemetry";
 import { createBrowserViewHost, type BrowserViewHost } from "./main/browser-view-host";
@@ -220,14 +221,88 @@ function runFilePath(): string | null {
 	return defaultRunFilePath(process.platform, process.env, os.homedir());
 }
 
-function daemonEnv(): NodeJS.ProcessEnv {
+// How long to wait for the login shell to print its env before giving up. A
+// misconfigured rc that blocks (or a slow nvm/pyenv chain) must not hang startup;
+// the daemon then falls back to the static PATH floor.
+const SHELL_ENV_TIMEOUT_MS = 3_000;
+
+// The login-shell env resolved once at startup (see docs/daemon-environment.md),
+// or null when the probe failed/timed out. Read synchronously by daemonEnv().
+let cachedShellEnv: Record<string, string> | null = null;
+// Memoize the in-flight resolution so concurrent/repeat awaits are cheap.
+let shellEnvPromise: Promise<void> | null = null;
+
+// Telemetry defaults stamped on the daemon env on every platform; explicit env
+// always wins.
+function telemetryOverrides(): Record<string, string> {
 	return {
-		...process.env,
 		AO_TELEMETRY_EVENTS: process.env.AO_TELEMETRY_EVENTS ?? "on",
 		AO_TELEMETRY_REMOTE: process.env.AO_TELEMETRY_REMOTE ?? "posthog",
 		AO_TELEMETRY_POSTHOG_KEY: process.env.AO_TELEMETRY_POSTHOG_KEY ?? DEFAULT_POSTHOG_PROJECT_KEY,
 		AO_TELEMETRY_POSTHOG_HOST: process.env.AO_TELEMETRY_POSTHOG_HOST ?? DEFAULT_POSTHOG_HOST,
 	};
+}
+
+// Run the user's login shell to dump its env. stdin is ignored so an rc that
+// reads input hits EOF instead of hanging; stderr is ignored to drop banner
+// noise. Never rejects: resolves null on spawn error, non-zero exit, or timeout
+// (SIGKILLed), so the caller degrades to the static PATH floor.
+const runLoginShell: ShellRunner = (shellPath, args) =>
+	new Promise((resolve) => {
+		let settled = false;
+		const finish = (value: string | null) => {
+			if (settled) return;
+			settled = true;
+			resolve(value);
+		};
+		let child: ReturnType<typeof spawn>;
+		try {
+			child = spawn(shellPath, args, { stdio: ["ignore", "pipe", "ignore"] });
+		} catch {
+			finish(null);
+			return;
+		}
+		const timer = setTimeout(() => {
+			child.kill("SIGKILL");
+			finish(null);
+		}, SHELL_ENV_TIMEOUT_MS);
+		let stdout = "";
+		// stdout may be typed Readable | null under this stdio config; guard it.
+		child.stdout?.on("data", (chunk: Buffer) => {
+			stdout += chunk.toString("utf8");
+		});
+		child.once("error", () => {
+			clearTimeout(timer);
+			finish(null);
+		});
+		child.once("exit", (code) => {
+			clearTimeout(timer);
+			finish(code === 0 ? stdout : null);
+		});
+	});
+
+// Resolve the login-shell env once and cache it. No-op on Windows (the launchd
+// shell split does not apply; a static PATH floor suffices). Awaited at the
+// daemon-spawn chokepoint so the cache is populated before the first spawn.
+function ensureShellEnv(): Promise<void> {
+	if (process.platform === "win32") return Promise.resolve();
+	if (!shellEnvPromise) {
+		shellEnvPromise = resolveShellEnv(process.env, runLoginShell).then((resolved) => {
+			cachedShellEnv = resolved;
+			if (!resolved) {
+				console.error("AO: could not read the login-shell environment; falling back to a static PATH floor.");
+			}
+		});
+	}
+	return shellEnvPromise;
+}
+
+function daemonEnv(): NodeJS.ProcessEnv {
+	// Windows keeps the old behavior exactly: no shell probe, no unix PATH floor.
+	if (process.platform === "win32") {
+		return { ...process.env, ...telemetryOverrides() };
+	}
+	return buildDaemonEnv(process.env, cachedShellEnv, telemetryOverrides());
 }
 
 function pathKey(value: string): string {
@@ -357,6 +432,11 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 	if (daemonProcess) {
 		return daemonStatus;
 	}
+
+	// Single chokepoint: make sure the login-shell env is resolved before the
+	// daemon is spawned, so a Finder/Dock launch hands the daemon a real PATH and
+	// shell-exported credentials rather than launchd's minimal env.
+	await ensureShellEnv();
 
 	const launch = resolveDaemonLaunch(
 		process.env,
