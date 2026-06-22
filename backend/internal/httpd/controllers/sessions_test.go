@@ -95,6 +95,9 @@ func (f *fakeSessionService) SetPreview(_ context.Context, id domain.SessionID, 
 		return domain.Session{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
 	}
 	s.Metadata.PreviewURL = previewURL
+	// Mirror the store: every set bumps the revision, even when the URL is
+	// unchanged, so the controller's refresh contract can be exercised here.
+	s.Metadata.PreviewRevision++
 	f.sessions[id] = s
 	return s, nil
 }
@@ -425,6 +428,131 @@ func TestSessionsAPI_SetPreviewEmptyURLAutodetectsIndex(t *testing.T) {
 	if strings.Contains(resp.Session.PreviewURL, workspace) {
 		t.Fatalf("preview leaked workspace path: %s", resp.Session.PreviewURL)
 	}
+}
+
+func TestSessionsAPI_SetPreviewEmptyURLReusesExistingTarget(t *testing.T) {
+	svc := newFakeSessionService()
+	workspace := t.TempDir()
+	// An index.html exists, but the session already has a preview target — the
+	// bare `ao preview` must reuse that target rather than autodetecting index.
+	if err := os.WriteFile(filepath.Join(workspace, "index.html"), []byte(`<html></html>`), 0o644); err != nil {
+		t.Fatalf("write index: %v", err)
+	}
+	s := svc.sessions["ao-1"]
+	s.Metadata = domain.SessionMetadata{WorkspacePath: workspace, PreviewURL: "http://localhost:4321/docs"}
+	svc.sessions["ao-1"] = s
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/preview", `{}`)
+	if status != http.StatusOK {
+		t.Fatalf("set preview = %d, want 200; body=%s", status, body)
+	}
+	var resp struct {
+		Session struct {
+			PreviewURL string `json:"previewUrl"`
+		} `json:"session"`
+	}
+	mustJSON(t, body, &resp)
+	if resp.Session.PreviewURL != "http://localhost:4321/docs" {
+		t.Fatalf("response previewUrl = %q, want reused existing target", resp.Session.PreviewURL)
+	}
+}
+
+func TestSessionsAPI_SetPreviewLocalRelativePathResolvesToFilesURL(t *testing.T) {
+	svc := newFakeSessionService()
+	workspace := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(workspace, "dist"), 0o755); err != nil {
+		t.Fatalf("mkdir dist: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "dist", "index.html"), []byte(`<html></html>`), 0o644); err != nil {
+		t.Fatalf("write dist index: %v", err)
+	}
+	s := svc.sessions["ao-1"]
+	s.Metadata = domain.SessionMetadata{WorkspacePath: workspace}
+	svc.sessions["ao-1"] = s
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/preview", `{"url":"./dist/index.html"}`)
+	if status != http.StatusOK {
+		t.Fatalf("set preview = %d, want 200; body=%s", status, body)
+	}
+	var resp struct {
+		Session struct {
+			PreviewURL string `json:"previewUrl"`
+		} `json:"session"`
+	}
+	mustJSON(t, body, &resp)
+	if !strings.HasSuffix(resp.Session.PreviewURL, "/preview/files/dist/index.html") {
+		t.Fatalf("response previewUrl = %q, want dist/index.html files URL", resp.Session.PreviewURL)
+	}
+	if strings.Contains(resp.Session.PreviewURL, workspace) {
+		t.Fatalf("preview leaked workspace path: %s", resp.Session.PreviewURL)
+	}
+	// The resolved files URL actually serves the local file.
+	parsed, err := url.Parse(resp.Session.PreviewURL)
+	if err != nil {
+		t.Fatalf("parse preview URL: %v", err)
+	}
+	fileBody, fileStatus, _ := doRequest(t, srv, "GET", parsed.RequestURI(), "")
+	if fileStatus != http.StatusOK {
+		t.Fatalf("serve local file = %d, want 200; body=%s", fileStatus, fileBody)
+	}
+}
+
+func TestSessionsAPI_SetPreviewBumpsRevisionOnSameURL(t *testing.T) {
+	svc := newFakeSessionService()
+	srv := newSessionTestServer(t, svc)
+
+	readRevision := func() int64 {
+		body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/preview", `{"url":"http://localhost:5173/"}`)
+		if status != http.StatusOK {
+			t.Fatalf("set preview = %d, want 200; body=%s", status, body)
+		}
+		var resp struct {
+			Session struct {
+				PreviewRevision int64 `json:"previewRevision"`
+			} `json:"session"`
+		}
+		mustJSON(t, body, &resp)
+		return resp.Session.PreviewRevision
+	}
+	first := readRevision()
+	second := readRevision()
+	if second <= first {
+		t.Fatalf("revision did not advance on same-URL re-run: first=%d second=%d", first, second)
+	}
+}
+
+func TestSessionsAPI_ClearPreviewResetsURL(t *testing.T) {
+	svc := newFakeSessionService()
+	s := svc.sessions["ao-1"]
+	s.Metadata = domain.SessionMetadata{PreviewURL: "http://localhost:5173/"}
+	svc.sessions["ao-1"] = s
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "DELETE", "/api/v1/sessions/ao-1/preview", "")
+	if status != http.StatusOK {
+		t.Fatalf("clear preview = %d, want 200; body=%s", status, body)
+	}
+	var resp struct {
+		Session struct {
+			PreviewURL string `json:"previewUrl"`
+		} `json:"session"`
+	}
+	mustJSON(t, body, &resp)
+	if resp.Session.PreviewURL != "" {
+		t.Fatalf("response previewUrl = %q, want empty after clear", resp.Session.PreviewURL)
+	}
+	if got := svc.sessions["ao-1"].Metadata.PreviewURL; got != "" {
+		t.Fatalf("persisted previewUrl = %q, want empty after clear", got)
+	}
+}
+
+func TestSessionsAPI_ClearPreviewNotFound(t *testing.T) {
+	srv := newSessionTestServer(t, newFakeSessionService())
+
+	body, status, _ := doRequest(t, srv, "DELETE", "/api/v1/sessions/missing-1/preview", "")
+	assertErrorCode(t, body, status, http.StatusNotFound, "SESSION_NOT_FOUND")
 }
 
 func TestSessionsAPI_SetPreviewEmptyURLNoEntry(t *testing.T) {

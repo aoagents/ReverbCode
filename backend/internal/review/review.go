@@ -9,7 +9,7 @@
 package review
 
 import (
-	"context"
+	stdctx "context"
 	"errors"
 	"fmt"
 	"sync"
@@ -18,7 +18,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
-	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 // ErrInvalid and ErrNotFound let the transport layer map failures to 422/404.
@@ -30,38 +29,39 @@ var (
 // Store is the persistence surface the engine needs. *sqlite.Store satisfies it
 // in production; tests use a fake.
 type Store interface {
-	UpsertReview(ctx context.Context, r domain.Review) error
-	GetReviewBySession(ctx context.Context, id domain.SessionID) (domain.Review, bool, error)
-	InsertReviewRun(ctx context.Context, r domain.ReviewRun) error
-	UpdateReviewRunResult(ctx context.Context, id string, status domain.ReviewRunStatus, verdict domain.ReviewVerdict, body, githubReviewID string) (bool, error)
-	GetReviewRun(ctx context.Context, id string) (domain.ReviewRun, bool, error)
-	GetReviewRunBySessionAndSHA(ctx context.Context, id domain.SessionID, targetSHA string) (domain.ReviewRun, bool, error)
-	ListReviewRunsBySession(ctx context.Context, id domain.SessionID) ([]domain.ReviewRun, error)
+	UpsertReview(ctx stdctx.Context, r domain.Review) error
+	GetReviewBySession(ctx stdctx.Context, id domain.SessionID) (domain.Review, bool, error)
+	InsertReviewRun(ctx stdctx.Context, r domain.ReviewRun) error
+	UpdateReviewRunResult(ctx stdctx.Context, id string, status domain.ReviewRunStatus, verdict domain.ReviewVerdict, body, githubReviewID string) (bool, error)
+	SupersedeReviewRun(ctx stdctx.Context, id, body string) (bool, error)
+	SupersedeStaleRunningReviewRuns(ctx stdctx.Context, sessionID domain.SessionID, targetSHA, body string) (int64, error)
+	GetReviewRun(ctx stdctx.Context, id string) (domain.ReviewRun, bool, error)
+	GetReviewRunBySessionAndSHA(ctx stdctx.Context, id domain.SessionID, targetSHA string) (domain.ReviewRun, bool, error)
+	ListReviewRunsBySession(ctx stdctx.Context, id domain.SessionID) ([]domain.ReviewRun, error)
 }
 
 // Sessions resolves the worker session under review.
 type Sessions interface {
-	GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error)
+	GetSession(ctx stdctx.Context, id domain.SessionID) (domain.SessionRecord, bool, error)
 }
 
 // PRs resolves the PR a worker owns.
 type PRs interface {
-	ListPRsBySession(ctx context.Context, id domain.SessionID) ([]domain.PullRequest, error)
+	ListPRsBySession(ctx stdctx.Context, id domain.SessionID) ([]domain.PullRequest, error)
 }
 
 // Projects resolves the per-project reviewer config.
 type Projects interface {
-	GetProject(ctx context.Context, id string) (domain.ProjectRecord, bool, error)
+	GetProject(ctx stdctx.Context, id string) (domain.ProjectRecord, bool, error)
 }
 
 // Deps wires the engine.
 type Deps struct {
-	Store     Store
-	Sessions  Sessions
-	PRs       PRs
-	Projects  Projects
-	Launcher  Launcher
-	Messenger ports.AgentMessenger
+	Store    Store
+	Sessions Sessions
+	PRs      PRs
+	Projects Projects
+	Launcher Launcher
 
 	// Clock and NewID are injectable for deterministic tests.
 	Clock func() time.Time
@@ -70,14 +70,13 @@ type Deps struct {
 
 // Engine is the core code-review engine.
 type Engine struct {
-	store     Store
-	sessions  Sessions
-	prs       PRs
-	projects  Projects
-	launcher  Launcher
-	messenger ports.AgentMessenger
-	clock     func() time.Time
-	newID     func() string
+	store    Store
+	sessions Sessions
+	prs      PRs
+	projects Projects
+	launcher Launcher
+	clock    func() time.Time
+	newID    func() string
 
 	// triggerMu guards triggerLocks; triggerLocks holds one mutex per worker
 	// session so concurrent Trigger calls for the same worker serialise (see
@@ -102,7 +101,6 @@ func New(d Deps) *Engine {
 		prs:          d.PRs,
 		projects:     d.Projects,
 		launcher:     d.Launcher,
-		messenger:    d.Messenger,
 		clock:        clock,
 		newID:        newID,
 		triggerLocks: make(map[domain.SessionID]*sync.Mutex),
@@ -151,7 +149,7 @@ type SessionReviews struct {
 //     new commit; if not, a fresh reviewer is spawned;
 //   - the run is recorded before launch so startup failures leave a visible
 //     failed pass instead of an empty gap.
-func (e *Engine) Trigger(ctx context.Context, workerID domain.SessionID) (TriggerResult, error) {
+func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID) (TriggerResult, error) {
 	if workerID == "" {
 		return TriggerResult{}, fmt.Errorf("%w: worker session id is required", ErrInvalid)
 	}
@@ -188,12 +186,29 @@ func (e *Engine) Trigger(ctx context.Context, workerID domain.SessionID) (Trigge
 		return TriggerResult{}, err
 	}
 
-	// Idempotency: return a non-failed pass as-is. Failed passes stay visible
-	// but can be retried after the user fixes the underlying issue.
+	// Idempotency: a pass for this commit is reusable while it is still running
+	// or once it carries a verdict. The fallback branch below is defensive for
+	// any non-running, non-failed row that somehow lacks a verdict; normal
+	// Submit paths complete a run only with a valid verdict (#342).
 	if existing, ok, err := e.store.GetReviewRunBySessionAndSHA(ctx, workerID, targetSHA); err != nil {
 		return TriggerResult{}, err
-	} else if ok && existing.Status != domain.ReviewRunFailed {
+	} else if ok && (existing.Status == domain.ReviewRunRunning || existing.Verdict != domain.VerdictNone) {
 		return TriggerResult{Run: existing, ReviewerHandleID: review.ReviewerHandleID, Created: false}, nil
+	} else if ok && existing.Status != domain.ReviewRunFailed {
+		superseded, err := e.store.SupersedeReviewRun(ctx, existing.ID, "superseded by a new review trigger")
+		if err != nil {
+			return TriggerResult{}, err
+		}
+		if !superseded {
+			if latest, ok, err := e.store.GetReviewRun(ctx, existing.ID); err != nil {
+				return TriggerResult{}, err
+			} else if ok {
+				return TriggerResult{Run: latest, ReviewerHandleID: review.ReviewerHandleID, Created: false}, nil
+			}
+		}
+	}
+	if _, err := e.store.SupersedeStaleRunningReviewRuns(ctx, workerID, targetSHA, "superseded by a review trigger for a newer commit"); err != nil {
+		return TriggerResult{}, err
 	}
 
 	harness, err := e.reviewerHarness(ctx, worker)
@@ -276,97 +291,8 @@ func (e *Engine) Trigger(ctx context.Context, workerID domain.SessionID) (Trigge
 	return TriggerResult{Run: run, ReviewerHandleID: handleID, Created: true}, nil
 }
 
-// Submit records the reviewer's result for a specific worker review pass: it
-// marks the run complete and stores the verdict, body, and the GitHub review id
-// the reviewer posted. AO does not post the review — the reviewer agent posts it
-// to the PR itself.
-//
-// On a changes_requested verdict, Submit also messages the worker session with
-// the review feedback directly, so the worker learns about it event-driven
-// rather than via the SCM poll loop (which never observes CHANGES_REQUESTED for
-// self-reviews or COMMENT-state reviews; issue #337). When a GitHub review id is
-// known, it is included so the worker knows exactly which review to address and
-// reply to.
-func (e *Engine) Submit(ctx context.Context, workerID domain.SessionID, runID string, verdict domain.ReviewVerdict, body, githubReviewID string) (domain.ReviewRun, error) {
-	if workerID == "" {
-		return domain.ReviewRun{}, fmt.Errorf("%w: worker session id is required", ErrInvalid)
-	}
-	if runID == "" {
-		return domain.ReviewRun{}, fmt.Errorf("%w: review run id is required", ErrInvalid)
-	}
-	if !verdict.Valid() {
-		return domain.ReviewRun{}, fmt.Errorf("%w: verdict must be %q or %q", ErrInvalid, domain.VerdictApproved, domain.VerdictChangesRequested)
-	}
-	if verdict == domain.VerdictChangesRequested && body == "" {
-		return domain.ReviewRun{}, fmt.Errorf("%w: a changes_requested review requires a body", ErrInvalid)
-	}
-
-	run, ok, err := e.store.GetReviewRun(ctx, runID)
-	if err != nil {
-		return domain.ReviewRun{}, err
-	}
-	if !ok {
-		return domain.ReviewRun{}, fmt.Errorf("%w: review run %q", ErrNotFound, runID)
-	}
-	if run.SessionID != workerID {
-		return domain.ReviewRun{}, fmt.Errorf("%w: review run %q does not belong to worker %q", ErrInvalid, runID, workerID)
-	}
-	if run.Status != domain.ReviewRunRunning {
-		return domain.ReviewRun{}, fmt.Errorf("%w: review run %q is not running", ErrInvalid, runID)
-	}
-
-	// Notify the worker before marking the run complete. If the message fails,
-	// the run stays 'running' so a retried `ao review submit` runs again instead
-	// of tripping the status='running' guard above on an already-completed run. A
-	// message that lands but a DB write that then fails degrades to one extra
-	// nudge on retry — the same trade lifecycle's sendOnce makes.
-	if verdict == domain.VerdictChangesRequested {
-		if err := e.notifyWorkerChangesRequested(ctx, workerID, body, githubReviewID); err != nil {
-			return domain.ReviewRun{}, err
-		}
-	}
-
-	updated, err := e.store.UpdateReviewRunResult(ctx, run.ID, domain.ReviewRunComplete, verdict, body, githubReviewID)
-	if err != nil {
-		return domain.ReviewRun{}, err
-	}
-	if !updated {
-		return domain.ReviewRun{}, fmt.Errorf("%w: review run %q is not running", ErrInvalid, runID)
-	}
-	run.Status = domain.ReviewRunComplete
-	run.Verdict = verdict
-	run.Body = body
-	run.GithubReviewID = githubReviewID
-	return run, nil
-}
-
-// notifyWorkerChangesRequested injects the AO reviewer's feedback into the
-// worker's live agent pane via the same messenger lifecycle uses for SCM nudges.
-//
-// When the GitHub review id is known, the worker is asked to reply on that
-// review referencing its id with how it addressed the feedback and to resolve
-// the review comment threads it addressed. The reviewer posts inline comments
-// (per its prompt), so the per-finding threads are resolvable via `gh api`
-// GraphQL resolveReviewThread; the top-level review object itself is not
-// resolvable, hence the reply. The body is reviewer-authored text pasted into a
-// PTY, so it is sanitized first (matching the lifecycle reaction path).
-func (e *Engine) notifyWorkerChangesRequested(ctx context.Context, workerID domain.SessionID, body, githubReviewID string) error {
-	if e.messenger == nil {
-		return nil
-	}
-	msg := "An AO code reviewer requested changes on your PR. Review the feedback below and address it."
-	if githubReviewID != "" {
-		safeReviewID := domain.SanitizeControlChars(githubReviewID)
-		msg += fmt.Sprintf(" This feedback is GitHub review %s. Once you have addressed it, reply on that review referencing id %s with how you addressed it, then resolve the review comment threads you addressed.", safeReviewID, safeReviewID)
-	}
-	if body != "" {
-		msg += "\n\n" + domain.SanitizeControlChars(body)
-	}
-	return e.messenger.Send(ctx, workerID, msg)
-}
-
 // List returns a worker's review state: the live reviewer handle and its passes.
-func (e *Engine) List(ctx context.Context, workerID domain.SessionID) (SessionReviews, error) {
+func (e *Engine) List(ctx stdctx.Context, workerID domain.SessionID) (SessionReviews, error) {
 	if workerID == "" {
 		return SessionReviews{}, fmt.Errorf("%w: worker session id is required", ErrInvalid)
 	}
@@ -383,7 +309,7 @@ func (e *Engine) List(ctx context.Context, workerID domain.SessionID) (SessionRe
 	return SessionReviews{ReviewerHandleID: handle, Runs: runs}, nil
 }
 
-func (e *Engine) workerPR(ctx context.Context, workerID domain.SessionID) (domain.PullRequest, error) {
+func (e *Engine) workerPR(ctx stdctx.Context, workerID domain.SessionID) (domain.PullRequest, error) {
 	prs, err := e.prs.ListPRsBySession(ctx, workerID)
 	if err != nil {
 		return domain.PullRequest{}, err
@@ -397,7 +323,7 @@ func (e *Engine) workerPR(ctx context.Context, workerID domain.SessionID) (domai
 // reviewerHarness resolves which harness reviews the worker's PR: a configured
 // reviewer wins, otherwise the worker's own harness is reused (falling back to
 // claude-code), per domain.ResolveReviewerHarness.
-func (e *Engine) reviewerHarness(ctx context.Context, worker domain.SessionRecord) (domain.ReviewerHarness, error) {
+func (e *Engine) reviewerHarness(ctx stdctx.Context, worker domain.SessionRecord) (domain.ReviewerHarness, error) {
 	var cfg domain.ProjectConfig
 	if e.projects != nil {
 		if proj, ok, err := e.projects.GetProject(ctx, string(worker.ProjectID)); err != nil {
@@ -409,7 +335,7 @@ func (e *Engine) reviewerHarness(ctx context.Context, worker domain.SessionRecor
 	return cfg.ResolveReviewerHarness(worker.Harness), nil
 }
 
-func (e *Engine) upsertReview(ctx context.Context, worker domain.SessionRecord, harness domain.ReviewerHarness, prURL, handleID string, now time.Time) (domain.Review, error) {
+func (e *Engine) upsertReview(ctx stdctx.Context, worker domain.SessionRecord, harness domain.ReviewerHarness, prURL, handleID string, now time.Time) (domain.Review, error) {
 	existing, ok, err := e.store.GetReviewBySession(ctx, worker.ID)
 	if err != nil {
 		return domain.Review{}, err

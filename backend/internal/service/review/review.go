@@ -6,8 +6,11 @@ package review
 
 import (
 	"context"
+	"fmt"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/lifecycle"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	reviewcore "github.com/aoagents/agent-orchestrator/backend/internal/review"
 )
@@ -29,14 +32,47 @@ type Manager interface {
 
 // Service is the API-facing review service. It delegates to the core engine.
 type Service struct {
-	engine *reviewcore.Engine
+	engine    *reviewcore.Engine
+	store     Store
+	lifecycle Reducer
+	clock     func() time.Time
 }
 
 var _ Manager = (*Service)(nil)
 
+// Store is the review_run persistence surface owned by the service submit path.
+type Store interface {
+	GetReviewRun(ctx context.Context, id string) (domain.ReviewRun, bool, error)
+	UpdateReviewRunResult(ctx context.Context, id string, status domain.ReviewRunStatus, verdict domain.ReviewVerdict, body, githubReviewID string) (bool, error)
+	MarkReviewRunDelivered(ctx context.Context, id string, deliveredAt time.Time) (bool, error)
+}
+
+// Reducer is the lifecycle reaction boundary used after a review result has
+// been persisted.
+type Reducer interface {
+	ApplyReviewResult(ctx context.Context, workerID domain.SessionID, result lifecycle.ReviewResult) (lifecycle.ReviewDeliveryOutcome, error)
+}
+
+// Option customizes the review service.
+type Option func(*Service)
+
+// WithLifecycleReducer wires post-submit review delivery through lifecycle.
+func WithLifecycleReducer(r Reducer) Option {
+	return func(s *Service) { s.lifecycle = r }
+}
+
+// WithClock overrides the service clock for tests.
+func WithClock(clock func() time.Time) Option {
+	return func(s *Service) { s.clock = clock }
+}
+
 // New wraps a core review engine as the API-facing service.
-func New(engine *reviewcore.Engine) *Service {
-	return &Service{engine: engine}
+func New(engine *reviewcore.Engine, store Store, opts ...Option) *Service {
+	s := &Service{engine: engine, store: store, clock: func() time.Time { return time.Now().UTC() }}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // Trigger starts (or reuses) a review pass for a worker's PR.
@@ -46,7 +82,89 @@ func (s *Service) Trigger(ctx context.Context, workerID domain.SessionID) (revie
 
 // Submit records a reviewer's result for a specific worker review pass.
 func (s *Service) Submit(ctx context.Context, workerID domain.SessionID, runID string, verdict domain.ReviewVerdict, body, githubReviewID string) (domain.ReviewRun, error) {
-	return s.engine.Submit(ctx, workerID, runID, verdict, body, githubReviewID)
+	if workerID == "" {
+		return domain.ReviewRun{}, fmt.Errorf("%w: worker session id is required", ErrInvalid)
+	}
+	if runID == "" {
+		return domain.ReviewRun{}, fmt.Errorf("%w: review run id is required", ErrInvalid)
+	}
+	if !verdict.Valid() {
+		return domain.ReviewRun{}, fmt.Errorf("%w: verdict must be %q or %q", ErrInvalid, domain.VerdictApproved, domain.VerdictChangesRequested)
+	}
+	if verdict == domain.VerdictChangesRequested && body == "" {
+		return domain.ReviewRun{}, fmt.Errorf("%w: a changes_requested review requires a body", ErrInvalid)
+	}
+	if s.store == nil {
+		return domain.ReviewRun{}, fmt.Errorf("review service store is not configured")
+	}
+	run, ok, err := s.store.GetReviewRun(ctx, runID)
+	if err != nil {
+		return domain.ReviewRun{}, err
+	}
+	if !ok {
+		return domain.ReviewRun{}, fmt.Errorf("%w: review run %q", ErrNotFound, runID)
+	}
+	if run.SessionID != workerID {
+		return domain.ReviewRun{}, fmt.Errorf("%w: review run %q does not belong to worker %q", ErrInvalid, runID, workerID)
+	}
+
+	switch run.Status {
+	case domain.ReviewRunRunning:
+		updated, err := s.store.UpdateReviewRunResult(ctx, run.ID, domain.ReviewRunComplete, verdict, body, githubReviewID)
+		if err != nil {
+			return domain.ReviewRun{}, err
+		}
+		if !updated {
+			return domain.ReviewRun{}, fmt.Errorf("%w: review run %q is not running", ErrInvalid, runID)
+		}
+		run.Status = domain.ReviewRunComplete
+		run.Verdict = verdict
+		run.Body = body
+		run.GithubReviewID = githubReviewID
+	case domain.ReviewRunComplete:
+		if run.Verdict != verdict {
+			return domain.ReviewRun{}, fmt.Errorf("%w: review run %q already recorded verdict %q", ErrInvalid, runID, run.Verdict)
+		}
+		if body != "" && body != run.Body {
+			return domain.ReviewRun{}, fmt.Errorf("%w: review run %q already recorded a different body", ErrInvalid, runID)
+		}
+		if githubReviewID != "" && githubReviewID != run.GithubReviewID {
+			return domain.ReviewRun{}, fmt.Errorf("%w: review run %q already recorded GitHub review id %q", ErrInvalid, runID, run.GithubReviewID)
+		}
+	case domain.ReviewRunDelivered:
+		return run, nil
+	default:
+		return domain.ReviewRun{}, fmt.Errorf("%w: review run %q is not running", ErrInvalid, runID)
+	}
+
+	if s.lifecycle == nil {
+		return run, nil
+	}
+	outcome, err := s.lifecycle.ApplyReviewResult(ctx, workerID, lifecycle.ReviewResult{
+		RunID:          run.ID,
+		WorkerID:       workerID,
+		PRURL:          run.PRURL,
+		TargetSHA:      run.TargetSHA,
+		Verdict:        run.Verdict,
+		Body:           run.Body,
+		GithubReviewID: run.GithubReviewID,
+		DeliveredAt:    run.DeliveredAt,
+	})
+	if err != nil {
+		return domain.ReviewRun{}, err
+	}
+	if outcome == lifecycle.ReviewDeliverySent {
+		deliveredAt := s.clock()
+		updated, err := s.store.MarkReviewRunDelivered(ctx, run.ID, deliveredAt)
+		if err != nil {
+			return domain.ReviewRun{}, err
+		}
+		if updated {
+			run.Status = domain.ReviewRunDelivered
+			run.DeliveredAt = &deliveredAt
+		}
+	}
+	return run, nil
 }
 
 // List returns a worker's review state.

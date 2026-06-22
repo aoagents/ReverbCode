@@ -61,6 +61,30 @@ func (f *fakeStore) UpdateReviewRunResult(_ context.Context, id string, status d
 	}
 	return false, nil
 }
+func (f *fakeStore) SupersedeReviewRun(_ context.Context, id, body string) (bool, error) {
+	for i := range f.runs {
+		if f.runs[i].ID == id {
+			if f.runs[i].Verdict != domain.VerdictNone || f.runs[i].Status == domain.ReviewRunFailed {
+				return false, nil
+			}
+			f.runs[i].Status = domain.ReviewRunFailed
+			f.runs[i].Body = body
+			return true, nil
+		}
+	}
+	return false, nil
+}
+func (f *fakeStore) SupersedeStaleRunningReviewRuns(_ context.Context, sessionID domain.SessionID, targetSHA, body string) (int64, error) {
+	var n int64
+	for i := range f.runs {
+		if f.runs[i].SessionID == sessionID && f.runs[i].TargetSHA != targetSHA && f.runs[i].Status == domain.ReviewRunRunning && f.runs[i].Verdict == domain.VerdictNone {
+			f.runs[i].Status = domain.ReviewRunFailed
+			f.runs[i].Body = body
+			n++
+		}
+	}
+	return n, nil
+}
 func (f *fakeStore) GetReviewRun(_ context.Context, id string) (domain.ReviewRun, bool, error) {
 	for _, r := range f.runs {
 		if r.ID == id {
@@ -129,20 +153,8 @@ func (f *fakeLauncher) Notify(_ context.Context, handleID string, spec LaunchSpe
 	f.gotSpec = spec
 	return f.notifyErr
 }
-func (f *fakeLauncher) Alive(_ context.Context, _ string) (bool, error) { return f.alive, nil }
-
-type fakeMessenger struct {
-	sends   int
-	gotID   domain.SessionID
-	gotMsg  string
-	sendErr error
-}
-
-func (f *fakeMessenger) Send(_ context.Context, id domain.SessionID, msg string) error {
-	f.sends++
-	f.gotID = id
-	f.gotMsg = msg
-	return f.sendErr
+func (f *fakeLauncher) Alive(_ context.Context, _ string) (bool, error) {
+	return f.alive || f.spawned, nil
 }
 
 func liveWorker() domain.SessionRecord {
@@ -222,7 +234,6 @@ func TestTriggerConcurrentSameWorkerSpawnsOnce(t *testing.T) {
 			created++
 		}
 	}
-	// Exactly one trigger does the work; the rest reuse its run.
 	if created != 1 {
 		t.Errorf("Created=true count = %d, want exactly 1", created)
 	}
@@ -259,9 +270,12 @@ func TestTriggerFallsBackToExistingRunOnUniqueConflict(t *testing.T) {
 func TestTriggerIsIdempotentForSameCommit(t *testing.T) {
 	store := &fakeStore{
 		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", ReviewerHandleID: "review-mer-1"},
-		runs:   []domain.ReviewRun{{ID: "run-1", SessionID: "mer-1", TargetSHA: "sha1", Status: domain.ReviewRunRunning}},
+		runs: []domain.ReviewRun{{
+			ID: "run-1", SessionID: "mer-1", TargetSHA: "sha1",
+			Status: domain.ReviewRunComplete, Verdict: domain.VerdictApproved,
+		}},
 	}
-	launcher := &fakeLauncher{}
+	launcher := &fakeLauncher{alive: true}
 	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
 
 	res, err := eng.Trigger(context.Background(), "mer-1")
@@ -276,6 +290,52 @@ func TestTriggerIsIdempotentForSameCommit(t *testing.T) {
 	}
 	if len(store.runs) != 1 {
 		t.Fatalf("should not insert another run: %+v", store.runs)
+	}
+}
+
+func TestTriggerReusesRunningRowWithNoVerdict(t *testing.T) {
+	store := &fakeStore{
+		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", ReviewerHandleID: "review-mer-1"},
+		runs:   []domain.ReviewRun{{ID: "run-1", SessionID: "mer-1", TargetSHA: "sha1", Status: domain.ReviewRunRunning}},
+	}
+	launcher := &fakeLauncher{alive: false, handle: "review-mer-2"}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
+
+	res, err := eng.Trigger(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatalf("Trigger: %v", err)
+	}
+	if res.Created || res.Run.ID != "run-1" {
+		t.Fatalf("expected reuse of the running review for the same commit: %+v", res)
+	}
+	if launcher.spawned || launcher.notified {
+		t.Fatalf("running same-commit review should not relaunch: %+v", launcher)
+	}
+	if got := store.runs[0]; got.Status != domain.ReviewRunRunning {
+		t.Fatalf("running row should remain running, got %+v", got)
+	}
+}
+
+func TestTriggerSupersedesNonRunningRowWithNoVerdict(t *testing.T) {
+	store := &fakeStore{
+		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", ReviewerHandleID: "review-mer-1"},
+		runs:   []domain.ReviewRun{{ID: "run-1", SessionID: "mer-1", TargetSHA: "sha1", Status: domain.ReviewRunComplete}},
+	}
+	launcher := &fakeLauncher{alive: true, handle: "review-mer-1"}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
+
+	res, err := eng.Trigger(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatalf("Trigger: %v", err)
+	}
+	if !res.Created {
+		t.Fatalf("expected a fresh pass when prior non-running row has no verdict: %+v", res)
+	}
+	if !launcher.notified || launcher.spawned {
+		t.Fatalf("expected notify on live reviewer pane, not spawn: %+v", launcher)
+	}
+	if stale := store.runs[0]; stale.ID != "run-1" || stale.Status != domain.ReviewRunFailed {
+		t.Fatalf("expected stale run-1 marked failed, got %+v", stale)
 	}
 }
 
@@ -299,6 +359,29 @@ func TestTriggerNotifiesLiveReviewerOnNewCommit(t *testing.T) {
 	}
 	if !res.Created || res.Run.TargetSHA != "sha1" || len(store.runs) != 2 {
 		t.Fatalf("expected a new run for sha1: res=%+v runs=%+v", res, store.runs)
+	}
+}
+
+func TestTriggerSupersedesOlderRunningRunOnNewCommit(t *testing.T) {
+	store := &fakeStore{
+		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", ReviewerHandleID: "review-mer-1"},
+		runs:   []domain.ReviewRun{{ID: "run-old", SessionID: "mer-1", TargetSHA: "sha0", Status: domain.ReviewRunRunning}},
+	}
+	launcher := &fakeLauncher{alive: true, handle: "review-mer-1"}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
+
+	res, err := eng.Trigger(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatalf("Trigger: %v", err)
+	}
+	if !res.Created || res.Run.TargetSHA != "sha1" {
+		t.Fatalf("expected new run for new commit, got %+v", res)
+	}
+	if old := store.runs[0]; old.ID != "run-old" || old.Status != domain.ReviewRunFailed {
+		t.Fatalf("expected older running run to be failed, got %+v", old)
+	}
+	if !launcher.notified || launcher.spawned {
+		t.Fatalf("expected live reviewer pane reused for new commit: %+v", launcher)
 	}
 }
 
@@ -386,136 +469,6 @@ func TestTriggerRejectsBadWorkerState(t *testing.T) {
 			t.Fatalf("err = %v, want ErrInvalid", err)
 		}
 	})
-}
-
-func TestSubmitRecordsVerdictAndBody(t *testing.T) {
-	store := &fakeStore{runs: []domain.ReviewRun{{ID: "run-1", SessionID: "mer-1", Status: domain.ReviewRunRunning}}}
-	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, &fakeLauncher{})
-
-	run, err := eng.Submit(context.Background(), "mer-1", "run-1", domain.VerdictChangesRequested, "please fix", "")
-	if err != nil {
-		t.Fatalf("Submit: %v", err)
-	}
-	if run.Status != domain.ReviewRunComplete || run.Verdict != domain.VerdictChangesRequested || run.Body != "please fix" {
-		t.Fatalf("run = %+v", run)
-	}
-}
-
-func newEngineWithMessenger(store Store, messenger ports.AgentMessenger) *Engine {
-	ids := 0
-	return New(Deps{
-		Store: store, Sessions: fakeSessions{rec: liveWorker(), ok: true}, PRs: prAt("sha1"),
-		Projects: fakeProjects{}, Launcher: &fakeLauncher{}, Messenger: messenger,
-		Clock: func() time.Time { return time.Unix(0, 0).UTC() },
-		NewID: func() string { ids++; return "id-" + string(rune('0'+ids)) },
-	})
-}
-
-func TestSubmitChangesRequestedMessagesWorker(t *testing.T) {
-	store := &fakeStore{runs: []domain.ReviewRun{{ID: "run-1", SessionID: "mer-1", Status: domain.ReviewRunRunning}}}
-	msgr := &fakeMessenger{}
-	eng := newEngineWithMessenger(store, msgr)
-
-	run, err := eng.Submit(context.Background(), "mer-1", "run-1", domain.VerdictChangesRequested, "fix the bug", "98\x1b[2J765")
-	if err != nil {
-		t.Fatalf("Submit: %v", err)
-	}
-	if run.GithubReviewID != "98\x1b[2J765" || store.runs[0].GithubReviewID != "98\x1b[2J765" {
-		t.Fatalf("review id not persisted: run=%+v stored=%+v", run, store.runs[0])
-	}
-	if msgr.sends != 1 || msgr.gotID != "mer-1" {
-		t.Fatalf("expected one message to worker mer-1, got %+v", msgr)
-	}
-	if !strings.Contains(msgr.gotMsg, "fix the bug") || !strings.Contains(msgr.gotMsg, "98[2J765") {
-		t.Fatalf("message missing body or review id: %q", msgr.gotMsg)
-	}
-	if strings.Contains(msgr.gotMsg, "\x1b") {
-		t.Fatalf("message should sanitize review id before sending to worker: %q", msgr.gotMsg)
-	}
-	// The worker must be able to tell an AO internal review from external SCM
-	// reviewer feedback, and is asked to reply + resolve for an AO review.
-	if !strings.Contains(msgr.gotMsg, "AO code reviewer") {
-		t.Fatalf("message should identify the AO internal review: %q", msgr.gotMsg)
-	}
-	if !strings.Contains(msgr.gotMsg, "reply on that review") || !strings.Contains(msgr.gotMsg, "resolve") {
-		t.Fatalf("message should ask the worker to reply and resolve: %q", msgr.gotMsg)
-	}
-}
-
-func TestSubmitApprovedDoesNotMessageWorker(t *testing.T) {
-	store := &fakeStore{runs: []domain.ReviewRun{{ID: "run-1", SessionID: "mer-1", Status: domain.ReviewRunRunning}}}
-	msgr := &fakeMessenger{}
-	eng := newEngineWithMessenger(store, msgr)
-
-	if _, err := eng.Submit(context.Background(), "mer-1", "run-1", domain.VerdictApproved, "", "98765"); err != nil {
-		t.Fatalf("Submit: %v", err)
-	}
-	if msgr.sends != 0 {
-		t.Fatalf("approved review should not message the worker: %+v", msgr)
-	}
-}
-
-func TestSubmitChangesRequestedOmitsReviewIDWhenAbsent(t *testing.T) {
-	store := &fakeStore{runs: []domain.ReviewRun{{ID: "run-1", SessionID: "mer-1", Status: domain.ReviewRunRunning}}}
-	msgr := &fakeMessenger{}
-	eng := newEngineWithMessenger(store, msgr)
-
-	if _, err := eng.Submit(context.Background(), "mer-1", "run-1", domain.VerdictChangesRequested, "fix it", ""); err != nil {
-		t.Fatalf("Submit: %v", err)
-	}
-	if msgr.sends != 1 || !strings.Contains(msgr.gotMsg, "fix it") {
-		t.Fatalf("expected message with body: %+v", msgr)
-	}
-	// Still identified as an AO review, but with no id there is nothing to reply
-	// to or resolve, so that instruction is omitted.
-	if !strings.Contains(msgr.gotMsg, "AO code reviewer") {
-		t.Fatalf("message should identify the AO internal review: %q", msgr.gotMsg)
-	}
-	if strings.Contains(msgr.gotMsg, "reply on that review") {
-		t.Fatalf("message should not ask to reply/resolve when no review id was supplied: %q", msgr.gotMsg)
-	}
-}
-
-func TestSubmitPropagatesMessengerError(t *testing.T) {
-	store := &fakeStore{runs: []domain.ReviewRun{{ID: "run-1", SessionID: "mer-1", Status: domain.ReviewRunRunning}}}
-	msgr := &fakeMessenger{sendErr: fmt.Errorf("dead pane")}
-	eng := newEngineWithMessenger(store, msgr)
-
-	if _, err := eng.Submit(context.Background(), "mer-1", "run-1", domain.VerdictChangesRequested, "fix it", "1"); err == nil {
-		t.Fatal("expected Submit to surface the messenger error")
-	}
-	// The run must stay running so a retried submit can try again, rather than
-	// being marked complete and then failing the status='running' guard.
-	if store.runs[0].Status != domain.ReviewRunRunning {
-		t.Fatalf("run should stay running after a failed send, got %q", store.runs[0].Status)
-	}
-
-	// A retry once the pane is back completes the run and messages the worker.
-	msgr.sendErr = nil
-	if _, err := eng.Submit(context.Background(), "mer-1", "run-1", domain.VerdictChangesRequested, "fix it", "1"); err != nil {
-		t.Fatalf("retry after recovered send: %v", err)
-	}
-	if store.runs[0].Status != domain.ReviewRunComplete || msgr.sends != 2 {
-		t.Fatalf("retry should complete the run and re-send: status=%q sends=%d", store.runs[0].Status, msgr.sends)
-	}
-}
-
-func TestSubmitValidationAndOwnership(t *testing.T) {
-	store := &fakeStore{runs: []domain.ReviewRun{{ID: "run-1", SessionID: "other", Status: domain.ReviewRunRunning}}}
-	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, &fakeLauncher{})
-
-	if _, err := eng.Submit(context.Background(), "mer-1", "", domain.VerdictApproved, "", ""); !errors.Is(err, ErrInvalid) {
-		t.Fatalf("missing run id err = %v", err)
-	}
-	if _, err := eng.Submit(context.Background(), "mer-1", "run-1", "garbage", "b", ""); !errors.Is(err, ErrInvalid) {
-		t.Fatalf("bad verdict err = %v", err)
-	}
-	if _, err := eng.Submit(context.Background(), "mer-1", "missing", domain.VerdictApproved, "", ""); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("unknown run err = %v", err)
-	}
-	if _, err := eng.Submit(context.Background(), "mer-1", "run-1", domain.VerdictApproved, "", ""); !errors.Is(err, ErrInvalid) {
-		t.Fatalf("ownership err = %v", err)
-	}
 }
 
 func TestListReturnsHandleAndRuns(t *testing.T) {

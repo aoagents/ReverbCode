@@ -1,5 +1,64 @@
-import { describe, expect, it } from "vitest";
-import { clampBoundsToWindow, isAllowedBrowserURL, normalizeBrowserURL } from "./browser-view-host";
+import { describe, expect, it, vi } from "vitest";
+import {
+	type BrowserNavState,
+	clampBoundsToWindow,
+	createBrowserViewHost,
+	isAllowedBrowserURL,
+	normalizeBrowserURL,
+} from "./browser-view-host";
+
+type InvokeHandler = (event: unknown, ...args: unknown[]) => unknown;
+
+function setupHost() {
+	let currentURL = "";
+	const webContents = {
+		canGoBack: () => false,
+		canGoForward: () => false,
+		getTitle: () => "",
+		getURL: () => currentURL,
+		goBack: () => undefined,
+		goForward: () => undefined,
+		isLoading: () => false,
+		loadURL: vi.fn(async (url: string) => {
+			currentURL = url;
+		}),
+		on: () => undefined,
+		reload: () => undefined,
+		send: () => undefined,
+		setWindowOpenHandler: () => undefined,
+		stop: () => undefined,
+		close: () => undefined,
+	};
+	const view = {
+		webContents,
+		setBounds: () => undefined,
+		setVisible: () => undefined,
+	};
+	const handlers = new Map<string, InvokeHandler>();
+	const sent: BrowserNavState[] = [];
+	const host = createBrowserViewHost({
+		mainWindow: {
+			contentView: { addChildView: () => undefined, removeChildView: () => undefined },
+			getContentBounds: () => ({ x: 0, y: 0, width: 800, height: 600 }),
+			webContents: { id: 1, send: (_channel: string, state: BrowserNavState) => sent.push(state) },
+		} as never,
+		ipcMain: {
+			handle: (channel: string, fn: InvokeHandler) => handlers.set(channel, fn),
+			on: () => undefined,
+			removeHandler: () => undefined,
+			off: () => undefined,
+		} as never,
+		shell: { openExternal: async () => undefined },
+		WebContentsView: function () {
+			return view;
+		} as never,
+		annotatePreloadPath: "/preload.js",
+		rendererOrigin: "http://localhost:5173",
+	});
+	const invoke = (channel: string, ...args: unknown[]) =>
+		handlers.get(channel)!({ sender: { id: 1 } }, ...args) as Promise<BrowserNavState>;
+	return { host, invoke, webContents };
+}
 
 describe("normalizeBrowserURL", () => {
 	it("defaults localhost-style inputs to http", () => {
@@ -30,6 +89,19 @@ describe("isAllowedBrowserURL", () => {
 
 	it("still blocks the renderer's own http origin", () => {
 		expect(isAllowedBrowserURL("http://localhost:5173/", "http://localhost:5173")).toBe(false);
+	});
+});
+
+describe("browser:clear", () => {
+	it("loads about:blank and reports it as an empty url (cleared state)", async () => {
+		const { invoke, webContents } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+		await invoke("browser:navigate", { viewId: "1:sess-1", url: "http://localhost:3000/" });
+
+		const state = await invoke("browser:clear", "1:sess-1");
+
+		expect(webContents.loadURL).toHaveBeenLastCalledWith("about:blank");
+		expect(state.url).toBe("");
 	});
 });
 

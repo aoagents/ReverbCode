@@ -54,12 +54,14 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	// Orchestrator sessions are terminal-only; only worker sessions have the rail.
 	const hasInspector = !isOrchestrator;
 	const previewUrl = session?.previewUrl?.trim() || undefined;
-	const revealedPreviewRef = useRef<string | null>(null);
+	const previewRevision = session?.previewRevision;
+	const revealedPreviewRef = useRef<number | null>(null);
 	const browserView = useBrowserView({
 		sessionId,
 		active: Boolean(session && hasInspector && (browserPoppedOut || isInspectorOpen)),
 		poppedOut: browserPoppedOut,
 		previewUrl,
+		previewRevision,
 	});
 
 	useEffect(() => {
@@ -71,14 +73,16 @@ export function SessionView({ sessionId }: SessionViewProps) {
 
 	// `ao preview` sets session.previewUrl (streamed over CDC); surface the result
 	// in the inspector rail's Browser tab (opening the rail if collapsed), not the
-	// center pane. Tracked per URL so re-revealing fires on a fresh target but a
-	// manual tab switch sticks while the URL is unchanged.
+	// center pane. Tracked per preview revision so re-revealing fires on every
+	// `ao preview` (even a re-run of the same target) while a manual tab switch
+	// sticks for a given revision. `ao preview clear` (empty url) does not reveal.
 	useEffect(() => {
-		if (!previewUrl || revealedPreviewRef.current === previewUrl) return;
-		revealedPreviewRef.current = previewUrl;
+		const revision = previewRevision ?? 0;
+		if (!previewUrl || revealedPreviewRef.current === revision) return;
+		revealedPreviewRef.current = revision;
 		setInspectorView("browser");
 		if (!useUiStore.getState().isInspectorOpen) toggleInspector();
-	}, [previewUrl, toggleInspector]);
+	}, [previewRevision, previewUrl, toggleInspector]);
 
 	// Computed when the inspector panel mounts and frozen while it stays
 	// mounted: rrp re-registers the panel (a layout effect keyed on defaultSize,

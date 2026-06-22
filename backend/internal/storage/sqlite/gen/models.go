@@ -146,6 +146,7 @@ type ReviewRun struct {
 	Body           string
 	CreatedAt      time.Time
 	GithubReviewID string
+	DeliveredAt    sql.NullTime
 }
 
 type Session struct {
@@ -168,6 +169,7 @@ type Session struct {
 	DisplayName     string
 	FirstSignalAt   sql.NullTime
 	PreviewURL      string
+	PreviewRevision int64
 }
 
 type SessionWorktree struct {

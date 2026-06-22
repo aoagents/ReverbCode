@@ -183,6 +183,16 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		return pushNavState(options, entry);
 	};
 
+	// clear resets the view to a blank page (`ao preview clear`). about:blank is
+	// loaded directly, bypassing the URL allowlist — it carries no content and
+	// readNavState normalizes it back to an empty url so the panel shows its
+	// empty state.
+	const clear = async (viewId: string): Promise<BrowserNavState> => {
+		const entry = ensure(viewId);
+		await entry.view.webContents.loadURL("about:blank");
+		return pushNavState(options, entry);
+	};
+
 	const destroy = (viewId: string): void => {
 		const entry = entries.get(viewId);
 		if (!entry) return;
@@ -215,6 +225,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	handle("browser:ensure", (event, sessionId: string) => pushNavState(options, ensure(scopedViewId(event, sessionId))));
 	on("browser:setBounds", (_event, input: BrowserBoundsInput) => setBounds(input));
 	handle("browser:navigate", (_event, input: BrowserNavigateInput) => navigate(input));
+	handle("browser:clear", (_event, viewId: string) => clear(viewId));
 	handle("browser:goBack", (_event, viewId: string) => invokeNav(viewId, (contents) => contents.goBack()));
 	handle("browser:goForward", (_event, viewId: string) => invokeNav(viewId, (contents) => contents.goForward()));
 	handle("browser:reload", (_event, viewId: string) => invokeNav(viewId, (contents) => contents.reload()));
@@ -304,9 +315,13 @@ function pushNavState(options: BrowserViewHostOptions, entry: BrowserEntry): Bro
 
 function readNavState(entry: BrowserEntry): BrowserNavState {
 	const { webContents } = entry.view;
+	const currentURL = webContents.getURL();
 	return {
 		viewId: entry.state.viewId,
-		url: webContents.getURL(),
+		// about:blank is the cleared/blank state — surface it as an empty url so
+		// the panel renders its "enter a URL" empty state and the address bar is
+		// blank rather than showing "about:blank".
+		url: currentURL === "about:blank" ? "" : currentURL,
 		title: webContents.getTitle(),
 		canGoBack: webContents.canGoBack(),
 		canGoForward: webContents.canGoForward(),

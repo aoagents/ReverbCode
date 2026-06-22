@@ -47,6 +47,7 @@ function setupBridge() {
 		),
 		setBounds: vi.fn(),
 		navigate: vi.fn(async ({ viewId }: { viewId: string }) => bridge.stateFor(viewId)),
+		clear: vi.fn(async (viewId: string) => bridge.stateFor(viewId)),
 		goBack: vi.fn(async (viewId: string) => bridge.stateFor(viewId)),
 		goForward: vi.fn(async (viewId: string) => bridge.stateFor(viewId)),
 		reload: vi.fn(async (viewId: string) => bridge.stateFor(viewId)),
@@ -147,11 +148,12 @@ describe("useBrowserView", () => {
 		expect(result.current.navState.title).toBe("Local app");
 	});
 
-	it("navigates to a daemon-set preview URL and re-navigates only when it changes", async () => {
+	it("navigates on each preview revision, including a same-URL re-run, and ignores replays", async () => {
 		const bridge = setupBridge();
 		const { rerender } = renderHook(
-			({ previewUrl }) => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false, previewUrl }),
-			{ initialProps: { previewUrl: "http://localhost:5173/" } },
+			({ previewUrl, previewRevision }) =>
+				useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false, previewUrl, previewRevision }),
+			{ initialProps: { previewUrl: "http://localhost:5173/", previewRevision: 1 } },
 		);
 
 		await waitFor(() =>
@@ -159,22 +161,44 @@ describe("useBrowserView", () => {
 		);
 		expect(bridge.navigate).toHaveBeenCalledTimes(1);
 
-		// Same URL replayed (CDC re-emits the session payload) must not re-navigate.
-		rerender({ previewUrl: "http://localhost:5173/" });
+		// CDC replays the session payload on an unrelated update (revision
+		// unchanged) — the panel must not reload.
+		rerender({ previewUrl: "http://localhost:5173/", previewRevision: 1 });
 		expect(bridge.navigate).toHaveBeenCalledTimes(1);
 
-		// A changed target re-navigates.
-		rerender({ previewUrl: "file:///tmp/preview/index.html" });
+		// Re-running `ao preview` with the SAME url bumps the revision and must
+		// re-navigate (refresh) — the regression this issue fixes.
+		rerender({ previewUrl: "http://localhost:5173/", previewRevision: 2 });
+		await waitFor(() => expect(bridge.navigate).toHaveBeenCalledTimes(2));
+
+		// A changed target with a fresh revision navigates to the new URL.
+		rerender({ previewUrl: "file:///tmp/preview/index.html", previewRevision: 3 });
 		await waitFor(() =>
 			expect(bridge.navigate).toHaveBeenCalledWith({ viewId: "42:sess-1", url: "file:///tmp/preview/index.html" }),
 		);
-		expect(bridge.navigate).toHaveBeenCalledTimes(2);
+		expect(bridge.navigate).toHaveBeenCalledTimes(3);
 	});
 
-	it("does not navigate without a preview URL", async () => {
+	it("clears the view when the preview is reset (ao preview clear) and does not navigate", async () => {
+		const bridge = setupBridge();
+		const { rerender } = renderHook(
+			({ previewUrl, previewRevision }) =>
+				useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false, previewUrl, previewRevision }),
+			{ initialProps: { previewUrl: "http://localhost:5173/" as string | undefined, previewRevision: 1 } },
+		);
+		await waitFor(() => expect(bridge.navigate).toHaveBeenCalledTimes(1));
+
+		// `ao preview clear` empties previewUrl and bumps the revision.
+		rerender({ previewUrl: undefined, previewRevision: 2 });
+		await waitFor(() => expect(bridge.clear).toHaveBeenCalledWith("42:sess-1"));
+		expect(bridge.navigate).toHaveBeenCalledTimes(1);
+	});
+
+	it("does not navigate or clear without a preview URL at revision zero", async () => {
 		const bridge = setupBridge();
 		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
 		await waitFor(() => expect(result.current.viewId).toBe("42:sess-1"));
 		expect(bridge.navigate).not.toHaveBeenCalled();
+		expect(bridge.clear).not.toHaveBeenCalled();
 	});
 });
