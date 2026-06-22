@@ -326,7 +326,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			const normalized = normalizedTerminalShortcut(event);
 			if (!normalized) return true;
 			consumeTerminalShortcut(event);
-			emitUserInput(normalized, "terminal");
+			emitUserInput(normalized, "shortcut");
 			return false;
 		});
 		const copyInput = (event: ClipboardEvent) => {
@@ -430,7 +430,12 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		// misses them. Listen on window directly as a session-long recovery path.
 		window.addEventListener("resize", fitTerminal);
 
-		const terminalInput = term.onData((data) => emitUserInput(data, "terminal"));
+		// Do not replace this with term.onData. xterm's raw data stream can include
+		// terminal-generated control responses during attach/repaint; forwarding
+		// those bytes through the mux writes dirty input into the real Codex PTY and
+		// corrupts the TUI. Keyboard is the only safe generic text path here; paste,
+		// composition, shortcuts, and wheel reports are emitted explicitly below.
+		const keyInput = term.onKey(({ key }) => emitUserInput(key, "keyboard"));
 
 		// Translate wheel motion into SGR wheel reports for zellij (see
 		// sgrWheelReport), one report per scrolled line. WheelEvent.deltaMode
@@ -457,7 +462,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			}
 			if (lines === 0) return false;
 			const button = lines < 0 ? SGR_WHEEL_UP : SGR_WHEEL_DOWN;
-			emitUserInput(sgrWheelReport(button, Math.abs(lines)), "terminal");
+			emitUserInput(sgrWheelReport(button, Math.abs(lines)), "wheel");
 			return false;
 		});
 		const pasteInput = (event: ClipboardEvent) => {
@@ -505,7 +510,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			selectionChange.dispose();
 			host.removeEventListener("paste", pasteInput, true);
 			host.removeEventListener("compositionend", compositionInput, true);
-			terminalInput.dispose();
+			keyInput.dispose();
 			userInputListeners.clear();
 			try {
 				term.dispose();

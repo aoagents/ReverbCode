@@ -91,6 +91,9 @@ type FakeTerminal = AttachableTerminal & {
 	clears: number;
 	typeKeys(data: string): void;
 	paste(data: string): void;
+	compose(data: string): void;
+	shortcut(data: string): void;
+	wheel(data: string): void;
 	emitResize(cols: number, rows: number): void;
 };
 
@@ -115,8 +118,11 @@ function createFakeTerminal(): FakeTerminal {
 			resizeListeners.add(listener);
 			return { dispose: () => resizeListeners.delete(listener) };
 		},
-		typeKeys: (data) => inputListeners.forEach((listener) => listener(data, "terminal")),
+		typeKeys: (data) => inputListeners.forEach((listener) => listener(data, "keyboard")),
 		paste: (data) => inputListeners.forEach((listener) => listener(data, "paste")),
+		compose: (data) => inputListeners.forEach((listener) => listener(data, "composition")),
+		shortcut: (data) => inputListeners.forEach((listener) => listener(data, "shortcut")),
+		wheel: (data) => inputListeners.forEach((listener) => listener(data, "wheel")),
 		emitResize: (cols, rows) => resizeListeners.forEach((listener) => listener({ cols, rows })),
 	};
 	return terminal;
@@ -186,6 +192,25 @@ describe("useTerminalSession", () => {
 		terminal.emitResize(120, 40);
 		act(() => void vi.advanceTimersByTime(100));
 		expect(muxes[0].resizes).toContainEqual(["handle-1", 120, 40]);
+	});
+
+	it("forwards every explicit input source after the attachment opens", () => {
+		const { terminal, muxes } = setup();
+		act(() => muxes[0].emitOpened("handle-1"));
+
+		terminal.typeKeys("a");
+		terminal.paste("paste\r");
+		terminal.compose("é");
+		terminal.shortcut("\x1b[1;5D");
+		terminal.wheel("\x1b[<64;1;1M");
+
+		expect(muxes[0].inputs).toEqual([
+			["handle-1", "a"],
+			["handle-1", "paste\r"],
+			["handle-1", "é"],
+			["handle-1", "\x1b[1;5D"],
+			["handle-1", "\x1b[<64;1;1M"],
+		]);
 	});
 
 	it("collapses a drag's burst of grid changes into one trailing PTY resize, then re-asserts it", () => {

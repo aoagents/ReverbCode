@@ -18,7 +18,7 @@ import { workspaceQueryKey } from "./useWorkspaceQuery";
  * The slice of xterm's Terminal the attachment needs. Structural, so tests can
  * drive the hook with a tiny fake instead of a real xterm + DOM.
  */
-export type TerminalUserInputSource = "terminal" | "paste" | "composition";
+export type TerminalUserInputSource = "keyboard" | "paste" | "composition" | "shortcut" | "wheel";
 
 export type AttachableTerminal = {
 	cols: number;
