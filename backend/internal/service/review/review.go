@@ -34,7 +34,7 @@ type Manager interface {
 type Service struct {
 	engine    *reviewcore.Engine
 	store     Store
-	lifecycle ReviewReducer
+	lifecycle Reducer
 	clock     func() time.Time
 }
 
@@ -47,9 +47,9 @@ type Store interface {
 	MarkReviewRunDelivered(ctx context.Context, id string, deliveredAt time.Time) (bool, error)
 }
 
-// ReviewReducer is the lifecycle reaction boundary used after a review result
-// has been persisted.
-type ReviewReducer interface {
+// Reducer is the lifecycle reaction boundary used after a review result has
+// been persisted.
+type Reducer interface {
 	ApplyReviewResult(ctx context.Context, workerID domain.SessionID, result lifecycle.ReviewResult) (lifecycle.ReviewDeliveryOutcome, error)
 }
 
@@ -57,7 +57,7 @@ type ReviewReducer interface {
 type Option func(*Service)
 
 // WithLifecycleReducer wires post-submit review delivery through lifecycle.
-func WithLifecycleReducer(r ReviewReducer) Option {
+func WithLifecycleReducer(r Reducer) Option {
 	return func(s *Service) { s.lifecycle = r }
 }
 

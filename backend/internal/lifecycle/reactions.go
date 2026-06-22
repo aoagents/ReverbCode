@@ -20,7 +20,11 @@ const reviewMaxNudge = 3
 type ReviewDeliveryOutcome string
 
 const (
+	// ReviewDeliveryNoop means lifecycle did not send or confirm a review nudge
+	// because the result was not relevant for delivery.
 	ReviewDeliveryNoop ReviewDeliveryOutcome = "no_op"
+	// ReviewDeliverySent means the worker nudge was sent or was already covered
+	// by sendOnce dedup state and may be stamped delivered.
 	ReviewDeliverySent ReviewDeliveryOutcome = "sent"
 )
 
