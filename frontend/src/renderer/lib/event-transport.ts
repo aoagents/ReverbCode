@@ -1,8 +1,9 @@
 import type { QueryClient } from "@tanstack/react-query";
 import { aoBridge } from "./bridge";
-import { getApiBaseUrl, subscribeApiBaseUrl } from "./api-client";
+import { getApiBaseUrl, hasTrustedApiBaseUrl, subscribeApiBaseUrl } from "./api-client";
 import { setEventsConnectionState } from "./events-connection";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { sessionScmSummaryQueryKey } from "../hooks/useSessionScmSummary";
 
 export type EventTransport = {
 	connect: () => () => void;
@@ -50,6 +51,7 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 				if (debounce) clearTimeout(debounce);
 				debounce = setTimeout(() => {
 					void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+					void queryClient.invalidateQueries({ queryKey: sessionScmSummaryQueryKey() });
 				}, INVALIDATE_DEBOUNCE_MS);
 			};
 
@@ -64,6 +66,13 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 			const connectSource = () => {
 				// EventSource is unavailable in jsdom (tests) and some preview surfaces; guard it.
 				if (typeof EventSource === "undefined") return;
+				if (!hasTrustedApiBaseUrl()) {
+					source?.close();
+					source = undefined;
+					sourceBaseUrl = undefined;
+					setEventsConnectionState("disconnected");
+					return;
+				}
 				const baseUrl = getApiBaseUrl();
 				// Keep a still-usable source on the same base URL; replace one the
 				// browser abandoned (CLOSED) or one bound to a stale port.

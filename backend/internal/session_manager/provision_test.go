@@ -82,18 +82,18 @@ func TestHookPATH(t *testing.T) {
 				}
 				return ""
 			}
-			got, err := hookPATH(tc.executable, getenv, tc.projectEnv)
+			got, err := HookPATH(tc.executable, getenv, tc.projectEnv)
 			if tc.wantErr {
 				if err == nil {
-					t.Fatalf("hookPATH = %q, want error", got)
+					t.Fatalf("HookPATH = %q, want error", got)
 				}
 				return
 			}
 			if err != nil {
-				t.Fatalf("hookPATH: %v", err)
+				t.Fatalf("HookPATH: %v", err)
 			}
 			if got != tc.want {
-				t.Fatalf("hookPATH = %q, want %q", got, tc.want)
+				t.Fatalf("HookPATH = %q, want %q", got, tc.want)
 			}
 		})
 	}

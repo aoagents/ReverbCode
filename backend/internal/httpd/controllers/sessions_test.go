@@ -6,6 +6,10 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,6 +27,7 @@ type fakeSessionService struct {
 	cleanupProjects []domain.ProjectID
 	cleanupResult   []domain.SessionID
 	cleanupSkipped  []sessionsvc.CleanupSkipped
+	spawnErr        error
 	claimErr        error
 	listPRErr       error
 }
@@ -51,6 +56,9 @@ func (f *fakeSessionService) List(_ context.Context, filter sessionsvc.ListFilte
 }
 
 func (f *fakeSessionService) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.Session, error) {
+	if f.spawnErr != nil {
+		return domain.Session{}, f.spawnErr
+	}
 	now := time.Now().UTC()
 	s := domain.Session{SessionRecord: domain.SessionRecord{ID: domain.SessionID(string(cfg.ProjectID) + "-2"), ProjectID: cfg.ProjectID, IssueID: cfg.IssueID, Kind: cfg.Kind, Harness: cfg.Harness, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, CreatedAt: now, UpdatedAt: now}, Status: domain.StatusIdle}
 	f.sessions[s.ID] = s
@@ -74,7 +82,21 @@ func (f *fakeSessionService) SpawnOrchestrator(ctx context.Context, projectID do
 }
 
 func (f *fakeSessionService) Get(_ context.Context, id domain.SessionID) (domain.Session, error) {
-	return f.sessions[id], nil
+	s, ok := f.sessions[id]
+	if !ok {
+		return domain.Session{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	return s, nil
+}
+
+func (f *fakeSessionService) SetPreview(_ context.Context, id domain.SessionID, previewURL string) (domain.Session, error) {
+	s, ok := f.sessions[id]
+	if !ok {
+		return domain.Session{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	s.Metadata.PreviewURL = previewURL
+	f.sessions[id] = s
+	return s, nil
 }
 
 func (f *fakeSessionService) Restore(_ context.Context, id domain.SessionID) (domain.Session, error) {
@@ -135,6 +157,49 @@ func (f *fakeSessionService) ListPRs(_ context.Context, id domain.SessionID) ([]
 	return []domain.PRFacts{{URL: "https://github.com/aoagents/agent-orchestrator/pull/142", Number: 142, CI: domain.CIPassing, Review: domain.ReviewRequired, Mergeability: domain.MergeMergeable, UpdatedAt: time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC)}}, nil
 }
 
+func (f *fakeSessionService) ListPRSummaries(_ context.Context, id domain.SessionID) ([]sessionsvc.PRSummary, error) {
+	if f.listPRErr != nil {
+		return nil, f.listPRErr
+	}
+	if _, ok := f.sessions[id]; !ok {
+		return nil, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	return []sessionsvc.PRSummary{{
+		URL:          "https://github.com/aoagents/agent-orchestrator/pull/142",
+		HTMLURL:      "https://github.com/aoagents/agent-orchestrator/pull/142",
+		Number:       142,
+		Title:        "Wire SCM summaries",
+		State:        domain.PRStateOpen,
+		Provider:     "github",
+		Repo:         "aoagents/agent-orchestrator",
+		Author:       "ada",
+		SourceBranch: "codex/scm-observer-v1",
+		TargetBranch: "main",
+		HeadSHA:      "abc123",
+		CI: sessionsvc.PRCISummary{State: domain.CIFailing, FailingChecks: []sessionsvc.PRFailingCheck{{
+			Name:       "unit",
+			Status:     domain.PRCheckFailed,
+			Conclusion: "failure",
+			URL:        "https://github.com/aoagents/agent-orchestrator/actions/runs/1",
+		}}},
+		Review: sessionsvc.PRReviewSummary{
+			Decision:                   domain.ReviewChangesRequest,
+			HasUnresolvedHumanComments: true,
+			UnresolvedBy: []sessionsvc.PRUnresolvedReviewer{{
+				ReviewerID: "reviewer-a",
+				Count:      1,
+				Links:      []sessionsvc.PRReviewCommentLink{{URL: "https://github.com/aoagents/agent-orchestrator/pull/142#discussion_r1", File: "main.go", Line: 12}},
+			}},
+		},
+		Mergeability: sessionsvc.PRMergeabilitySummary{
+			State:   domain.MergeConflicting,
+			Reasons: []string{"conflicts"},
+			PRURL:   "https://github.com/aoagents/agent-orchestrator/pull/142",
+		},
+		UpdatedAt: time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC),
+	}}, nil
+}
+
 func (f *fakeSessionService) ClaimPR(_ context.Context, id domain.SessionID, ref string, opts sessionsvc.ClaimPROptions) (sessionsvc.ClaimPRResult, error) {
 	if f.claimErr != nil {
 		return sessionsvc.ClaimPRResult{}, f.claimErr
@@ -166,6 +231,9 @@ func TestSessionsRoutes_DefaultToStubsWithoutService(t *testing.T) {
 
 func TestSessionsAPI_ListSpawnGetAndActions(t *testing.T) {
 	svc := newFakeSessionService()
+	s := svc.sessions["ao-1"]
+	s.Metadata = domain.SessionMetadata{Branch: "qa/modal-worker", WorkspacePath: "/tmp/private-worktree", RuntimeHandleID: "runtime-1", Prompt: "private prompt"}
+	svc.sessions["ao-1"] = s
 	srv := newSessionTestServer(t, svc)
 
 	body, status, _ := doRequest(t, srv, "GET", "/api/v1/sessions?project=ao", "")
@@ -178,6 +246,22 @@ func TestSessionsAPI_ListSpawnGetAndActions(t *testing.T) {
 	mustJSON(t, body, &list)
 	if len(list.Sessions) != 1 || list.Sessions[0].ID != "ao-1" || list.Sessions[0].Status != string(domain.StatusIdle) || list.Sessions[0].TerminalHandleID != "ao-1/terminal_0" {
 		t.Fatalf("list = %#v", list)
+	}
+	if list.Sessions[0].Branch != "qa/modal-worker" {
+		t.Fatalf("branch = %q, want qa/modal-worker", list.Sessions[0].Branch)
+	}
+	var rawList struct {
+		Sessions []map[string]any `json:"sessions"`
+	}
+	mustJSON(t, body, &rawList)
+	if _, ok := rawList.Sessions[0]["metadata"]; ok {
+		t.Fatalf("list leaked metadata: %s", body)
+	}
+	if _, ok := rawList.Sessions[0]["workspacePath"]; ok {
+		t.Fatalf("list leaked workspacePath: %s", body)
+	}
+	if _, ok := rawList.Sessions[0]["prompt"]; ok {
+		t.Fatalf("list leaked prompt: %s", body)
 	}
 
 	body, status, _ = doRequest(t, srv, "POST", "/api/v1/sessions", `{"projectId":"ao","issueId":"ISS-1","kind":"worker","harness":"codex","prompt":"fix"}`)
@@ -241,6 +325,133 @@ func TestSessionsAPI_ListSpawnGetAndActions(t *testing.T) {
 	if status != http.StatusCreated {
 		t.Fatalf("orchestrator = %d, want 201; body=%s", status, body)
 	}
+}
+
+func TestSessionsAPI_PreviewDiscoversAndServesStaticIndex(t *testing.T) {
+	svc := newFakeSessionService()
+	workspace := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workspace, "index.html"), []byte(`<link rel="stylesheet" href="styles.css"><script src="app.js"></script>`), 0o644); err != nil {
+		t.Fatalf("write index: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "styles.css"), []byte(`body { color: red; }`), 0o644); err != nil {
+		t.Fatalf("write css: %v", err)
+	}
+	s := svc.sessions["ao-1"]
+	s.Metadata = domain.SessionMetadata{WorkspacePath: workspace}
+	svc.sessions["ao-1"] = s
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "GET", "/api/v1/sessions/ao-1/preview", "")
+	if status != http.StatusOK {
+		t.Fatalf("preview = %d, want 200; body=%s", status, body)
+	}
+	var preview struct {
+		SessionID  string `json:"sessionId"`
+		PreviewURL string `json:"previewUrl"`
+		Entry      string `json:"entry"`
+	}
+	mustJSON(t, body, &preview)
+	if preview.SessionID != "ao-1" || preview.Entry != "index.html" || preview.PreviewURL == "" {
+		t.Fatalf("preview response = %#v", preview)
+	}
+	if strings.Contains(preview.PreviewURL, workspace) {
+		t.Fatalf("preview leaked workspace path: %s", preview.PreviewURL)
+	}
+	if !strings.Contains(preview.PreviewURL, "/index.html") {
+		t.Fatalf("preview URL = %q, want index.html asset path", preview.PreviewURL)
+	}
+	parsed, err := url.Parse(preview.PreviewURL)
+	if err != nil {
+		t.Fatalf("parse preview URL: %v", err)
+	}
+	body, status, headers := doRequest(t, srv, "GET", parsed.RequestURI(), "")
+	if status != http.StatusOK {
+		t.Fatalf("preview file = %d, want 200; body=%s", status, body)
+	}
+	if !strings.Contains(headers.Get("Content-Type"), "text/html") {
+		t.Fatalf("content type = %q, want text/html", headers.Get("Content-Type"))
+	}
+	if !strings.Contains(string(body), "styles.css") {
+		t.Fatalf("preview body did not serve index: %s", body)
+	}
+}
+
+func TestSessionsAPI_SetPreviewExplicitURLPersists(t *testing.T) {
+	svc := newFakeSessionService()
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/preview", `{"url":"http://localhost:5173/"}`)
+	if status != http.StatusOK {
+		t.Fatalf("set preview = %d, want 200; body=%s", status, body)
+	}
+	var resp struct {
+		Session struct {
+			PreviewURL string `json:"previewUrl"`
+		} `json:"session"`
+	}
+	mustJSON(t, body, &resp)
+	if resp.Session.PreviewURL != "http://localhost:5173/" {
+		t.Fatalf("response previewUrl = %q, want explicit url", resp.Session.PreviewURL)
+	}
+	if got := svc.sessions["ao-1"].Metadata.PreviewURL; got != "http://localhost:5173/" {
+		t.Fatalf("persisted previewUrl = %q, want explicit url", got)
+	}
+}
+
+func TestSessionsAPI_SetPreviewEmptyURLAutodetectsIndex(t *testing.T) {
+	svc := newFakeSessionService()
+	workspace := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workspace, "index.html"), []byte(`<html></html>`), 0o644); err != nil {
+		t.Fatalf("write index: %v", err)
+	}
+	s := svc.sessions["ao-1"]
+	s.Metadata = domain.SessionMetadata{WorkspacePath: workspace}
+	svc.sessions["ao-1"] = s
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/preview", `{}`)
+	if status != http.StatusOK {
+		t.Fatalf("set preview = %d, want 200; body=%s", status, body)
+	}
+	var resp struct {
+		Session struct {
+			PreviewURL string `json:"previewUrl"`
+		} `json:"session"`
+	}
+	mustJSON(t, body, &resp)
+	if !strings.Contains(resp.Session.PreviewURL, "/index.html") {
+		t.Fatalf("response previewUrl = %q, want autodetected index.html URL", resp.Session.PreviewURL)
+	}
+	if strings.Contains(resp.Session.PreviewURL, workspace) {
+		t.Fatalf("preview leaked workspace path: %s", resp.Session.PreviewURL)
+	}
+}
+
+func TestSessionsAPI_SetPreviewEmptyURLNoEntry(t *testing.T) {
+	svc := newFakeSessionService()
+	s := svc.sessions["ao-1"]
+	s.Metadata = domain.SessionMetadata{WorkspacePath: t.TempDir()}
+	svc.sessions["ao-1"] = s
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/preview", `{}`)
+	assertErrorCode(t, body, status, http.StatusNotFound, "NO_PREVIEW_ENTRY")
+}
+
+func TestSessionsAPI_SetPreviewNotFound(t *testing.T) {
+	srv := newSessionTestServer(t, newFakeSessionService())
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/missing-1/preview", `{"url":"http://x"}`)
+	assertErrorCode(t, body, status, http.StatusNotFound, "SESSION_NOT_FOUND")
+}
+
+func TestSessionsAPI_SpawnBranchNotFetchedReturnsTypedError(t *testing.T) {
+	svc := newFakeSessionService()
+	svc.spawnErr = apierr.Invalid("BRANCH_NOT_FETCHED", `workspace: branch is not fetched: "feature/missing"`, nil)
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions", `{"projectId":"ao","kind":"worker","branch":"feature/missing","prompt":"fix"}`)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "BRANCH_NOT_FETCHED")
 }
 
 func TestSessionsAPI_RenameNotFound(t *testing.T) {
@@ -375,6 +586,7 @@ type sessionBody struct {
 	Kind             string `json:"kind"`
 	Harness          string `json:"harness"`
 	DisplayName      string `json:"displayName"`
+	Branch           string `json:"branch"`
 	Status           string `json:"status"`
 	TerminalHandleID string `json:"terminalHandleId"`
 }
@@ -389,15 +601,55 @@ func TestSessionsAPI_PRRoutes(t *testing.T) {
 	var listed struct {
 		SessionID string `json:"sessionId"`
 		PRs       []struct {
-			URL       string `json:"url"`
-			Number    int    `json:"number"`
-			State     string `json:"state"`
-			UpdatedAt string `json:"updatedAt"`
+			URL    string `json:"url"`
+			Number int    `json:"number"`
+			Title  string `json:"title"`
+			State  string `json:"state"`
+			CI     struct {
+				State         string `json:"state"`
+				FailingChecks []struct {
+					Name       string `json:"name"`
+					Status     string `json:"status"`
+					Conclusion string `json:"conclusion"`
+					URL        string `json:"url"`
+					LogTail    string `json:"logTail"`
+				} `json:"failingChecks"`
+			} `json:"ci"`
+			Review struct {
+				Decision     string `json:"decision"`
+				UnresolvedBy []struct {
+					ReviewerID string `json:"reviewerId"`
+					Count      int    `json:"count"`
+					Links      []struct {
+						URL  string `json:"url"`
+						File string `json:"file"`
+						Line int    `json:"line"`
+						Body string `json:"body"`
+					} `json:"links"`
+				} `json:"unresolvedBy"`
+			} `json:"review"`
+			Mergeability struct {
+				State         string   `json:"state"`
+				Reasons       []string `json:"reasons"`
+				PRURL         string   `json:"prUrl"`
+				ConflictFiles []struct {
+					Path string `json:"path"`
+				} `json:"conflictFiles"`
+			} `json:"mergeability"`
 		} `json:"prs"`
 	}
 	mustJSON(t, body, &listed)
-	if listed.SessionID != "ao-1" || len(listed.PRs) != 1 || listed.PRs[0].State != "open" {
+	if listed.SessionID != "ao-1" || len(listed.PRs) != 1 || listed.PRs[0].State != "open" || listed.PRs[0].Title == "" {
 		t.Fatalf("GET shape = %#v", listed)
+	}
+	if checks := listed.PRs[0].CI.FailingChecks; len(checks) != 1 || checks[0].Name != "unit" || checks[0].LogTail != "" {
+		t.Fatalf("failing checks = %#v", checks)
+	}
+	if reviewers := listed.PRs[0].Review.UnresolvedBy; len(reviewers) != 1 || reviewers[0].ReviewerID != "reviewer-a" || reviewers[0].Links[0].Body != "" {
+		t.Fatalf("reviewers = %#v", reviewers)
+	}
+	if merge := listed.PRs[0].Mergeability; merge.State != "conflicting" || len(merge.ConflictFiles) != 0 || merge.PRURL == "" {
+		t.Fatalf("mergeability = %#v", merge)
 	}
 
 	body, status, _ = doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/pr/claim", `{"pr":"142"}`)

@@ -1,4 +1,16 @@
-import { app, BrowserWindow, dialog, ipcMain, net, protocol, shell, type OpenDialogOptions } from "electron";
+import {
+	app,
+	BrowserWindow,
+	clipboard,
+	dialog,
+	ipcMain,
+	net,
+	Notification as ElectronNotification,
+	protocol,
+	shell,
+	WebContentsView,
+	type OpenDialogOptions,
+} from "electron";
 import { updateElectronApp } from "update-electron-app";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -6,9 +18,19 @@ import { readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { resolveDaemonLaunch } from "./shared/daemon-launch";
+import { type DaemonLaunchSpec, resolveDaemonLaunch } from "./shared/daemon-launch";
 import { createListenPortScanner, defaultRunFilePath, parseRunFile } from "./shared/daemon-discovery";
 import type { DaemonStatus } from "./shared/daemon-status";
+import {
+	type DaemonProbe,
+	expectedDaemonPort,
+	parseDaemonProbe,
+	resolveDaemonFromPort,
+	resolveDaemonFromRunFile,
+} from "./shared/daemon-attach";
+import { DEFAULT_POSTHOG_HOST, DEFAULT_POSTHOG_PROJECT_KEY } from "./shared/posthog-config";
+import { buildTelemetryBootstrap } from "./shared/telemetry";
+import { createBrowserViewHost, type BrowserViewHost } from "./main/browser-view-host";
 
 // Globals injected at compile time by @electron-forge/plugin-vite.
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
@@ -17,9 +39,21 @@ declare const MAIN_WINDOW_VITE_NAME: string;
 // Must run before app ready so the About panel and default-menu role labels use it.
 app.setName("Agent Orchestrator");
 
+// Pin ALL Electron-owned state (Chromium cache, cookies, local/session storage,
+// crash dumps) under the canonical AO home at ~/.ao instead of Electron's macOS
+// default ~/Library/Application Support/<name>. Keeps the app's entire footprint
+// inside ~/.ao alongside the daemon's data dir and running.json. sessionData and
+// crashDumps derive from userData, so this one override reparents them all.
+// Must run before app ready.
+app.setPath("userData", path.join(os.homedir(), ".ao", "electron"));
+
 let mainWindow: BrowserWindow | null = null;
 let daemonProcess: ChildProcessWithoutNullStreams | null = null;
+let daemonStoppingProcess: ChildProcessWithoutNullStreams | null = null;
+let daemonStartPromise: Promise<DaemonStatus> | null = null;
+let daemonStartEpoch = 0;
 let daemonStatus: DaemonStatus = { state: "stopped" };
+let browserViewHost: BrowserViewHost | null = null;
 
 const isDev = !app.isPackaged;
 
@@ -76,18 +110,35 @@ function preloadPath(): string {
 	return path.join(__dirname, "preload.js");
 }
 
+function annotatePreloadPath(): string {
+	return path.join(__dirname, "annotate-preload.js");
+}
+
+// Runtime window/taskbar icon for Linux and Windows. macOS ignores this and
+// uses the .app bundle's .icns instead. Packaged: shipped via extraResource to
+// resources/icon.png; dev: the source asset under frontend/assets.
+function windowIconPath(): string | undefined {
+	const candidate = app.isPackaged
+		? path.join(process.resourcesPath, "icon.png")
+		: path.join(__dirname, "../../assets/icon.png");
+	return existsSync(candidate) ? candidate : undefined;
+}
+
 function setDaemonStatus(nextStatus: DaemonStatus): void {
 	daemonStatus = nextStatus;
 	mainWindow?.webContents.send("daemon:status", daemonStatus);
 }
 
 function createWindow(): void {
+	browserViewHost?.dispose();
+	browserViewHost = null;
 	mainWindow = new BrowserWindow({
 		width: 1320,
 		height: 860,
 		minWidth: 960,
 		minHeight: 640,
 		title: "Agent Orchestrator",
+		icon: windowIconPath(),
 		backgroundColor: "#0f1014",
 		titleBarStyle: "hiddenInset",
 		// Lights visually centered at y=28 — the 56px topbar/.titlebar-nav center
@@ -119,6 +170,15 @@ function createWindow(): void {
 		}
 	});
 
+	browserViewHost = createBrowserViewHost({
+		mainWindow,
+		ipcMain,
+		shell,
+		WebContentsView,
+		annotatePreloadPath: annotatePreloadPath(),
+		rendererOrigin: RENDERER_ORIGIN,
+	});
+
 	void mainWindow.loadURL(rendererUrl());
 
 	if (isDev && process.env.AO_OPEN_DEVTOOLS === "1") {
@@ -128,6 +188,8 @@ function createWindow(): void {
 	}
 
 	mainWindow.on("closed", () => {
+		browserViewHost?.dispose();
+		browserViewHost = null;
 		mainWindow = null;
 	});
 }
@@ -140,13 +202,147 @@ const RUN_FILE_POLL_MS = 300;
 // Accept run-files stamped slightly before our spawn timestamp: the daemon's
 // clock reading and ours race within normal scheduling jitter.
 const RUN_FILE_FRESHNESS_SKEW_MS = 2_000;
+const DAEMON_PROBE_TIMEOUT_MS = 2_000;
 
 function runFilePath(): string | null {
 	if (process.env.AO_RUN_FILE) return process.env.AO_RUN_FILE;
 	return defaultRunFilePath(process.platform, process.env, os.homedir());
 }
 
-function startDaemon(): DaemonStatus {
+function daemonEnv(): NodeJS.ProcessEnv {
+	return {
+		...process.env,
+		AO_TELEMETRY_EVENTS: process.env.AO_TELEMETRY_EVENTS ?? "on",
+		AO_TELEMETRY_REMOTE: process.env.AO_TELEMETRY_REMOTE ?? "posthog",
+		AO_TELEMETRY_POSTHOG_KEY: process.env.AO_TELEMETRY_POSTHOG_KEY ?? DEFAULT_POSTHOG_PROJECT_KEY,
+		AO_TELEMETRY_POSTHOG_HOST: process.env.AO_TELEMETRY_POSTHOG_HOST ?? DEFAULT_POSTHOG_HOST,
+	};
+}
+
+function pathKey(value: string): string {
+	const resolved = path.resolve(value);
+	return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+}
+
+function samePath(a: string, b: string): boolean {
+	return pathKey(a) === pathKey(b);
+}
+
+function pathInside(child: string, parent: string): boolean {
+	const childKey = pathKey(child);
+	const parentKey = pathKey(parent);
+	return childKey === parentKey || childKey.startsWith(parentKey + path.sep);
+}
+
+function processAlive(pid: number): boolean {
+	if (!pid) return false;
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+async function readDaemonProbe(port: number, endpoint: "healthz" | "readyz"): Promise<DaemonProbe | null> {
+	const controller = new AbortController();
+	const timer = setTimeout(() => controller.abort(), DAEMON_PROBE_TIMEOUT_MS);
+	try {
+		const response = await net.fetch(`http://127.0.0.1:${port}/${endpoint}`, { signal: controller.signal });
+		if (!response.ok) return null;
+		return parseDaemonProbe(endpoint, await response.json());
+	} catch {
+		return null;
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
+function daemonIdentityError(launch: DaemonLaunchSpec, probe: DaemonProbe): string | null {
+	if (launch.source === "dev") {
+		const cwdMatches = probe.workingDirectory ? samePath(probe.workingDirectory, launch.cwd) : false;
+		const executableMatches = probe.executablePath ? pathInside(probe.executablePath, launch.cwd) : false;
+		if (!probe.workingDirectory && !probe.executablePath) {
+			return "An older AO daemon is already running, but it does not report its checkout identity. Stop it and restart this app.";
+		}
+		if (!cwdMatches && !executableMatches) {
+			const actual = probe.workingDirectory ?? probe.executablePath ?? "an unknown location";
+			return `Another AO daemon is already running from ${actual}; expected this checkout at ${launch.cwd}. Stop the other daemon before using this checkout.`;
+		}
+		return null;
+	}
+
+	if (launch.source === "bundled") {
+		if (!probe.executablePath) {
+			return "An older AO daemon is already running, but it does not report its binary path. Stop it and restart this app.";
+		}
+		if (!samePath(probe.executablePath, launch.command)) {
+			return `Another AO daemon is already running from ${probe.executablePath}; expected ${launch.command}. Stop the other daemon before using this app.`;
+		}
+	}
+	return null;
+}
+
+async function inspectExistingDaemon(launch: DaemonLaunchSpec): Promise<DaemonStatus | null> {
+	const handshakePath = runFilePath();
+	let runFileContents: string | null = null;
+	if (handshakePath) {
+		try {
+			runFileContents = await readFile(handshakePath, "utf8");
+		} catch {
+			runFileContents = null;
+		}
+	}
+	return resolveDaemonFromRunFile({
+		runFileContents,
+		isProcessAlive: processAlive,
+		probe: readDaemonProbe,
+		identityError: (probe) => daemonIdentityError(launch, probe),
+	});
+}
+
+async function refreshDaemonStatus(): Promise<DaemonStatus> {
+	if (daemonProcess) {
+		return daemonStatus;
+	}
+	const launch = resolveDaemonLaunch(
+		process.env,
+		app.isPackaged,
+		process.resourcesPath,
+		app.getAppPath(),
+		process.platform,
+	);
+	if (!launch) return daemonStatus;
+	const existing = await inspectExistingDaemon(launch);
+	if (existing) {
+		setDaemonStatus(existing);
+	} else if (
+		daemonStatus.state === "ready" ||
+		(daemonStatus.state === "error" && (daemonStatus.pid || daemonStatus.port))
+	) {
+		setDaemonStatus({
+			state: "stopped",
+			message: "AO daemon is no longer reachable.",
+		});
+	}
+	return daemonStatus;
+}
+
+async function startDaemon(): Promise<DaemonStatus> {
+	if (daemonStartPromise) {
+		return daemonStartPromise;
+	}
+	const startEpoch = daemonStartEpoch;
+	const promise = startDaemonInner(startEpoch).finally(() => {
+		if (daemonStartPromise === promise) {
+			daemonStartPromise = null;
+		}
+	});
+	daemonStartPromise = promise;
+	return daemonStartPromise;
+}
+
+async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 	if (daemonProcess) {
 		return daemonStatus;
 	}
@@ -163,6 +359,36 @@ function startDaemon(): DaemonStatus {
 			state: "stopped",
 			message: "AO_DAEMON_COMMAND is not configured; renderer uses loopback REST when available.",
 		});
+		return daemonStatus;
+	}
+
+	const existing = await inspectExistingDaemon(launch);
+	if (startEpoch !== daemonStartEpoch) {
+		return daemonStatus;
+	}
+	if (existing) {
+		setDaemonStatus(existing);
+		return daemonStatus;
+	}
+
+	// Defensive: inspectExistingDaemon only attaches when the run-file agrees with
+	// a live daemon. Any divergence (missing/stale/unparseable run-file, dead PID,
+	// health.pid mismatch) makes it return null — yet a daemon may still be serving
+	// the port. Spawning then would just make the Go child refuse and exit 1. Probe
+	// the expected port directly, independent of the run-file, and attach if a
+	// daemon answers. The expected port (AO_PORT or the default) is exactly the
+	// port the Go child would bind and collide on — probing a hardcoded 3001 would
+	// miss an AO_PORT override.
+	const directDaemon = await resolveDaemonFromPort({
+		expectedPort: expectedDaemonPort(process.env),
+		probe: readDaemonProbe,
+		identityError: (probe) => daemonIdentityError(launch, probe),
+	});
+	if (startEpoch !== daemonStartEpoch) {
+		return daemonStatus;
+	}
+	if (directDaemon) {
+		setDaemonStatus(directDaemon);
 		return daemonStatus;
 	}
 
@@ -186,7 +412,7 @@ function startDaemon(): DaemonStatus {
 	// the whole group via killDaemon() reaches the daemon and any PTY children.
 	const child = spawn(launch.command, launch.args, {
 		cwd: launch.cwd,
-		env: process.env,
+		env: daemonEnv(),
 		shell: launch.shell,
 		detached: true,
 	});
@@ -209,7 +435,7 @@ function startDaemon(): DaemonStatus {
 	};
 
 	const reportBoundPort = (port: number) => {
-		if (portConfirmed || daemonProcess !== child) return;
+		if (portConfirmed || daemonProcess !== child || daemonStoppingProcess === child) return;
 		portConfirmed = true;
 		stopDiscovery();
 		setDaemonStatus({ state: "ready", port });
@@ -250,7 +476,7 @@ function startDaemon(): DaemonStatus {
 	// Last resort: neither source confirmed (e.g. an older daemon build). Report
 	// the configured port so the renderer is not stuck on "starting" forever.
 	fallbackTimer = setTimeout(() => {
-		if (portConfirmed || daemonProcess !== child) return;
+		if (portConfirmed || daemonProcess !== child || daemonStoppingProcess === child) return;
 		stopDiscovery();
 		setDaemonStatus({
 			state: "ready",
@@ -263,6 +489,7 @@ function startDaemon(): DaemonStatus {
 		stopDiscovery();
 		if (daemonProcess !== child) return;
 		daemonProcess = null;
+		if (daemonStoppingProcess === child) daemonStoppingProcess = null;
 		setDaemonStatus({ state: "error", message: error.message });
 	});
 
@@ -270,6 +497,7 @@ function startDaemon(): DaemonStatus {
 		stopDiscovery();
 		if (daemonProcess !== child) return;
 		daemonProcess = null;
+		if (daemonStoppingProcess === child) daemonStoppingProcess = null;
 		setDaemonStatus({
 			state: "stopped",
 			message: signal ? `Daemon exited with ${signal}` : `Daemon exited with code ${code ?? "unknown"}`,
@@ -293,21 +521,26 @@ function killDaemon(child: ChildProcessWithoutNullStreams): void {
 }
 
 function stopDaemon(): DaemonStatus {
+	daemonStartEpoch += 1;
+	daemonStartPromise = null;
 	if (!daemonProcess) {
 		setDaemonStatus({ state: "stopped" });
 		return daemonStatus;
 	}
 
+	daemonStoppingProcess = daemonProcess;
 	killDaemon(daemonProcess);
-	daemonProcess = null;
 	setDaemonStatus({ state: "stopped" });
 	return daemonStatus;
 }
 
-ipcMain.handle("daemon:getStatus", () => daemonStatus);
+ipcMain.handle("daemon:getStatus", () => refreshDaemonStatus());
 ipcMain.handle("daemon:start", () => startDaemon());
 ipcMain.handle("daemon:stop", () => stopDaemon());
 ipcMain.handle("app:getVersion", () => app.getVersion());
+ipcMain.handle("telemetry:getBootstrap", () =>
+	buildTelemetryBootstrap(process.env, app.getVersion(), process.platform),
+);
 ipcMain.handle("app:chooseDirectory", async () => {
 	const options: OpenDialogOptions = {
 		properties: ["openDirectory"],
@@ -317,6 +550,29 @@ ipcMain.handle("app:chooseDirectory", async () => {
 
 	if (result.canceled) return null;
 	return result.filePaths[0] ?? null;
+});
+ipcMain.handle("clipboard:writeText", (_event, text: string) => {
+	clipboard.writeText(text, "clipboard");
+	if (process.platform === "linux") {
+		clipboard.writeText(text, "selection");
+	}
+});
+ipcMain.handle("clipboard:readText", () => clipboard.readText());
+
+ipcMain.handle("notifications:show", (_event, notification: { id: string; title: string; body?: string }) => {
+	if (!notification.id || !notification.title || !ElectronNotification.isSupported()) return;
+	const toast = new ElectronNotification({
+		title: notification.title,
+		body: notification.body,
+	});
+	toast.on("click", () => {
+		if (!mainWindow) return;
+		if (mainWindow.isMinimized()) mainWindow.restore();
+		mainWindow.show();
+		mainWindow.focus();
+		mainWindow.webContents.send("notifications:click", notification.id);
+	});
+	toast.show();
 });
 
 // Auto-update only runs for packaged builds reading the GitHub Releases feed
@@ -331,7 +587,7 @@ function initAutoUpdates(): void {
 app.whenReady().then(() => {
 	registerRendererProtocol();
 	createWindow();
-	startDaemon();
+	void startDaemon();
 	initAutoUpdates();
 
 	app.on("activate", () => {
@@ -342,6 +598,8 @@ app.whenReady().then(() => {
 });
 
 app.on("before-quit", () => {
+	browserViewHost?.dispose();
+	browserViewHost = null;
 	if (daemonProcess) {
 		killDaemon(daemonProcess);
 	}

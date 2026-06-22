@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -59,6 +60,47 @@ func TestReviewSubmitReadsBodyFile(t *testing.T) {
 	}
 	if req.RunID != "run-1" || req.Verdict != "changes_requested" || req.Body != "please fix" {
 		t.Fatalf("request = %+v", req)
+	}
+}
+
+func TestReviewSubmitReadsBodyFromStdin(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, capture := reviewServer(t, http.StatusOK, `{"review":{"verdict":"changes_requested"}}`)
+	writeRunFileFor(t, cfg, srv)
+
+	deps := aliveDeps()
+	deps.In = strings.NewReader("please fix from stdin")
+	_, errOut, err := executeCLI(t, deps,
+		"review", "submit", "mer-1", "--run", "run-1", "--verdict", "changes_requested", "--body", "-")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	var req submitReviewRequest
+	if err := json.Unmarshal([]byte(capture.body), &req); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if req.Body != "please fix from stdin" {
+		t.Fatalf("body = %q, want the stdin contents", req.Body)
+	}
+}
+
+func TestReviewSubmitAcceptsUnderscoreFlags(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, capture := reviewServer(t, http.StatusOK, `{"review":{"verdict":"changes_requested"}}`)
+	writeRunFileFor(t, cfg, srv)
+
+	// Reviewer agents often spell --review-id as --review_id; both must work.
+	_, errOut, err := executeCLI(t, aliveDeps(),
+		"review", "submit", "mer-1", "--run", "run-1", "--verdict", "changes_requested", "--review_id", "98765")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	var req submitReviewRequest
+	if err := json.Unmarshal([]byte(capture.body), &req); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if req.GithubReviewID != "98765" {
+		t.Fatalf("githubReviewId = %q, want 98765", req.GithubReviewID)
 	}
 }
 

@@ -99,6 +99,37 @@ func TestServeOpenStreamsAndWritesTerminal(t *testing.T) {
 	})
 }
 
+func TestServeBuffersInputUntilAttachReady(t *testing.T) {
+	src := &fakeSource{alive: true}
+	pty := newFakePTY()
+	spawnStarted := make(chan struct{})
+	releaseSpawn := make(chan struct{})
+	spawn := func(context.Context, []string, []string, uint16, uint16) (ptyProcess, error) {
+		close(spawnStarted)
+		<-releaseSpawn
+		return pty, nil
+	}
+	mgr := NewManager(src, nil, testLogger(), WithSpawn(spawn), WithHeartbeat(0))
+	defer mgr.Close()
+
+	conn := newFakeConn()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go mgr.Serve(ctx, conn)
+
+	conn.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgOpen}
+	select {
+	case <-spawnStarted:
+	case <-time.After(time.Second):
+		t.Fatal("spawn was not reached")
+	}
+	conn.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgData, Data: base64.StdEncoding.EncodeToString([]byte("status\n"))}
+	close(releaseSpawn)
+
+	recv(t, conn, chTerminal, msgOpened, time.Second)
+	eventually(t, time.Second, func() bool { return string(pty.writtenBytes()) == "status\n" })
+}
+
 // nextTerminal returns the next frame on conn.out (no skipping), so callers can
 // assert frame ordering rather than just presence.
 func nextTerminal(t *testing.T, c *fakeConn) serverMsg {
@@ -112,13 +143,13 @@ func nextTerminal(t *testing.T, c *fakeConn) serverMsg {
 	}
 }
 
-// Opening a pane whose runtime is already dead must (1) send opened before
-// exited (the dead pane is reported, not errored) and (2) clear the conn's
-// entry, so a later open for the same id on this connection is still served
-// instead of being silently dropped by the already-open guard.
+// Opening a pane whose runtime is already dead must report exited without
+// spawning an attach. The conn entry still has to clear so a later open for the
+// same id on this connection is served instead of being silently dropped by the
+// already-open guard.
 func TestServeOpenDeadRuntimeReportsExitedAndAllowsReopen(t *testing.T) {
 	src := &fakeSource{alive: false}
-	sp := &fakeSpawner{}
+	sp := &fakeSpawner{ptys: []*fakePTY{newFakePTY()}}
 	mgr := NewManager(src, nil, testLogger(), WithSpawn(sp.spawn), WithHeartbeat(0))
 	defer mgr.Close()
 
@@ -128,16 +159,14 @@ func TestServeOpenDeadRuntimeReportsExitedAndAllowsReopen(t *testing.T) {
 	go mgr.Serve(ctx, conn)
 
 	conn.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgOpen}
-	if m := nextTerminal(t, conn); m.Type != msgOpened {
-		t.Fatalf("first frame = %q, want opened", m.Type)
-	}
 	if m := nextTerminal(t, conn); m.Type != msgExited {
-		t.Fatalf("second frame = %q, want exited", m.Type)
+		t.Fatalf("first frame = %q, want exited", m.Type)
 	}
 	if got := sp.calls(); got != 0 {
 		t.Fatalf("attach must never run against a dead runtime, got %d spawns", got)
 	}
 
+	src.setAlive(true)
 	conn.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgOpen}
 	if m := nextTerminal(t, conn); m.Type != msgOpened {
 		t.Fatalf("re-open frame = %q, want opened (open was dropped, entry stuck)", m.Type)
@@ -166,6 +195,7 @@ func TestServeExitAfterOpenClearsEntryAllowingReopen(t *testing.T) {
 	p.Close()           // drop the pty; IsAlive false => session exits, no re-attach
 	recv(t, conn, chTerminal, msgExited, time.Second)
 
+	src.setAlive(true)
 	conn.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgOpen}
 	recv(t, conn, chTerminal, msgOpened, 2*time.Second)
 }
@@ -173,8 +203,9 @@ func TestServeExitAfterOpenClearsEntryAllowingReopen(t *testing.T) {
 // An attachment that exits the moment it is opened (dead runtime) fires onExit
 // from its run goroutine, racing the reopen that follows the exited frame. The
 // identity-guarded delete in onExit must never evict a successor attachment
-// registered under the same id: every reopen must be served (opened), never
-// silently dropped by the already-open guard. Stressed across many iterations
+// registered under the same id: every reopen must be served (exited again for a
+// still-dead runtime), never silently dropped by the already-open guard.
+// Stressed across many iterations
 // to shake the exit/reopen interleavings out.
 func TestServeReopenAfterImmediateExitNeverStuck(t *testing.T) {
 	for i := 0; i < 400; i++ {
@@ -189,13 +220,12 @@ func TestServeReopenAfterImmediateExitNeverStuck(t *testing.T) {
 
 		conn.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgOpen}
 
-		recv(t, conn, chTerminal, msgOpened, time.Second)
 		recv(t, conn, chTerminal, msgExited, time.Second)
 
 		// The reopen must be served even while the first open's exit teardown is
 		// still in flight.
 		conn.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgOpen}
-		recv(t, conn, chTerminal, msgOpened, time.Second)
+		recv(t, conn, chTerminal, msgExited, time.Second)
 
 		cancel()
 		mgr.Close()

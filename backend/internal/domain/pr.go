@@ -16,6 +16,8 @@ type PRFacts struct {
 	Review         ReviewDecision
 	Mergeability   Mergeability
 	ReviewComments bool // has unresolved review comments (any author) to address
+	SourceBranch   string
+	TargetBranch   string
 	UpdatedAt      time.Time
 }
 

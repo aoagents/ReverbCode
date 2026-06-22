@@ -4,6 +4,12 @@ name: Desktop release
 # Generates a GitHub Release (draft) with installers + update manifests.
 # Triggered by a `desktop-v*` tag or manually.
 #
+# Each target OS builds on its own runner so the bundled `ao` daemon is compiled
+# natively for that platform. build-daemon.mjs keys the binary off the build
+# host's platform, so cross-OS packaging (e.g. building the Windows installer on
+# macOS) would ship a non-Windows binary named `ao` and the app could not launch
+# the daemon (issues #235/#256). The per-OS matrix keeps host == target.
+#
 # ⚠️ Until macOS code signing + notarization secrets are configured (see
 # frontend/docs/desktop-release.md), published builds are UNSIGNED and will
 # NOT auto-update on macOS. The workflow still produces installable artifacts.
@@ -16,7 +22,11 @@ on:
 
 jobs:
   release:
-    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     permissions:
       contents: write
     defaults:
@@ -29,6 +39,12 @@ jobs:
           node-version: 20
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+      # The daemon is compiled by build-daemon.mjs during prepackage/premake, so
+      # the Go toolchain must be present and pinned on every runner.
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
       - run: npm ci
       - name: Publish
         run: npm run publish

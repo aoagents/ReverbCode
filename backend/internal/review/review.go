@@ -18,6 +18,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 // ErrInvalid and ErrNotFound let the transport layer map failures to 422/404.
@@ -33,7 +34,7 @@ type Store interface {
 	GetReviewBySessionAndPR(ctx context.Context, id domain.SessionID, prURL string) (domain.Review, bool, error)
 	ListReviewsBySession(ctx context.Context, id domain.SessionID) ([]domain.Review, error)
 	InsertReviewRun(ctx context.Context, r domain.ReviewRun) error
-	UpdateReviewRunResult(ctx context.Context, id string, status domain.ReviewRunStatus, verdict domain.ReviewVerdict, body string) (bool, error)
+	UpdateReviewRunResult(ctx context.Context, id string, status domain.ReviewRunStatus, verdict domain.ReviewVerdict, body, githubReviewID string) (bool, error)
 	GetReviewRun(ctx context.Context, id string) (domain.ReviewRun, bool, error)
 	GetReviewRunBySessionPRAndSHA(ctx context.Context, id domain.SessionID, prURL, targetSHA string) (domain.ReviewRun, bool, error)
 	ListReviewRunsBySession(ctx context.Context, id domain.SessionID) ([]domain.ReviewRun, error)
@@ -57,11 +58,12 @@ type Projects interface {
 
 // Deps wires the engine.
 type Deps struct {
-	Store    Store
-	Sessions Sessions
-	PRs      PRs
-	Projects Projects
-	Launcher Launcher
+	Store     Store
+	Sessions  Sessions
+	PRs       PRs
+	Projects  Projects
+	Launcher  Launcher
+	Messenger ports.AgentMessenger
 
 	// Clock and NewID are injectable for deterministic tests.
 	Clock func() time.Time
@@ -70,13 +72,14 @@ type Deps struct {
 
 // Engine is the core code-review engine.
 type Engine struct {
-	store    Store
-	sessions Sessions
-	prs      PRs
-	projects Projects
-	launcher Launcher
-	clock    func() time.Time
-	newID    func() string
+	store     Store
+	sessions  Sessions
+	prs       PRs
+	projects  Projects
+	launcher  Launcher
+	messenger ports.AgentMessenger
+	clock     func() time.Time
+	newID     func() string
 
 	// triggerMu guards triggerLocks; triggerLocks holds one mutex per worker
 	// session so concurrent Trigger calls for the same worker serialise (see
@@ -101,6 +104,7 @@ func New(d Deps) *Engine {
 		prs:          d.PRs,
 		projects:     d.Projects,
 		launcher:     d.Launcher,
+		messenger:    d.Messenger,
 		clock:        clock,
 		newID:        newID,
 		triggerLocks: make(map[domain.SessionID]*sync.Mutex),
@@ -152,10 +156,11 @@ type SessionReviews struct {
 }
 
 // Trigger starts (or reuses) a review of a worker's PR at its current head:
-//   - if a run already exists for this commit, it is returned unchanged;
+//   - if a non-failed run already exists for this commit, it is returned unchanged;
 //   - otherwise, if a live reviewer pane exists, it is messaged to review the
 //     new commit; if not, a fresh reviewer is spawned;
-//   - only after the reviewer is launched is the run recorded.
+//   - the run is recorded before launch so startup failures leave a visible
+//     failed pass instead of an empty gap.
 func (e *Engine) Trigger(ctx context.Context, workerID domain.SessionID, prURL string) (TriggerResult, error) {
 	if workerID == "" {
 		return TriggerResult{}, fmt.Errorf("%w: worker session id is required", ErrInvalid)
@@ -193,10 +198,11 @@ func (e *Engine) Trigger(ctx context.Context, workerID domain.SessionID, prURL s
 		return TriggerResult{}, err
 	}
 
-	// Idempotency: a pass already exists for this commit — return it as-is.
+	// Idempotency: return a non-failed pass as-is. Failed passes stay visible
+	// but can be retried after the user fixes the underlying issue.
 	if existing, ok, err := e.store.GetReviewRunBySessionPRAndSHA(ctx, workerID, pr.URL, targetSHA); err != nil {
 		return TriggerResult{}, err
-	} else if ok {
+	} else if ok && existing.Status != domain.ReviewRunFailed {
 		return TriggerResult{Run: existing, ReviewerHandleID: review.ReviewerHandleID, Created: false}, nil
 	}
 
@@ -216,30 +222,7 @@ func (e *Engine) Trigger(ctx context.Context, workerID domain.SessionID, prURL s
 		TargetSHA:     targetSHA,
 	}
 
-	// Reuse a live reviewer pane if there is one; otherwise spawn a fresh one.
-	handleID := ""
-	if hasReview && review.ReviewerHandleID != "" {
-		alive, err := e.launcher.Alive(ctx, review.ReviewerHandleID)
-		if err != nil {
-			return TriggerResult{}, err
-		}
-		if alive {
-			if err := e.launcher.Notify(ctx, review.ReviewerHandleID, spec); err != nil {
-				return TriggerResult{}, fmt.Errorf("notify reviewer: %w", err)
-			}
-			handleID = review.ReviewerHandleID
-		}
-	}
-	if handleID == "" {
-		h, err := e.launcher.Spawn(ctx, spec)
-		if err != nil {
-			return TriggerResult{}, fmt.Errorf("launch reviewer: %w", err)
-		}
-		handleID = h
-	}
-
-	// The reviewer is running; now record the pass.
-	review, err = e.upsertReview(ctx, worker, harness, pr.URL, handleID, now)
+	review, err = e.upsertReview(ctx, worker, harness, pr.URL, review.ReviewerHandleID, now)
 	if err != nil {
 		return TriggerResult{}, err
 	}
@@ -257,25 +240,68 @@ func (e *Engine) Trigger(ctx context.Context, workerID domain.SessionID, prURL s
 	if err := e.store.InsertReviewRun(ctx, run); err != nil {
 		// The per-worker lock serialises in-process triggers, but the unique
 		// index can still reject a run a concurrent daemon (or a pre-lock
-		// restart) recorded for this PR commit. The reviewer is already
-		// launched, so don't surface a raw error: re-read the recorded run and
+		// restart) recorded for this PR commit. Re-read the recorded run and
 		// return it as the existing, not-newly-created pass.
 		if errors.Is(err, domain.ErrDuplicateReviewRun) {
 			if existing, ok, getErr := e.store.GetReviewRunBySessionPRAndSHA(ctx, workerID, pr.URL, targetSHA); getErr != nil {
 				return TriggerResult{}, getErr
 			} else if ok {
-				return TriggerResult{Run: existing, ReviewerHandleID: handleID, Created: false}, nil
+				return TriggerResult{Run: existing, ReviewerHandleID: review.ReviewerHandleID, Created: false}, nil
 			}
 		}
 		return TriggerResult{}, err
 	}
+
+	failRun := func(err error) error {
+		if _, updateErr := e.store.UpdateReviewRunResult(ctx, run.ID, domain.ReviewRunFailed, domain.VerdictNone, err.Error(), ""); updateErr != nil {
+			return updateErr
+		}
+		return err
+	}
+
+	// Reuse a live reviewer pane if there is one; otherwise spawn a fresh one.
+	handleID := ""
+	if hasReview && review.ReviewerHandleID != "" {
+		alive, err := e.launcher.Alive(ctx, review.ReviewerHandleID)
+		if err != nil {
+			return TriggerResult{}, failRun(err)
+		}
+		if alive {
+			if err := e.launcher.Notify(ctx, review.ReviewerHandleID, spec); err != nil {
+				return TriggerResult{}, failRun(fmt.Errorf("notify reviewer: %w", err))
+			}
+			handleID = review.ReviewerHandleID
+		}
+	}
+	if handleID == "" {
+		h, err := e.launcher.Spawn(ctx, spec)
+		if err != nil {
+			return TriggerResult{}, failRun(fmt.Errorf("launch reviewer: %w", err))
+		}
+		handleID = h
+	}
+
+	// The reviewer is running; now record the pass.
+	review, err = e.upsertReview(ctx, worker, harness, pr.URL, handleID, now)
+	if err != nil {
+		return TriggerResult{}, err
+	}
+	run.ReviewID = review.ID
 	return TriggerResult{Run: run, ReviewerHandleID: handleID, Created: true}, nil
 }
 
 // Submit records the reviewer's result for a specific worker review pass: it
-// marks the run complete and stores the verdict and body. AO does not post the
-// review — the reviewer agent posts it to the PR itself.
-func (e *Engine) Submit(ctx context.Context, workerID domain.SessionID, runID string, verdict domain.ReviewVerdict, body string) (domain.ReviewRun, error) {
+// marks the run complete and stores the verdict, body, and the GitHub review id
+// the reviewer posted. AO does not post the review — the reviewer agent posts it
+// to the PR itself.
+//
+// On a changes_requested verdict, Submit also messages the worker session with
+// the review feedback directly, so the worker learns about it event-driven
+// rather than via the SCM poll loop (which never observes CHANGES_REQUESTED for
+// self-reviews or COMMENT-state reviews; issue #337). When a GitHub review id is
+// known, it is included so the worker knows exactly which review to address and
+// reply to.
+func (e *Engine) Submit(ctx context.Context, workerID domain.SessionID, runID string, verdict domain.ReviewVerdict, body, githubReviewID string) (domain.ReviewRun, error) {
 	if workerID == "" {
 		return domain.ReviewRun{}, fmt.Errorf("%w: worker session id is required", ErrInvalid)
 	}
@@ -303,7 +329,18 @@ func (e *Engine) Submit(ctx context.Context, workerID domain.SessionID, runID st
 		return domain.ReviewRun{}, fmt.Errorf("%w: review run %q is not running", ErrInvalid, runID)
 	}
 
-	updated, err := e.store.UpdateReviewRunResult(ctx, run.ID, domain.ReviewRunComplete, verdict, body)
+	// Notify the worker before marking the run complete. If the message fails,
+	// the run stays 'running' so a retried `ao review submit` runs again instead
+	// of tripping the status='running' guard above on an already-completed run. A
+	// message that lands but a DB write that then fails degrades to one extra
+	// nudge on retry — the same trade lifecycle's sendOnce makes.
+	if verdict == domain.VerdictChangesRequested {
+		if err := e.notifyWorkerChangesRequested(ctx, workerID, body, githubReviewID); err != nil {
+			return domain.ReviewRun{}, err
+		}
+	}
+
+	updated, err := e.store.UpdateReviewRunResult(ctx, run.ID, domain.ReviewRunComplete, verdict, body, githubReviewID)
 	if err != nil {
 		return domain.ReviewRun{}, err
 	}
@@ -313,7 +350,33 @@ func (e *Engine) Submit(ctx context.Context, workerID domain.SessionID, runID st
 	run.Status = domain.ReviewRunComplete
 	run.Verdict = verdict
 	run.Body = body
+	run.GithubReviewID = githubReviewID
 	return run, nil
+}
+
+// notifyWorkerChangesRequested injects the AO reviewer's feedback into the
+// worker's live agent pane via the same messenger lifecycle uses for SCM nudges.
+//
+// When the GitHub review id is known, the worker is asked to reply on that
+// review referencing its id with how it addressed the feedback and to resolve
+// the review comment threads it addressed. The reviewer posts inline comments
+// (per its prompt), so the per-finding threads are resolvable via `gh api`
+// GraphQL resolveReviewThread; the top-level review object itself is not
+// resolvable, hence the reply. The body is reviewer-authored text pasted into a
+// PTY, so it is sanitized first (matching the lifecycle reaction path).
+func (e *Engine) notifyWorkerChangesRequested(ctx context.Context, workerID domain.SessionID, body, githubReviewID string) error {
+	if e.messenger == nil {
+		return nil
+	}
+	msg := "An AO code reviewer requested changes on your PR. Review the feedback below and address it."
+	if githubReviewID != "" {
+		safeReviewID := domain.SanitizeControlChars(githubReviewID)
+		msg += fmt.Sprintf(" This feedback is GitHub review %s. Once you have addressed it, reply on that review referencing id %s with how you addressed it, then resolve the review comment threads you addressed.", safeReviewID, safeReviewID)
+	}
+	if body != "" {
+		msg += "\n\n" + domain.SanitizeControlChars(body)
+	}
+	return e.messenger.Send(ctx, workerID, msg)
 }
 
 // List returns a worker's review state: the live reviewer handle and its passes.

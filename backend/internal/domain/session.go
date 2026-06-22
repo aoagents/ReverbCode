@@ -30,6 +30,10 @@ type SessionMetadata struct {
 	RuntimeHandleID string `json:"runtimeHandleId,omitempty"`
 	AgentSessionID  string `json:"agentSessionId,omitempty"`
 	Prompt          string `json:"prompt,omitempty"`
+	// PreviewURL is the browser preview target the desktop app opens for this
+	// session. Set via `ao preview` (POST /sessions/{id}/preview); persisted so
+	// it survives a daemon restart. Empty means no preview has been requested.
+	PreviewURL string `json:"previewUrl,omitempty"`
 }
 
 // SessionRecord is the persistence shape. It intentionally stores only durable
@@ -59,6 +63,10 @@ type SessionRecord struct {
 // plus the derived display Status.
 type Session struct {
 	SessionRecord
-	Status           SessionStatus `json:"status"`
+	Status           SessionStatus `json:"status" enum:"working,pr_open,draft,ci_failed,review_pending,changes_requested,approved,mergeable,merged,needs_input,idle,terminated,no_signal"`
 	TerminalHandleID string        `json:"terminalHandleId,omitempty"`
+	// PRs are the session's attributed pull requests (one session can own many).
+	// They feed status derivation and are surfaced on the API read model. Not
+	// serialized here: the HTTP boundary maps them to the curated wire shape.
+	PRs []PRFacts `json:"-"`
 }

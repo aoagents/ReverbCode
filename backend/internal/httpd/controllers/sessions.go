@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/url"
+	"os"
+	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
-	"unicode"
 
 	"github.com/go-chi/chi/v5"
 
@@ -33,8 +36,9 @@ type SessionService interface {
 	RollbackSpawn(ctx context.Context, id domain.SessionID) (sessionsvc.RollbackOutcome, error)
 	Cleanup(ctx context.Context, project domain.ProjectID) (sessionsvc.CleanupOutcome, error)
 	Rename(ctx context.Context, id domain.SessionID, displayName string) error
+	SetPreview(ctx context.Context, id domain.SessionID, previewURL string) (domain.Session, error)
 	Send(ctx context.Context, id domain.SessionID, message string) error
-	ListPRs(ctx context.Context, id domain.SessionID) ([]domain.PRFacts, error)
+	ListPRSummaries(ctx context.Context, id domain.SessionID) ([]sessionsvc.PRSummary, error)
 	ClaimPR(ctx context.Context, id domain.SessionID, ref string, opts sessionsvc.ClaimPROptions) (sessionsvc.ClaimPRResult, error)
 }
 
@@ -60,6 +64,9 @@ func (c *SessionsController) Register(r chi.Router) {
 	r.Post("/sessions", c.spawn)
 	r.Post("/sessions/cleanup", c.cleanup)
 	r.Get("/sessions/{sessionId}", c.get)
+	r.Get("/sessions/{sessionId}/preview", c.preview)
+	r.Post("/sessions/{sessionId}/preview", c.setPreview)
+	r.Get("/sessions/{sessionId}/preview/files/*", c.previewFile)
 	r.Get("/sessions/{sessionId}/pr", c.listPRs)
 	r.Post("/sessions/{sessionId}/pr/claim", c.claimPR)
 	r.Patch("/sessions/{sessionId}", c.rename)
@@ -88,7 +95,7 @@ func (c *SessionsController) list(w http.ResponseWriter, r *http.Request) {
 		envelope.WriteError(w, r, err)
 		return
 	}
-	envelope.WriteJSON(w, http.StatusOK, ListSessionsResponse{Sessions: sessions})
+	envelope.WriteJSON(w, http.StatusOK, ListSessionsResponse{Sessions: sessionViews(sessions)})
 }
 
 func (c *SessionsController) spawn(w http.ResponseWriter, r *http.Request) {
@@ -117,7 +124,7 @@ func (c *SessionsController) spawn(w http.ResponseWriter, r *http.Request) {
 		envelope.WriteError(w, r, err)
 		return
 	}
-	envelope.WriteJSON(w, http.StatusCreated, SessionResponse{Session: sess})
+	envelope.WriteJSON(w, http.StatusCreated, SessionResponse{Session: sessionView(sess)})
 }
 
 func (c *SessionsController) get(w http.ResponseWriter, r *http.Request) {
@@ -130,7 +137,84 @@ func (c *SessionsController) get(w http.ResponseWriter, r *http.Request) {
 		envelope.WriteError(w, r, err)
 		return
 	}
-	envelope.WriteJSON(w, http.StatusOK, SessionResponse{Session: sess})
+	envelope.WriteJSON(w, http.StatusOK, SessionResponse{Session: sessionView(sess)})
+}
+
+func (c *SessionsController) preview(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "GET", "/api/v1/sessions/{sessionId}/preview")
+		return
+	}
+	sess, err := c.Svc.Get(r.Context(), sessionID(r))
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	entry, ok := discoverPreviewEntry(sess.Metadata.WorkspacePath)
+	res := SessionPreviewResponse{SessionID: sessionID(r)}
+	if ok {
+		res.Entry = entry
+		res.PreviewURL = previewFileURL(r, sessionID(r), entry)
+	}
+	envelope.WriteJSON(w, http.StatusOK, res)
+}
+
+func (c *SessionsController) previewFile(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "GET", "/api/v1/sessions/{sessionId}/preview/files/*")
+		return
+	}
+	sess, err := c.Svc.Get(r.Context(), sessionID(r))
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	file, ok := confinedPreviewPath(sess.Metadata.WorkspacePath, chi.URLParam(r, "*"))
+	if !ok {
+		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "PREVIEW_FILE_NOT_FOUND", "Preview file not found", nil)
+		return
+	}
+	http.ServeFile(w, r, file)
+}
+
+// setPreview persists the browser preview URL the desktop app opens for a
+// session. An explicit url is used verbatim; an empty url autodetects a static
+// entry point in the session workspace (index.html and friends) and serves it
+// through the preview/files route. The resolved URL is persisted and fans out a
+// session_updated CDC event so the dashboard's browser panel reacts live.
+func (c *SessionsController) setPreview(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/{sessionId}/preview")
+		return
+	}
+	var in SetSessionPreviewRequest
+	if err := decodeJSON(r, &in); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+		return
+	}
+	// Get first so a missing session is rejected with the normal 404 before any
+	// write, and so autodetect has the workspace path to probe.
+	sess, err := c.Svc.Get(r.Context(), sessionID(r))
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	// ponytail: no URL sanitization on preview target; agent-trusted for now
+	previewURL := strings.TrimSpace(in.URL)
+	if previewURL == "" {
+		entry, ok := discoverPreviewEntry(sess.Metadata.WorkspacePath)
+		if !ok {
+			envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "NO_PREVIEW_ENTRY", "No preview entry point found in session workspace", nil)
+			return
+		}
+		previewURL = previewFileURL(r, sessionID(r), entry)
+	}
+	updated, err := c.Svc.SetPreview(r.Context(), sessionID(r), previewURL)
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, SessionResponse{Session: sessionView(updated)})
 }
 
 func (c *SessionsController) listPRs(w http.ResponseWriter, r *http.Request) {
@@ -138,12 +222,12 @@ func (c *SessionsController) listPRs(w http.ResponseWriter, r *http.Request) {
 		apispec.NotImplemented(w, r, "GET", "/api/v1/sessions/{sessionId}/pr")
 		return
 	}
-	prs, err := c.Svc.ListPRs(r.Context(), sessionID(r))
+	prs, err := c.Svc.ListPRSummaries(r.Context(), sessionID(r))
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return
 	}
-	envelope.WriteJSON(w, http.StatusOK, ListSessionPRsResponse{SessionID: sessionID(r), PRs: sessionPRFacts(prs)})
+	envelope.WriteJSON(w, http.StatusOK, ListSessionPRsResponse{SessionID: sessionID(r), PRs: sessionPRSummaries(prs)})
 }
 
 func (c *SessionsController) claimPR(w http.ResponseWriter, r *http.Request) {
@@ -204,7 +288,7 @@ func (c *SessionsController) restore(w http.ResponseWriter, r *http.Request) {
 		envelope.WriteError(w, r, err)
 		return
 	}
-	envelope.WriteJSON(w, http.StatusOK, RestoreSessionResponse{OK: true, SessionID: sessionID(r), Session: sess})
+	envelope.WriteJSON(w, http.StatusOK, RestoreSessionResponse{OK: true, SessionID: sessionID(r), Session: sessionView(sess)})
 }
 
 func (c *SessionsController) kill(w http.ResponseWriter, r *http.Request) {
@@ -274,7 +358,7 @@ func (c *SessionsController) send(w http.ResponseWriter, r *http.Request) {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "MESSAGE_TOO_LONG", "Message is too long", nil)
 		return
 	}
-	message := stripUnsafeControlChars(in.Message)
+	message := domain.SanitizeControlChars(in.Message)
 	if err := c.Svc.Send(r.Context(), sessionID(r), message); err != nil {
 		envelope.WriteError(w, r, err)
 		return
@@ -348,7 +432,7 @@ func (c *SessionsController) listOrchestrators(w http.ResponseWriter, r *http.Re
 		envelope.WriteError(w, r, err)
 		return
 	}
-	envelope.WriteJSON(w, http.StatusOK, ListSessionsResponse{Sessions: sessions})
+	envelope.WriteJSON(w, http.StatusOK, ListSessionsResponse{Sessions: sessionViews(sessions)})
 }
 
 func (c *SessionsController) getOrchestrator(w http.ResponseWriter, r *http.Request) {
@@ -365,7 +449,7 @@ func (c *SessionsController) getOrchestrator(w http.ResponseWriter, r *http.Requ
 		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "SESSION_NOT_FOUND", "Unknown session", nil)
 		return
 	}
-	envelope.WriteJSON(w, http.StatusOK, SessionResponse{Session: sess})
+	envelope.WriteJSON(w, http.StatusOK, SessionResponse{Session: sessionView(sess)})
 }
 
 func sessionID(r *http.Request) domain.SessionID {
@@ -403,15 +487,6 @@ func parseSessionListFilter(r *http.Request) (sessionsvc.ListFilter, error) {
 	return filter, nil
 }
 
-func stripUnsafeControlChars(message string) string {
-	return strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) && r != '\n' && r != '\r' && r != '\t' {
-			return -1
-		}
-		return r
-	}, message)
-}
-
 func writeSessionPRError(w http.ResponseWriter, r *http.Request, err error) {
 	var claimed ports.PRClaimedByActiveSessionError
 	switch {
@@ -436,10 +511,85 @@ func writeSessionPRError(w http.ResponseWriter, r *http.Request, err error) {
 	}
 }
 
+func discoverPreviewEntry(workspacePath string) (string, bool) {
+	if strings.TrimSpace(workspacePath) == "" {
+		return "", false
+	}
+	for _, candidate := range []string{"index.html", "public/index.html", "dist/index.html", "build/index.html"} {
+		file, ok := confinedPreviewPath(workspacePath, candidate)
+		if !ok {
+			continue
+		}
+		info, err := os.Stat(file)
+		if err == nil && !info.IsDir() {
+			return candidate, true
+		}
+	}
+	return "", false
+}
+
+func confinedPreviewPath(workspacePath, assetPath string) (string, bool) {
+	root, err := filepath.Abs(workspacePath)
+	if err != nil || root == "" {
+		return "", false
+	}
+	clean := strings.TrimPrefix(path.Clean("/"+strings.TrimSpace(assetPath)), "/")
+	if clean == "" || clean == "." {
+		clean = "index.html"
+	}
+	file := filepath.Join(root, filepath.FromSlash(clean))
+	absFile, err := filepath.Abs(file)
+	if err != nil {
+		return "", false
+	}
+	rel, err := filepath.Rel(root, absFile)
+	if err != nil || rel == "." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." {
+		return "", false
+	}
+	return absFile, true
+}
+
+func previewFileURL(r *http.Request, id domain.SessionID, entry string) string {
+	u := url.URL{
+		Scheme: "http",
+		Host:   r.Host,
+		Path:   "/api/v1/sessions/" + url.PathEscape(string(id)) + "/preview/files/" + escapePath(entry),
+	}
+	return u.String()
+}
+
+func escapePath(raw string) string {
+	parts := strings.Split(raw, "/")
+	for i, part := range parts {
+		parts[i] = url.PathEscape(part)
+	}
+	return strings.Join(parts, "/")
+}
+
+func sessionView(s domain.Session) SessionView {
+	return SessionView{Session: s, Branch: s.Metadata.Branch, PreviewURL: s.Metadata.PreviewURL, PRs: sessionPRFacts(s.PRs)}
+}
+
+func sessionViews(sessions []domain.Session) []SessionView {
+	out := make([]SessionView, 0, len(sessions))
+	for _, s := range sessions {
+		out = append(out, sessionView(s))
+	}
+	return out
+}
+
 func sessionPRFacts(prs []domain.PRFacts) []SessionPRFacts {
 	out := make([]SessionPRFacts, 0, len(prs))
 	for _, pr := range prs {
 		out = append(out, SessionPRFacts{URL: pr.URL, Number: pr.Number, State: prState(pr), CI: pr.CI, Review: pr.Review, Mergeability: pr.Mergeability, ReviewComments: pr.ReviewComments, UpdatedAt: pr.UpdatedAt})
+	}
+	return out
+}
+
+func sessionPRSummaries(prs []sessionsvc.PRSummary) []SessionPRSummary {
+	out := make([]SessionPRSummary, 0, len(prs))
+	for _, pr := range prs {
+		out = append(out, NewSessionPRSummary(pr))
 	}
 	return out
 }

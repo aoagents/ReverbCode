@@ -1,16 +1,17 @@
 import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import {
-	type AttentionZone,
-	type WorkerDisplayStatus,
-	type WorkspaceSession,
-	attentionZone,
-	workerDisplayStatus,
-	workerSessions,
-} from "../types/workspace";
-import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
+import { Plus } from "lucide-react";
+import { type AttentionZone, type WorkspaceSession, attentionZone, workerSessions } from "../types/workspace";
+import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
+import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { DashboardSubhead } from "./DashboardSubhead";
+import { OrchestratorIcon } from "./icons";
+import { NewTaskDialog } from "./NewTaskDialog";
+import { spawnOrchestrator } from "../lib/spawn-orchestrator";
+import { prDiffSummary, sessionPRDisplaySummaries } from "../lib/pr-display";
 import { cn } from "../lib/utils";
+import { PRAttentionPanel, PRStatusStrip } from "./PRSummaryDisplay";
 
 type SessionsBoardProps = {
 	/** When set, the board shows only this project's sessions. */
@@ -63,20 +64,18 @@ const COLUMNS: Column[] = [
 	},
 ];
 
-const BADGE: Record<WorkerDisplayStatus, { label: string; className: string }> = {
-	working: { label: "Working", className: "text-working" },
-	needs_you: { label: "Needs input", className: "text-warning" },
-	ci_failed: { label: "CI failed", className: "text-error" },
-	mergeable: { label: "Ready", className: "text-success" },
-	done: { label: "Done", className: "text-passive" },
-};
-
 export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const navigate = useNavigate();
+	const queryClient = useQueryClient();
 	const workspaceQuery = useWorkspaceQuery();
 	const all = workspaceQuery.data ?? [];
 	const workspaces = projectId ? all.filter((w) => w.id === projectId) : all;
 	const sessions = workspaces.flatMap((w) => workerSessions(w.sessions));
+	const orchestrator = projectId
+		? workspaces[0]?.sessions.find((session) => session.kind === "orchestrator" && session.status !== "terminated")
+		: undefined;
+	const [isNewTaskOpen, setIsNewTaskOpen] = useState(false);
+	const [isSpawning, setIsSpawning] = useState(false);
 
 	const byZone = new Map<AttentionZone, WorkspaceSession[]>();
 	for (const session of sessions) {
@@ -94,9 +93,68 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			params: { projectId: session.workspaceId, sessionId: session.id },
 		});
 
+	const openOrchestrator = async () => {
+		if (!projectId) return;
+		if (orchestrator) {
+			void navigate({
+				to: "/projects/$projectId/sessions/$sessionId",
+				params: { projectId, sessionId: orchestrator.id },
+			});
+			return;
+		}
+		setIsSpawning(true);
+		try {
+			const sessionId = await spawnOrchestrator(projectId);
+			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+			void navigate({
+				to: "/projects/$projectId/sessions/$sessionId",
+				params: { projectId, sessionId },
+			});
+		} finally {
+			setIsSpawning(false);
+		}
+	};
+
+	const handleTaskCreated = async (sessionId: string) => {
+		if (!projectId) return;
+		await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+		void navigate({
+			to: "/projects/$projectId/sessions/$sessionId",
+			params: { projectId, sessionId },
+		});
+	};
+
+	const actions = projectId ? (
+		<>
+			<button
+				aria-label="New task"
+				className="dashboard-app-header__accent-btn"
+				onClick={() => setIsNewTaskOpen(true)}
+				type="button"
+			>
+				<Plus className="h-3.5 w-3.5" aria-hidden="true" />
+				New task
+			</button>
+			<button
+				aria-label={orchestrator ? "Orchestrator" : "Spawn Orchestrator"}
+				className="dashboard-app-header__primary-btn"
+				disabled={isSpawning}
+				onClick={() => void openOrchestrator()}
+				type="button"
+			>
+				<OrchestratorIcon className="h-3.5 w-3.5" aria-hidden="true" />
+				{isSpawning ? "Spawning..." : orchestrator ? "Orchestrator" : "Spawn Orchestrator"}
+			</button>
+		</>
+	) : undefined;
+
 	return (
 		<div className="flex h-full min-h-0 flex-col bg-background text-foreground">
-			<DashboardSubhead title="Board" subtitle="Live agent sessions flowing from work → review → merge." />
+			<DashboardSubhead
+				title="Board"
+				subtitle="Live agent sessions flowing from work → review → merge."
+				actions={actions}
+			/>
 
 			<div className="min-h-0 flex-1 overflow-hidden p-[18px]">
 				{workspaceQuery.isError ? (
@@ -154,6 +212,12 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 					)}
 				</div>
 			)}
+			<NewTaskDialog
+				open={isNewTaskOpen}
+				projectId={projectId}
+				onCreated={(sessionId) => void handleTaskCreated(sessionId)}
+				onOpenChange={setIsNewTaskOpen}
+			/>
 		</div>
 	);
 }
@@ -195,8 +259,10 @@ function ZoneColumn({
 }
 
 function SessionCard({ session, onOpen }: { session: WorkspaceSession; onOpen: () => void }) {
-	const badge = BADGE[workerDisplayStatus(session)];
-	const branch = session.branch || `session/${session.id}`;
+	const badge = sessionBadge(session);
+	const branch = session.branch || "";
+	const showBranch = branch !== "" && !sameLabel(branch, session.title) && !sameLabel(branch, session.id);
+	const prSummaries = sessionPRDisplaySummaries(session, useSessionScmSummary(session.id).data);
 	return (
 		<button
 			className="w-full rounded-[7px] border border-border bg-surface text-left transition-colors hover:border-border-strong"
@@ -208,20 +274,98 @@ function SessionCard({ session, onOpen }: { session: WorkspaceSession; onOpen: (
 					<span className={cn("h-[7px] w-[7px] rounded-full bg-current")} />
 					{badge.label}
 				</span>
-				<span className="ml-auto shrink-0 font-mono text-[10.5px] tracking-[0.04em] text-passive">{session.id}</span>
+				<span className="ml-auto shrink-0 font-mono text-[10.5px] tracking-[0.04em] text-passive">
+					{agentLabel(session.provider)}
+				</span>
 			</div>
 			<div
 				className={cn(
-					"px-[13px] pb-2.5 text-[13px] font-medium leading-[1.42] tracking-[-0.01em] text-foreground",
+					"px-[13px] text-[13px] font-medium leading-[1.42] tracking-[-0.01em] text-foreground",
+					showBranch ? "pb-2" : "pb-3",
 					"line-clamp-2 overflow-hidden",
 				)}
 			>
 				{session.title}
 			</div>
-			<div className="px-[13px] pb-2.5 font-mono text-[10.5px] text-passive">{branch}</div>
+			{showBranch && <div className="px-[13px] pb-2.5 font-mono text-[10.5px] text-passive">{branch}</div>}
 			<div className="border-t border-border px-[13px] py-2 font-mono text-[10.5px] text-passive">
-				{session.pullRequest ? `PR #${session.pullRequest.number} · ${session.pullRequest.state}` : "no PR yet"}
+				{prSummaries.length > 0 ? (
+					<div className="flex flex-col gap-2">
+						{prSummaries.map((prSummary, index) => (
+							<BoardPRSummary
+								className={cn(index > 0 && "border-t border-border pt-2")}
+								key={prSummary.number}
+								pr={prSummary}
+							/>
+						))}
+					</div>
+				) : (
+					"no PR yet"
+				)}
 			</div>
 		</button>
 	);
+}
+
+function BoardPRSummary({ className, pr }: { className?: string; pr: SessionPRSummary }) {
+	const diffSummary = prDiffSummary(pr);
+	return (
+		<div className={cn("flex min-w-0 flex-col gap-1", className)}>
+			<span>
+				PR #{pr.number} · {pr.state}
+			</span>
+			{diffSummary ? <span className="truncate">{diffSummary}</span> : null}
+			<PRStatusStrip pr={pr} />
+			<PRAttentionPanel className="mt-1.5 pt-1.5" interactiveLinks={false} maxItems={2} pr={pr} />
+		</div>
+	);
+}
+
+function sameLabel(a: string, b: string): boolean {
+	const normalize = (value: string) =>
+		value
+			.toLowerCase()
+			.replace(/^(feat|fix|chore|refactor|session)\//, "")
+			.replace(/[^a-z0-9]+/g, "");
+	return normalize(a) === normalize(b);
+}
+
+function agentLabel(provider: WorkspaceSession["provider"]): string {
+	switch (provider) {
+		case "claude-code":
+			return "Claude";
+		case "opencode":
+			return "OpenCode";
+		default:
+			return provider;
+	}
+}
+
+function sessionBadge(session: WorkspaceSession): { label: string; className: string } {
+	switch (session.status) {
+		case "needs_input":
+			return { label: "Input needed", className: "text-warning" };
+		case "no_signal":
+			return { label: "No signal", className: "text-passive" };
+		case "ci_failed":
+			return { label: "CI failed", className: "text-error" };
+		case "changes_requested":
+			return { label: "Changes requested", className: "text-warning" };
+		case "review_pending":
+			return { label: "Review pending", className: "text-muted-foreground" };
+		case "draft":
+			return { label: "Draft PR", className: "text-muted-foreground" };
+		case "pr_open":
+			return { label: "PR open", className: "text-muted-foreground" };
+		case "approved":
+			return { label: "Approved", className: "text-success" };
+		case "mergeable":
+			return { label: "Ready", className: "text-success" };
+		case "merged":
+			return { label: "Merged", className: "text-passive" };
+		case "terminated":
+			return { label: "Terminated", className: "text-passive" };
+		default:
+			return { label: "Working", className: "text-working" };
+	}
 }

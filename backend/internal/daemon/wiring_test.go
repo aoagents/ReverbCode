@@ -11,6 +11,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/zellij"
+	telemetryadapter "github.com/aoagents/agent-orchestrator/backend/internal/adapters/telemetry"
 	"github.com/aoagents/agent-orchestrator/backend/internal/cdc"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -78,8 +79,7 @@ func TestWiring_WriteFlowsToBroadcaster(t *testing.T) {
 
 // TestWiring_AgentResolverResolvesRealAdapters asserts buildAgentResolver wires a
 // real registry-backed per-session resolver: each harness resolves to the
-// matching registered adapter, an empty harness falls back to the AO_AGENT
-// default, and an unknown harness misses.
+// matching registered adapter, while empty and unknown harnesses miss.
 func TestWiring_AgentResolverResolvesRealAdapters(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	resolver, err := buildAgentResolver("", log) // empty default → claude-code
@@ -113,7 +113,6 @@ func TestWiring_AgentResolverResolvesRealAdapters(t *testing.T) {
 		{domain.HarnessVibe, "vibe"},
 		{domain.HarnessPi, "pi"},
 		{domain.HarnessAutohand, "autohand"},
-		{"", config.DefaultAgent}, // empty harness falls back to the AO_AGENT default
 	} {
 		agent, ok := resolver.Agent(tc.harness)
 		if !ok {
@@ -129,6 +128,9 @@ func TestWiring_AgentResolverResolvesRealAdapters(t *testing.T) {
 	}
 	if _, ok := resolver.Agent("definitely-not-an-agent"); ok {
 		t.Fatal("unknown harness resolved to an agent; want a miss")
+	}
+	if _, ok := resolver.Agent(""); ok {
+		t.Fatal("empty harness resolved to an agent; want a miss")
 	}
 }
 
@@ -149,7 +151,7 @@ func TestWiring_StartSessionBuildsSessionService(t *testing.T) {
 
 	runtime := zellij.New(zellij.Options{})
 	messenger := newSessionMessenger(store, runtime, log)
-	svc, reviewSvc, err := startSession(cfg, runtime, store, lcm, messenger, log)
+	svc, reviewSvc, err := startSession(cfg, runtime, store, lcm, messenger, telemetryadapter.NoopSink{}, log)
 	if err != nil {
 		t.Fatalf("startSession: %v", err)
 	}
@@ -318,7 +320,7 @@ func TestWiring_StartLifecycleThreadsMessengerIntoLCM(t *testing.T) {
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	messenger := &captureMessenger{}
-	stack := startLifecycle(ctx, store, zellij.New(zellij.Options{}), messenger, nil, log)
+	stack := startLifecycle(ctx, store, zellij.New(zellij.Options{}), messenger, nil, nil, log)
 	t.Cleanup(stack.Stop)
 	t.Cleanup(cancel)
 

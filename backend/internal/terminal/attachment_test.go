@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"sync"
 	"testing"
 	"time"
 
@@ -13,7 +14,17 @@ import (
 func testLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
 func newTestAttachment(src PTYSource, spawn spawnFunc, onData func([]byte), onExit func()) *attachment {
-	return newAttachment("t1", ports.RuntimeHandle{ID: "t1"}, src, spawn, onData, onExit, testLogger())
+	return newTestAttachmentWithOpen(src, spawn, nil, onData, onExit)
+}
+
+func newTestAttachmentWithOpen(src PTYSource, spawn spawnFunc, onOpen func(), onData func([]byte), onExit func()) *attachment {
+	return newAttachment("t1", ports.RuntimeHandle{ID: "t1"}, src, spawn, onOpen, onData, onExit, testLogger())
+}
+
+func currentPTY(a *attachment) ptyProcess {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.pty
 }
 
 func TestAttachmentStreamsOutputToSink(t *testing.T) {
@@ -52,6 +63,60 @@ func TestAttachmentWriteAndResizeReachPTY(t *testing.T) {
 		rs := pty.resizeCalls()
 		return len(rs) == 1 && rs[0] == [2]uint16{24, 80}
 	})
+}
+
+func TestAttachmentSignalsOpenOnlyAfterPTYIsPublished(t *testing.T) {
+	src := &fakeSource{alive: true}
+	pty := newFakePTY()
+	sp := &fakeSpawner{ptys: []*fakePTY{pty}}
+
+	opened := make(chan bool, 1)
+	var a *attachment
+	a = newTestAttachmentWithOpen(src, sp.spawn, func() {
+		opened <- currentPTY(a) == pty
+	}, nil, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go a.run(ctx)
+
+	select {
+	case sawPTY := <-opened:
+		if !sawPTY {
+			t.Fatal("open callback fired before the PTY was published")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("open callback did not fire")
+	}
+}
+
+func TestAttachmentBuffersInputUntilPTYReady(t *testing.T) {
+	src := &fakeSource{alive: true}
+	pty := newFakePTY()
+	spawnStarted := make(chan struct{})
+	releaseSpawn := make(chan struct{})
+	spawn := func(context.Context, []string, []string, uint16, uint16) (ptyProcess, error) {
+		close(spawnStarted)
+		<-releaseSpawn
+		return pty, nil
+	}
+	a := newTestAttachment(src, spawn, nil, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go a.run(ctx)
+
+	select {
+	case <-spawnStarted:
+	case <-time.After(time.Second):
+		t.Fatal("spawn was not reached")
+	}
+	if err := a.write([]byte("hello\n")); err != nil {
+		t.Fatalf("write before PTY ready: %v", err)
+	}
+	close(releaseSpawn)
+
+	eventually(t, time.Second, func() bool { return string(pty.writtenBytes()) == "hello\n" })
 }
 
 // A size requested before the PTY exists (the open frame's cols/rows, or a
@@ -282,5 +347,68 @@ func TestAttachmentCloseDoesNotFireExit(t *testing.T) {
 	}
 	if got := sp.calls(); got != 1 {
 		t.Fatalf("close must stop re-attaching, got %d spawns", got)
+	}
+}
+
+type closeOrderPTY struct {
+	*fakePTY
+	ctx    context.Context
+	before chan struct{}
+	after  chan struct{}
+	once   sync.Once
+}
+
+func (p *closeOrderPTY) Close() error {
+	p.once.Do(func() {
+		select {
+		case <-p.ctx.Done():
+			close(p.after)
+		default:
+			close(p.before)
+		}
+	})
+	return p.fakePTY.Close()
+}
+
+func TestAttachmentCloseClosesPTYBeforeCancel(t *testing.T) {
+	src := &fakeSource{alive: true}
+	beforeCancel := make(chan struct{})
+	afterCancel := make(chan struct{})
+	var spawnCtx context.Context
+	spawn := func(ctx context.Context, _ []string, _ []string, _, _ uint16) (ptyProcess, error) {
+		spawnCtx = ctx
+		return &closeOrderPTY{
+			fakePTY: newFakePTY(),
+			ctx:     ctx,
+			before:  beforeCancel,
+			after:   afterCancel,
+		}, nil
+	}
+	a := newTestAttachment(src, spawn, nil, nil)
+
+	done := make(chan struct{})
+	go func() {
+		a.run(context.Background())
+		close(done)
+	}()
+	eventually(t, time.Second, func() bool { return currentPTY(a) != nil })
+
+	a.close()
+	select {
+	case <-beforeCancel:
+	case <-afterCancel:
+		t.Fatal("attachment cancelled the run context before closing the PTY")
+	case <-time.After(time.Second):
+		t.Fatal("PTY was not closed")
+	}
+	select {
+	case <-spawnCtx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("close must still cancel the attach context")
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("run must return after close")
 	}
 }

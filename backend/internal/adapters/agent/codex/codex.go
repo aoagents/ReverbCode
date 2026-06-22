@@ -73,12 +73,13 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	appendHookTrustBypassFlag(&cmd)
 	appendApprovalFlags(&cmd, cfg.Permissions)
 	appendSessionHookFlags(&cmd)
+	appendTerminalCompatibilityFlags(&cmd)
 	appendWorkspaceTrustFlag(&cmd, cfg.WorkspacePath)
 
 	if cfg.SystemPromptFile != "" {
 		cmd = append(cmd, "-c", "model_instructions_file="+cfg.SystemPromptFile)
 	} else if cfg.SystemPrompt != "" {
-		cmd = append(cmd, "-c", "developer_instructions="+cfg.SystemPrompt)
+		cmd = append(cmd, "-c", "developer_instructions="+codexTOMLConfigString(cfg.SystemPrompt))
 	}
 
 	if cfg.Prompt != "" {
@@ -122,6 +123,7 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	appendHookTrustBypassFlag(&cmd)
 	appendApprovalFlags(&cmd, cfg.Permissions)
 	appendSessionHookFlags(&cmd)
+	appendTerminalCompatibilityFlags(&cmd)
 	appendWorkspaceTrustFlag(&cmd, cfg.Session.WorkspacePath)
 	cmd = append(cmd, agentSessionID)
 	return cmd, true, nil
@@ -154,10 +156,10 @@ func ResolveCodexBinary(ctx context.Context) (string, error) {
 	}
 
 	if runtime.GOOS == "windows" {
-		for _, name := range []string{"codex.cmd", "codex.exe", "codex"} {
+		for _, name := range []string{"codex.exe", "codex.cmd", "codex"} {
 			path, err := exec.LookPath(name)
 			if err == nil && path != "" {
-				return path, nil
+				return resolveNativeWindowsCodex(path), nil
 			}
 			if err := ctx.Err(); err != nil {
 				return "", err
@@ -166,9 +168,11 @@ func ResolveCodexBinary(ctx context.Context) (string, error) {
 
 		candidates := []string{}
 		if appData := os.Getenv("APPDATA"); appData != "" {
+			shim := filepath.Join(appData, "npm", "codex.cmd")
+			candidates = append(candidates, windowsNativeCodexCandidatesForShim(shim)...)
 			candidates = append(candidates,
-				filepath.Join(appData, "npm", "codex.cmd"),
 				filepath.Join(appData, "npm", "codex.exe"),
+				shim,
 			)
 		}
 		if home, err := os.UserHomeDir(); err == nil {
@@ -176,7 +180,7 @@ func ResolveCodexBinary(ctx context.Context) (string, error) {
 		}
 		for _, candidate := range candidates {
 			if fileExists(candidate) {
-				return candidate, nil
+				return resolveNativeWindowsCodex(candidate), nil
 			}
 			if err := ctx.Err(); err != nil {
 				return "", err
@@ -211,6 +215,26 @@ func ResolveCodexBinary(ctx context.Context) (string, error) {
 	}
 
 	return "", fmt.Errorf("codex: %w", ports.ErrAgentBinaryNotFound)
+}
+
+func resolveNativeWindowsCodex(path string) string {
+	if runtime.GOOS != "windows" || !strings.EqualFold(filepath.Ext(path), ".cmd") {
+		return path
+	}
+	for _, candidate := range windowsNativeCodexCandidatesForShim(path) {
+		if fileExists(candidate) {
+			return candidate
+		}
+	}
+	return path
+}
+
+func windowsNativeCodexCandidatesForShim(shim string) []string {
+	dir := filepath.Dir(shim)
+	return []string{
+		filepath.Join(dir, "node_modules", "@openai", "codex", "node_modules", "@openai", "codex-win32-x64", "vendor", "x86_64-pc-windows-msvc", "bin", "codex.exe"),
+		filepath.Join(dir, "node_modules", "@openai", "codex", "bin", "codex.exe"),
+	}
 }
 
 func (p *Plugin) codexBinary(ctx context.Context) (string, error) {
@@ -270,10 +294,19 @@ func appendHookTrustBypassFlag(cmd *[]string) {
 	*cmd = append(*cmd, "--dangerously-bypass-hook-trust")
 }
 
+func appendTerminalCompatibilityFlags(cmd *[]string) {
+	if runtime.GOOS == "windows" {
+		*cmd = append(*cmd, "--no-alt-screen")
+	}
+}
+
 func appendApprovalFlags(cmd *[]string, permissions ports.PermissionMode) {
 	switch normalizePermissionMode(permissions) {
 	case ports.PermissionModeDefault:
-		// No flag: defer to the user's Codex config/default behavior.
+		// Codex sessions are AO-managed and run headlessly inside a terminal
+		// mux pane; default to no approval prompts unless project settings
+		// explicitly choose a more restrictive mode.
+		*cmd = append(*cmd, "--dangerously-bypass-approvals-and-sandbox")
 	case ports.PermissionModeAcceptEdits:
 		*cmd = append(*cmd, "--ask-for-approval", "on-request")
 	case ports.PermissionModeAuto:

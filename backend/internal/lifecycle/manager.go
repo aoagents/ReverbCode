@@ -18,6 +18,11 @@ import (
 type sessionStore interface {
 	GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error)
 	UpdateSession(ctx context.Context, rec domain.SessionRecord) error
+	// ListPRsBySession returns every PR row tracked for the session. The
+	// reducer reads it to apply the multi-PR completion rule (terminate only
+	// when no open PR remains and at least one merged) and to suppress
+	// merge-conflict nudges on PRs stacked behind an open parent.
+	ListPRsBySession(ctx context.Context, id domain.SessionID) ([]domain.PullRequest, error)
 	// GetPRLastNudgeSignature / UpdatePRLastNudgeSignature persist the
 	// reaction-dedup map so nudges survive a daemon restart.
 	GetPRLastNudgeSignature(ctx context.Context, prURL string) (string, error)
@@ -37,6 +42,11 @@ func WithNotificationSink(sink notificationSink) Option {
 	return func(m *Manager) { m.notifications = sink }
 }
 
+// WithTelemetry wires lifecycle activity transitions to the shared telemetry sink.
+func WithTelemetry(sink ports.EventSink) Option {
+	return func(m *Manager) { m.telemetry = sink }
+}
+
 // Manager reduces runtime, activity, spawn, and termination observations into durable session facts.
 // It also owns agent nudges caused by PR observations, including merge-conflict, CI-failure, and review-feedback prompts.
 type Manager struct {
@@ -44,10 +54,11 @@ type Manager struct {
 	messenger     ports.AgentMessenger
 	notifications notificationSink
 
-	mu     sync.Mutex
-	window time.Duration
-	clock  func() time.Time
-	react  reactionState
+	mu        sync.Mutex
+	window    time.Duration
+	clock     func() time.Time
+	react     reactionState
+	telemetry ports.EventSink
 }
 
 // New builds a Lifecycle Manager over the session store it writes and the messenger it uses for agent nudges.
@@ -119,6 +130,8 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 		m.mu.Unlock()
 		return nil
 	}
+	prevState := rec.Activity.State
+	prevAt := rec.Activity.LastActivityAt
 	next := rec
 	act := domain.Activity{State: s.State, LastActivityAt: timeOr(s.Timestamp, now)}
 	// A same-state repeat is still a write when it is the FIRST signal for
@@ -151,9 +164,59 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 			SessionDisplayName: next.DisplayName,
 		}
 	}
+	waitingEvents := m.waitingInputEvents(next, prevState, prevAt, now)
 	m.mu.Unlock()
+	for _, ev := range waitingEvents {
+		m.emitTelemetry(ctx, ev)
+	}
 	m.emitNotification(ctx, intent)
 	return nil
+}
+
+func (m *Manager) waitingInputEvents(next domain.SessionRecord, prevState domain.ActivityState, prevAt, now time.Time) []ports.TelemetryEvent {
+	if m.telemetry == nil {
+		return nil
+	}
+	projectID := next.ProjectID
+	sessionID := next.ID
+	var events []ports.TelemetryEvent
+	if prevState != domain.ActivityWaitingInput && next.Activity.State == domain.ActivityWaitingInput && !next.IsTerminated {
+		events = append(events, ports.TelemetryEvent{
+			Name:       "ao.session.waiting_input_entered",
+			Source:     "lifecycle",
+			OccurredAt: now.UTC(),
+			Level:      ports.TelemetryLevelInfo,
+			ProjectID:  &projectID,
+			SessionID:  &sessionID,
+			Payload: map[string]any{
+				"state": string(next.Activity.State),
+			},
+		})
+	}
+	if prevState == domain.ActivityWaitingInput && next.Activity.State != domain.ActivityWaitingInput {
+		payload := map[string]any{
+			"state":     string(next.Activity.State),
+			"dwell_ms":  now.Sub(prevAt).Milliseconds(),
+			"exited_to": string(next.Activity.State),
+		}
+		events = append(events, ports.TelemetryEvent{
+			Name:       "ao.session.waiting_input_exited",
+			Source:     "lifecycle",
+			OccurredAt: now.UTC(),
+			Level:      ports.TelemetryLevelInfo,
+			ProjectID:  &projectID,
+			SessionID:  &sessionID,
+			Payload:    payload,
+		})
+	}
+	return events
+}
+
+func (m *Manager) emitTelemetry(ctx context.Context, ev ports.TelemetryEvent) {
+	if m.telemetry == nil {
+		return
+	}
+	m.telemetry.Emit(ctx, ev)
 }
 
 func (m *Manager) emitNotification(ctx context.Context, intent *ports.NotificationIntent) {

@@ -39,6 +39,10 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 		WorkspacePath: inv.WorkspacePath,
 		Prompt:        inv.Prompt,
 		SystemPrompt:  inv.SystemPrompt,
+		// The reviewer runs headless with no human to approve tool prompts; it
+		// is read-only by prompt and must run gh/ao on its own, so bypass the
+		// permission gate rather than stall on the first prompt.
+		Permissions: ports.PermissionModeBypassPermissions,
 	})
 	if err != nil {
 		return ports.ReviewCommandSpec{}, err

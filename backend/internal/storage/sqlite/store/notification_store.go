@@ -62,6 +62,31 @@ func (s *Store) ListUnreadNotifications(ctx context.Context, limit int) ([]domai
 	return notificationsFromGen(rows), nil
 }
 
+// MarkNotificationRead marks one unread notification read.
+func (s *Store) MarkNotificationRead(ctx context.Context, id string) (domain.NotificationRecord, bool, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	row, err := s.qw.MarkNotificationRead(ctx, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.NotificationRecord{}, false, nil
+	}
+	if err != nil {
+		return domain.NotificationRecord{}, false, fmt.Errorf("mark notification read %s: %w", id, err)
+	}
+	return notificationFromGen(row), true, nil
+}
+
+// MarkAllNotificationsRead marks every unread notification read.
+func (s *Store) MarkAllNotificationsRead(ctx context.Context) ([]domain.NotificationRecord, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	rows, err := s.qw.MarkAllNotificationsRead(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("mark all notifications read: %w", err)
+	}
+	return notificationsFromGen(rows), nil
+}
+
 func (s *Store) getUnreadNotificationByDedupe(ctx context.Context, rec domain.NotificationRecord) (domain.NotificationRecord, bool, error) {
 	row, err := s.qw.GetUnreadNotificationByDedupe(ctx, gen.GetUnreadNotificationByDedupeParams{
 		SessionID: rec.SessionID,

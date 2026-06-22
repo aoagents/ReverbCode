@@ -1,17 +1,36 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
-import { GitBranch, GitCommitHorizontal, GitPullRequest, Plus, Square, Trash2 } from "lucide-react";
+import {
+	AlertCircle,
+	ArrowUpRight,
+	CheckCircle2,
+	CircleMinus,
+	GitPullRequest,
+	Play,
+	Shield,
+	Terminal,
+} from "lucide-react";
 import type { components } from "../../api/schema";
-import { apiClient } from "../lib/api-client";
+import { apiClient, apiErrorMessage } from "../lib/api-client";
+import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { formatTimeCompact } from "../lib/format-time";
+import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
+import { prStatusRows, sessionPRDisplaySummaries, type PRDisplayTone } from "../lib/pr-display";
 import type { SessionStatus, WorkspaceSession } from "../types/workspace";
-import { workerDisplayStatus } from "../types/workspace";
+import { sortedPRs, workerDisplayStatus } from "../types/workspace";
+import { BrowserPanelView } from "./BrowserPanel";
+import type { BrowserViewModel } from "../hooks/useBrowserView";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { cn } from "../lib/utils";
+import { PRAttentionPanel, PRSummaryMeta } from "./PRSummaryDisplay";
 
-type PRFacts = components["schemas"]["SessionPRFacts"];
-type InspectorView = "summary" | "changes" | "browser";
+type ProjectConfig = components["schemas"]["ProjectConfig"];
+type ReviewRun = components["schemas"]["ReviewRun"];
+type ReviewsResponse = components["schemas"]["ListReviewsResponse"];
+type OpenReviewerTerminal = (target: { handleId: string; harness: string }) => void;
+
+export type InspectorView = "summary" | "reviews" | "browser";
 
 const VIEWS: { id: InspectorView; label: string; icon: ReactNode }[] = [
 	{
@@ -29,15 +48,11 @@ const VIEWS: { id: InspectorView; label: string; icon: ReactNode }[] = [
 		),
 	},
 	{
-		id: "changes",
-		label: "Changes",
+		id: "reviews",
+		label: "Reviews",
 		icon: (
 			<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
-				<path d="M12 3v6" />
-				<path d="M9 6h6" />
-				<path d="M11 18H7a2 2 0 0 1-2-2V6" />
-				<path d="M13 15h4" />
-				<path d="M19 9v7a2 2 0 0 1-2 2h-2" />
+				<path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
 			</svg>
 		),
 	},
@@ -54,7 +69,7 @@ const VIEWS: { id: InspectorView; label: string; icon: ReactNode }[] = [
 	},
 ];
 
-const prStateTone: Record<PRFacts["state"], string> = {
+const prStateTone: Record<SessionPRSummary["state"], string> = {
 	open: "border-success/40 bg-success/10 text-success",
 	draft: "border-border bg-raised text-muted-foreground",
 	merged: "border-accent/40 bg-accent-weak text-accent",
@@ -62,11 +77,34 @@ const prStateTone: Record<PRFacts["state"], string> = {
 };
 
 /**
- * Tabbed inspector rail beside the terminal — cloned from agent-orchestrator
- * SessionInspector (Summary · Changes · Browser).
+ * Tabbed inspector rail beside the terminal (Summary · Reviews · Browser).
  */
-export function SessionInspector({ session }: { session?: WorkspaceSession }) {
-	const [view, setView] = useState<InspectorView>("summary");
+export function SessionInspector({
+	session,
+	onOpenReviewerTerminal,
+	browserPoppedOut = false,
+	isInspectorVisible = true,
+	onToggleBrowserPopOut,
+	browserView,
+	view: viewProp,
+	onViewChange,
+}: {
+	session?: WorkspaceSession;
+	onOpenReviewerTerminal?: OpenReviewerTerminal;
+	browserPoppedOut?: boolean;
+	isInspectorVisible?: boolean;
+	onToggleBrowserPopOut?: (next: boolean) => void;
+	browserView?: BrowserViewModel;
+	/** Controlled active tab. Omit to let the inspector own its own selection. */
+	view?: InspectorView;
+	onViewChange?: (view: InspectorView) => void;
+}) {
+	const [internalView, setInternalView] = useState<InspectorView>("summary");
+	const view = viewProp ?? internalView;
+	const setView = (next: InspectorView) => {
+		setInternalView(next);
+		onViewChange?.(next);
+	};
 
 	if (!session) {
 		return (
@@ -98,16 +136,34 @@ export function SessionInspector({ session }: { session?: WorkspaceSession }) {
 
 			<div className="session-inspector__body">
 				{view === "summary" ? <SummaryView session={session} /> : null}
-				{view === "changes" ? <ChangesView session={session} /> : null}
-				{view === "browser" ? <BrowserView /> : null}
+				{view === "reviews" ? <ReviewsView onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} /> : null}
+				{view === "browser" ? (
+					<BrowserView
+						browserPoppedOut={browserPoppedOut}
+						browserView={browserView}
+						isActive={isInspectorVisible && !browserPoppedOut}
+						onTogglePopOut={onToggleBrowserPopOut}
+						session={session}
+					/>
+				) : null}
 			</div>
 		</aside>
 	);
 }
 
-function Section({ title, action, children }: { title: string; action?: ReactNode; children: ReactNode }) {
+function Section({
+	action,
+	children,
+	className,
+	title,
+}: {
+	action?: ReactNode;
+	children: ReactNode;
+	className?: string;
+	title: string;
+}) {
 	return (
-		<section className="inspector-section">
+		<section className={cn("inspector-section", className)}>
 			<div className="inspector-section__head">
 				<span>{title}</span>
 				{action ?? null}
@@ -118,62 +174,21 @@ function Section({ title, action, children }: { title: string; action?: ReactNod
 }
 
 function SummaryView({ session }: { session: WorkspaceSession }) {
-	const hasPr = Boolean(session.pullRequest);
-	const query = useQuery({
-		queryKey: ["session-pr", session.id],
-		enabled: hasPr,
-		queryFn: async () => {
-			const { data, error } = await apiClient.GET("/api/v1/sessions/{sessionId}/pr", {
-				params: { path: { sessionId: session.id } },
-			});
-			if (error) return [] as PRFacts[];
-			return data?.prs ?? [];
-		},
-	});
-	const prFacts = query.data?.[0];
+	const query = useSessionScmSummary(session.id);
+	const prSummaries = sessionPRDisplaySummaries(session, query.data);
+	const prSectionTitle = prSummaries.length > 1 ? `Pull requests (${prSummaries.length})` : "Pull request";
 	const branchLabel = session.branch || `session/${session.id}`;
 
 	return (
 		<div role="tabpanel">
-			<Section
-				title="Pull request"
-				action={
-					prFacts?.url ? (
-						<a href={prFacts.url} target="_blank" rel="noopener noreferrer" className="inspector-section__link">
-							Open ↗
-						</a>
-					) : undefined
-				}
-			>
-				{!hasPr ? (
+			<Section title={prSectionTitle}>
+				{prSummaries.length === 0 ? (
 					<p className="inspector-empty">No pull request opened yet.</p>
-				) : query.isLoading ? (
-					<p className="inspector-empty">Loading pull request…</p>
 				) : (
 					<div className="flex flex-col gap-2">
-						<div className="flex items-center gap-2">
-							<GitPullRequest className="h-3.5 w-3.5 shrink-0 text-passive" aria-hidden="true" />
-							<span className="text-[12.5px] font-medium text-foreground">
-								PR #{prFacts?.number ?? session.pullRequest?.number}
-							</span>
-							{prFacts ? (
-								<Badge
-									variant="outline"
-									className={cn("ml-auto h-5 px-1.5 text-[10px] font-medium", prStateTone[prFacts.state])}
-								>
-									{prFacts.state}
-								</Badge>
-							) : null}
-						</div>
-						{prFacts ? (
-							<dl className="inspector-kv">
-								<Row k="CI" v={prFacts.ci || "—"} mono />
-								<Row k="Merge" v={prFacts.mergeability || "—"} mono />
-								<Row k="Review" v={prFacts.review || "—"} mono />
-							</dl>
-						) : (
-							<p className="inspector-empty">No enriched PR facts yet.</p>
-						)}
+						{prSummaries.map((pr) => (
+							<PRSummaryCard key={pr.number} pr={pr} />
+						))}
 					</div>
 				)}
 			</Section>
@@ -182,7 +197,7 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 				<ActivityTimeline session={session} />
 			</Section>
 
-			<Section title="Overview">
+			<Section className="inspector-section--separated" title="Overview">
 				<dl className="inspector-kv">
 					<Row k="Agent" v={session.provider} mono />
 					<Row k="Branch" v={branchLabel} mono />
@@ -192,6 +207,61 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 			</Section>
 		</div>
 	);
+}
+
+function PRSummaryCard({ pr }: { pr: SessionPRSummary }) {
+	return (
+		<div className="rounded-[7px] border border-border bg-surface px-3 py-2.5">
+			<div className="flex items-center gap-2">
+				<GitPullRequest className="h-3.5 w-3.5 shrink-0 text-passive" aria-hidden="true" />
+				<span className="text-[12.5px] font-medium text-foreground">PR #{pr.number}</span>
+				<Badge variant="outline" className={cn("h-5 px-1.5 text-[10px] font-medium", prStateTone[pr.state])}>
+					{pr.state}
+				</Badge>
+				<a
+					href={pr.htmlUrl || pr.url}
+					target="_blank"
+					rel="noopener noreferrer"
+					className="ml-auto inline-flex items-center gap-0.5 text-[11px] font-medium text-accent hover:underline"
+				>
+					<span>Open</span>
+					<ArrowUpRight aria-hidden="true" className="h-3 w-3" strokeWidth={2} />
+				</a>
+			</div>
+			{pr.title ? <div className="mt-2 text-[12px] font-medium leading-snug text-foreground">{pr.title}</div> : null}
+			<PRSummaryMeta className="mt-1.5" pr={pr} />
+			<PRStatusStack className="mt-2" pr={pr} />
+			<PRAttentionPanel pr={pr} />
+		</div>
+	);
+}
+
+function PRStatusStack({ className, pr }: { className?: string; pr: SessionPRSummary }) {
+	return (
+		<div className={cn("flex flex-col gap-0.5 font-mono text-[10.5px] leading-4", className)}>
+			{prStatusRows(pr).map((row) => (
+				<div key={row.key} className="min-w-0 truncate">
+					<span className="text-passive">{row.label}</span>{" "}
+					<span className={cn("font-medium", inspectorStatusToneClass(row.tone))}>{row.value}</span>
+				</div>
+			))}
+		</div>
+	);
+}
+
+function inspectorStatusToneClass(tone: PRDisplayTone): string {
+	switch (tone) {
+		case "success":
+			return "text-success";
+		case "warning":
+			return "text-warning";
+		case "error":
+			return "text-error";
+		case "neutral":
+			return "text-muted-foreground";
+		case "passive":
+			return "text-passive";
+	}
 }
 
 type TimelineTone = "now" | "good" | "warn" | "neutral";
@@ -213,12 +283,12 @@ function ActivityTimeline({ session }: { session: WorkspaceSession }) {
 		ts: formatTimeCompact(session.updatedAt),
 	});
 
-	if (session.pullRequest) {
+	for (const pr of sortedPRs(session)) {
 		events.push({
 			tone: "good",
 			node: (
 				<>
-					Opened <b>PR #{session.pullRequest.number}</b>
+					Opened <b>PR #{pr.number}</b>
 				</>
 			),
 			ts: null,
@@ -257,7 +327,9 @@ function activityDetail(status: SessionStatus): string | null {
 		case "idle":
 			return "Session idle";
 		case "needs_input":
-			return "Waiting for input";
+			return "Waiting for your input";
+		case "no_signal":
+			return "No recent agent signal";
 		case "working":
 			return null;
 		default:
@@ -270,10 +342,12 @@ const STATUS_PILL: Record<
 	{ label: string; tone: string; breathe: boolean }
 > = {
 	working: { label: "Working", tone: "var(--orange)", breathe: true },
-	needs_you: { label: "Needs input", tone: "var(--amber)", breathe: false },
+	needs_you: { label: "Input needed", tone: "var(--amber)", breathe: false },
 	ci_failed: { label: "CI failed", tone: "var(--red)", breathe: false },
+	no_signal: { label: "No signal", tone: "var(--fg-muted)", breathe: false },
 	mergeable: { label: "Ready", tone: "var(--green)", breathe: false },
 	done: { label: "Done", tone: "var(--fg-muted)", breathe: false },
+	unknown: { label: "Unknown", tone: "var(--fg-muted)", breathe: false },
 	idle: { label: "Idle", tone: "var(--fg-muted)", breathe: false },
 };
 
@@ -298,85 +372,264 @@ function InspectorStatusPill({ session }: { session: WorkspaceSession }) {
 	);
 }
 
-function ChangesView({ session }: { session: WorkspaceSession }) {
-	const files = session.changedFiles ?? [];
+function ReviewsView({
+	session,
+	onOpenReviewerTerminal,
+}: {
+	session: WorkspaceSession;
+	onOpenReviewerTerminal?: OpenReviewerTerminal;
+}) {
+	const hasPr = sortedPRs(session).length > 0;
+	const queryClient = useQueryClient();
+	const [reviewNotice, setReviewNotice] = useState<string | null>(null);
+	const reviewsQuery = useQuery({
+		queryKey: ["session-reviews", session.id],
+		enabled: hasPr,
+		refetchInterval: (query) => {
+			const data = query.state.data as ReviewsResponse | undefined;
+			return data?.reviews.some((review) => review.status === "running") ? 2500 : false;
+		},
+		queryFn: async () => {
+			const { data, error } = await apiClient.GET("/api/v1/sessions/{sessionId}/reviews", {
+				params: { path: { sessionId: session.id } },
+			});
+			if (error) throw new Error(apiErrorMessage(error, "Unable to load reviews"));
+			return data ?? ({ reviewerHandleId: "", reviews: [], targets: [] } satisfies ReviewsResponse);
+		},
+	});
+	const projectConfigQuery = useQuery({
+		queryKey: ["project-config", session.workspaceId],
+		enabled: hasPr,
+		queryFn: async () => {
+			const { data, error } = await apiClient.GET("/api/v1/projects/{id}", {
+				params: { path: { id: session.workspaceId } },
+			});
+			if (error) return undefined;
+			return projectConfig(data?.project);
+		},
+	});
+	const triggerReview = useMutation({
+		mutationFn: async () => {
+			const { data, error, response } = await apiClient.POST("/api/v1/sessions/{sessionId}/reviews/trigger", {
+				params: { path: { sessionId: session.id } },
+			});
+			if (error) throw new Error(apiErrorMessage(error, "Unable to start review"));
+			return { data, reused: response?.status === 200 };
+		},
+		onMutate: () => {
+			setReviewNotice(null);
+		},
+		onSuccess: ({ data, reused }) => {
+			void queryClient.invalidateQueries({ queryKey: ["session-reviews", session.id] });
+			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+			if (reused) {
+				setReviewNotice("Review is already up to date for this commit.");
+				return;
+			}
+			if (data?.reviewerHandleId) {
+				onOpenReviewerTerminal?.({ handleId: data.reviewerHandleId, harness: data.review.harness || "reviewer" });
+			}
+		},
+	});
+	const reviews = reviewsQuery.data?.reviews ?? [];
 
 	return (
-		<div role="tabpanel" className="flex min-h-0 flex-1 flex-col">
-			<div className="inspector-changes__head">
-				<span className="inspector-changes__title">Changed</span>
-				<span className="inspector-changes__count">{files.length}</span>
-			</div>
-
-			<div className="inspector-changes__actions">
-				<button className="inspector-changes__action" type="button">
-					All files
-				</button>
-				<button className="inspector-changes__action inspector-changes__action--danger" type="button">
-					<Trash2 aria-hidden="true" />
-					Discard all
-				</button>
-				<button className="inspector-changes__action inspector-changes__action--end" type="button">
-					<Plus aria-hidden="true" />
-					Stage all
-				</button>
-			</div>
-
-			<div className="inspector-changes__list">
-				{files.length === 0 ? (
-					<p className="inspector-empty inspector-empty--center">No changes yet.</p>
-				) : (
-					files.map((file) => (
-						<div className="inspector-changes__file" key={file.path}>
-							<span className="inspector-changes__path">{file.path}</span>
-							<span className="inspector-changes__add">+{file.additions}</span>
-							<span className="inspector-changes__del">−{file.deletions}</span>
-							<Square className={cn("inspector-changes__stage", file.staged && "is-staged")} aria-hidden="true" />
-						</div>
-					))
-				)}
-			</div>
-
-			<div className="inspector-changes__commit">
-				<input
-					className="inspector-changes__input"
-					defaultValue={session.commitMessage ?? ""}
-					key={session.id}
-					placeholder="Commit message"
+		<div role="tabpanel">
+			<Section title="Reviews">
+				<ReviewPanel
+					config={projectConfigQuery.data}
+					error={reviewsQuery.error ?? triggerReview.error}
+					isLoading={reviewsQuery.isLoading}
+					isTriggering={triggerReview.isPending}
+					onOpenTerminal={onOpenReviewerTerminal}
+					onTrigger={() => triggerReview.mutate()}
+					reviewerHandleId={reviewsQuery.data?.reviewerHandleId ?? ""}
+					reviews={reviews}
+					notice={reviewNotice}
+					session={session}
 				/>
-				<textarea className="inspector-changes__textarea" placeholder="Description" rows={2} />
-				<Button className="w-full" disabled={files.length === 0} variant="primary">
-					<GitCommitHorizontal aria-hidden="true" />
-					Commit &amp; Push
-				</Button>
-			</div>
+			</Section>
+		</div>
+	);
+}
 
-			<div className="inspector-changes__footer">
-				<GitBranch aria-hidden="true" />
-				<span className="inspector-changes__branch">{session.branch || "—"}</span>
-				<button className="inspector-changes__pr" type="button">
-					<Plus aria-hidden="true" />
-					<GitPullRequest aria-hidden="true" />
-					Create PR
+function projectConfig(project: components["schemas"]["ProjectOrDegraded"] | undefined): ProjectConfig | undefined {
+	if (!project || !("config" in project)) return undefined;
+	return project.config;
+}
+
+function ReviewPanel({
+	session,
+	config,
+	reviews,
+	reviewerHandleId,
+	isLoading,
+	isTriggering,
+	error,
+	notice,
+	onTrigger,
+	onOpenTerminal,
+}: {
+	session: WorkspaceSession;
+	config?: ProjectConfig;
+	reviews: ReviewRun[];
+	reviewerHandleId: string;
+	isLoading: boolean;
+	isTriggering: boolean;
+	error: unknown;
+	notice: string | null;
+	onTrigger: () => void;
+	onOpenTerminal?: OpenReviewerTerminal;
+}) {
+	if (sortedPRs(session).length === 0) {
+		return <p className="inspector-empty">No pull request opened yet.</p>;
+	}
+	if (isLoading) {
+		return <p className="inspector-empty">Loading reviews...</p>;
+	}
+
+	const latest = latestReview(reviews);
+	const harness = latest?.harness || config?.reviewers?.[0]?.harness || session.provider || "reviewer";
+
+	return (
+		<div className="reviewer-list">
+			{error ? <p className="reviewer-error">{apiErrorMessage(error, "Review request failed")}</p> : null}
+			{notice ? <p className="reviewer-notice">{notice}</p> : null}
+			<ReviewerCard
+				handleId={reviewerHandleId}
+				harness={harness}
+				isTriggering={isTriggering}
+				onOpenTerminal={onOpenTerminal}
+				onTrigger={onTrigger}
+				review={latest}
+			/>
+		</div>
+	);
+}
+
+function latestReview(reviews: ReviewRun[]): ReviewRun | undefined {
+	return [...reviews].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0];
+}
+
+function ReviewerCard({
+	harness,
+	review,
+	handleId,
+	isTriggering,
+	onTrigger,
+	onOpenTerminal,
+}: {
+	harness: string;
+	review?: ReviewRun;
+	handleId: string;
+	isTriggering: boolean;
+	onTrigger: () => void;
+	onOpenTerminal?: OpenReviewerTerminal;
+}) {
+	const status = reviewStatus(review);
+	const terminalEnabled = Boolean(handleId && onOpenTerminal);
+	const runLabel = review ? "Re-run review" : "Run review";
+
+	return (
+		<div className={cn("reviewer-card", status.tone && `reviewer-card--${status.tone}`)}>
+			<div className="reviewer-card__top">
+				<div className="reviewer-card__name">
+					<Shield aria-hidden="true" />
+					<span>{harness}</span>
+				</div>
+				<span className={cn("reviewer-status", `reviewer-status--${status.tone}`)}>
+					{status.icon}
+					{status.label}
+				</span>
+			</div>
+			<div className="reviewer-card__actions">
+				<button
+					className="reviewer-card__action reviewer-card__action--primary"
+					disabled={isTriggering}
+					onClick={onTrigger}
+					type="button"
+				>
+					<Play aria-hidden="true" />
+					{isTriggering ? "Starting..." : runLabel}
 				</button>
+				{review ? (
+					<button
+						className="reviewer-card__action"
+						disabled={!terminalEnabled}
+						onClick={() => {
+							if (!terminalEnabled) return;
+							onOpenTerminal?.({ handleId, harness });
+						}}
+						type="button"
+					>
+						<Terminal aria-hidden="true" />
+						Open terminal
+					</button>
+				) : null}
 			</div>
 		</div>
 	);
 }
 
-function BrowserView() {
-	return (
-		<div role="tabpanel">
-			<div className="inspector-empty inspector-empty--browser">
-				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
-					<circle cx="12" cy="12" r="9" />
-					<line x1="3" y1="12" x2="21" y2="12" />
-					<path d="M12 3a14 14 0 0 1 0 18 14 14 0 0 1 0-18" />
-				</svg>
-				<p>No live browser preview.</p>
-				<span>A browser plugin will render what the agent is viewing here.</span>
+function reviewStatus(review?: ReviewRun): {
+	label: string;
+	tone: "neutral" | "running" | "success" | "danger";
+	icon: ReactNode;
+} {
+	if (!review) return { label: "Not run", tone: "neutral", icon: null };
+	if (review.status === "running") {
+		return { label: "Running", tone: "running", icon: <Play aria-hidden="true" /> };
+	}
+	if (review.status === "failed") {
+		return { label: "Failed", tone: "danger", icon: <AlertCircle aria-hidden="true" /> };
+	}
+	if (review.verdict === "approved") {
+		return { label: "Approved", tone: "success", icon: <CheckCircle2 aria-hidden="true" /> };
+	}
+	if (review.verdict === "changes_requested") {
+		return { label: "Changes requested", tone: "danger", icon: <CircleMinus aria-hidden="true" /> };
+	}
+	return { label: "Complete", tone: "success", icon: <CheckCircle2 aria-hidden="true" /> };
+}
+
+function BrowserView({
+	session,
+	isActive,
+	browserPoppedOut,
+	onTogglePopOut,
+	browserView,
+}: {
+	session: WorkspaceSession;
+	isActive: boolean;
+	browserPoppedOut: boolean;
+	onTogglePopOut?: (next: boolean) => void;
+	browserView?: BrowserViewModel;
+}) {
+	if (browserPoppedOut) {
+		return (
+			<div role="tabpanel">
+				<div className="inspector-empty inspector-empty--browser">
+					<p>Browser preview is in the center pane.</p>
+					<Button onClick={() => onTogglePopOut?.(false)} size="sm" type="button" variant="outline">
+						Return to panel
+					</Button>
+				</div>
 			</div>
-		</div>
+		);
+	}
+
+	if (!browserView) {
+		return null;
+	}
+
+	return (
+		<BrowserPanelView
+			active={isActive}
+			browserView={browserView}
+			onTogglePopOut={(next) => onTogglePopOut?.(next)}
+			poppedOut={false}
+			session={session}
+		/>
 	);
 }
 

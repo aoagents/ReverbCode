@@ -67,7 +67,7 @@ func (s *scmMessengerSpy) snapshot() []scmCapturedNudge {
 }
 
 // cannedSCMProvider satisfies observe/scm.Provider with hand-built observations
-// keyed by branch (for DetectPRByBranch) and by PR number (for everything else,
+// keyed by branch (for ListOpenPRsByRepo) and by PR number (for everything else,
 // since every test case uses scmTestRepo). It is the integration-package analog
 // of observer_test.go's fakeProvider: the SCM adapter has its own httptest-based
 // coverage, so this test holds the provider constant and exercises every other
@@ -101,14 +101,14 @@ func (p *cannedSCMProvider) RepoPRListGuard(_ context.Context, _ ports.SCMRepo, 
 	return ports.SCMGuardResult{ETag: "repo-etag"}, nil
 }
 
-func (p *cannedSCMProvider) DetectPRByBranch(_ context.Context, _ ports.SCMRepo, branch string) (ports.SCMPRObservation, error) {
+func (p *cannedSCMProvider) ListOpenPRsByRepo(_ context.Context, _ ports.SCMRepo) ([]ports.SCMPRObservation, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	pr, ok := p.detected[branch]
-	if !ok {
-		return ports.SCMPRObservation{}, ports.ErrSCMNotFound
+	out := make([]ports.SCMPRObservation, 0, len(p.detected))
+	for _, pr := range p.detected {
+		out = append(out, pr)
 	}
-	return pr, nil
+	return out, nil
 }
 
 func (p *cannedSCMProvider) CommitChecksGuard(_ context.Context, _ ports.SCMRepo, _, _ string) (ports.SCMGuardResult, error) {
@@ -274,7 +274,7 @@ func TestSCMObserverEndToEnd(t *testing.T) {
 			logTail = "setup\nsetup\nFAILED: build broke\n"
 		)
 		f.provider.detected["feat/x"] = ports.SCMPRObservation{
-			URL: prURL, Number: 42, SourceBranch: "feat/x", TargetBranch: "main", HeadSHA: headSHA,
+			URL: prURL, Number: 42, SourceBranch: "feat/x", HeadRepo: scmTestRepo.Repo, TargetBranch: "main", HeadSHA: headSHA,
 		}
 		f.provider.observations[42] = failingSCMObservation(prURL, 42, headSHA, logTail)
 
@@ -350,7 +350,7 @@ func TestSCMObserverEndToEnd(t *testing.T) {
 		// the production fallback the observer relies on when the upstream
 		// ETag guard misses. The ETag-driven 304 short-circuit on the same
 		// SHA is covered by the unit tests in observe/scm/observer_test.go
-		// (Poll_RepoETag304SkipsDetectPR, Poll_CIETagChangeRefreshesWhenRepoUnchanged).
+		// (Poll_RepoETag304SkipsListPRs, Poll_CIETagChangeRefreshesWhenRepoUnchanged).
 		if err := f.observer.Poll(ctx); err != nil {
 			t.Fatalf("second Poll: %v", err)
 		}
@@ -374,7 +374,7 @@ func TestSCMObserverEndToEnd(t *testing.T) {
 			headSHA = "cafef00d"
 		)
 		f.provider.detected["feat/x"] = ports.SCMPRObservation{
-			URL: prURL, Number: 77, SourceBranch: "feat/x", TargetBranch: "main", HeadSHA: headSHA, Merged: true,
+			URL: prURL, Number: 77, SourceBranch: "feat/x", HeadRepo: scmTestRepo.Repo, TargetBranch: "main", HeadSHA: headSHA, Merged: true,
 		}
 		f.provider.observations[77] = mergedSCMObservation(prURL, 77, headSHA)
 
@@ -397,7 +397,7 @@ func TestSCMObserverEndToEnd(t *testing.T) {
 	t.Run("Branch with no open PR writes nothing and sends no nudge", func(t *testing.T) {
 		ctx := context.Background()
 		f := newSCMFixture(t, "feat/quiet")
-		// No entry in provider.detected — DetectPRByBranch returns ErrSCMNotFound,
+		// No entry in provider.detected — ListOpenPRsByRepo returns an empty list,
 		// the production "no PR yet" signal.
 
 		if err := f.observer.Poll(ctx); err != nil {
@@ -413,6 +413,227 @@ func TestSCMObserverEndToEnd(t *testing.T) {
 		}
 		if got := f.spy.count(); got != 0 {
 			t.Fatalf("quiet branch must not nudge, got %d msgs: %+v", got, f.spy.snapshot())
+		}
+	})
+}
+
+// openSCMObservation builds an open-PR observation with caller-chosen branches
+// and mergeability, CI passing and no review. The multi-PR cases drive the stack
+// model (target/source branch pairs) and the completion rule, so branches must
+// be configurable rather than the fixed feat/x->main the single-PR helpers bake in.
+func openSCMObservation(prURL string, num int, headSHA, src, tgt string, merge domain.Mergeability) ports.SCMObservation {
+	mo := ports.SCMMergeabilityObservation{State: string(merge)}
+	switch merge {
+	case domain.MergeMergeable:
+		mo.Mergeable = true
+	case domain.MergeConflicting:
+		mo.Conflict = true
+		mo.Blockers = []string{"conflicts"}
+	}
+	return ports.SCMObservation{
+		Fetched:  true,
+		Provider: "github", Host: "github.com", Repo: "octocat/hello",
+		PR: ports.SCMPRObservation{
+			URL:          prURL,
+			HTMLURL:      prURL,
+			Number:       num,
+			State:        string(domain.PRStateOpen),
+			SourceBranch: src,
+			TargetBranch: tgt,
+			HeadSHA:      headSHA,
+			Title:        "wip",
+		},
+		CI:           ports.SCMCIObservation{Summary: string(domain.CIPassing), HeadSHA: headSHA},
+		Review:       ports.SCMReviewObservation{Decision: string(domain.ReviewNone)},
+		Mergeability: mo,
+	}
+}
+
+// mergedSCMObservationBranches is mergedSCMObservation with caller-chosen
+// branches so a stacked child (feat/x/auth -> feat/x) can be merged distinctly
+// from the root (feat/x -> main).
+func mergedSCMObservationBranches(prURL string, num int, headSHA, src, tgt string) ports.SCMObservation {
+	o := mergedSCMObservation(prURL, num, headSHA)
+	o.PR.SourceBranch = src
+	o.PR.TargetBranch = tgt
+	return o
+}
+
+// detectedPR is the open-PR-list discovery shape: the observer attributes a
+// listed PR to a session by source-branch prefix, so only identity + branches
+// matter here.
+func detectedPR(prURL string, num int, src, tgt, headSHA string) ports.SCMPRObservation {
+	return ports.SCMPRObservation{URL: prURL, HTMLURL: prURL, Number: num, SourceBranch: src, HeadRepo: scmTestRepo.Repo, TargetBranch: tgt, HeadSHA: headSHA}
+}
+
+// TestSCMObserverMultiPREndToEnd is the functional regression guard for the
+// multi-PR-per-session feature. It drives the real store + lifecycle + observer
+// through the three behaviours the feature adds on top of the single-PR lane:
+// branch-prefix attribution of several PRs to one session, the "all PRs
+// merged/closed and at least one merged" completion bar, and the stacked-child
+// merge-conflict nudge suppression. The SCM provider is canned (its own httptest
+// coverage lives in observe/scm), so every other layer runs for real.
+func TestSCMObserverMultiPREndToEnd(t *testing.T) {
+	t.Run("one session owns its root and stacked child PRs from a single repo list", func(t *testing.T) {
+		ctx := context.Background()
+		f := newSCMFixture(t, "feat/x")
+		const (
+			rootURL  = "https://github.com/octocat/hello/pull/101"
+			childURL = "https://github.com/octocat/hello/pull/102"
+		)
+		// Root PR on the session branch, plus a stacked child whose source branch
+		// descends from it (feat/x/auth). matchSession claims both for the one
+		// session: the child by the "branch/..." stacking convention.
+		f.provider.detected["feat/x"] = detectedPR(rootURL, 101, "feat/x", "main", "sha-root")
+		f.provider.detected["feat/x/auth"] = detectedPR(childURL, 102, "feat/x/auth", "feat/x", "sha-child")
+		f.provider.observations[101] = openSCMObservation(rootURL, 101, "sha-root", "feat/x", "main", domain.MergeMergeable)
+		f.provider.observations[102] = openSCMObservation(childURL, 102, "sha-child", "feat/x/auth", "feat/x", domain.MergeBlocked)
+
+		if err := f.observer.Poll(ctx); err != nil {
+			t.Fatalf("Poll: %v", err)
+		}
+
+		prs, err := f.store.ListPRsBySession(ctx, f.session.ID)
+		if err != nil {
+			t.Fatalf("ListPRsBySession: %v", err)
+		}
+		if len(prs) != 2 {
+			t.Fatalf("one session should own both discovered PRs, got %d: %+v", len(prs), prs)
+		}
+		byURL := map[string]domain.PullRequest{}
+		for _, pr := range prs {
+			if pr.SessionID != f.session.ID {
+				t.Fatalf("PR %q attributed to %q, want %q", pr.URL, pr.SessionID, f.session.ID)
+			}
+			byURL[pr.URL] = pr
+		}
+		// The branch pair is what the stack model is derived from, so it must be
+		// persisted by the observer write path (not just discovered).
+		if byURL[rootURL].SourceBranch != "feat/x" || byURL[rootURL].TargetBranch != "main" {
+			t.Fatalf("root branch pair lost: %+v", byURL[rootURL])
+		}
+		if byURL[childURL].SourceBranch != "feat/x/auth" || byURL[childURL].TargetBranch != "feat/x" {
+			t.Fatalf("child branch pair lost: %+v", byURL[childURL])
+		}
+		if got := f.spy.count(); got != 0 {
+			t.Fatalf("clean PRs must not nudge, got %d: %+v", got, f.spy.snapshot())
+		}
+	})
+
+	t.Run("session stays alive while a stacked PR is open and terminates once all are merged", func(t *testing.T) {
+		ctx := context.Background()
+		f := newSCMFixture(t, "feat/x")
+		const (
+			rootURL  = "https://github.com/octocat/hello/pull/201"
+			childURL = "https://github.com/octocat/hello/pull/202"
+		)
+		f.provider.detected["feat/x"] = detectedPR(rootURL, 201, "feat/x", "main", "sha-root")
+		f.provider.detected["feat/x/auth"] = detectedPR(childURL, 202, "feat/x/auth", "feat/x", "sha-child")
+		f.provider.observations[201] = openSCMObservation(rootURL, 201, "sha-root", "feat/x", "main", domain.MergeMergeable)
+		f.provider.observations[202] = openSCMObservation(childURL, 202, "sha-child", "feat/x/auth", "feat/x", domain.MergeBlocked)
+
+		// Poll 1: both PRs open and tracked. The session is live.
+		if err := f.observer.Poll(ctx); err != nil {
+			t.Fatalf("Poll 1: %v", err)
+		}
+		if rec, _, _ := f.store.GetSession(ctx, f.session.ID); rec.IsTerminated {
+			t.Fatal("session terminated with two open PRs")
+		}
+
+		// Poll 2: the root merges while the child stays open. One merged PR does
+		// not satisfy the completion bar while another PR is still open.
+		f.provider.observations[201] = mergedSCMObservationBranches(rootURL, 201, "sha-root", "feat/x", "main")
+		if err := f.observer.Poll(ctx); err != nil {
+			t.Fatalf("Poll 2: %v", err)
+		}
+		rootPR, ok, err := f.store.GetPR(ctx, rootURL)
+		if err != nil || !ok {
+			t.Fatalf("GetPR root: ok=%v err=%v", ok, err)
+		}
+		if !rootPR.Merged {
+			t.Fatalf("root PR should be persisted merged: %+v", rootPR)
+		}
+		if rec, _, _ := f.store.GetSession(ctx, f.session.ID); rec.IsTerminated {
+			t.Fatal("session terminated while the stacked child PR is still open")
+		}
+
+		// Poll 3: the child merges too. Now every PR is merged/closed and at least
+		// one merged, so the session completes and terminates.
+		f.provider.observations[202] = mergedSCMObservationBranches(childURL, 202, "sha-child", "feat/x/auth", "feat/x")
+		if err := f.observer.Poll(ctx); err != nil {
+			t.Fatalf("Poll 3: %v", err)
+		}
+		rec, ok, err := f.store.GetSession(ctx, f.session.ID)
+		if err != nil || !ok {
+			t.Fatalf("GetSession: ok=%v err=%v", ok, err)
+		}
+		if !rec.IsTerminated {
+			t.Fatalf("session should terminate once all PRs are merged: %+v", rec)
+		}
+		if got := f.spy.count(); got != 0 {
+			t.Fatalf("merge-driven completion must not nudge, got %d: %+v", got, f.spy.snapshot())
+		}
+	})
+
+	t.Run("stacked child blocked by an open parent is exempt from the rebase nudge", func(t *testing.T) {
+		ctx := context.Background()
+		f := newSCMFixture(t, "feat/x")
+		const (
+			rootURL  = "https://github.com/octocat/hello/pull/301"
+			childURL = "https://github.com/octocat/hello/pull/302"
+		)
+		f.provider.detected["feat/x"] = detectedPR(rootURL, 301, "feat/x", "main", "sha-root")
+		f.provider.detected["feat/x/auth"] = detectedPR(childURL, 302, "feat/x/auth", "feat/x", "sha-child")
+		// Poll 1 establishes both rows (open, mergeable) so the stack relationship
+		// is durable before conflicts appear, making the poll-2 reaction order
+		// independent of map iteration.
+		f.provider.observations[301] = openSCMObservation(rootURL, 301, "sha-root", "feat/x", "main", domain.MergeMergeable)
+		f.provider.observations[302] = openSCMObservation(childURL, 302, "sha-child", "feat/x/auth", "feat/x", domain.MergeMergeable)
+		if err := f.observer.Poll(ctx); err != nil {
+			t.Fatalf("Poll 1: %v", err)
+		}
+		if got := f.spy.count(); got != 0 {
+			t.Fatalf("clean establishing poll must not nudge, got %d: %+v", got, f.spy.snapshot())
+		}
+
+		// Poll 2: both PRs now report merge conflicts. Only the bottom of the
+		// stack (the root, targeting main) is eligible for the rebase nudge; the
+		// child targets feat/x, the still-open root's source branch, so it is
+		// expected to conflict against its parent until the parent merges and is
+		// suppressed.
+		f.provider.observations[301] = openSCMObservation(rootURL, 301, "sha-root", "feat/x", "main", domain.MergeConflicting)
+		f.provider.observations[302] = openSCMObservation(childURL, 302, "sha-child", "feat/x/auth", "feat/x", domain.MergeConflicting)
+		if err := f.observer.Poll(ctx); err != nil {
+			t.Fatalf("Poll 2: %v", err)
+		}
+
+		msgs := f.spy.snapshot()
+		if len(msgs) != 1 {
+			t.Fatalf("exactly one PR (the stack bottom) should be nudged, got %d: %+v", len(msgs), msgs)
+		}
+		if msgs[0].session != f.session.ID {
+			t.Fatalf("nudge addressed to %q, want %q", msgs[0].session, f.session.ID)
+		}
+		if !strings.Contains(msgs[0].body, "merge conflicts") {
+			t.Fatalf("nudge body missing merge-conflict cue: %q", msgs[0].body)
+		}
+
+		// The persisted dedup signature must be the root's, never the child's —
+		// proving the child was suppressed at the reaction layer, not merely
+		// deduped after sending.
+		rootSig, err := f.store.GetPRLastNudgeSignature(ctx, rootURL)
+		if err != nil {
+			t.Fatalf("GetPRLastNudgeSignature root: %v", err)
+		}
+		if rootSig == "" {
+			t.Fatal("root PR should have a persisted nudge signature")
+		}
+		childSig, err := f.store.GetPRLastNudgeSignature(ctx, childURL)
+		if err != nil {
+			t.Fatalf("GetPRLastNudgeSignature child: %v", err)
+		}
+		if childSig != "" {
+			t.Fatalf("stacked child must not record a nudge signature: %q", childSig)
 		}
 	})
 }

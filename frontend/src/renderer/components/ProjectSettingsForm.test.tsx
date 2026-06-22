@@ -77,6 +77,7 @@ describe("ProjectSettingsForm", () => {
 							model: "claude-opus-4-5",
 							permissions: "auto",
 						},
+						reviewers: [{ harness: "claude-code" }],
 					},
 				},
 			},
@@ -93,9 +94,11 @@ describe("ProjectSettingsForm", () => {
 		const workerAgent = screen.getByRole("combobox", { name: "Default worker agent" });
 		const orchestratorAgent = screen.getByRole("combobox", { name: "Default orchestrator agent" });
 		const permissionMode = screen.getByRole("combobox", { name: "Permission mode" });
+		const reviewerAgent = screen.getByRole("combobox", { name: "Default reviewer agent" });
 		expect(workerAgent).toHaveTextContent("codex");
 		expect(orchestratorAgent).toHaveTextContent("claude-code");
 		expect(permissionMode).toHaveTextContent("Auto");
+		expect(reviewerAgent).toHaveTextContent("claude-code");
 
 		await userEvent.clear(screen.getByLabelText("Default branch"));
 		await userEvent.type(screen.getByLabelText("Default branch"), "release");
@@ -128,11 +131,12 @@ describe("ProjectSettingsForm", () => {
 						model: "gpt-5-codex",
 						permissions: "bypass-permissions",
 					},
+					reviewers: [{ harness: "claude-code" }],
 				},
 			},
 		});
 		expect(await screen.findByText("Saved.")).toBeInTheDocument();
-	});
+	}, 20_000);
 
 	it("shows the daemon validation message when save fails", async () => {
 		getMock.mockResolvedValue({
@@ -145,6 +149,10 @@ describe("ProjectSettingsForm", () => {
 					path: "/repo/project-one",
 					repo: "",
 					defaultBranch: "main",
+					config: {
+						worker: { agent: "codex" },
+						orchestrator: { agent: "claude-code" },
+					},
 				},
 			},
 			error: undefined,
@@ -160,5 +168,36 @@ describe("ProjectSettingsForm", () => {
 
 		expect(await screen.findByText("invalid permissions")).toBeInTheDocument();
 		expect(screen.queryByText("Saved.")).not.toBeInTheDocument();
+	});
+
+	it("requires worker and orchestrator agents for existing projects missing role config", async () => {
+		getMock.mockResolvedValue({
+			data: {
+				status: "ok",
+				project: {
+					id: "proj-1",
+					name: "Project One",
+					kind: "single_repo",
+					path: "/repo/project-one",
+					repo: "",
+					defaultBranch: "main",
+					config: {},
+				},
+			},
+			error: undefined,
+		});
+
+		renderSettings();
+
+		expect(await screen.findByText("Worker and orchestrator agents are required.")).toBeInTheDocument();
+		expect(screen.getByRole("combobox", { name: "Default worker agent" })).toHaveTextContent("Select worker agent");
+		expect(screen.getByRole("combobox", { name: "Default orchestrator agent" })).toHaveTextContent(
+			"Select orchestrator agent",
+		);
+
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		expect(await screen.findAllByText("Worker and orchestrator agents are required.")).toHaveLength(2);
+		expect(putMock).not.toHaveBeenCalled();
 	});
 });

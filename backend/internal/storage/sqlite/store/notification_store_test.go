@@ -49,6 +49,95 @@ func TestNotificationStore_InsertListAndDedupe(t *testing.T) {
 	}
 }
 
+func TestNotificationStore_MarkReadReopensUnreadDedupe(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	sess, err := s.CreateSession(ctx, sampleRecord("mer"))
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	rec := domain.NotificationRecord{
+		ID:        "ntf_1",
+		SessionID: sess.ID,
+		ProjectID: sess.ProjectID,
+		Type:      domain.NotificationNeedsInput,
+		Title:     "checkout-flow needs input",
+		Status:    domain.NotificationUnread,
+		CreatedAt: now,
+	}
+	if _, inserted, err := s.CreateNotification(ctx, rec); err != nil || !inserted {
+		t.Fatalf("CreateNotification inserted=%v err=%v", inserted, err)
+	}
+	read, ok, err := s.MarkNotificationRead(ctx, rec.ID)
+	if err != nil || !ok {
+		t.Fatalf("MarkNotificationRead ok=%v err=%v", ok, err)
+	}
+	if read.Status != domain.NotificationRead {
+		t.Fatalf("status = %q, want read", read.Status)
+	}
+	rows, err := s.ListUnreadNotifications(ctx, 10)
+	if err != nil {
+		t.Fatalf("ListUnreadNotifications: %v", err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("rows = %+v, want none", rows)
+	}
+	again := rec
+	again.ID = "ntf_2"
+	again.CreatedAt = now.Add(time.Minute)
+	if _, inserted, err := s.CreateNotification(ctx, again); err != nil || !inserted {
+		t.Fatalf("CreateNotification after read inserted=%v err=%v", inserted, err)
+	}
+}
+
+func TestNotificationStore_MarkReadMissing(t *testing.T) {
+	s := newTestStore(t)
+	_, ok, err := s.MarkNotificationRead(context.Background(), "missing")
+	if err != nil || ok {
+		t.Fatalf("MarkNotificationRead ok=%v err=%v, want false nil", ok, err)
+	}
+}
+
+func TestNotificationStore_MarkAllRead(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	sess, err := s.CreateSession(ctx, sampleRecord("mer"))
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	base := time.Now().UTC().Truncate(time.Second)
+	for _, rec := range []domain.NotificationRecord{
+		{ID: "ntf_1", SessionID: sess.ID, ProjectID: sess.ProjectID, Type: domain.NotificationNeedsInput, Title: "one", Status: domain.NotificationUnread, CreatedAt: base},
+		{ID: "ntf_2", SessionID: sess.ID, ProjectID: sess.ProjectID, PRURL: "https://github.com/o/r/pull/1", Type: domain.NotificationReadyToMerge, Title: "two", Status: domain.NotificationUnread, CreatedAt: base.Add(time.Minute)},
+	} {
+		if _, inserted, err := s.CreateNotification(ctx, rec); err != nil || !inserted {
+			t.Fatalf("insert %s inserted=%v err=%v", rec.ID, inserted, err)
+		}
+	}
+	read, err := s.MarkAllNotificationsRead(ctx)
+	if err != nil {
+		t.Fatalf("MarkAllNotificationsRead: %v", err)
+	}
+	if len(read) != 2 {
+		t.Fatalf("read rows = %+v", read)
+	}
+	for _, row := range read {
+		if row.Status != domain.NotificationRead {
+			t.Fatalf("row = %+v, want read", row)
+		}
+	}
+	rows, err := s.ListUnreadNotifications(ctx, 10)
+	if err != nil {
+		t.Fatalf("ListUnreadNotifications: %v", err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("unread rows = %+v, want none", rows)
+	}
+}
+
 func TestNotificationStore_ListUnreadNewestFirstAcrossProjects(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

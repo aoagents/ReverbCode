@@ -11,6 +11,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
+	"github.com/aoagents/agent-orchestrator/backend/internal/telemetrymeta"
 )
 
 // Store is the read-only persistence surface needed to assemble controller-facing session read models.
@@ -19,8 +20,12 @@ type Store interface {
 	ListSessions(ctx context.Context, project domain.ProjectID) ([]domain.SessionRecord, error)
 	ListAllSessions(ctx context.Context) ([]domain.SessionRecord, error)
 	RenameSession(ctx context.Context, id domain.SessionID, displayName string, updatedAt time.Time) (bool, error)
+	SetSessionPreviewURL(ctx context.Context, id domain.SessionID, previewURL string, updatedAt time.Time) (bool, error)
 	GetDisplayPRFactsForSession(ctx context.Context, id domain.SessionID) (domain.PRFacts, bool, error)
+	ListPRFactsForSession(ctx context.Context, id domain.SessionID) ([]domain.PRFacts, error)
 	ListPRsBySession(ctx context.Context, sessionID domain.SessionID) ([]domain.PullRequest, error)
+	ListChecks(ctx context.Context, prURL string) ([]domain.PullRequestCheck, error)
+	ListPRReviewThreads(ctx context.Context, prURL string) ([]domain.PullRequestReviewThread, error)
 	ListPRComments(ctx context.Context, prURL string) ([]domain.PullRequestComment, error)
 	GetProject(ctx context.Context, id string) (domain.ProjectRecord, bool, error)
 }
@@ -80,6 +85,7 @@ type Service struct {
 	prClaimer ports.PRClaimer
 	scm       scmProvider
 	clock     func() time.Time
+	telemetry ports.EventSink
 	// signalCapable reports whether a harness has a hook pipeline that can
 	// deliver activity signals at all. Only capable harnesses are eligible for
 	// the no_signal downgrade — a hook-less harness staying silent forever is
@@ -101,6 +107,7 @@ type Deps struct {
 	PRClaimer ports.PRClaimer
 	SCM       scmProvider
 	Clock     func() time.Time
+	Telemetry ports.EventSink
 	// SignalCapable gates the no_signal status downgrade per harness; daemon
 	// wiring passes activitydispatch.SupportsHarness. Left nil, no session is
 	// ever downgraded to no_signal.
@@ -109,7 +116,7 @@ type Deps struct {
 
 // NewWithDeps wires a session service with optional PR-claim dependencies.
 func NewWithDeps(d Deps) *Service {
-	s := &Service{manager: d.Manager, store: d.Store, prClaimer: d.PRClaimer, scm: d.SCM, clock: d.Clock, signalCapable: d.SignalCapable}
+	s := &Service{manager: d.Manager, store: d.Store, prClaimer: d.PRClaimer, scm: d.SCM, clock: d.Clock, signalCapable: d.SignalCapable, telemetry: d.Telemetry}
 	if s.prClaimer == nil {
 		if w, ok := d.Store.(ports.PRClaimer); ok {
 			s.prClaimer = w
@@ -123,12 +130,23 @@ func NewWithDeps(d Deps) *Service {
 
 // Spawn creates a session and returns the API-facing read model.
 func (s *Service) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Session, error) {
-	if err := s.requireProject(ctx, cfg.ProjectID); err != nil {
+	project, err := s.requireProject(ctx, cfg.ProjectID)
+	if err != nil {
 		return domain.Session{}, err
+	}
+	start := s.now()
+	firstSession, err := s.isFirstSession(ctx)
+	if err != nil {
+		return domain.Session{}, fmt.Errorf("count sessions: %w", err)
 	}
 	rec, err := s.manager.Spawn(ctx, cfg)
 	if err != nil {
+		s.emitSpawnFailed(cfg, err, s.now().Sub(start).Milliseconds())
 		return domain.Session{}, toAPIError(err)
+	}
+	s.emitSpawned(rec, s.now().Sub(start).Milliseconds())
+	if firstSession {
+		s.emitFirstSessionSpawned(rec, project)
 	}
 	return s.toSession(ctx, rec)
 }
@@ -136,21 +154,106 @@ func (s *Service) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 // requireProject verifies the project is registered before any spawn write
 // touches the session store, so an unknown projectId surfaces as a typed 404
 // rather than an opaque 500 with an orphan terminated row left behind.
-func (s *Service) requireProject(ctx context.Context, id domain.ProjectID) error {
+func (s *Service) requireProject(ctx context.Context, id domain.ProjectID) (domain.ProjectRecord, error) {
 	if id == "" {
-		return apierr.Invalid("PROJECT_ID_REQUIRED", "projectId is required", nil)
+		return domain.ProjectRecord{}, apierr.Invalid("PROJECT_ID_REQUIRED", "projectId is required", nil)
 	}
 	if s.store == nil {
-		return nil
+		return domain.ProjectRecord{ID: string(id)}, nil
 	}
-	_, ok, err := s.store.GetProject(ctx, string(id))
+	rec, ok, err := s.store.GetProject(ctx, string(id))
 	if err != nil {
-		return fmt.Errorf("get project %s: %w", id, err)
+		return domain.ProjectRecord{}, fmt.Errorf("get project %s: %w", id, err)
 	}
 	if !ok {
-		return apierr.NotFound("PROJECT_NOT_FOUND", "Unknown project — register it with `ao project add`")
+		return domain.ProjectRecord{}, apierr.NotFound("PROJECT_NOT_FOUND", "Unknown project — register it with `ao project add`")
 	}
-	return nil
+	return rec, nil
+}
+
+func (s *Service) isFirstSession(ctx context.Context) (bool, error) {
+	if s.store == nil {
+		return false, nil
+	}
+	rows, err := s.store.ListAllSessions(ctx)
+	if err != nil {
+		return false, err
+	}
+	return len(rows) == 0, nil
+}
+
+func (s *Service) emitSpawned(rec domain.SessionRecord, durationMs int64) {
+	if s.telemetry == nil {
+		return
+	}
+	projectID := rec.ProjectID
+	sessionID := rec.ID
+	s.telemetry.Emit(context.Background(), ports.TelemetryEvent{
+		Name:       "ao.session.spawned",
+		Source:     "session_service",
+		OccurredAt: s.now(),
+		Level:      ports.TelemetryLevelInfo,
+		ProjectID:  &projectID,
+		SessionID:  &sessionID,
+		Payload: map[string]any{
+			"kind":        string(rec.Kind),
+			"harness":     string(rec.Harness),
+			"duration_ms": durationMs,
+		},
+	})
+}
+
+func (s *Service) emitFirstSessionSpawned(rec domain.SessionRecord, project domain.ProjectRecord) {
+	if s.telemetry == nil {
+		return
+	}
+	projectID := rec.ProjectID
+	sessionID := rec.ID
+	payload := map[string]any{
+		"kind":    string(rec.Kind),
+		"harness": string(rec.Harness),
+	}
+	if !project.RegisteredAt.IsZero() {
+		payload["since_first_project_ms"] = s.now().Sub(project.RegisteredAt).Milliseconds()
+	}
+	s.telemetry.Emit(context.Background(), ports.TelemetryEvent{
+		Name:       "ao.onboarding.first_session_spawned",
+		Source:     "session_service",
+		OccurredAt: s.now(),
+		Level:      ports.TelemetryLevelInfo,
+		ProjectID:  &projectID,
+		SessionID:  &sessionID,
+		Payload:    payload,
+	})
+}
+
+func (s *Service) emitSpawnFailed(cfg ports.SpawnConfig, err error, durationMs int64) {
+	if s.telemetry == nil {
+		return
+	}
+	projectID := cfg.ProjectID
+	apiErr := toAPIError(err)
+	errorKind, errorCode := telemetrymeta.ErrorKindAndCode(apiErr)
+	payload := map[string]any{
+		"component":   "session_service",
+		"operation":   "spawn_session",
+		"kind":        string(cfg.Kind),
+		"harness":     string(cfg.Harness),
+		"duration_ms": durationMs,
+		"error_kind":  errorKind,
+		"fingerprint": telemetrymeta.Fingerprint("session_service", "spawn_session", string(cfg.Kind), string(cfg.Harness), errorKind, errorCode),
+	}
+	if errorCode != "" {
+		payload["error_code"] = errorCode
+	}
+	s.telemetry.Emit(context.Background(), ports.TelemetryEvent{
+		Name:       "ao.session.spawn_failed",
+		Source:     "session_service",
+		OccurredAt: s.now(),
+		Level:      ports.TelemetryLevelError,
+		ProjectID:  &projectID,
+		Payload:    payload,
+	})
 }
 
 // SpawnOrchestrator spawns an orchestrator session for a project. When clean is
@@ -158,9 +261,6 @@ func (s *Service) requireProject(ctx context.Context, id domain.ProjectID) error
 // one is the only live coordinator — a business rule that belongs here, not in the
 // HTTP controller.
 func (s *Service) SpawnOrchestrator(ctx context.Context, projectID domain.ProjectID, clean bool) (domain.Session, error) {
-	if err := s.requireProject(ctx, projectID); err != nil {
-		return domain.Session{}, err
-	}
 	if clean {
 		active := true
 		existing, err := s.List(ctx, ListFilter{ProjectID: projectID, Active: &active, OrchestratorOnly: true})
@@ -222,6 +322,23 @@ func (s *Service) Rename(ctx context.Context, id domain.SessionID, displayName s
 		return apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
 	}
 	return nil
+}
+
+// SetPreview persists the browser preview URL for a session and returns the
+// refreshed read model. The URL is taken verbatim from the caller (the
+// controller resolves it, either an explicit target or an autodetected entry).
+// Persisting it via the store fans out a session_updated CDC event through the
+// sessions_cdc_update trigger, mirroring how other session mutations surface on
+// the live event stream.
+func (s *Service) SetPreview(ctx context.Context, id domain.SessionID, previewURL string) (domain.Session, error) {
+	updated, err := s.store.SetSessionPreviewURL(ctx, id, previewURL, time.Now().UTC())
+	if err != nil {
+		return domain.Session{}, fmt.Errorf("set preview url %s: %w", id, err)
+	}
+	if !updated {
+		return domain.Session{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	return s.Get(ctx, id)
 }
 
 // Cleanup delegates terminal workspace cleanup to the internal manager and
@@ -340,6 +457,8 @@ func toAPIError(err error) error {
 		return apierr.Invalid("PROJECT_NOT_RESOLVABLE", "Project is not registered or has no repo — register it with `ao project add`", nil)
 	case errors.Is(err, sessionmanager.ErrUnknownHarness):
 		return apierr.Invalid("UNKNOWN_HARNESS", err.Error(), nil)
+	case errors.Is(err, sessionmanager.ErrMissingHarness):
+		return apierr.Invalid("AGENT_REQUIRED", err.Error(), nil)
 	case errors.Is(err, ports.ErrWorkspaceBranchCheckedOutElsewhere):
 		return apierr.Conflict("BRANCH_CHECKED_OUT_ELSEWHERE", err.Error(), nil)
 	case errors.Is(err, ports.ErrWorkspaceBranchNotFetched):
@@ -354,23 +473,20 @@ func toAPIError(err error) error {
 }
 
 func (s *Service) toSession(ctx context.Context, rec domain.SessionRecord) (domain.Session, error) {
-	pr, ok, err := s.store.GetDisplayPRFactsForSession(ctx, rec.ID)
+	prs, err := s.store.ListPRFactsForSession(ctx, rec.ID)
 	if err != nil {
 		return domain.Session{}, fmt.Errorf("pr facts %s: %w", rec.ID, err)
 	}
-	if !ok {
-		return domain.Session{SessionRecord: rec, Status: deriveStatus(rec, nil, s.now(), s.harnessSignals(rec.Harness)), TerminalHandleID: rec.Metadata.RuntimeHandleID}, nil
-	}
-	return domain.Session{SessionRecord: rec, Status: deriveStatus(rec, &pr, s.now(), s.harnessSignals(rec.Harness)), TerminalHandleID: rec.Metadata.RuntimeHandleID}, nil
+	return domain.Session{SessionRecord: rec, Status: deriveStatus(rec, prs, s.now(), s.harnessSignals(rec.Harness)), TerminalHandleID: rec.Metadata.RuntimeHandleID, PRs: prs}, nil
 }
 
 // now tolerates a zero-value Service (tests construct the struct literally
 // without going through New, which is where clock gets its default).
 func (s *Service) now() time.Time {
 	if s.clock == nil {
-		return time.Now()
+		return time.Now().UTC()
 	}
-	return s.clock()
+	return s.clock().UTC()
 }
 
 // harnessSignals tolerates a zero-value Service the same way now does. Without

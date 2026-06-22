@@ -57,36 +57,36 @@ func (p *Provider) RepoPRListGuard(ctx context.Context, repo ports.SCMRepo, etag
 	return ports.SCMGuardResult{ETag: firstNonEmptyHeader(resp.ETag, etag), NotModified: resp.NotModified}, nil
 }
 
-// DetectPRByBranch finds an open PR whose head branch matches the session branch.
-func (p *Provider) DetectPRByBranch(ctx context.Context, repo ports.SCMRepo, branch string) (ports.SCMPRObservation, error) {
-	branch = strings.TrimSpace(branch)
-	if branch == "" {
-		return ports.SCMPRObservation{}, fmt.Errorf("%w: empty branch", ErrNotFound)
+// ListOpenPRsByRepo lists every open pull request in the repository so the
+// observer can attribute each to a session by head-branch prefix. It paginates
+// the REST pulls endpoint; AO repos are not expected to carry thousands of
+// concurrent open PRs, and the observer only calls this when the repo PR-list
+// ETag guard reports a change.
+func (p *Provider) ListOpenPRsByRepo(ctx context.Context, repo ports.SCMRepo) ([]ports.SCMPRObservation, error) {
+	const perPage = 100
+	out := []ports.SCMPRObservation{}
+	for page := 1; ; page++ {
+		q := url.Values{}
+		q.Set("state", "open")
+		q.Set("sort", "updated")
+		q.Set("direction", "desc")
+		q.Set("per_page", strconv.Itoa(perPage))
+		q.Set("page", strconv.Itoa(page))
+		resp, err := p.client.doREST(ctx, http.MethodGet, repoPath(repo.Owner, repo.Name, "pulls"), q, nil)
+		if err != nil {
+			return nil, err
+		}
+		var pulls []restListPull
+		if err := json.Unmarshal(resp.Body, &pulls); err != nil {
+			return nil, fmt.Errorf("github scm: decode open PR list: %w", err)
+		}
+		for _, pull := range pulls {
+			out = append(out, restListPullToSCM(pull))
+		}
+		if len(pulls) < perPage {
+			return out, nil
+		}
 	}
-	pulls, err := p.detectPRByHead(ctx, repo, repo.Owner+":"+branch)
-	if err != nil {
-		return ports.SCMPRObservation{}, err
-	}
-	if len(pulls) == 0 {
-		return ports.SCMPRObservation{}, fmt.Errorf("%w: no open PR for branch %s", ErrNotFound, branch)
-	}
-	return restListPullToSCM(pulls[0]), nil
-}
-
-func (p *Provider) detectPRByHead(ctx context.Context, repo ports.SCMRepo, head string) ([]restListPull, error) {
-	q := url.Values{}
-	q.Set("state", "open")
-	q.Set("head", head)
-	q.Set("per_page", "10")
-	resp, err := p.client.doREST(ctx, http.MethodGet, repoPath(repo.Owner, repo.Name, "pulls"), q, nil)
-	if err != nil {
-		return nil, err
-	}
-	var pulls []restListPull
-	if err := json.Unmarshal(resp.Body, &pulls); err != nil {
-		return nil, fmt.Errorf("github scm: decode branch PR list: %w", err)
-	}
-	return pulls, nil
 }
 
 // CommitChecksGuard checks GitHub's per-commit check-runs ETag guard.
@@ -201,8 +201,11 @@ type restListPull struct {
 	Draft   bool   `json:"draft"`
 	Title   string `json:"title"`
 	Head    struct {
-		Ref string `json:"ref"`
-		SHA string `json:"sha"`
+		Ref  string `json:"ref"`
+		SHA  string `json:"sha"`
+		Repo struct {
+			FullName string `json:"full_name"`
+		} `json:"repo"`
 	} `json:"head"`
 	Base struct {
 		Ref string `json:"ref"`
@@ -224,6 +227,7 @@ func restListPullToSCM(pull restListPull) ports.SCMPRObservation {
 		Draft:             pull.Draft,
 		Closed:            closed,
 		SourceBranch:      pull.Head.Ref,
+		HeadRepo:          pull.Head.Repo.FullName,
 		TargetBranch:      pull.Base.Ref,
 		HeadSHA:           pull.Head.SHA,
 		Title:             pull.Title,

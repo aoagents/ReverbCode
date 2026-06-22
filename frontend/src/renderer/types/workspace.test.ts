@@ -8,7 +8,13 @@ import {
 	toSessionStatus,
 	workerDisplayStatus,
 	workerStatusPulses,
+	openPRs,
+	mergedPRCount,
+	primaryPR,
+	sortedPRs,
 	type AttentionZone,
+	type PRState,
+	type PullRequestFacts,
 	type SessionStatus,
 	type WorkspaceSession,
 	type WorkspaceSummary,
@@ -24,25 +30,38 @@ function sessionWith(overrides: Partial<WorkspaceSession>): WorkspaceSession {
 		branch: "feat/x",
 		status: "working",
 		updatedAt: "2026-01-01T00:00:00Z",
+		prs: [],
 		...overrides,
 	};
 }
 
+const pr = (overrides: Partial<PullRequestFacts> & { number: number; state: PRState }): PullRequestFacts => ({
+	url: `https://example.com/pr/${overrides.number}`,
+	ci: "passing",
+	review: "approved",
+	mergeability: "mergeable",
+	reviewComments: false,
+	updatedAt: "2026-01-01T00:00:00Z",
+	...overrides,
+});
+
 describe("toSessionStatus", () => {
 	it("passes through a known status", () => {
 		expect(toSessionStatus("mergeable")).toBe("mergeable");
+		expect(toSessionStatus("no_signal")).toBe("no_signal");
 	});
 
-	it("overrides to terminated when the session is terminated", () => {
-		expect(toSessionStatus("working", true)).toBe("terminated");
+	it("keeps a backend merged status even when the session is terminated", () => {
+		expect(toSessionStatus("merged", true)).toBe("merged");
 	});
 
-	it("falls back to working for an unknown status", () => {
-		expect(toSessionStatus("bogus")).toBe("working");
+	it("uses terminated only as a fallback when a terminated session has no known status", () => {
+		expect(toSessionStatus(undefined, true)).toBe("terminated");
 	});
 
-	it("falls back to working when status is undefined", () => {
-		expect(toSessionStatus(undefined)).toBe("working");
+	it("falls back to unknown for an unknown live status", () => {
+		expect(toSessionStatus("bogus")).toBe("unknown");
+		expect(toSessionStatus(undefined)).toBe("unknown");
 	});
 });
 
@@ -56,10 +75,12 @@ describe("workerDisplayStatus", () => {
 		["changes_requested", "needs_you"],
 		["review_pending", "needs_you"],
 		["ci_failed", "ci_failed"],
+		["no_signal", "no_signal"],
 		["approved", "mergeable"],
 		["mergeable", "mergeable"],
 		["merged", "done"],
 		["terminated", "done"],
+		["unknown", "unknown"],
 		["working", "working"],
 		["idle", "working"],
 	] as const)("maps %s to %s", (status, expected) => {
@@ -111,8 +132,15 @@ describe("findProjectOrchestrator", () => {
 });
 
 describe("sessionNeedsAttention", () => {
-	it.each(["needs_input", "changes_requested", "review_pending", "ci_failed"] as const)("is true for %s", (status) => {
-		expect(sessionNeedsAttention(sessionWith({ status }))).toBe(true);
+	it.each(["needs_input", "no_signal", "changes_requested", "review_pending", "ci_failed"] as const)(
+		"is true for %s",
+		(status) => {
+			expect(sessionNeedsAttention(sessionWith({ status }))).toBe(true);
+		},
+	);
+
+	it("treats no_signal as needing attention", () => {
+		expect(sessionNeedsAttention(sessionWith({ status: "no_signal" }))).toBe(true);
 	});
 
 	it("is false for statuses that don't need the user", () => {
@@ -126,7 +154,9 @@ describe("workerStatusPulses", () => {
 		expect(workerStatusPulses("working")).toBe(true);
 		expect(workerStatusPulses("needs_you")).toBe(true);
 		expect(workerStatusPulses("mergeable")).toBe(false);
+		expect(workerStatusPulses("no_signal")).toBe(false);
 		expect(workerStatusPulses("done")).toBe(false);
+		expect(workerStatusPulses("unknown")).toBe(false);
 	});
 });
 
@@ -141,16 +171,53 @@ describe("toAgentProvider", () => {
 	});
 });
 
+describe("PR helpers", () => {
+	const session = sessionWith({
+		prs: [
+			pr({ number: 41, state: "open" }),
+			pr({ number: 42, state: "draft" }),
+			pr({ number: 40, state: "merged" }),
+			pr({ number: 39, state: "closed" }),
+		],
+	});
+
+	it("sortedPRs orders open, draft, merged, closed then by number", () => {
+		expect(sortedPRs(session).map((p) => p.number)).toEqual([41, 42, 40, 39]);
+	});
+
+	it("openPRs returns open and draft only", () => {
+		expect(
+			openPRs(session)
+				.map((p) => p.number)
+				.sort(),
+		).toEqual([41, 42]);
+	});
+
+	it("mergedPRCount counts merged PRs", () => {
+		expect(mergedPRCount(session)).toBe(1);
+	});
+
+	it("primaryPR is the highest-priority PR (open before merged)", () => {
+		expect(primaryPR(session)?.number).toBe(41);
+	});
+
+	it("primaryPR is undefined when there are no PRs", () => {
+		expect(primaryPR(sessionWith({ prs: [] }))).toBeUndefined();
+	});
+});
+
 describe("attentionZone", () => {
 	const cases: Array<[SessionStatus, AttentionZone]> = [
 		["mergeable", "merge"],
 		["approved", "merge"],
 		["needs_input", "action"],
+		["no_signal", "action"],
 		["ci_failed", "action"],
 		["changes_requested", "action"],
 		["review_pending", "pending"],
 		["pr_open", "pending"],
 		["draft", "pending"],
+		["unknown", "pending"],
 		["working", "working"],
 		["idle", "working"],
 		["merged", "done"],

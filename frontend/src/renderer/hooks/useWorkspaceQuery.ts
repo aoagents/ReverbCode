@@ -1,7 +1,27 @@
 import { useQuery } from "@tanstack/react-query";
-import { apiClient } from "../lib/api-client";
+import type { components } from "../../api/schema";
+import { apiClient, hasTrustedApiBaseUrl } from "../lib/api-client";
 import { mockWorkspaces } from "../lib/mock-data";
-import { toAgentProvider, toSessionStatus, type WorkspaceSummary } from "../types/workspace";
+import {
+	type PRState,
+	type PullRequestFacts,
+	toAgentProvider,
+	toSessionStatus,
+	type WorkspaceSummary,
+} from "../types/workspace";
+
+function toPullRequestFacts(pr: components["schemas"]["SessionPRFacts"]): PullRequestFacts {
+	return {
+		url: pr.url,
+		number: pr.number,
+		state: pr.state as PRState,
+		ci: pr.ci,
+		review: pr.review,
+		mergeability: pr.mergeability,
+		reviewComments: pr.reviewComments,
+		updatedAt: pr.updatedAt,
+	};
+}
 
 export const workspaceQueryKey = ["workspaces"] as const;
 const usePreviewData = import.meta.env.VITE_NO_ELECTRON === "1";
@@ -9,6 +29,9 @@ const usePreviewData = import.meta.env.VITE_NO_ELECTRON === "1";
 async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 	if (usePreviewData) {
 		return mockWorkspaces;
+	}
+	if (!hasTrustedApiBaseUrl()) {
+		return [];
 	}
 
 	const [{ data: projectsData, error: projectsError }, { data: sessionsData, error: sessionsError }] =
@@ -30,10 +53,12 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 				title: session.displayName ?? session.issueId ?? session.id,
 				provider: toAgentProvider(session.harness),
 				kind: session.kind === "orchestrator" ? "orchestrator" : session.kind === "worker" ? "worker" : undefined,
-				branch: `session/${session.id}`,
+				branch: session.branch ?? `session/${session.id}`,
 				status: toSessionStatus(session.status, session.isTerminated),
 				createdAt: session.createdAt,
 				updatedAt: session.updatedAt,
+				previewUrl: session.previewUrl,
+				prs: (session.prs ?? []).map(toPullRequestFacts),
 			})),
 	}));
 }

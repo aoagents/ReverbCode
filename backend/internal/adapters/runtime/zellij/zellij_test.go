@@ -87,16 +87,31 @@ func containsKey(values []string, key string) bool {
 }
 
 func TestCommandBuilders(t *testing.T) {
+	embeddedOptions := []string{
+		"--pane-frames", "false",
+		"--mouse-mode", "true",
+		"--advanced-mouse-actions", "false",
+		"--mouse-hover-effects", "false",
+		"--focus-follows-mouse", "false",
+		"--mouse-click-through", "false",
+		"--support-kitty-keyboard-protocol", "false",
+	}
 	if got, want := versionArgs(), []string{"--version"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("versionArgs = %#v, want %#v", got, want)
 	}
-	if got, want := createSessionArgs("sess-1", "/tmp/layout.kdl"), []string{"attach", "--create-background", "sess-1", "options", "--default-layout", "/tmp/layout.kdl", "--pane-frames", "false", "--session-serialization", "false", "--show-startup-tips", "false", "--show-release-notes", "false"}; !reflect.DeepEqual(got, want) {
+	wantCreate := append([]string{"attach", "--create-background", "sess-1", "options", "--default-layout", "/tmp/layout.kdl"}, embeddedOptions...)
+	wantCreate = append(wantCreate, "--session-serialization", "false", "--show-startup-tips", "false", "--show-release-notes", "false")
+	if got, want := createSessionArgs("sess-1", "/tmp/layout.kdl"), wantCreate; !reflect.DeepEqual(got, want) {
 		t.Fatalf("createSessionArgs = %#v, want %#v", got, want)
 	}
 	if got, want := listPanesArgs("sess-1"), []string{"--session", "sess-1", "action", "list-panes", "--all", "--json"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("listPanesArgs = %#v, want %#v", got, want)
 	}
-	if got, want := pasteArgs("sess-1", "terminal_0", "hello"), []string{"--session", "sess-1", "action", "paste", "--pane-id", "terminal_0", "hello"}; !reflect.DeepEqual(got, want) {
+	pasteAction := "paste"
+	if runtime.GOOS == "windows" {
+		pasteAction = "write-chars"
+	}
+	if got, want := pasteArgs("sess-1", "terminal_0", "hello"), []string{"--session", "sess-1", "action", pasteAction, "--pane-id", "terminal_0", "hello"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("pasteArgs = %#v, want %#v", got, want)
 	}
 	if got, want := dumpScreenArgs("sess-1", "terminal_0"), []string{"--session", "sess-1", "action", "dump-screen", "--pane-id", "terminal_0", "--full"}; !reflect.DeepEqual(got, want) {
@@ -108,7 +123,8 @@ func TestCommandBuilders(t *testing.T) {
 	if got, want := deleteSessionArgs("sess-1"), []string{"delete-session", "--force", "sess-1"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("deleteSessionArgs = %#v, want %#v", got, want)
 	}
-	if got, want := attachArgs("sess-1"), []string{"attach", "sess-1", "options", "--pane-frames", "false"}; !reflect.DeepEqual(got, want) {
+	wantAttach := append([]string{"attach", "sess-1", "options"}, embeddedOptions...)
+	if got, want := attachArgs("sess-1"), wantAttach; !reflect.DeepEqual(got, want) {
 		t.Fatalf("attachArgs = %#v, want %#v", got, want)
 	}
 }
@@ -186,7 +202,7 @@ func TestHandleID(t *testing.T) {
 	}
 }
 
-func TestBuildLayoutExportsEnvAndKeepsPaneAlive(t *testing.T) {
+func TestBuildLayoutExportsEnvAndRunsAgentCommand(t *testing.T) {
 	oldGetenv := getenv
 	getenv = func(key string) string {
 		if key == "PATH" {
@@ -201,6 +217,18 @@ func TestBuildLayoutExportsEnvAndKeepsPaneAlive(t *testing.T) {
 		"ODD":           "can't",
 		"PATH":          "/custom/bin:/usr/bin",
 	}}, "/bin/zsh")
+	if runtime.GOOS == "windows" {
+		for _, want := range []string{
+			`cwd "/tmp/ws"`,
+			`pane command="ao" name="agent" borderless=true`,
+			`args "run"`,
+		} {
+			if !strings.Contains(got, want) {
+				t.Fatalf("direct windows layout missing %q in %q", want, got)
+			}
+		}
+		return
+	}
 
 	for _, want := range []string{
 		`cwd "/tmp/ws"`,
@@ -208,11 +236,14 @@ func TestBuildLayoutExportsEnvAndKeepsPaneAlive(t *testing.T) {
 		"export AO_SESSION_ID='sess-1';",
 		"export ODD='can'\\\\''t';",
 		"export PATH='/custom/bin:/usr/bin';",
-		"'ao' 'run'; exec '/bin/zsh' -i",
+		"'ao' 'run'",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("layout missing %q in %q", want, got)
 		}
+	}
+	if strings.Contains(got, "exec '/bin/zsh' -i") {
+		t.Fatalf("layout kept pane alive after agent exit: %q", got)
 	}
 }
 
@@ -229,13 +260,22 @@ func TestBuildLayoutUsesPowerShellLaunchOnWindowsShells(t *testing.T) {
 	got := buildLayout(ports.RuntimeConfig{WorkspacePath: `C:\ws`, Argv: []string{"Write-Host", "ready"}, Env: map[string]string{
 		"AO_SESSION_ID": "sess-1",
 	}}, `C:\Program Files\PowerShell\7\pwsh.exe`)
+	if runtime.GOOS == "windows" {
+		for _, want := range []string{
+			`cwd "C:\\ws"`,
+			`pane command="Write-Host" name="agent" borderless=true`,
+			`args "ready"`,
+		} {
+			if !strings.Contains(got, want) {
+				t.Fatalf("direct windows layout missing %q in %q", want, got)
+			}
+		}
+		return
+	}
 
 	for _, want := range []string{
 		`pane command="C:\\Program Files\\PowerShell\\7\\pwsh.exe" name="agent" borderless=true`,
-		`args "-NoLogo" "-NoProfile" "-NoExit" "-Command"`,
-		"$env:AO_SESSION_ID = 'sess-1';",
-		"$env:PATH = ",
-		"& 'Write-Host' 'ready'",
+		`args "-NoLogo" "-NoProfile" "-NoExit" "-EncodedCommand"`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("powershell layout missing %q in %q", want, got)
@@ -253,6 +293,18 @@ func TestBuildLayoutUsesCmdLaunchOnCmdShells(t *testing.T) {
 	got := buildLayout(ports.RuntimeConfig{WorkspacePath: `C:\ws`, Argv: []string{"echo", "ready"}, Env: map[string]string{
 		"AO_SESSION_ID": "sess-1",
 	}}, `C:\Windows\System32\cmd.exe`)
+	if runtime.GOOS == "windows" {
+		for _, want := range []string{
+			`cwd "C:\\ws"`,
+			`pane command="echo" name="agent" borderless=true`,
+			`args "ready"`,
+		} {
+			if !strings.Contains(got, want) {
+				t.Fatalf("direct windows layout missing %q in %q", want, got)
+			}
+		}
+		return
+	}
 
 	for _, want := range []string{
 		`pane command="C:\\Windows\\System32\\cmd.exe" name="agent" borderless=true`,
@@ -281,7 +333,18 @@ func TestCreateRejectsInvalidEnvKeys(t *testing.T) {
 }
 
 func TestCreateStartsSessionAndDiscoversPane(t *testing.T) {
-	fr := &fakeRunner{outputs: [][]byte{[]byte("zellij 0.44.3"), nil, nil, []byte(`[{"id":0,"is_plugin":true,"title":"zellij:tab-bar"},{"id":3,"is_plugin":false,"title":"agent"}]`)}}
+	panesOut := []byte(`[{"id":0,"is_plugin":true,"title":"zellij:tab-bar"},{"id":3,"is_plugin":false,"title":"agent"}]`)
+	outputs := [][]byte{
+		[]byte("zellij 0.44.3"),
+		nil,
+		nil,
+		panesOut,
+	}
+	if runtime.GOOS == "windows" {
+		outputs = append(outputs, panesOut)
+	}
+	outputs = append(outputs, []byte("sess-1 [Created 1s ago] \n"))
+	fr := &fakeRunner{outputs: outputs}
 	r := New(Options{Binary: "zellij-test", Timeout: time.Second, Shell: "/bin/zsh", SocketDir: "/tmp/zj", ConfigDir: "/tmp/cfg"})
 	r.runner = fr
 
@@ -297,8 +360,12 @@ func TestCreateStartsSessionAndDiscoversPane(t *testing.T) {
 	if handle != (ports.RuntimeHandle{ID: "sess-1/terminal_3"}) {
 		t.Fatalf("handle = %+v, want zellij handle", handle)
 	}
-	if len(fr.calls) != 4 {
-		t.Fatalf("calls = %d, want 4", len(fr.calls))
+	wantCalls := 5
+	if runtime.GOOS == "windows" {
+		wantCalls = 6
+	}
+	if len(fr.calls) != wantCalls {
+		t.Fatalf("calls = %d, want %d", len(fr.calls), wantCalls)
 	}
 	if got, want := fr.calls[0].args, []string{"--config-dir", "/tmp/cfg", "--version"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("version args = %#v, want %#v", got, want)
@@ -312,18 +379,34 @@ func TestCreateStartsSessionAndDiscoversPane(t *testing.T) {
 	if got := fr.calls[3].args; !reflect.DeepEqual(got, append([]string{"--config-dir", "/tmp/cfg"}, listPanesArgs("sess-1")...)) {
 		t.Fatalf("list panes args = %#v", got)
 	}
+	listSessionsCall := 4
+	if runtime.GOOS == "windows" {
+		if got := fr.calls[4].args; !reflect.DeepEqual(got, append([]string{"--config-dir", "/tmp/cfg"}, listPanesArgs("sess-1")...)) {
+			t.Fatalf("ready list panes args = %#v", got)
+		}
+		listSessionsCall = 5
+	}
+	if got := fr.calls[listSessionsCall].args; !reflect.DeepEqual(got, append([]string{"--config-dir", "/tmp/cfg"}, listSessionsArgs()...)) {
+		t.Fatalf("list sessions args = %#v", got)
+	}
 	if got, want := fr.calls[0].env, expectedZellijEnv("/tmp/zj"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("env = %#v, want %#v", got, want)
 	}
 }
 
 func TestCreateClearsStaleSessionBeforeCreating(t *testing.T) {
-	fr := &fakeRunner{outputs: [][]byte{
+	panesOut := []byte(`[{"id":1,"is_plugin":false,"title":"agent"}]`)
+	outputs := [][]byte{
 		[]byte("zellij 0.44.3"),
 		nil,
 		nil,
-		[]byte(`[{"id":1,"is_plugin":false,"title":"agent"}]`),
-	}}
+		panesOut,
+	}
+	if runtime.GOOS == "windows" {
+		outputs = append(outputs, panesOut)
+	}
+	outputs = append(outputs, []byte("sess-1 [Created 1s ago] \n"))
+	fr := &fakeRunner{outputs: outputs}
 	r := New(Options{Binary: "zellij-test", Timeout: time.Second, Shell: "/bin/zsh"})
 	r.runner = fr
 
@@ -335,8 +418,12 @@ func TestCreateClearsStaleSessionBeforeCreating(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	if len(fr.calls) != 4 {
-		t.Fatalf("calls = %d, want 4", len(fr.calls))
+	wantCalls := 5
+	if runtime.GOOS == "windows" {
+		wantCalls = 6
+	}
+	if len(fr.calls) != wantCalls {
+		t.Fatalf("calls = %d, want %d", len(fr.calls), wantCalls)
 	}
 	if got, want := fr.calls[1].args, []string{"delete-session", "--force", "sess-1"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("delete args = %#v, want %#v", got, want)
@@ -346,22 +433,32 @@ func TestCreateClearsStaleSessionBeforeCreating(t *testing.T) {
 	}
 }
 
-func TestAttachCommandDisablesPaneFrames(t *testing.T) {
+func TestAttachCommandUsesEmbeddedClientOptions(t *testing.T) {
 	r := New(Options{})
-	args, err := r.AttachCommand(ports.RuntimeHandle{ID: "sess-1/terminal_0"})
+	args, _, err := r.AttachCommand(ports.RuntimeHandle{ID: "sess-1/terminal_0"})
 	if err != nil {
 		t.Fatalf("AttachCommand: %v", err)
 	}
+	embeddedOptions := []string{
+		"--pane-frames", "false",
+		"--mouse-mode", "true",
+		"--advanced-mouse-actions", "false",
+		"--mouse-hover-effects", "false",
+		"--focus-follows-mouse", "false",
+		"--mouse-click-through", "false",
+		"--support-kitty-keyboard-protocol", "false",
+	}
 	if runtime.GOOS == "windows" {
 		joined := strings.Join(args, " ")
-		for _, want := range []string{"--pane-frames", "false"} {
+		for _, want := range embeddedOptions {
 			if !strings.Contains(joined, want) {
 				t.Fatalf("windows attach command missing %q: %#v", want, args)
 			}
 		}
 		return
 	}
-	want := append(expectedAttachEnvPrefix(), "zellij", "attach", "sess-1", "options", "--pane-frames", "false")
+	want := append(expectedAttachEnvPrefix(), r.binary, "attach", "sess-1", "options")
+	want = append(want, embeddedOptions...)
 	if !reflect.DeepEqual(args, want) {
 		t.Fatalf("AttachCommand = %#v, want %#v", args, want)
 	}
@@ -369,16 +466,13 @@ func TestAttachCommandDisablesPaneFrames(t *testing.T) {
 
 func TestAttachCommandUsesSocketDir(t *testing.T) {
 	r := New(Options{SocketDir: "/tmp/zj"})
-	args, err := r.AttachCommand(ports.RuntimeHandle{ID: "sess-1/terminal_0"})
+	args, _, err := r.AttachCommand(ports.RuntimeHandle{ID: "sess-1/terminal_0"})
 	if err != nil {
 		t.Fatalf("AttachCommand: %v", err)
 	}
 	if runtime.GOOS == "windows" {
-		if len(args) < 4 || args[0] != "powershell.exe" {
-			t.Fatalf("attach command = %#v, want powershell wrapper", args)
-		}
-		if !strings.Contains(strings.Join(args, " "), "ZELLIJ_SOCKET_DIR") {
-			t.Fatalf("attach command missing socket dir env: %#v", args)
+		if got, want := args[0], r.binary; got != want {
+			t.Fatalf("attach binary = %q, want %q", got, want)
 		}
 		return
 	}
@@ -480,6 +574,20 @@ func TestGetOutputTrimsLines(t *testing.T) {
 	}
 }
 
+func TestGetOutputTrimsTrailingScreenPaddingBeforeTailing(t *testing.T) {
+	fr := &fakeRunner{outputs: [][]byte{[]byte("ready\nprompt> echo hi\nhi\n\n\n\n")}}
+	r := New(Options{Timeout: time.Second})
+	r.runner = fr
+
+	out, err := r.GetOutput(context.Background(), ports.RuntimeHandle{ID: "sess-1/terminal_0"}, 2)
+	if err != nil {
+		t.Fatalf("GetOutput: %v", err)
+	}
+	if out != "prompt> echo hi\nhi\n" {
+		t.Fatalf("output = %q, want last non-padding lines", out)
+	}
+}
+
 func TestIsAliveParsesNoFormattingOutput(t *testing.T) {
 	fr := &fakeRunner{outputs: [][]byte{[]byte("sess-1 [Created 1s ago] \nold [Created 2s ago] (EXITED - attach to resurrect)\n")}}
 	r := New(Options{Timeout: time.Second})
@@ -532,7 +640,7 @@ func TestIsAliveReportsOtherExitFailuresAsProbeErrors(t *testing.T) {
 }
 
 func TestDestroyIsIdempotentWhenSessionMissing(t *testing.T) {
-	fr := &fakeRunner{err: &exec.ExitError{}}
+	fr := &fakeRunner{outputs: [][]byte{[]byte("No active zellij sessions found.")}, err: &exec.ExitError{}}
 	r := New(Options{Timeout: time.Second})
 	r.runner = fr
 
@@ -541,6 +649,16 @@ func TestDestroyIsIdempotentWhenSessionMissing(t *testing.T) {
 	}
 	if len(fr.calls) != 1 || fr.calls[0].args[0] != "delete-session" {
 		t.Fatalf("calls = %#v, want only delete-session", fr.calls)
+	}
+}
+
+func TestDestroyReportsUnexpectedExitFailures(t *testing.T) {
+	fr := &fakeRunner{outputs: [][]byte{[]byte("permission denied")}, err: &exec.ExitError{}}
+	r := New(Options{Timeout: time.Second})
+	r.runner = fr
+
+	if err := r.Destroy(context.Background(), ports.RuntimeHandle{ID: "sess-1/terminal_0"}); err == nil {
+		t.Fatal("Destroy: got nil, want unexpected delete-session failure")
 	}
 }
 
@@ -594,6 +712,14 @@ func (f *fakeRunner) Run(_ context.Context, env []string, name string, args ...s
 		return out, f.err
 	}
 	return out, nil
+}
+
+func (f *fakeRunner) Start(env []string, name string, args ...string) error {
+	f.calls = append(f.calls, runnerCall{env: append([]string(nil), env...), name: name, args: append([]string(nil), args...)})
+	if len(f.outputs) > 0 {
+		f.outputs = f.outputs[1:]
+	}
+	return f.err
 }
 
 func TestCommandErrorUnwraps(t *testing.T) {

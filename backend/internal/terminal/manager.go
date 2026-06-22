@@ -224,6 +224,9 @@ func (c *connState) openTerminal(id string, rows, cols uint16) {
 	// the only thing that fires onExit — starts after the registration below.
 	var a *attachment
 	a = newAttachment(id, ports.RuntimeHandle{ID: id}, c.mgr.src, c.mgr.spawn,
+		func() {
+			c.enqueue(serverMsg{Ch: chTerminal, ID: id, Type: msgOpened})
+		},
 		func(data []byte) {
 			c.enqueue(serverMsg{
 				Ch:   chTerminal,
@@ -256,11 +259,6 @@ func (c *connState) openTerminal(id string, rows, cols uint16) {
 	c.mu.Lock()
 	c.terms[id] = a
 	c.mu.Unlock()
-
-	// Ack before starting the attach loop so opened always precedes any
-	// data/exited frames (the single out channel preserves this order). A
-	// dead pane is reported as opened followed by exited.
-	c.enqueue(serverMsg{Ch: chTerminal, ID: id, Type: msgOpened})
 
 	go func() {
 		a.run(c.mgr.ctx)

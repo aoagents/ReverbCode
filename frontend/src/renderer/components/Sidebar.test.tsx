@@ -1,4 +1,5 @@
 import { SidebarProvider } from "@/components/ui/sidebar";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -25,18 +26,37 @@ const workspace: WorkspaceSummary = {
 	sessions: [],
 };
 
-function renderSidebar(onRemoveProject = vi.fn().mockResolvedValue(undefined)) {
+type CreateProjectHandler = (input: { path: string; workerAgent: string; orchestratorAgent: string }) => Promise<void>;
+type RemoveProjectHandler = (projectId: string) => Promise<void>;
+
+function renderSidebar({
+	onCreateProject = vi.fn().mockResolvedValue(undefined) as CreateProjectHandler,
+	onRemoveProject = vi.fn().mockResolvedValue(undefined) as RemoveProjectHandler,
+}: {
+	onCreateProject?: CreateProjectHandler;
+	onRemoveProject?: RemoveProjectHandler;
+} = {}) {
+	const queryClient = new QueryClient({
+		defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+	});
 	render(
-		<SidebarProvider>
-			<Sidebar
-				daemonStatus={{ state: "running" }}
-				onCreateProject={vi.fn()}
-				onRemoveProject={onRemoveProject}
-				workspaces={[workspace]}
-			/>
-		</SidebarProvider>,
+		<QueryClientProvider client={queryClient}>
+			<SidebarProvider>
+				<Sidebar
+					daemonStatus={{ state: "running" }}
+					onCreateProject={onCreateProject}
+					onRemoveProject={onRemoveProject}
+					workspaces={[workspace]}
+				/>
+			</SidebarProvider>
+		</QueryClientProvider>,
 	);
 	return onRemoveProject;
+}
+
+async function chooseOption(trigger: HTMLElement, optionName: string) {
+	await userEvent.click(trigger);
+	await userEvent.click(await screen.findByRole("option", { name: optionName }));
 }
 
 beforeEach(() => {
@@ -74,18 +94,54 @@ describe("Sidebar", () => {
 		expect(onRemoveProject).not.toHaveBeenCalled();
 	});
 
-	it("hides the worker count in every state that reveals project actions", () => {
+	it("reveals dashboard and orchestrator buttons alongside the kebab on the project row", () => {
+		renderSidebar();
+
+		expect(screen.getByLabelText("Open Project One dashboard")).toBeInTheDocument();
+		expect(screen.getByLabelText("Spawn Project One orchestrator")).toBeInTheDocument();
+		expect(screen.getByLabelText("Project actions for Project One")).toBeInTheDocument();
+	});
+
+	it("navigates to the project board when the dashboard button is clicked", async () => {
+		const user = userEvent.setup();
+		renderSidebar();
+
+		await user.click(screen.getByLabelText("Open Project One dashboard"));
+
+		expect(navigateMock).toHaveBeenCalledWith({ to: "/projects/$projectId", params: { projectId: "proj-1" } });
+	});
+
+	it("requires explicit worker and orchestrator agents when creating a project", async () => {
+		const user = userEvent.setup();
+		const onCreateProject = vi.fn().mockResolvedValue(undefined) as CreateProjectHandler;
+		window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue("/repo/new-project");
+		renderSidebar({ onCreateProject });
+
+		await user.click(screen.getByLabelText("New project"));
+
+		expect(await screen.findByText("/repo/new-project")).toBeInTheDocument();
+		const dialog = screen.getByRole("dialog", { name: "Project agents" });
+		expect(dialog).toHaveClass("left-1/2", "top-1/2", "-translate-x-1/2", "-translate-y-1/2");
+		await chooseOption(screen.getByRole("combobox", { name: "Worker agent" }), "codex");
+		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "claude-code");
+		await user.click(screen.getByRole("button", { name: "Create and start" }));
+
+		await waitFor(() =>
+			expect(onCreateProject).toHaveBeenCalledWith({
+				path: "/repo/new-project",
+				workerAgent: "codex",
+				orchestratorAgent: "claude-code",
+			}),
+		);
+	});
+
+	it("always shows action icons and reserves padding for them", () => {
 		renderSidebar();
 
 		const projectRow = screen.getByText("Project One").closest("button");
-		const count = screen.getByText("0");
 
 		if (!projectRow) throw new Error("Project row button not found");
-		expect(projectRow).toHaveClass("group-hover/menu-item:pr-[34px]");
-		expect(projectRow).toHaveClass("group-focus-within/menu-item:pr-[34px]");
-		expect(projectRow).toHaveClass("group-has-data-[state=open]/menu-item:pr-[34px]");
-		expect(count).toHaveClass("group-hover/menu-item:opacity-0");
-		expect(count).toHaveClass("group-focus-within/menu-item:opacity-0");
-		expect(count).toHaveClass("group-has-data-[state=open]/menu-item:opacity-0");
+		// Padding is always reserved for the action cluster (not hover-gated)
+		expect(projectRow).toHaveClass("pr-[84px]");
 	});
 });

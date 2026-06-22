@@ -89,7 +89,15 @@ func newStack(t *testing.T) *stack {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	if err := store.UpsertProject(ctx, domain.ProjectRecord{ID: "mer", Path: "/repo/mer", RegisteredAt: time.Now()}); err != nil {
+	if err := store.UpsertProject(ctx, domain.ProjectRecord{
+		ID:           "mer",
+		Path:         "/repo/mer",
+		RegisteredAt: time.Now(),
+		Config: domain.ProjectConfig{
+			Worker:       domain.RoleOverride{Harness: domain.HarnessClaudeCode},
+			Orchestrator: domain.RoleOverride{Harness: domain.HarnessClaudeCode},
+		},
+	}); err != nil {
 		t.Fatal(err)
 	}
 	msg := &captureMessenger{}

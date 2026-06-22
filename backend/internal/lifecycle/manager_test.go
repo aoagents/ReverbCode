@@ -15,6 +15,7 @@ var ctx = context.Background()
 
 type fakeStore struct {
 	sessions   map[domain.SessionID]domain.SessionRecord
+	prs        map[domain.SessionID][]domain.PullRequest
 	signatures map[string]string
 
 	signatureWriteErr error
@@ -22,12 +23,16 @@ type fakeStore struct {
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{sessions: map[domain.SessionID]domain.SessionRecord{}, signatures: map[string]string{}}
+	return &fakeStore{sessions: map[domain.SessionID]domain.SessionRecord{}, prs: map[domain.SessionID][]domain.PullRequest{}, signatures: map[string]string{}}
 }
 
 func (f *fakeStore) GetSession(_ context.Context, id domain.SessionID) (domain.SessionRecord, bool, error) {
 	r, ok := f.sessions[id]
 	return r, ok, nil
+}
+
+func (f *fakeStore) ListPRsBySession(_ context.Context, id domain.SessionID) ([]domain.PullRequest, error) {
+	return f.prs[id], nil
 }
 
 func (f *fakeStore) UpdateSession(_ context.Context, rec domain.SessionRecord) error {
@@ -55,6 +60,16 @@ type fakeMessenger struct {
 	msgs []string
 	err  error
 }
+
+type telemetrySink struct {
+	events []ports.TelemetryEvent
+}
+
+func (s *telemetrySink) Emit(_ context.Context, ev ports.TelemetryEvent) {
+	s.events = append(s.events, ev)
+}
+
+func (*telemetrySink) Close(context.Context) error { return nil }
 
 func (f *fakeMessenger) Send(_ context.Context, _ domain.SessionID, msg string) error {
 	if f.err != nil {
@@ -161,6 +176,37 @@ func TestMarkSpawned_StampsUTCActivity(t *testing.T) {
 	}
 }
 
+func TestActivity_WaitingInputEntryAndExitEmitTelemetry(t *testing.T) {
+	st := newFakeStore()
+	sink := &telemetrySink{}
+	m := New(st, nil, WithTelemetry(sink))
+	now := time.Unix(100, 0).UTC()
+	m.clock = func() time.Time { return now }
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:        "mer-1",
+		ProjectID: "mer",
+		Activity:  domain.Activity{State: domain.ActivityIdle, LastActivityAt: now.Add(-time.Minute)},
+	}
+
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityWaitingInput, Timestamp: now}); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(3 * time.Second)
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityActive, Timestamp: now}); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(sink.events) != 2 {
+		t.Fatalf("events = %#v, want waiting_input entered/exited", sink.events)
+	}
+	if sink.events[0].Name != "ao.session.waiting_input_entered" || sink.events[1].Name != "ao.session.waiting_input_exited" {
+		t.Fatalf("event names = %#v", []string{sink.events[0].Name, sink.events[1].Name})
+	}
+	if got := sink.events[1].Payload["dwell_ms"]; got != int64(3000) {
+		t.Fatalf("dwell_ms = %#v, want 3000", got)
+	}
+}
+
 func TestPRObservation_CIFailingNudgesAgentWithLogs(t *testing.T) {
 	m, st, msg := newManager()
 	st.sessions["mer-1"] = working("mer-1")
@@ -182,6 +228,46 @@ func TestPRObservation_ReviewCommentsNudgeAgent(t *testing.T) {
 	}
 	if len(msg.msgs) != 1 || !strings.Contains(msg.msgs[0], "fix this") {
 		t.Fatalf("want review nudge, got %v", msg.msgs)
+	}
+}
+
+func TestPRObservation_CINudgeSanitizesLogTailControlChars(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	// A CI log tail with an embedded ANSI escape sequence and a NUL byte; the
+	// agent's pane must receive the visible text without the control bytes.
+	o := ports.PRObservation{Fetched: true, URL: "pr1", CI: domain.CIFailing, Checks: []ports.PRCheckObservation{{Name: "build", CommitHash: "c1", Status: domain.PRCheckFailed, LogTail: "line1\x1b[2Jline2\x00\ttabbed"}}}
+	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 1 {
+		t.Fatalf("want one CI nudge, got %v", msg.msgs)
+	}
+	got := msg.msgs[0]
+	if strings.ContainsRune(got, '\x1b') || strings.ContainsRune(got, '\x00') {
+		t.Fatalf("nudge still carries control bytes: %q", got)
+	}
+	if !strings.Contains(got, "line1") || !strings.Contains(got, "line2") || !strings.Contains(got, "\ttabbed") {
+		t.Fatalf("nudge dropped visible text or tab: %q", got)
+	}
+}
+
+func TestPRObservation_ReviewNudgeSanitizesCommentControlChars(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	o := ports.PRObservation{Fetched: true, URL: "pr1", Review: domain.ReviewChangesRequest, Comments: []ports.PRCommentObservation{{ID: "1", Body: "please\x1b]0;pwned\afix this"}}}
+	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 1 {
+		t.Fatalf("want one review nudge, got %v", msg.msgs)
+	}
+	got := msg.msgs[0]
+	if strings.ContainsRune(got, '\x1b') || strings.ContainsRune(got, '\a') {
+		t.Fatalf("review nudge still carries control bytes: %q", got)
+	}
+	if !strings.Contains(got, "please") || !strings.Contains(got, "fix this") {
+		t.Fatalf("review nudge dropped visible text: %q", got)
 	}
 }
 
@@ -259,6 +345,7 @@ func TestPRObservation_MergeConflictNudgesAgent(t *testing.T) {
 func TestPRObservation_MergedTerminatesWithoutNudge(t *testing.T) {
 	m, st, msg := newManager()
 	st.sessions["mer-1"] = working("mer-1")
+	st.prs["mer-1"] = []domain.PullRequest{{URL: "pr1", Merged: true}}
 	if err := m.ApplyPRObservation(ctx, "mer-1", ports.PRObservation{Fetched: true, URL: "pr1", Merged: true}); err != nil {
 		t.Fatal(err)
 	}
@@ -268,6 +355,91 @@ func TestPRObservation_MergedTerminatesWithoutNudge(t *testing.T) {
 	}
 	if len(msg.msgs) != 0 {
 		t.Fatalf("merged PR should not send nudge, got %v", msg.msgs)
+	}
+}
+
+// A session with one merged PR and one still-open PR must NOT terminate: the
+// completion bar is "no open PR remains AND at least one merged".
+func TestPRObservation_MergedWithOpenSiblingDoesNotTerminate(t *testing.T) {
+	m, st, _ := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	st.prs["mer-1"] = []domain.PullRequest{
+		{URL: "pr1", Merged: true},
+		{URL: "pr2"},
+	}
+	if err := m.ApplyPRObservation(ctx, "mer-1", ports.PRObservation{Fetched: true, URL: "pr1", Merged: true}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions["mer-1"]; got.IsTerminated {
+		t.Fatalf("session with an open sibling PR must stay alive, got %+v", got)
+	}
+}
+
+// Once the last open PR merges (all PRs now merged), the session terminates.
+func TestPRObservation_LastMergeTerminatesSession(t *testing.T) {
+	m, st, _ := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	st.prs["mer-1"] = []domain.PullRequest{
+		{URL: "pr1", Merged: true},
+		{URL: "pr2", Merged: true},
+	}
+	if err := m.ApplyPRObservation(ctx, "mer-1", ports.PRObservation{Fetched: true, URL: "pr2", Merged: true}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions["mer-1"]; !got.IsTerminated {
+		t.Fatalf("session should terminate once all PRs are merged, got %+v", got)
+	}
+}
+
+// A closed PR that leaves the session with an open sibling and no merge does not
+// terminate; closing the last PR with no merge also does not terminate (nothing
+// shipped).
+func TestPRObservation_ClosedWithoutMergeDoesNotTerminate(t *testing.T) {
+	m, st, _ := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	st.prs["mer-1"] = []domain.PullRequest{{URL: "pr1", Closed: true}}
+	if err := m.ApplyPRObservation(ctx, "mer-1", ports.PRObservation{Fetched: true, URL: "pr1", Closed: true}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions["mer-1"]; got.IsTerminated {
+		t.Fatalf("a closed-without-merge PR must not terminate the session, got %+v", got)
+	}
+}
+
+// A PR stacked on an open parent (its target branch is the parent's source
+// branch) is exempt from the merge-conflict nudge: conflicts there are expected
+// until the parent merges.
+func TestPRObservation_StackedChildConflictSuppressed(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	st.prs["mer-1"] = []domain.PullRequest{
+		{URL: "parent", SourceBranch: "ao/x", TargetBranch: "main"},
+		{URL: "child", SourceBranch: "ao/x/auth", TargetBranch: "ao/x"},
+	}
+	o := ports.PRObservation{Fetched: true, URL: "child", Mergeability: domain.MergeConflicting}
+	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 0 {
+		t.Fatalf("stacked child conflict should be suppressed, got %v", msg.msgs)
+	}
+}
+
+// The bottom-of-stack PR (not stacked on any open parent) still gets the
+// merge-conflict nudge even when it has open stacked children.
+func TestPRObservation_BottomOfStackConflictNudges(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	st.prs["mer-1"] = []domain.PullRequest{
+		{URL: "parent", SourceBranch: "ao/x", TargetBranch: "main"},
+		{URL: "child", SourceBranch: "ao/x/auth", TargetBranch: "ao/x"},
+	}
+	o := ports.PRObservation{Fetched: true, URL: "parent", Mergeability: domain.MergeConflicting}
+	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 1 || !strings.Contains(msg.msgs[0], "merge conflicts") {
+		t.Fatalf("bottom-of-stack conflict should nudge, got %v", msg.msgs)
 	}
 }
 

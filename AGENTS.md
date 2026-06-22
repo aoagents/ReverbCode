@@ -41,12 +41,14 @@ npm run typecheck
 npm run build
 ```
 
+When showing or demoing frontend changes, run `ao preview [url]` from inside the session so the change renders in the desktop browser panel (the inspector rail's Browser tab); do not just describe it.
+
 ## Where to look first
 
 - `README.md` — current run/config/test quickstart.
 - `docs/README.md` — docs index.
 - `docs/architecture.md` — backend mental model, package layout, lifecycle/session/service boundaries, and load-bearing rules.
-- `docs/status.md` — what is shipped on `main` today and what is still in flight.
+- `docs/STATUS.md` — what is shipped on `main` today and what is still in flight.
 - `docs/cli/README.md` — intended CLI shape: thin Cobra client over daemon HTTP, never direct storage/runtime access.
 - `docs/agent/README.md` — agent adapter contract and hook behavior.
 - `CLAUDE.md` — compatibility pointer for Claude Code; it directs agents back to `AGENTS.md`.
@@ -86,6 +88,7 @@ For code entry points:
 - Keep generated OpenAPI/API DTO drift in mind: controller response shapes live in `backend/internal/httpd/controllers/dto.go` and tests may assert CLI/HTTP wire compatibility.
 - Do not add network calls to tests unless the package already has an integration/e2e pattern for them. Prefer `httptest`, fakes, and injected dependencies.
 - Do not commit local run state, daemon data, temporary worktrees, build outputs, or credentials.
+- All app state lives under `~/.ao` only. The daemon's data dir, `running.json`, worktrees, and the Electron supervisor's `userData` (Chromium cache, cookies, local/session storage, crash dumps) must resolve under `~/.ao` (overridable via `AO_DATA_DIR`/`AO_RUN_FILE`). Never write to or read from `~/Library/Application Support` or any other OS default app-data location. `main.ts` pins Electron's `userData` to `~/.ao/electron`; do not remove that override or rely on Electron's default path.
 
 ## API contract changes
 

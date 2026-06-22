@@ -27,7 +27,8 @@ ALTER TABLE review_new RENAME TO review;
 
 CREATE INDEX idx_review_session ON review (session_id);
 CREATE UNIQUE INDEX idx_review_run_session_pr_sha
-    ON review_run (session_id, pr_url, target_sha) WHERE target_sha != '';
+    ON review_run (session_id, pr_url, target_sha)
+    WHERE target_sha != '' AND status != 'failed';
 CREATE INDEX idx_review_run_session_pr_created ON review_run (session_id, pr_url, created_at);
 -- +goose StatementEnd
 
@@ -57,5 +58,6 @@ DROP TABLE review;
 ALTER TABLE review_old RENAME TO review;
 
 CREATE UNIQUE INDEX idx_review_run_session_sha
-    ON review_run (session_id, target_sha) WHERE target_sha != '';
+    ON review_run (session_id, target_sha)
+    WHERE target_sha != '' AND status != 'failed';
 -- +goose StatementEnd

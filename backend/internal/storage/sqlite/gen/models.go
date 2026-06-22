@@ -135,16 +135,17 @@ type Review struct {
 }
 
 type ReviewRun struct {
-	ID        string
-	ReviewID  string
-	SessionID domain.SessionID
-	Harness   domain.ReviewerHarness
-	PRURL     string
-	TargetSha string
-	Status    domain.ReviewRunStatus
-	Verdict   domain.ReviewVerdict
-	Body      string
-	CreatedAt time.Time
+	ID             string
+	ReviewID       string
+	SessionID      domain.SessionID
+	Harness        domain.ReviewerHarness
+	PRURL          string
+	TargetSha      string
+	Status         domain.ReviewRunStatus
+	Verdict        domain.ReviewVerdict
+	Body           string
+	CreatedAt      time.Time
+	GithubReviewID string
 }
 
 type Session struct {
@@ -166,6 +167,7 @@ type Session struct {
 	UpdatedAt       time.Time
 	DisplayName     string
 	FirstSignalAt   sql.NullTime
+	PreviewURL      string
 }
 
 type SessionWorktree struct {
@@ -176,6 +178,18 @@ type SessionWorktree struct {
 	WorktreePath string
 	PreservedRef string
 	State        string
+}
+
+type TelemetryEvent struct {
+	ID          string
+	OccurredAt  time.Time
+	Name        string
+	Source      string
+	Level       string
+	ProjectID   sql.NullString
+	SessionID   sql.NullString
+	RequestID   string
+	PayloadJson string
 }
 
 type WorkspaceRepo struct {

@@ -2,18 +2,22 @@
 //
 // Design rules (the reason this component exists):
 //  - The mount effect is dependency-free: the terminal instance is created once
-//    per mount and NEVER torn down because a callback identity or session
-//    changed. Session switching is the owner's job (re-point the mux, clear the
-//    screen) — see TerminalPane.
+//    per mount and NEVER torn down because a callback identity changed.
+//    TerminalPane chooses the mount lifetime; it keys mounts by terminal handle
+//    so session switches get a clean surface, while same-handle reconnects reuse
+//    the mounted renderer.
 //  - Nothing writes into the buffer at mount. Status/empty-state belongs to DOM
 //    chrome around the terminal, not inside it. Writing before layout settles
 //    is what crashed xterm's Viewport (`dimensions` of a zero-sized renderer).
-//  - Fitting runs on several triggers, not one: FitAddon derives the column
-//    count from measured cell width, and if it measures before the monospace
-//    font's real metrics are resolved it over-counts columns and the grid
-//    overflows the panel. So: next frame, two settle timeouts, fonts.ready,
-//    and a ResizeObserver. xterm itself only fires onResize when the grid
-//    actually changed, so repeated fits don't spam the PTY.
+//  - Fitting runs on several triggers, not one: FitAddon derives the grid from
+//    the measured cell box, and if it measures before the monospace font's real
+//    metrics (and the post-open renderer) are resolved it mis-counts cols/rows
+//    and the grid clips inside the panel. So: next frame, two settle timeouts,
+//    fonts.ready, a ResizeObserver, AND an onRender convergence loop that
+//    re-fits until the proposed grid stops changing (the last is the only
+//    trigger that recovers a clipped grid without the host box resizing). xterm
+//    itself only fires onResize when the grid actually changed, so repeated
+//    fits don't spam the PTY.
 
 import { useEffect, useRef } from "react";
 import { Terminal } from "@xterm/xterm";
@@ -23,13 +27,15 @@ import { SearchAddon } from "@xterm/addon-search";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
-import type { AttachableTerminal } from "../hooks/useTerminalSession";
+import type { AttachableTerminal, TerminalUserInputSource } from "../hooks/useTerminalSession";
+import { aoBridge } from "../lib/bridge";
 import { buildTerminalThemes } from "../lib/terminal-themes";
 import type { Theme } from "../stores/ui-store";
 
 export type XtermTerminalProps = {
 	ariaLabel?: string;
 	className?: string;
+	fontSize?: number;
 	theme: Theme;
 	/** Terminal construction failed; the owner decides how to surface it. */
 	onError?: (error: unknown) => void;
@@ -65,15 +71,69 @@ const terminalThemes = buildTerminalThemes();
 
 // Erase scrollback (3J) + display (2J) and home the cursor — yyork's
 // terminalResetSequence. Deliberately NOT term.reset(): every pane PTY is a
-// fresh per-client `zellij attach` whose handshake re-asserts the DEC private
-// modes (SGR mouse tracking, alt screen) anyway, but a full RIS would drop
-// them for the window until that handshake arrives — a flash where wheel
-// events stop reaching zellij. The clear only wipes pixels; modes stay up.
+// fresh per-client `zellij attach` whose handshake re-asserts terminal modes
+// anyway, but a full RIS would drop them for the window until that handshake
+// arrives. The clear only wipes pixels; modes stay up.
 const CLEAR_SEQUENCE = "\x1b[3J\x1b[2J\x1b[H";
+
+function preparePastedText(text: string): string {
+	return text.replace(/\r?\n/g, "\r");
+}
+
+function bracketPastedText(text: string, bracketedPasteMode: boolean): string {
+	return bracketedPasteMode ? `\x1b[200~${text}\x1b[201~` : text;
+}
+
+function isTerminalCopyShortcut(event: KeyboardEvent): boolean {
+	if (event.key.toLowerCase() !== "c") return false;
+	if (event.metaKey) return true;
+	return event.ctrlKey && event.shiftKey;
+}
+
+function terminalHasFocus(host: HTMLElement): boolean {
+	const activeElement = document.activeElement;
+	return !!activeElement && host.contains(activeElement);
+}
+
+type XtermInternal = Terminal & {
+	_core?: {
+		element?: HTMLElement;
+		_selectionService?: {
+			enable: () => void;
+			shouldForceSelection: (event: MouseEvent) => boolean;
+		};
+	};
+};
+
+// zellij (started with `--mouse-mode true`, see backend embeddedClientOptions)
+// acts on SGR mouse-wheel reports written to its stdin and scrolls the focused
+// pane, but it does NOT enable host mouse reporting, so xterm's own mouse
+// protocol stays NONE and it never reports the wheel itself. With scrollback:0
+// xterm would instead convert the wheel into cursor-arrow keys (its alt-buffer
+// fallback), which move the agent's cursor/history rather than scrolling. So we
+// synthesize the SGR wheel reports here. SGR button 64 = wheel up, 65 = down;
+// reports are 1-based and a single cell is enough for a borderless single pane.
+const SGR_WHEEL_UP = 64;
+const SGR_WHEEL_DOWN = 65;
+
+function sgrWheelReport(button: number, count: number): string {
+	return `\x1b[<${button};1;1M`.repeat(count);
+}
+
+function forceSelectionMode(term: Terminal): void {
+	const internal = term as XtermInternal;
+	const selectionService = internal._core?._selectionService;
+	const element = internal._core?.element;
+	if (!selectionService || !element) return;
+	selectionService.shouldForceSelection = () => true;
+	selectionService.enable();
+	element.classList.remove("enable-mouse-events");
+}
 
 export function XtermTerminal(props: XtermTerminalProps) {
 	const hostRef = useRef<HTMLDivElement | null>(null);
 	const termRef = useRef<Terminal | null>(null);
+	const fitRef = useRef<(() => void) | null>(null);
 	// Latest callbacks in a ref so the mount effect stays dependency-free — we
 	// never tear down and recreate the terminal because a handler identity
 	// changed between renders.
@@ -88,6 +148,15 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		if (!term) return;
 		term.options.theme = props.theme === "dark" ? terminalThemes.dark : terminalThemes.light;
 	}, [props.theme]);
+
+	useEffect(() => {
+		const term = termRef.current;
+		if (!term || !props.fontSize) return undefined;
+		term.options.fontSize = props.fontSize;
+		fitRef.current?.();
+		const timer = window.setTimeout(() => fitRef.current?.(), 50);
+		return () => window.clearTimeout(timer);
+	}, [props.fontSize]);
 
 	useEffect(() => {
 		const host = hostRef.current;
@@ -107,7 +176,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				fontFamily:
 					getComputedStyle(host).getPropertyValue("--font-mono").trim() ||
 					'ui-monospace, Menlo, Monaco, "Courier New", monospace',
-				fontSize: 13,
+				fontSize: props.fontSize ?? 12,
 				lineHeight: 1.35,
 				// Agent TUIs leave SGR bold active while using ANSI black for
 				// separators; keep bold weight-only so black stays black.
@@ -142,6 +211,50 @@ export function XtermTerminal(props: XtermTerminalProps) {
 
 		term.open(host);
 		loadRenderer(term);
+		term.options.macOptionClickForcesSelection = true;
+		forceSelectionMode(term);
+
+		let lastCopiedSelection = "";
+		const copySelection = (options?: { clipboardData?: DataTransfer | null; dedupe?: boolean }) => {
+			const selection = term.getSelection();
+			if (!selection || (options?.dedupe && selection === lastCopiedSelection)) return false;
+			options?.clipboardData?.setData("text/plain", selection);
+			void aoBridge.clipboard
+				.writeText(selection)
+				.then(() => {
+					lastCopiedSelection = selection;
+				})
+				.catch((error) => {
+					console.warn("Unable to copy terminal selection", error);
+				});
+			return true;
+		};
+		const clearCopiedSelection = () => {
+			lastCopiedSelection = "";
+		};
+		term.attachCustomKeyEventHandler((event) => {
+			if (!isTerminalCopyShortcut(event) || !copySelection()) return true;
+			event.preventDefault();
+			return false;
+		});
+		const copyInput = (event: ClipboardEvent) => {
+			if (!copySelection({ clipboardData: event.clipboardData })) return;
+			event.preventDefault();
+		};
+		const copyShortcut = (event: KeyboardEvent) => {
+			if (!isTerminalCopyShortcut(event) || !terminalHasFocus(host) || !copySelection()) return;
+			event.preventDefault();
+			event.stopPropagation();
+		};
+		host.addEventListener("copy", copyInput);
+		window.addEventListener("keydown", copyShortcut, true);
+		const selectionChange = term.onSelectionChange(() => {
+			if (!term.hasSelection()) {
+				clearCopiedSelection();
+				return;
+			}
+			window.setTimeout(() => copySelection({ dedupe: true }), 0);
+		});
 
 		const fitTerminal = () => {
 			try {
@@ -151,14 +264,128 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				// trigger retries.
 			}
 		};
+		fitRef.current = fitTerminal;
 
 		const raf = requestAnimationFrame(fitTerminal);
-		const settleTimers = [window.setTimeout(fitTerminal, 50), window.setTimeout(fitTerminal, 250)];
+		// 50/250ms catch the common settle; 600/1200ms are a session-bounded
+		// backstop. By 600ms the WebGL atlas and font metrics are unambiguously
+		// warm, so even if the convergence loop below detached at a briefly-stable
+		// wrong measurement, this re-measures the real cell box and corrects —
+		// which fires the PTY resize that makes zellij repaint cleanly (clearing
+		// any ghost frame). fit() is idempotent: a no-op when the grid is already
+		// right, so a correct terminal never reflows.
+		const settleTimers = [50, 250, 600, 1200].map((ms) => window.setTimeout(fitTerminal, ms));
 		if (document.fonts?.ready) {
 			void document.fonts.ready.then(fitTerminal);
 		}
 		const observer = new ResizeObserver(fitTerminal);
 		observer.observe(host);
+
+		// Recovery re-fit that does NOT depend on the host box changing size.
+		//
+		// FitAddon derives the grid by dividing the pane box by the renderer's
+		// measured cell box. That box is measured asynchronously: the WebGL
+		// renderer loads after open() and the monospace font's real metrics
+		// resolve a frame or more later, so the early fits above can divide by a
+		// not-yet-final cell box, mis-count cols/rows, and clip the grid inside the
+		// pane. The fixed settle window (rAF, timeouts, fonts.ready) may all run
+		// before the cell box is final, and the ResizeObserver never fires to
+		// correct it because the host's pixel box is a stable height:100%, so a
+		// wrong grid would otherwise freeze for the whole session.
+		//
+		// onRender fires on every renderer repaint, including the repaint after
+		// the metrics settle. Each fire re-proposes dimensions from the *current*
+		// measured cell box. Crucially we never re-fit straight off a single
+		// frame's proposal: the WebGL atlas warm-up can emit a one-frame transient
+		// cell box (e.g. a doubled box on a HiDPI display) that halves the grid,
+		// and committing it would lock the terminal at half size and detach (the
+		// #313 ghost). So a differing proposal must REPEAT identically across two
+		// consecutive renders — proving the measurement settled — before we apply
+		// it. proposeDimensions returns undefined until the cell box is non-zero,
+		// so a fit is never accepted from an unmeasured cell. Once the proposal
+		// holds at the live grid for a few frames (or a hard re-fit cap is hit) the
+		// listener detaches, so steady-state content renders cost nothing.
+		const STABLE_FRAMES_TARGET = 3;
+		const MAX_REFITS = 20;
+		let stableFrames = 0;
+		let refits = 0;
+		let pending: { cols: number; rows: number } | null = null;
+		const stabilizer = term.onRender(() => {
+			const proposed = fit.proposeDimensions();
+			if (!proposed || !proposed.cols || !proposed.rows) return;
+			if (proposed.cols !== term.cols || proposed.rows !== term.rows) {
+				stableFrames = 0;
+				// Only act once the same differing proposal repeats — a single-frame
+				// transient never gets committed, it just updates `pending`.
+				if (pending && pending.cols === proposed.cols && pending.rows === proposed.rows) {
+					pending = null;
+					if (refits++ >= MAX_REFITS) {
+						stabilizer.dispose();
+						return;
+					}
+					fitTerminal();
+					return;
+				}
+				pending = { cols: proposed.cols, rows: proposed.rows };
+				return;
+			}
+			pending = null;
+			if (++stableFrames >= STABLE_FRAMES_TARGET) stabilizer.dispose();
+		});
+
+		// OS window resize and monitor/DPR changes also alter the true cell box
+		// without touching the host's height:100% box, so the ResizeObserver above
+		// misses them. Listen on window directly as a session-long recovery path.
+		window.addEventListener("resize", fitTerminal);
+
+		const userInputListeners = new Set<(data: string, source: TerminalUserInputSource) => void>();
+		const emitUserInput = (data: string, source: TerminalUserInputSource) => {
+			if (data.length === 0) return;
+			userInputListeners.forEach((listener) => listener(data, source));
+		};
+		const terminalInput = term.onData((data) => emitUserInput(data, "terminal"));
+
+		// Translate wheel motion into SGR wheel reports for zellij (see
+		// sgrWheelReport), one report per scrolled line. WheelEvent.deltaMode
+		// varies by platform/device: trackpads and normalized wheels report
+		// pixels (mode 0, the macOS case), while many Linux/Windows mouse wheels
+		// report whole lines (mode 1) or pages (mode 2). Mirror xterm's native
+		// getLinesScrolled across all three so scroll works everywhere; pixel
+		// deltas accumulate so a full cell-height emits one line. Returning false
+		// suppresses xterm's arrow-key wheel fallback. Ctrl/Cmd wheel is the
+		// font-size zoom (CenterPane), so leave it for that handler.
+		let wheelAccumPx = 0;
+		term.attachCustomWheelEventHandler((event) => {
+			if (event.ctrlKey || event.metaKey) return false;
+			let lines: number;
+			if (event.deltaMode === 1 /* DOM_DELTA_LINE */) {
+				lines = Math.trunc(event.deltaY) || Math.sign(event.deltaY);
+			} else if (event.deltaMode === 2 /* DOM_DELTA_PAGE */) {
+				lines = (Math.trunc(event.deltaY) || Math.sign(event.deltaY)) * term.rows;
+			} else {
+				const rowHeight = (term.options.fontSize ?? 12) * (term.options.lineHeight ?? 1);
+				wheelAccumPx += event.deltaY;
+				lines = Math.trunc(wheelAccumPx / rowHeight);
+				wheelAccumPx -= lines * rowHeight;
+			}
+			if (lines === 0) return false;
+			const button = lines < 0 ? SGR_WHEEL_UP : SGR_WHEEL_DOWN;
+			emitUserInput(sgrWheelReport(button, Math.abs(lines)), "terminal");
+			return false;
+		});
+		const pasteInput = (event: ClipboardEvent) => {
+			event.preventDefault();
+			event.stopPropagation();
+			const text = event.clipboardData?.getData("text/plain") ?? "";
+			const prepared = preparePastedText(text);
+			const bracketed = term.modes.bracketedPasteMode && term.options.ignoreBracketedPasteMode !== true;
+			emitUserInput(bracketPastedText(prepared, bracketed), "paste");
+		};
+		const compositionInput = (event: CompositionEvent) => {
+			emitUserInput(event.data, "composition");
+		};
+		host.addEventListener("paste", pasteInput, true);
+		host.addEventListener("compositionend", compositionInput, true);
 
 		// Live cols/rows getters: the owner reads the current grid at attach time,
 		// not a snapshot taken at ready time (the first fit may not have run yet).
@@ -172,16 +399,29 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			write: (data) => term.write(data),
 			writeln: (line) => term.writeln(line),
 			clear: () => term.write(CLEAR_SEQUENCE),
-			onData: (listener) => term.onData(listener),
+			onUserInput: (listener) => {
+				userInputListeners.add(listener);
+				return { dispose: () => userInputListeners.delete(listener) };
+			},
 			onResize: (listener) => term.onResize(listener),
 		};
 		callbacksRef.current.onReady?.(handle);
 
 		return () => {
 			termRef.current = null;
+			fitRef.current = null;
 			cancelAnimationFrame(raf);
 			for (const timer of settleTimers) window.clearTimeout(timer);
 			observer.disconnect();
+			stabilizer.dispose();
+			window.removeEventListener("resize", fitTerminal);
+			host.removeEventListener("copy", copyInput);
+			window.removeEventListener("keydown", copyShortcut, true);
+			selectionChange.dispose();
+			host.removeEventListener("paste", pasteInput, true);
+			host.removeEventListener("compositionend", compositionInput, true);
+			terminalInput.dispose();
+			userInputListeners.clear();
 			try {
 				term.dispose();
 			} catch {
