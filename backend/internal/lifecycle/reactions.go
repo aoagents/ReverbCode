@@ -3,15 +3,44 @@ package lifecycle
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 const reviewMaxNudge = 3
+
+// ReviewDeliveryOutcome reports what ApplyReviewResult did with a completed
+// AO-internal review pass.
+type ReviewDeliveryOutcome string
+
+const (
+	// ReviewDeliveryNoop means lifecycle did not send or confirm a review nudge
+	// because the result was not relevant for delivery.
+	ReviewDeliveryNoop ReviewDeliveryOutcome = "no_op"
+	// ReviewDeliverySent means the worker nudge was sent or was already covered
+	// by sendOnce dedup state and may be stamped delivered.
+	ReviewDeliverySent ReviewDeliveryOutcome = "sent"
+)
+
+// ReviewResult is the already-persisted result of an AO-internal review pass.
+// Lifecycle treats it as input to the reaction reducer; it does not write the
+// review_run row.
+type ReviewResult struct {
+	RunID          string
+	WorkerID       domain.SessionID
+	PRURL          string
+	TargetSHA      string
+	Verdict        domain.ReviewVerdict
+	Body           string
+	GithubReviewID string
+	DeliveredAt    *time.Time
+}
 
 type reactionState struct {
 	mu       sync.Mutex
@@ -106,6 +135,40 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 		return m.sendOnce(ctx, id, o.URL, "merge-conflict:"+o.URL, string(o.Mergeability), "Your PR has merge conflicts. Rebase onto the base branch and resolve them.", 0)
 	}
 	return nil
+}
+
+// ApplyReviewResult reacts to a completed AO-internal review pass after the
+// review service has persisted the run result. It mirrors ApplyPRObservation:
+// no change_log reads, no review_run writes, only lifecycle side effects.
+func (m *Manager) ApplyReviewResult(ctx context.Context, workerID domain.SessionID, r ReviewResult) (ReviewDeliveryOutcome, error) {
+	if r.Verdict != domain.VerdictChangesRequested || r.DeliveredAt != nil {
+		return ReviewDeliveryNoop, nil
+	}
+	rec, ok, err := m.store.GetSession(ctx, workerID)
+	if err != nil || !ok {
+		return ReviewDeliveryNoop, err
+	}
+	if rec.IsTerminated || rec.Activity.State == domain.ActivityWaitingInput {
+		return ReviewDeliveryNoop, nil
+	}
+	if m.messenger == nil {
+		return ReviewDeliveryNoop, nil
+	}
+	msg := "[AO reviewer] AO's internal code reviewer requested changes on your PR. Review the feedback below and address it."
+	if r.GithubReviewID != "" {
+		safeReviewID := domain.SanitizeControlChars(r.GithubReviewID)
+		msg += fmt.Sprintf(" This feedback is GitHub review %s. Once you have addressed it, reply on that review referencing id %s with how you addressed it, then resolve the review comment threads you addressed.", safeReviewID, safeReviewID)
+	}
+	if r.Body != "" {
+		msg += "\n\n" + domain.SanitizeControlChars(r.Body)
+	}
+	key := "review:" + r.PRURL + ":ao:" + r.RunID
+	sig := strings.Join([]string{r.TargetSHA, r.RunID, r.GithubReviewID, r.Body}, "\x00")
+	err = m.sendOnce(ctx, workerID, r.PRURL, key, sig, msg, reviewMaxNudge)
+	if err != nil {
+		return ReviewDeliveryNoop, err
+	}
+	return ReviewDeliverySent, nil
 }
 
 // sessionComplete reports whether the session has reached the multi-PR

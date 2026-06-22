@@ -681,6 +681,8 @@ export interface components {
             body: string;
             /** Format: date-time */
             createdAt: string;
+            /** Format: date-time */
+            deliveredAt?: null | string;
             githubReviewId: string;
             harness: string;
             id: string;

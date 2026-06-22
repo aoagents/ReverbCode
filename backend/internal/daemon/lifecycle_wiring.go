@@ -121,12 +121,8 @@ func startSession(cfg config.Config, runtime *zellij.Runtime, store *sqlite.Stor
 		PRs:      store,
 		Projects: store,
 		Launcher: reviewcore.NewLauncher(reviewers, runtime),
-		// On a changes_requested verdict the engine nudges the worker's live pane
-		// directly, using the same per-daemon messenger lifecycle uses for SCM
-		// nudges (issue #337).
-		Messenger: messenger,
 	})
-	reviewSvc := reviewsvc.New(reviewEngine)
+	reviewSvc := reviewsvc.New(reviewEngine, store, reviewsvc.WithLifecycleReducer(lcm))
 	return sessionSvc, reviewSvc, nil
 }
 

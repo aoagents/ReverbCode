@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/gen"
@@ -95,6 +96,49 @@ func (s *Store) UpdateReviewRunResult(ctx context.Context, id string, status dom
 	return n > 0, nil
 }
 
+// SupersedeReviewRun marks an unverdicted non-failed pass failed so a new pass
+// for the same commit can be recorded.
+func (s *Store) SupersedeReviewRun(ctx context.Context, id, body string) (bool, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	n, err := s.qw.SupersedeReviewRun(ctx, gen.SupersedeReviewRunParams{
+		Body: body,
+		ID:   id,
+	})
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
+// SupersedeStaleRunningReviewRuns marks older running unverdicted passes for a
+// worker's PR failed before starting a review for a newer commit.
+func (s *Store) SupersedeStaleRunningReviewRuns(ctx context.Context, sessionID domain.SessionID, prURL, targetSHA, body string) (int64, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	return s.qw.SupersedeStaleRunningReviewRuns(ctx, gen.SupersedeStaleRunningReviewRunsParams{
+		Body:      body,
+		SessionID: sessionID,
+		PRURL:     prURL,
+		TargetSha: targetSHA,
+	})
+}
+
+// MarkReviewRunDelivered records that lifecycle delivered the worker nudge for
+// a completed AO-internal review pass.
+func (s *Store) MarkReviewRunDelivered(ctx context.Context, id string, deliveredAt time.Time) (bool, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	n, err := s.qw.MarkReviewRunDelivered(ctx, gen.MarkReviewRunDeliveredParams{
+		DeliveredAt: sql.NullTime{Time: deliveredAt, Valid: true},
+		ID:          id,
+	})
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
 // GetReviewRun returns one review pass by id.
 func (s *Store) GetReviewRun(ctx context.Context, id string) (domain.ReviewRun, bool, error) {
 	row, err := s.qr.GetReviewRun(ctx, id)
@@ -160,6 +204,11 @@ func reviewFromRow(r gen.Review) domain.Review {
 }
 
 func reviewRunFromRow(r gen.ReviewRun) domain.ReviewRun {
+	var deliveredAt *time.Time
+	if r.DeliveredAt.Valid {
+		t := r.DeliveredAt.Time
+		deliveredAt = &t
+	}
 	return domain.ReviewRun{
 		ID:             r.ID,
 		ReviewID:       r.ReviewID,
@@ -172,5 +221,6 @@ func reviewRunFromRow(r gen.ReviewRun) domain.ReviewRun {
 		Body:           r.Body,
 		GithubReviewID: r.GithubReviewID,
 		CreatedAt:      r.CreatedAt,
+		DeliveredAt:    deliveredAt,
 	}
 }

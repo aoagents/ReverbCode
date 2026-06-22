@@ -46,8 +46,9 @@ type ReviewRun struct {
 	// submit time. It is empty when the reviewer could not post to the provider.
 	// When the pass requests changes, AO includes it in the message to the
 	// worker so the worker knows exactly which review to address and reply to.
-	GithubReviewID string    `json:"githubReviewId"`
-	CreatedAt      time.Time `json:"createdAt"`
+	GithubReviewID string     `json:"githubReviewId"`
+	CreatedAt      time.Time  `json:"createdAt"`
+	DeliveredAt    *time.Time `json:"deliveredAt,omitempty"`
 }
 
 // ReviewRunStatus is the lifecycle state of a single review pass.
@@ -55,9 +56,10 @@ type ReviewRunStatus string
 
 // Review run statuses.
 const (
-	ReviewRunRunning  ReviewRunStatus = "running"
-	ReviewRunComplete ReviewRunStatus = "complete"
-	ReviewRunFailed   ReviewRunStatus = "failed"
+	ReviewRunRunning   ReviewRunStatus = "running"
+	ReviewRunComplete  ReviewRunStatus = "complete"
+	ReviewRunDelivered ReviewRunStatus = "delivered"
+	ReviewRunFailed    ReviewRunStatus = "failed"
 )
 
 // ReviewVerdict is the outcome a reviewer reports. The empty verdict marks a

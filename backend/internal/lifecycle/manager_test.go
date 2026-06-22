@@ -222,7 +222,7 @@ func TestPRObservation_CIFailingNudgesAgentWithLogs(t *testing.T) {
 func TestPRObservation_ReviewCommentsNudgeAgent(t *testing.T) {
 	m, st, msg := newManager()
 	st.sessions["mer-1"] = working("mer-1")
-	o := ports.PRObservation{Fetched: true, URL: "pr1", Review: domain.ReviewChangesRequest, Comments: []ports.PRCommentObservation{{ID: "1", Body: "fix this"}}}
+	o := ports.PRObservation{Fetched: true, URL: "pr1", Review: domain.ReviewChangesRequest, Comments: []ports.PRCommentObservation{{ID: "1", Author: "alice", Body: "fix this"}}}
 	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
 		t.Fatal(err)
 	}
@@ -517,6 +517,101 @@ func TestPRObservation_DedupPersistsAcrossPRs(t *testing.T) {
 	}
 	if _, ok := st.signatures["https://github.com/o/r/pull/2"]; !ok {
 		t.Fatal("missing persisted signature for PR 2")
+	}
+}
+
+func TestApplyReviewResultSendsAndDedupsThroughPRSignature(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = working("mer-1")
+	msg := &fakeMessenger{}
+	m := New(st, msg)
+	result := ReviewResult{
+		RunID:          "run-1",
+		WorkerID:       "mer-1",
+		PRURL:          "https://github.com/o/r/pull/1",
+		TargetSHA:      "sha1",
+		Verdict:        domain.VerdictChangesRequested,
+		Body:           "fix the bug",
+		GithubReviewID: "98\x1b[2J765",
+	}
+
+	outcome, err := m.ApplyReviewResult(ctx, "mer-1", result)
+	if err != nil {
+		t.Fatalf("ApplyReviewResult: %v", err)
+	}
+	if outcome != ReviewDeliverySent || len(msg.msgs) != 1 {
+		t.Fatalf("outcome/messages = %q/%v, want sent once", outcome, msg.msgs)
+	}
+	got := msg.msgs[0]
+	if !strings.Contains(got, "[AO reviewer]") || !strings.Contains(got, "fix the bug") || !strings.Contains(got, "98[2J765") {
+		t.Fatalf("AO review nudge missing label/body/review id: %q", got)
+	}
+	if strings.Contains(got, "\x1b") {
+		t.Fatalf("AO review nudge should sanitize control bytes: %q", got)
+	}
+	if st.signatures[result.PRURL] == "" {
+		t.Fatal("AO review nudge did not persist sendOnce signature")
+	}
+
+	outcome, err = m.ApplyReviewResult(ctx, "mer-1", result)
+	if err != nil {
+		t.Fatalf("repeat ApplyReviewResult: %v", err)
+	}
+	if outcome != ReviewDeliverySent || len(msg.msgs) != 1 {
+		t.Fatalf("repeat should report delivered outcome and suppress duplicate send, outcome=%q msgs=%v", outcome, msg.msgs)
+	}
+
+	result.RunID = "run-2"
+	result.TargetSHA = "sha2"
+	outcome, err = m.ApplyReviewResult(ctx, "mer-1", result)
+	if err != nil {
+		t.Fatalf("new pass ApplyReviewResult: %v", err)
+	}
+	if outcome != ReviewDeliverySent || len(msg.msgs) != 2 {
+		t.Fatalf("new review pass should send again, outcome=%q msgs=%v", outcome, msg.msgs)
+	}
+}
+
+func TestApplyReviewResultNoopsWhenIrrelevant(t *testing.T) {
+	deliveredAt := time.Unix(100, 0).UTC()
+	tests := []struct {
+		name   string
+		result ReviewResult
+		rec    domain.SessionRecord
+	}{
+		{
+			name:   "approved",
+			result: ReviewResult{RunID: "run-1", PRURL: "pr1", Verdict: domain.VerdictApproved},
+			rec:    working("mer-1"),
+		},
+		{
+			name:   "already delivered",
+			result: ReviewResult{RunID: "run-1", PRURL: "pr1", Verdict: domain.VerdictChangesRequested, DeliveredAt: &deliveredAt},
+			rec:    working("mer-1"),
+		},
+		{
+			name:   "terminated worker",
+			result: ReviewResult{RunID: "run-1", PRURL: "pr1", Verdict: domain.VerdictChangesRequested},
+			rec:    func() domain.SessionRecord { r := working("mer-1"); r.IsTerminated = true; return r }(),
+		},
+		{
+			name:   "worker waiting input",
+			result: ReviewResult{RunID: "run-1", PRURL: "pr1", Verdict: domain.VerdictChangesRequested},
+			rec:    domain.SessionRecord{ID: "mer-1", Activity: domain.Activity{State: domain.ActivityWaitingInput}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m, st, msg := newManager()
+			st.sessions["mer-1"] = tt.rec
+			outcome, err := m.ApplyReviewResult(ctx, "mer-1", tt.result)
+			if err != nil {
+				t.Fatalf("ApplyReviewResult: %v", err)
+			}
+			if outcome != ReviewDeliveryNoop || len(msg.msgs) != 0 || st.signatureWrites != 0 {
+				t.Fatalf("irrelevant result should no-op, outcome=%q msgs=%v signatureWrites=%d", outcome, msg.msgs, st.signatureWrites)
+			}
+		})
 	}
 }
 
