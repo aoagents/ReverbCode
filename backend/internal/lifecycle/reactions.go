@@ -171,12 +171,9 @@ func (m *Manager) ApplyReviewResult(ctx context.Context, workerID domain.Session
 	}
 	key := "review:" + r.PRURL + ":ao:" + r.RunID
 	sig := strings.Join([]string{r.TargetSHA, r.RunID, r.GithubReviewID, r.Body}, "\x00")
-	sent, err := m.sendOnce(ctx, workerID, r.PRURL, key, sig, msg, reviewMaxNudge)
+	_, err = m.sendOnce(ctx, workerID, r.PRURL, key, sig, msg, reviewMaxNudge)
 	if err != nil {
 		return ReviewDeliveryNoop, err
-	}
-	if !sent {
-		return ReviewDeliverySent, nil
 	}
 	return ReviewDeliverySent, nil
 }

@@ -471,37 +471,6 @@ func TestTriggerRejectsBadWorkerState(t *testing.T) {
 	})
 }
 
-func TestSubmitRecordsVerdictAndBody(t *testing.T) {
-	store := &fakeStore{runs: []domain.ReviewRun{{ID: "run-1", SessionID: "mer-1", Status: domain.ReviewRunRunning}}}
-	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, &fakeLauncher{})
-
-	run, err := eng.Submit(context.Background(), "mer-1", "run-1", domain.VerdictChangesRequested, "please fix", "")
-	if err != nil {
-		t.Fatalf("Submit: %v", err)
-	}
-	if run.Status != domain.ReviewRunComplete || run.Verdict != domain.VerdictChangesRequested || run.Body != "please fix" {
-		t.Fatalf("run = %+v", run)
-	}
-}
-
-func TestSubmitValidationAndOwnership(t *testing.T) {
-	store := &fakeStore{runs: []domain.ReviewRun{{ID: "run-1", SessionID: "other", Status: domain.ReviewRunRunning}}}
-	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, &fakeLauncher{})
-
-	if _, err := eng.Submit(context.Background(), "mer-1", "", domain.VerdictApproved, "", ""); !errors.Is(err, ErrInvalid) {
-		t.Fatalf("missing run id err = %v", err)
-	}
-	if _, err := eng.Submit(context.Background(), "mer-1", "run-1", "garbage", "b", ""); !errors.Is(err, ErrInvalid) {
-		t.Fatalf("bad verdict err = %v", err)
-	}
-	if _, err := eng.Submit(context.Background(), "mer-1", "missing", domain.VerdictApproved, "", ""); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("unknown run err = %v", err)
-	}
-	if _, err := eng.Submit(context.Background(), "mer-1", "run-1", domain.VerdictApproved, "", ""); !errors.Is(err, ErrInvalid) {
-		t.Fatalf("ownership err = %v", err)
-	}
-}
-
 func TestListReturnsHandleAndRuns(t *testing.T) {
 	store := &fakeStore{
 		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", ReviewerHandleID: "review-mer-1"},

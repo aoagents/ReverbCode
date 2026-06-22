@@ -100,3 +100,32 @@ func TestSubmitDeliveryFailureLeavesCompletedUndeliveredForRetry(t *testing.T) {
 		t.Fatalf("retry should not rewrite result and should stamp delivery: update=%d reducer=%d run=%+v", st.updateCalls, reducer.calls, st.run)
 	}
 }
+
+func TestSubmitCompletedRetryRejectsDifferentRecordedFields(t *testing.T) {
+	tests := []struct {
+		name           string
+		body           string
+		githubReviewID string
+	}{
+		{name: "different body", body: "different", githubReviewID: "987"},
+		{name: "different review id", body: "fix it", githubReviewID: "654"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			st := &fakeStore{ok: true, run: domain.ReviewRun{
+				ID: "run-1", SessionID: "mer-1", PRURL: "pr1", TargetSHA: "sha1",
+				Status: domain.ReviewRunComplete, Verdict: domain.VerdictChangesRequested,
+				Body: "fix it", GithubReviewID: "987",
+			}}
+			reducer := &fakeReducer{outcome: lifecycle.ReviewDeliverySent}
+			svc := New(nil, st, WithLifecycleReducer(reducer))
+
+			if _, err := svc.Submit(context.Background(), "mer-1", "run-1", domain.VerdictChangesRequested, tt.body, tt.githubReviewID); !errors.Is(err, ErrInvalid) {
+				t.Fatalf("err = %v, want ErrInvalid", err)
+			}
+			if st.updateCalls != 0 || st.markCalls != 0 || reducer.calls != 0 {
+				t.Fatalf("mismatched retry should not rewrite or deliver: update=%d mark=%d reducer=%d", st.updateCalls, st.markCalls, reducer.calls)
+			}
+		})
+	}
+}

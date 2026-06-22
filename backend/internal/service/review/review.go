@@ -125,11 +125,11 @@ func (s *Service) Submit(ctx context.Context, workerID domain.SessionID, runID s
 		if run.Verdict != verdict {
 			return domain.ReviewRun{}, fmt.Errorf("%w: review run %q already recorded verdict %q", ErrInvalid, runID, run.Verdict)
 		}
-		if body != "" {
-			run.Body = body
+		if body != "" && body != run.Body {
+			return domain.ReviewRun{}, fmt.Errorf("%w: review run %q already recorded a different body", ErrInvalid, runID)
 		}
-		if githubReviewID != "" {
-			run.GithubReviewID = githubReviewID
+		if githubReviewID != "" && githubReviewID != run.GithubReviewID {
+			return domain.ReviewRun{}, fmt.Errorf("%w: review run %q already recorded GitHub review id %q", ErrInvalid, runID, run.GithubReviewID)
 		}
 	case domain.ReviewRunDelivered:
 		return run, nil

@@ -291,51 +291,6 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID) (Trigger
 	return TriggerResult{Run: run, ReviewerHandleID: handleID, Created: true}, nil
 }
 
-// Submit records the reviewer's result for a specific worker review pass. The
-// API service owns any post-persist lifecycle delivery; the core engine only
-// validates ownership and persists the result.
-func (e *Engine) Submit(ctx stdctx.Context, workerID domain.SessionID, runID string, verdict domain.ReviewVerdict, body, githubReviewID string) (domain.ReviewRun, error) {
-	if workerID == "" {
-		return domain.ReviewRun{}, fmt.Errorf("%w: worker session id is required", ErrInvalid)
-	}
-	if runID == "" {
-		return domain.ReviewRun{}, fmt.Errorf("%w: review run id is required", ErrInvalid)
-	}
-	if !verdict.Valid() {
-		return domain.ReviewRun{}, fmt.Errorf("%w: verdict must be %q or %q", ErrInvalid, domain.VerdictApproved, domain.VerdictChangesRequested)
-	}
-	if verdict == domain.VerdictChangesRequested && body == "" {
-		return domain.ReviewRun{}, fmt.Errorf("%w: a changes_requested review requires a body", ErrInvalid)
-	}
-
-	run, ok, err := e.store.GetReviewRun(ctx, runID)
-	if err != nil {
-		return domain.ReviewRun{}, err
-	}
-	if !ok {
-		return domain.ReviewRun{}, fmt.Errorf("%w: review run %q", ErrNotFound, runID)
-	}
-	if run.SessionID != workerID {
-		return domain.ReviewRun{}, fmt.Errorf("%w: review run %q does not belong to worker %q", ErrInvalid, runID, workerID)
-	}
-	if run.Status != domain.ReviewRunRunning {
-		return domain.ReviewRun{}, fmt.Errorf("%w: review run %q is not running", ErrInvalid, runID)
-	}
-
-	updated, err := e.store.UpdateReviewRunResult(ctx, run.ID, domain.ReviewRunComplete, verdict, body, githubReviewID)
-	if err != nil {
-		return domain.ReviewRun{}, err
-	}
-	if !updated {
-		return domain.ReviewRun{}, fmt.Errorf("%w: review run %q is not running", ErrInvalid, runID)
-	}
-	run.Status = domain.ReviewRunComplete
-	run.Verdict = verdict
-	run.Body = body
-	run.GithubReviewID = githubReviewID
-	return run, nil
-}
-
 // List returns a worker's review state: the live reviewer handle and its passes.
 func (e *Engine) List(ctx stdctx.Context, workerID domain.SessionID) (SessionReviews, error) {
 	if workerID == "" {
