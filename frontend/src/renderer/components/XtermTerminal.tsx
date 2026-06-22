@@ -102,7 +102,8 @@ function isTerminalPasteShortcut(event: KeyboardEvent): boolean {
 	if (event.key === "Insert") return event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey;
 	if (event.key.toLowerCase() !== "v") return false;
 	if (event.metaKey) return true;
-	return event.ctrlKey && event.shiftKey;
+	if (event.ctrlKey && event.shiftKey && !event.altKey) return true;
+	return isWindowsPlatform() && event.ctrlKey && !event.shiftKey && !event.altKey && !event.metaKey;
 }
 
 function consumeTerminalShortcut(event: KeyboardEvent): void {
@@ -298,6 +299,23 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			const bracketed = term.modes.bracketedPasteMode && term.options.ignoreBracketedPasteMode !== true;
 			emitUserInput(bracketPastedText(prepared, bracketed), "paste");
 		};
+		let suppressNextNativePaste = false;
+		let suppressPasteTimer: number | null = null;
+		const suppressNativePasteOnce = () => {
+			suppressNextNativePaste = true;
+			if (suppressPasteTimer !== null) window.clearTimeout(suppressPasteTimer);
+			suppressPasteTimer = window.setTimeout(() => {
+				suppressNextNativePaste = false;
+				suppressPasteTimer = null;
+			}, 0);
+		};
+		const clearSuppressNativePaste = () => {
+			suppressNextNativePaste = false;
+			if (suppressPasteTimer !== null) {
+				window.clearTimeout(suppressPasteTimer);
+				suppressPasteTimer = null;
+			}
+		};
 		const pasteFromClipboard = () => {
 			void aoBridge.clipboard
 				.readText()
@@ -320,6 +338,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			}
 			if (isTerminalPasteShortcut(event)) {
 				consumeTerminalShortcut(event);
+				suppressNativePasteOnce();
 				pasteFromClipboard();
 				return false;
 			}
@@ -463,6 +482,10 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		const pasteInput = (event: ClipboardEvent) => {
 			event.preventDefault();
 			event.stopPropagation();
+			if (suppressNextNativePaste) {
+				clearSuppressNativePaste();
+				return;
+			}
 			const text = event.clipboardData?.getData("text/plain") ?? "";
 			pasteText(text);
 		};
@@ -505,6 +528,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			selectionChange.dispose();
 			host.removeEventListener("paste", pasteInput, true);
 			host.removeEventListener("compositionend", compositionInput, true);
+			clearSuppressNativePaste();
 			terminalInput.dispose();
 			userInputListeners.clear();
 			try {

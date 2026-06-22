@@ -274,10 +274,10 @@ describe("XtermTerminal", () => {
 		expect(window.ao!.clipboard.writeText).not.toHaveBeenCalled();
 	});
 
-	it("pastes from the Electron clipboard on Windows/Linux paste shortcuts", async () => {
+	it("pastes once from the Electron clipboard on Windows/Linux paste shortcuts", async () => {
 		const onInput = vi.fn();
 		window.ao!.clipboard.readText = vi.fn().mockResolvedValue("hello\nworld");
-		render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
+		const { container } = render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
 
 		const event = {
 			key: "v",
@@ -289,13 +289,45 @@ describe("XtermTerminal", () => {
 			stopPropagation: vi.fn(),
 		} as unknown as KeyboardEvent;
 		const allowed = state.lastTerminal!.keyHandler!(event);
+		const pasteEvent = new Event("paste", { bubbles: true, cancelable: true }) as ClipboardEvent;
+		Object.defineProperty(pasteEvent, "clipboardData", {
+			value: { getData: vi.fn().mockReturnValue("hello\nworld") },
+		});
+		container.firstElementChild!.dispatchEvent(pasteEvent);
 		await Promise.resolve();
 
 		expect(allowed).toBe(false);
 		expect(event.preventDefault).toHaveBeenCalled();
 		expect(event.stopPropagation).toHaveBeenCalled();
 		expect(window.ao!.clipboard.readText).toHaveBeenCalled();
+		expect(pasteEvent.defaultPrevented).toBe(true);
+		expect(onInput).toHaveBeenCalledTimes(1);
 		expect(onInput).toHaveBeenCalledWith("hello\rworld", "paste");
+	});
+
+	it("supports Windows Ctrl+V paste without relying on a native paste event", async () => {
+		setNavigatorPlatform("Win32");
+		const onInput = vi.fn();
+		window.ao!.clipboard.readText = vi.fn().mockResolvedValue("windows paste");
+		render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
+
+		const event = {
+			key: "v",
+			metaKey: false,
+			ctrlKey: true,
+			shiftKey: false,
+			altKey: false,
+			preventDefault: vi.fn(),
+			stopPropagation: vi.fn(),
+		} as unknown as KeyboardEvent;
+		const allowed = state.lastTerminal!.keyHandler!(event);
+		await Promise.resolve();
+
+		expect(allowed).toBe(false);
+		expect(event.preventDefault).toHaveBeenCalled();
+		expect(event.stopPropagation).toHaveBeenCalled();
+		expect(window.ao!.clipboard.readText).toHaveBeenCalled();
+		expect(onInput).toHaveBeenCalledWith("windows paste", "paste");
 	});
 
 	it("supports classic Windows terminal copy and paste shortcuts", async () => {
