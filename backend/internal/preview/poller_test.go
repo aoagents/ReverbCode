@@ -70,6 +70,23 @@ func TestPollerUsesFirstExistingEntrypoint(t *testing.T) {
 	})
 }
 
+func TestPollerPreservesEntrypointPriority(t *testing.T) {
+	workspace := t.TempDir()
+	writeFile(t, filepath.Join(workspace, "public", "index.html"), "<main>public</main>")
+	writeFile(t, filepath.Join(workspace, "dist", "index.html"), "<main>dist</main>")
+	svc := &fakePreviewSessions{sessions: []domain.SessionRecord{workerSession("ao-1", workspace, "")}}
+	poller := NewPoller(svc, svc, "http://127.0.0.1:3001", PollerConfig{Logger: discardLogger()})
+
+	if err := poller.Poll(context.Background()); err != nil {
+		t.Fatalf("Poll: %v", err)
+	}
+
+	assertSets(t, svc.sets, previewSet{
+		id:  "ao-1",
+		url: "http://127.0.0.1:3001/api/v1/sessions/ao-1/preview/files/public/index.html",
+	})
+}
+
 func TestPollerRefreshesOnlyWhenEntrypointChanges(t *testing.T) {
 	workspace := t.TempDir()
 	entry := filepath.Join(workspace, "index.html")
@@ -98,6 +115,23 @@ func TestPollerRefreshesOnlyWhenEntrypointChanges(t *testing.T) {
 
 	if len(svc.sets) != 2 {
 		t.Fatalf("sets after changed entry = %#v, want refresh set", svc.sets)
+	}
+}
+
+func TestPollerDoesNotRestoreClearedPreviewAfterRestart(t *testing.T) {
+	workspace := t.TempDir()
+	writeFile(t, filepath.Join(workspace, "index.html"), "<main>hello</main>")
+	sess := workerSession("ao-1", workspace, "")
+	sess.Metadata.PreviewRevision = 2
+	svc := &fakePreviewSessions{sessions: []domain.SessionRecord{sess}}
+	poller := NewPoller(svc, svc, "http://127.0.0.1:3001", PollerConfig{Logger: discardLogger()})
+
+	if err := poller.Poll(context.Background()); err != nil {
+		t.Fatalf("Poll: %v", err)
+	}
+
+	if len(svc.sets) != 0 {
+		t.Fatalf("sets = %#v, want cleared preview to remain empty after restart", svc.sets)
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
+// DefaultPollInterval is the preview poller's scan interval when none is configured.
 const DefaultPollInterval = 250 * time.Millisecond
 
 type sessionPreviewSource interface {
@@ -22,6 +23,7 @@ type previewSetter interface {
 	SetPreview(ctx context.Context, id domain.SessionID, previewURL string) (domain.Session, error)
 }
 
+// PollerConfig configures preview poller timing and logging.
 type PollerConfig struct {
 	Interval time.Duration
 	Logger   *slog.Logger
@@ -44,6 +46,7 @@ type entryState struct {
 	size    int64
 }
 
+// NewPoller constructs a preview poller over the supplied session source and setter.
 func NewPoller(source sessionPreviewSource, setter previewSetter, baseURL string, cfg PollerConfig) *Poller {
 	p := &Poller{
 		source:   source,
@@ -137,7 +140,7 @@ func (p *Poller) Poll(ctx context.Context) error {
 func (p *Poller) shouldRefresh(sess domain.SessionRecord, target string, seenBefore bool) bool {
 	current := strings.TrimSpace(sess.Metadata.PreviewURL)
 	if current == "" {
-		return !seenBefore
+		return !seenBefore && sess.Metadata.PreviewRevision == 0
 	}
 	if current == target || isWorkspacePreviewURL(current, sess.ID) {
 		return true

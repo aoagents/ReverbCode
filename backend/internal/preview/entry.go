@@ -11,7 +11,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
-var entryCandidates = []string{"index.html", "dist/index.html", "build/index.html", "public/index.html"}
+var entryCandidates = []string{"index.html", "public/index.html", "dist/index.html", "build/index.html"}
 
 // Entry is a workspace-local static frontend entrypoint.
 type Entry struct {
