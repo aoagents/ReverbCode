@@ -132,8 +132,7 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 		if blocked {
 			return nil
 		}
-		err = m.sendOnce(ctx, id, o.URL, "merge-conflict:"+o.URL, string(o.Mergeability), "Your PR has merge conflicts. Rebase onto the base branch and resolve them.", 0)
-		return err
+		return m.sendOnce(ctx, id, o.URL, "merge-conflict:"+o.URL, string(o.Mergeability), "Your PR has merge conflicts. Rebase onto the base branch and resolve them.", 0)
 	}
 	return nil
 }
