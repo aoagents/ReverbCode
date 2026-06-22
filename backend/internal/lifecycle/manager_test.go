@@ -229,9 +229,6 @@ func TestPRObservation_ReviewCommentsNudgeAgent(t *testing.T) {
 	if len(msg.msgs) != 1 || !strings.Contains(msg.msgs[0], "fix this") {
 		t.Fatalf("want review nudge, got %v", msg.msgs)
 	}
-	if !strings.Contains(msg.msgs[0], "[PR reviewer @alice]") {
-		t.Fatalf("review nudge should identify the external reviewer, got %q", msg.msgs[0])
-	}
 }
 
 func TestPRObservation_CINudgeSanitizesLogTailControlChars(t *testing.T) {

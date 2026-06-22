@@ -110,11 +110,7 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 	}
 	if o.Review == domain.ReviewChangesRequest || hasUnresolvedComments(o.Comments) {
 		comments, sig := reviewContent(o.Comments)
-		msg := "[PR reviewer]"
-		if author := firstReviewAuthor(o.Comments); author != "" {
-			msg = "[PR reviewer @" + domain.SanitizeControlChars(author) + "]"
-		}
-		msg += " A reviewer left feedback on your PR. Address it and push."
+		msg := "A reviewer left feedback on your PR. Address it and push."
 		if comments != "" {
 			msg += "\n\n" + comments
 		}
@@ -483,15 +479,6 @@ func reviewContent(comments []ports.PRCommentObservation) (string, string) {
 		ids = append(ids, c.ID)
 	}
 	return strings.Join(bodies, "\n\n"), strings.Join(ids, ",")
-}
-
-func firstReviewAuthor(comments []ports.PRCommentObservation) string {
-	for _, c := range comments {
-		if strings.TrimSpace(c.Author) != "" {
-			return strings.TrimPrefix(strings.TrimSpace(c.Author), "@")
-		}
-	}
-	return ""
 }
 
 func (m *Manager) sendOnce(ctx context.Context, id domain.SessionID, prURL, key, sig, msg string, maxAttempts int) error {
