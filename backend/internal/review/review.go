@@ -33,6 +33,7 @@ type Store interface {
 	GetReviewBySession(ctx context.Context, id domain.SessionID) (domain.Review, bool, error)
 	InsertReviewRun(ctx context.Context, r domain.ReviewRun) error
 	UpdateReviewRunResult(ctx context.Context, id string, status domain.ReviewRunStatus, verdict domain.ReviewVerdict, body, githubReviewID string) (bool, error)
+	SupersedeReviewRun(ctx context.Context, id, body string) (bool, error)
 	GetReviewRun(ctx context.Context, id string) (domain.ReviewRun, bool, error)
 	GetReviewRunBySessionAndSHA(ctx context.Context, id domain.SessionID, targetSHA string) (domain.ReviewRun, bool, error)
 	ListReviewRunsBySession(ctx context.Context, id domain.SessionID) ([]domain.ReviewRun, error)
@@ -184,18 +185,16 @@ func (e *Engine) Trigger(ctx context.Context, workerID domain.SessionID) (Trigge
 		return TriggerResult{}, err
 	}
 
-	// Idempotency: a pass only counts as done once it carries a verdict, which
-	// is set exclusively by Submit. Status alone is not enough: a Running pass
-	// with no verdict may have been interrupted without ever calling Submit, and
-	// pane liveness cannot distinguish "still working" from "pane open, work
-	// stopped." Supersede an un-verdicted Running row on retry, reusing the pane
-	// via Notify if still alive or spawning fresh if not (#342).
+	// Idempotency: a pass for this commit is reusable while it is still running
+	// or once it carries a verdict. A non-running pass with no verdict may have
+	// been interrupted without ever calling Submit, so it is superseded on retry
+	// and a fresh pass starts below (#342).
 	if existing, ok, err := e.store.GetReviewRunBySessionAndSHA(ctx, workerID, targetSHA); err != nil {
 		return TriggerResult{}, err
-	} else if ok && existing.Verdict != domain.VerdictNone {
+	} else if ok && (existing.Status == domain.ReviewRunRunning || existing.Verdict != domain.VerdictNone) {
 		return TriggerResult{Run: existing, ReviewerHandleID: review.ReviewerHandleID, Created: false}, nil
-	} else if ok && existing.Status == domain.ReviewRunRunning {
-		superseded, err := e.store.UpdateReviewRunResult(ctx, existing.ID, domain.ReviewRunFailed, domain.VerdictNone, "superseded by a new review trigger", "")
+	} else if ok && existing.Status != domain.ReviewRunFailed {
+		superseded, err := e.store.SupersedeReviewRun(ctx, existing.ID, "superseded by a new review trigger")
 		if err != nil {
 			return TriggerResult{}, err
 		}

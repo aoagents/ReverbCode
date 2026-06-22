@@ -183,6 +183,23 @@ func (q *Queries) MarkReviewRunDelivered(ctx context.Context, arg MarkReviewRunD
 	return result.RowsAffected()
 }
 
+const supersedeReviewRun = `-- name: SupersedeReviewRun :execrows
+UPDATE review_run SET status = 'failed', body = ? WHERE id = ? AND verdict = '' AND status != 'failed'
+`
+
+type SupersedeReviewRunParams struct {
+	Body string
+	ID   string
+}
+
+func (q *Queries) SupersedeReviewRun(ctx context.Context, arg SupersedeReviewRunParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, supersedeReviewRun, arg.Body, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const updateReviewRunResult = `-- name: UpdateReviewRunResult :execrows
 UPDATE review_run SET status = ?, verdict = ?, body = ?, github_review_id = ? WHERE id = ? AND status = 'running'
 `
