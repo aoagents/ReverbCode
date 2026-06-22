@@ -114,9 +114,21 @@ vi.mock("@xterm/addon-webgl", () => ({
 	},
 }));
 
+function setNavigatorPlatform(platform: string) {
+	Object.defineProperty(window.navigator, "platform", {
+		configurable: true,
+		value: platform,
+	});
+	Object.defineProperty(window.navigator, "userAgentData", {
+		configurable: true,
+		value: { platform },
+	});
+}
+
 describe("XtermTerminal", () => {
 	beforeEach(() => {
 		state.lastTerminal = null;
+		setNavigatorPlatform("Linux x86_64");
 		window.ao!.clipboard.writeText = vi.fn().mockResolvedValue(undefined);
 		window.ao!.clipboard.readText = vi.fn().mockResolvedValue("");
 	});
@@ -195,6 +207,71 @@ describe("XtermTerminal", () => {
 		expect(allowed).toBe(false);
 		expect(writeText).toHaveBeenCalledTimes(2);
 		expect(writeText).toHaveBeenLastCalledWith("retry me");
+	});
+
+	it("leaves plain Ctrl+C as terminal input on non-Windows even when text is selected", () => {
+		render(<XtermTerminal theme="dark" />);
+		state.lastTerminal!.selection = "selected text";
+
+		const event = {
+			key: "c",
+			metaKey: false,
+			ctrlKey: true,
+			shiftKey: false,
+			altKey: false,
+			preventDefault: vi.fn(),
+			stopPropagation: vi.fn(),
+		} as unknown as KeyboardEvent;
+		const allowed = state.lastTerminal!.keyHandler!(event);
+
+		expect(allowed).toBe(true);
+		expect(event.preventDefault).not.toHaveBeenCalled();
+		expect(event.stopPropagation).not.toHaveBeenCalled();
+		expect(window.ao!.clipboard.writeText).not.toHaveBeenCalled();
+	});
+
+	it("copies selected text with plain Ctrl+C on Windows", () => {
+		setNavigatorPlatform("Win32");
+		render(<XtermTerminal theme="dark" />);
+		state.lastTerminal!.selection = "windows copy";
+
+		const event = {
+			key: "c",
+			metaKey: false,
+			ctrlKey: true,
+			shiftKey: false,
+			altKey: false,
+			preventDefault: vi.fn(),
+			stopPropagation: vi.fn(),
+		} as unknown as KeyboardEvent;
+		const allowed = state.lastTerminal!.keyHandler!(event);
+
+		expect(allowed).toBe(false);
+		expect(event.preventDefault).toHaveBeenCalled();
+		expect(event.stopPropagation).toHaveBeenCalled();
+		expect(window.ao!.clipboard.writeText).toHaveBeenCalledWith("windows copy");
+	});
+
+	it("leaves plain Ctrl+C as terminal input on Windows when nothing is selected", () => {
+		setNavigatorPlatform("Win32");
+		render(<XtermTerminal theme="dark" />);
+		state.lastTerminal!.selection = "";
+
+		const event = {
+			key: "c",
+			metaKey: false,
+			ctrlKey: true,
+			shiftKey: false,
+			altKey: false,
+			preventDefault: vi.fn(),
+			stopPropagation: vi.fn(),
+		} as unknown as KeyboardEvent;
+		const allowed = state.lastTerminal!.keyHandler!(event);
+
+		expect(allowed).toBe(true);
+		expect(event.preventDefault).not.toHaveBeenCalled();
+		expect(event.stopPropagation).not.toHaveBeenCalled();
+		expect(window.ao!.clipboard.writeText).not.toHaveBeenCalled();
 	});
 
 	it("pastes from the Electron clipboard on Windows/Linux paste shortcuts", async () => {

@@ -88,7 +88,14 @@ function isTerminalCopyShortcut(event: KeyboardEvent): boolean {
 	if (event.key === "Insert") return event.ctrlKey && !event.altKey && !event.metaKey;
 	if (event.key.toLowerCase() !== "c") return false;
 	if (event.metaKey) return true;
-	return event.ctrlKey;
+	if (event.ctrlKey && event.shiftKey && !event.altKey) return true;
+	return isWindowsPlatform() && event.ctrlKey && !event.shiftKey && !event.altKey && !event.metaKey;
+}
+
+function isWindowsPlatform(): boolean {
+	const platform =
+		(navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ?? navigator.platform;
+	return platform.toLowerCase().startsWith("win");
 }
 
 function isTerminalPasteShortcut(event: KeyboardEvent): boolean {
