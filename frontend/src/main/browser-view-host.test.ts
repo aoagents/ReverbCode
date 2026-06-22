@@ -80,9 +80,7 @@ describe("normalizeBrowserURL", () => {
 		expect(normalizeBrowserURL("C:\\Users\\Lenovo\\Downloads\\sm5\\paper_explainer.html").href).toBe(
 			"file:///C:/Users/Lenovo/Downloads/sm5/paper_explainer.html",
 		);
-		expect(normalizeBrowserURL("C:/Users/Lenovo/My File.html").href).toBe(
-			"file:///C:/Users/Lenovo/My%20File.html",
-		);
+		expect(normalizeBrowserURL("C:/Users/Lenovo/My File.html").href).toBe("file:///C:/Users/Lenovo/My%20File.html");
 		expect(normalizeBrowserURL("/tmp/preview/index.html").href).toBe("file:///tmp/preview/index.html");
 	});
 
