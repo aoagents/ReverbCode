@@ -46,7 +46,7 @@ WHEN OLD.activity_state <> NEW.activity_state
 BEGIN
     INSERT INTO change_log (project_id, session_id, event_type, payload, created_at)
     VALUES (NEW.project_id, NEW.id, 'session_updated',
-        json_object('id', NEW.id, 'activity', NEW.activity_state, 'isTerminated', json(CASE WHEN NEW.is_terminated THEN 'true' ELSE 'false' END), 'previewUrl', NEW.preview_url, 'previewRevision', NEW.preview_revision),
+        json_object('id', NEW.id, 'activity', NEW.activity_state, 'isTerminated', json(CASE WHEN NEW.is_terminated THEN 'true' ELSE 'false' END), 'previewUrl', NEW.preview_url),
         NEW.updated_at);
 END;
 -- +goose StatementEnd
