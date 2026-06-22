@@ -129,7 +129,9 @@ func (f *fakeLauncher) Notify(_ context.Context, handleID string, spec LaunchSpe
 	f.gotSpec = spec
 	return f.notifyErr
 }
-func (f *fakeLauncher) Alive(_ context.Context, _ string) (bool, error) { return f.alive, nil }
+func (f *fakeLauncher) Alive(_ context.Context, _ string) (bool, error) {
+	return f.alive || f.spawned, nil
+}
 
 func liveWorker() domain.SessionRecord {
 	return domain.SessionRecord{
@@ -181,42 +183,34 @@ func TestTriggerSpawnsNewReviewerAndRecordsRunAfterLaunch(t *testing.T) {
 	}
 }
 
-func TestTriggerConcurrentSameWorkerSpawnsOnce(t *testing.T) {
+func TestTriggerConcurrentSameWorkerNeverDoubleSpawns(t *testing.T) {
+	// Concurrent triggers for the same worker must never create two independent
+	// reviewer panes for the same commit (#242). Verdict-gated idempotency
+	// (#342) means a run with no verdict is not blindly trusted, so repeat
+	// triggers may notify the live pane again; the invariant is no double-spawn.
 	store := &fakeStore{}
 	launcher := &fakeLauncher{handle: "review-mer-1"}
 	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
 
 	const n = 8
 	var wg sync.WaitGroup
-	results := make([]TriggerResult, n)
 	errs := make([]error, n)
 	wg.Add(n)
 	for i := 0; i < n; i++ {
 		go func(i int) {
 			defer wg.Done()
-			results[i], errs[i] = eng.Trigger(context.Background(), "mer-1")
+			_, errs[i] = eng.Trigger(context.Background(), "mer-1")
 		}(i)
 	}
 	wg.Wait()
 
-	created := 0
 	for i := 0; i < n; i++ {
 		if errs[i] != nil {
 			t.Fatalf("Trigger[%d]: %v", i, errs[i])
 		}
-		if results[i].Created {
-			created++
-		}
-	}
-	// Exactly one trigger does the work; the rest reuse its run.
-	if created != 1 {
-		t.Errorf("Created=true count = %d, want exactly 1", created)
 	}
 	if launcher.spawnCount != 1 {
-		t.Errorf("reviewer spawn count = %d, want 1", launcher.spawnCount)
-	}
-	if len(store.runs) != 1 {
-		t.Errorf("recorded review runs = %d, want 1", len(store.runs))
+		t.Errorf("reviewer spawn count = %d, want exactly 1", launcher.spawnCount)
 	}
 }
 
@@ -245,9 +239,12 @@ func TestTriggerFallsBackToExistingRunOnUniqueConflict(t *testing.T) {
 func TestTriggerIsIdempotentForSameCommit(t *testing.T) {
 	store := &fakeStore{
 		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", ReviewerHandleID: "review-mer-1"},
-		runs:   []domain.ReviewRun{{ID: "run-1", SessionID: "mer-1", TargetSHA: "sha1", Status: domain.ReviewRunRunning}},
+		runs: []domain.ReviewRun{{
+			ID: "run-1", SessionID: "mer-1", TargetSHA: "sha1",
+			Status: domain.ReviewRunComplete, Verdict: domain.VerdictApproved,
+		}},
 	}
-	launcher := &fakeLauncher{}
+	launcher := &fakeLauncher{alive: true}
 	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
 
 	res, err := eng.Trigger(context.Background(), "mer-1")
@@ -262,6 +259,52 @@ func TestTriggerIsIdempotentForSameCommit(t *testing.T) {
 	}
 	if len(store.runs) != 1 {
 		t.Fatalf("should not insert another run: %+v", store.runs)
+	}
+}
+
+func TestTriggerRespawnsWhenRunningRowHasNoVerdict(t *testing.T) {
+	store := &fakeStore{
+		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", ReviewerHandleID: "review-mer-1"},
+		runs:   []domain.ReviewRun{{ID: "run-1", SessionID: "mer-1", TargetSHA: "sha1", Status: domain.ReviewRunRunning}},
+	}
+	launcher := &fakeLauncher{alive: false, handle: "review-mer-2"}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
+
+	res, err := eng.Trigger(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatalf("Trigger: %v", err)
+	}
+	if !res.Created {
+		t.Fatalf("expected a fresh pass when the prior run has no verdict: %+v", res)
+	}
+	if !launcher.spawned {
+		t.Fatalf("expected a fresh spawn since the old pane is dead: %+v", launcher)
+	}
+	if stale := store.runs[0]; stale.ID != "run-1" || stale.Status != domain.ReviewRunFailed {
+		t.Fatalf("expected stale run-1 marked failed, got %+v", stale)
+	}
+}
+
+func TestTriggerNotifiesLiveReviewerWhenRunningRowHasNoVerdict(t *testing.T) {
+	store := &fakeStore{
+		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", ReviewerHandleID: "review-mer-1"},
+		runs:   []domain.ReviewRun{{ID: "run-1", SessionID: "mer-1", TargetSHA: "sha1", Status: domain.ReviewRunRunning}},
+	}
+	launcher := &fakeLauncher{alive: true, handle: "review-mer-1"}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
+
+	res, err := eng.Trigger(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatalf("Trigger: %v", err)
+	}
+	if !res.Created {
+		t.Fatalf("expected a fresh pass even though the pane is reused: %+v", res)
+	}
+	if !launcher.notified || launcher.spawned {
+		t.Fatalf("expected notify on the still-live pane, not spawn: %+v", launcher)
+	}
+	if stale := store.runs[0]; stale.ID != "run-1" || stale.Status != domain.ReviewRunFailed {
+		t.Fatalf("expected stale run-1 marked failed, got %+v", stale)
 	}
 }
 

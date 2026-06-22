@@ -184,12 +184,28 @@ func (e *Engine) Trigger(ctx context.Context, workerID domain.SessionID) (Trigge
 		return TriggerResult{}, err
 	}
 
-	// Idempotency: return a non-failed pass as-is. Failed passes stay visible
-	// but can be retried after the user fixes the underlying issue.
+	// Idempotency: a pass only counts as done once it carries a verdict, which
+	// is set exclusively by Submit. Status alone is not enough: a Running pass
+	// with no verdict may have been interrupted without ever calling Submit, and
+	// pane liveness cannot distinguish "still working" from "pane open, work
+	// stopped." Supersede an un-verdicted Running row on retry, reusing the pane
+	// via Notify if still alive or spawning fresh if not (#342).
 	if existing, ok, err := e.store.GetReviewRunBySessionAndSHA(ctx, workerID, targetSHA); err != nil {
 		return TriggerResult{}, err
-	} else if ok && existing.Status != domain.ReviewRunFailed {
+	} else if ok && existing.Verdict != domain.VerdictNone {
 		return TriggerResult{Run: existing, ReviewerHandleID: review.ReviewerHandleID, Created: false}, nil
+	} else if ok && existing.Status == domain.ReviewRunRunning {
+		superseded, err := e.store.UpdateReviewRunResult(ctx, existing.ID, domain.ReviewRunFailed, domain.VerdictNone, "superseded by a new review trigger", "")
+		if err != nil {
+			return TriggerResult{}, err
+		}
+		if !superseded {
+			if latest, ok, err := e.store.GetReviewRun(ctx, existing.ID); err != nil {
+				return TriggerResult{}, err
+			} else if ok {
+				return TriggerResult{Run: latest, ReviewerHandleID: review.ReviewerHandleID, Created: false}, nil
+			}
+		}
 	}
 
 	harness, err := e.reviewerHarness(ctx, worker)
