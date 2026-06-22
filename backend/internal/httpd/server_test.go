@@ -193,9 +193,10 @@ func waitForHealth(t *testing.T, base string) {
 	t.Fatal("server did not become healthy within timeout")
 }
 
-// TestNewFailsOnPortConflict confirms a second bind of the same port fails
-// fast rather than silently sharing it.
-func TestNewFailsOnPortConflict(t *testing.T) {
+// TestNewFallsBackOnPortConflict confirms that when the configured port is
+// already held, the constructor binds an ephemeral port instead of failing, so
+// the desktop supervisor never gets stuck on "daemon not ready".
+func TestNewFallsBackOnPortConflict(t *testing.T) {
 	cfg := config.Config{Host: "127.0.0.1", Port: 0, RunFilePath: filepath.Join(t.TempDir(), "r.json")}
 
 	first, err := NewWithDeps(cfg, discardLogger(), nil, APIDeps{})
@@ -204,9 +205,19 @@ func TestNewFailsOnPortConflict(t *testing.T) {
 	}
 	defer first.listen.Close()
 
-	// Re-bind the exact port the first server took.
+	// Request the exact port the first server took; the second server should
+	// fall back to a different, ephemeral port rather than error out.
 	conflict := config.Config{Host: "127.0.0.1", Port: first.boundPort(), RunFilePath: cfg.RunFilePath}
-	if _, err := NewWithDeps(conflict, discardLogger(), nil, APIDeps{}); err == nil {
-		t.Fatal("New on an already-bound port = nil error, want bind failure")
+	second, err := NewWithDeps(conflict, discardLogger(), nil, APIDeps{})
+	if err != nil {
+		t.Fatalf("New on an already-bound port = %v, want ephemeral fallback", err)
+	}
+	defer second.listen.Close()
+
+	if second.boundPort() == first.boundPort() {
+		t.Fatalf("second server bound the same port %d; want a fallback port", second.boundPort())
+	}
+	if second.boundPort() == 0 {
+		t.Fatal("second server bound port 0; want a real fallback port")
 	}
 }

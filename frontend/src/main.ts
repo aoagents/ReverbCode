@@ -605,6 +605,18 @@ app.on("before-quit", () => {
 	}
 });
 
+// Last-resort teardown. before-quit covers the normal quit path, but app.exit()
+// and some shutdown routes skip it, which would orphan the detached daemon and
+// leave it holding the port for the next launch. The Node 'exit' event fires
+// synchronously on those paths too, so the daemon's process group is always
+// signalled when the supervisor goes away. (A hard SIGKILL/crash still can't run
+// JS; the daemon's port-conflict fallback covers the orphan that leaves behind.)
+process.on("exit", () => {
+	if (daemonProcess) {
+		killDaemon(daemonProcess);
+	}
+});
+
 app.on("window-all-closed", () => {
 	if (process.platform !== "darwin") {
 		app.quit();

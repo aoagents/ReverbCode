@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
@@ -30,14 +31,32 @@ type Server struct {
 }
 
 // NewWithDeps constructs a Server with API dependencies supplied by the daemon
-// and binds the listener immediately so a port conflict fails fast — before any
-// running.json is written. The caller owns the returned Server's lifecycle via
-// Run. termMgr may be nil, in which case the /mux terminal surface is not mounted.
+// and binds the listener immediately, before any running.json is written. The
+// caller owns the returned Server's lifecycle via Run. termMgr may be nil, in
+// which case the /mux terminal surface is not mounted.
+//
+// If the configured port is already held, it falls back to an OS-assigned
+// ephemeral port rather than failing. A genuine peer AO daemon is ruled out
+// upstream (the running.json + /healthz check in daemon.Run), so a conflict here
+// means a non-AO process owns the port; exiting would only leave the desktop
+// supervisor stuck on "daemon not ready". The actual bound port is logged
+// ("daemon listening") and written to running.json, both of which the supervisor
+// reads, so the fallback propagates to the renderer with no UI changes.
 func NewWithDeps(cfg config.Config, log *slog.Logger, termMgr *terminal.Manager, deps APIDeps) (*Server, error) {
 	log = loggerOrDefault(log)
 	ln, err := net.Listen("tcp", cfg.Addr())
 	if err != nil {
-		return nil, fmt.Errorf("bind %s (is a daemon already running?): %w", cfg.Addr(), err)
+		if !errors.Is(err, syscall.EADDRINUSE) {
+			return nil, fmt.Errorf("bind %s: %w", cfg.Addr(), err)
+		}
+		// Configured port is taken by a non-AO process: retry on an ephemeral port.
+		fallback, ferr := net.Listen("tcp", net.JoinHostPort(cfg.Host, "0"))
+		if ferr != nil {
+			return nil, fmt.Errorf("bind %s (in use) and ephemeral fallback: %w", cfg.Addr(), ferr)
+		}
+		log.Warn("configured port in use; bound an ephemeral port instead",
+			"configured", cfg.Addr(), "bound", fallback.Addr().String())
+		ln = fallback
 	}
 
 	srv := &Server{
