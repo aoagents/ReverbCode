@@ -154,6 +154,24 @@ func TestPreview_MissingSessionIDIsUsageError(t *testing.T) {
 	}
 }
 
+func TestPreview_HelpIncludesExamples(t *testing.T) {
+	out, _, err := executeCLI(t, Deps{}, "preview", "--help")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Examples section present.
+	if !strings.Contains(out, "EXAMPLES") && !strings.Contains(out, "Examples") {
+		t.Errorf("help output missing Examples section:\n%s", out)
+	}
+	// file:// URL example (not a relative path).
+	if !strings.Contains(out, "file://$(pwd)/index.html") {
+		t.Errorf("help output missing file:// example:\n%s", out)
+	}
+	if strings.Contains(out, "./dist/index.html") {
+		t.Errorf("help output still references relative ./dist/index.html:\n%s", out)
+	}
+}
+
 func TestPreview_BlankSessionIDIsUsageError(t *testing.T) {
 	t.Setenv("AO_SESSION_ID", " \t ")
 	cfg := setConfigEnv(t)
