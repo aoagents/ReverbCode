@@ -20,8 +20,8 @@ var (
 	ErrAgentBinaryNotFound = ports.ErrAgentBinaryNotFound
 )
 
-// ReviewTarget is one PR's review state within a worker session.
-type ReviewTarget = reviewcore.ReviewTarget
+// Target is one PR's review state within a worker session.
+type Target = reviewcore.Target
 
 // Manager is the reviews surface the HTTP controller depends on.
 type Manager interface {

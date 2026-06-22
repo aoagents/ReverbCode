@@ -140,8 +140,8 @@ type TriggerResult struct {
 	Created          bool
 }
 
-// ReviewTarget is one PR's review state within a worker session.
-type ReviewTarget struct {
+// Target is one PR's review state within a worker session.
+type Target struct {
 	PRURL            string
 	ReviewerHandleID string
 	Runs             []domain.ReviewRun
@@ -152,7 +152,7 @@ type ReviewTarget struct {
 type SessionReviews struct {
 	ReviewerHandleID string
 	Runs             []domain.ReviewRun
-	Targets          []ReviewTarget
+	Targets          []Target
 }
 
 // Trigger starts (or reuses) a review of a worker's PR at its current head:
@@ -402,7 +402,7 @@ func (e *Engine) List(ctx context.Context, workerID domain.SessionID, prURL stri
 		return SessionReviews{
 			ReviewerHandleID: handle,
 			Runs:             runs,
-			Targets:          []ReviewTarget{{PRURL: pr.URL, ReviewerHandleID: handle, Runs: runs}},
+			Targets:          []Target{{PRURL: pr.URL, ReviewerHandleID: handle, Runs: runs}},
 		}, nil
 	}
 
@@ -448,7 +448,7 @@ func (e *Engine) workerPR(ctx context.Context, workerID domain.SessionID, prURL 
 	return prs[0], nil
 }
 
-func reviewTargets(prs []domain.PullRequest, reviews []domain.Review, runs []domain.ReviewRun) []ReviewTarget {
+func reviewTargets(prs []domain.PullRequest, reviews []domain.Review, runs []domain.ReviewRun) []Target {
 	reviewByPR := make(map[string]domain.Review, len(reviews))
 	for _, review := range reviews {
 		reviewByPR[review.PRURL] = review
@@ -458,7 +458,7 @@ func reviewTargets(prs []domain.PullRequest, reviews []domain.Review, runs []dom
 		runsByPR[run.PRURL] = append(runsByPR[run.PRURL], run)
 	}
 	seen := make(map[string]bool, len(prs)+len(reviews)+len(runsByPR))
-	targets := make([]ReviewTarget, 0, len(prs))
+	targets := make([]Target, 0, len(prs))
 	for _, pr := range prs {
 		targets = append(targets, reviewTarget(pr.URL, reviewByPR, runsByPR))
 		seen[pr.URL] = true
@@ -477,8 +477,8 @@ func reviewTargets(prs []domain.PullRequest, reviews []domain.Review, runs []dom
 	return targets
 }
 
-func reviewTarget(prURL string, reviewByPR map[string]domain.Review, runsByPR map[string][]domain.ReviewRun) ReviewTarget {
-	target := ReviewTarget{PRURL: prURL, Runs: runsByPR[prURL]}
+func reviewTarget(prURL string, reviewByPR map[string]domain.Review, runsByPR map[string][]domain.ReviewRun) Target {
+	target := Target{PRURL: prURL, Runs: runsByPR[prURL]}
 	if review, ok := reviewByPR[prURL]; ok {
 		target.ReviewerHandleID = review.ReviewerHandleID
 	}

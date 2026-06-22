@@ -53,7 +53,7 @@ func (f *fakeReviewsService) List(_ context.Context, workerID domain.SessionID, 
 	return reviewcore.SessionReviews{
 		ReviewerHandleID: "reviewer-1",
 		Runs:             []domain.ReviewRun{{ID: "run-1", SessionID: workerID, PRURL: prURL}},
-		Targets:          []reviewcore.ReviewTarget{{PRURL: prURL, ReviewerHandleID: "reviewer-1", Runs: []domain.ReviewRun{{ID: "run-1", SessionID: workerID, PRURL: prURL}}}},
+		Targets:          []reviewcore.Target{{PRURL: prURL, ReviewerHandleID: "reviewer-1", Runs: []domain.ReviewRun{{ID: "run-1", SessionID: workerID, PRURL: prURL}}}},
 	}, nil
 }
 

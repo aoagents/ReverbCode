@@ -110,7 +110,7 @@ func (c *ReviewsController) trigger(w http.ResponseWriter, r *http.Request) {
 	envelope.WriteJSON(w, status, ReviewRunResponse{Review: res.Run, ReviewerHandleID: res.ReviewerHandleID})
 }
 
-func reviewTargetsResponse(targets []reviewsvc.ReviewTarget) []ReviewTargetResponse {
+func reviewTargetsResponse(targets []reviewsvc.Target) []ReviewTargetResponse {
 	out := make([]ReviewTargetResponse, 0, len(targets))
 	for _, target := range targets {
 		runs := target.Runs
