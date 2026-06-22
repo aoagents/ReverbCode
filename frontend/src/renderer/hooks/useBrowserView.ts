@@ -58,7 +58,7 @@ export function useBrowserView({
 	const activeRef = useRef(active);
 	const frameRef = useRef<number | null>(null);
 	const observerRef = useRef<ResizeObserver | null>(null);
-	const previewRevisionRef = useRef<number | null>(null);
+	const previewTriggerRef = useRef<{ revision: number | null; target: string } | null>(null);
 
 	useEffect(() => {
 		activeRef.current = active;
@@ -182,21 +182,20 @@ export function useBrowserView({
 
 	const clear = useCallback(() => withView((id) => window.ao!.browser.clear(id)), [withView]);
 
-	// Drive the view from the daemon-set preview target, keyed on the preview
-	// revision (bumped on every `ao preview` call). Acting on the revision rather
-	// than the URL means a repeated `ao preview <same-url>` still refreshes, an
-	// `ao preview clear` (empty URL) blanks the view, and CDC replays of
-	// unrelated session updates (revision unchanged) are ignored — so the panel
-	// never reloads on an unrelated activity flip.
+	// Drive the view from the daemon-set preview target. Current daemons key
+	// this on previewRevision (bumped on every `ao preview` call); older daemons
+	// did not send it, so fall back to URL changes for compatibility.
 	useEffect(() => {
 		if (!viewId) return;
-		const revision = previewRevision ?? 0;
-		if (previewRevisionRef.current === revision) return;
-		previewRevisionRef.current = revision;
-		const target = previewUrl?.trim();
+		const target = previewUrl?.trim() ?? "";
+		const revision = typeof previewRevision === "number" ? previewRevision : null;
+		const previous = previewTriggerRef.current;
+		if (previous?.revision === revision && previous.target === target) return;
+		if (revision !== null && previous?.revision === revision) return;
+		previewTriggerRef.current = { revision, target };
 		if (target) {
 			void navigate(target);
-		} else if (revision > 0) {
+		} else if ((revision !== null && revision > 0) || previous?.target) {
 			void clear();
 		}
 	}, [clear, navigate, previewRevision, previewUrl, viewId]);

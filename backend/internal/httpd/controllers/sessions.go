@@ -17,6 +17,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apispec"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	previewutil "github.com/aoagents/agent-orchestrator/backend/internal/preview"
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
 )
 
@@ -24,6 +25,8 @@ const (
 	maxPromptLen  = 4096
 	maxMessageLen = 4096
 )
+
+var errPreviewFileNotFound = errors.New("preview file not found")
 
 // SessionService is the controller-facing session service contract.
 type SessionService interface {
@@ -182,10 +185,9 @@ func (c *SessionsController) previewFile(w http.ResponseWriter, r *http.Request)
 // session and fans out a session_updated CDC event so the dashboard's browser
 // panel reacts live. The target is resolved as follows:
 //
-//   - An empty url reuses the session's existing preview target (so a bare
-//     `ao preview` re-opens whatever this agent/context last previewed),
-//     falling back to autodetecting a static entry point (index.html and
-//     friends) only when nothing has been previewed yet.
+//   - An empty url opens the workspace's static entry point (index.html and
+//     friends), falling back to the session's existing preview target only
+//     when no entry point exists.
 //   - An explicit workspace-local path (e.g. `index.html`, `./dist/index.html`)
 //     is served through the preview/files route so local files load.
 //   - Anything else (http(s)/file URLs, host:port dev servers) is kept verbatim.
@@ -212,16 +214,26 @@ func (c *SessionsController) setPreview(w http.ResponseWriter, r *http.Request) 
 	// ponytail: no URL sanitization on preview target; agent-trusted for now
 	previewURL := strings.TrimSpace(in.URL)
 	if previewURL == "" {
-		if existing := strings.TrimSpace(sess.Metadata.PreviewURL); existing != "" {
-			previewURL = existing
-		} else if entry, ok := discoverPreviewEntry(sess.Metadata.WorkspacePath); ok {
+		if entry, ok := discoverPreviewEntry(sess.Metadata.WorkspacePath); ok {
 			previewURL = previewFileURL(r, sessionID(r), entry)
+		} else if existing := strings.TrimSpace(sess.Metadata.PreviewURL); existing != "" {
+			var resolveErr error
+			previewURL, resolveErr = resolvePreviewTarget(r, sessionID(r), sess.Metadata.WorkspacePath, existing)
+			if resolveErr != nil {
+				writePreviewResolveError(w, r, resolveErr)
+				return
+			}
 		} else {
 			envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "NO_PREVIEW_ENTRY", "No preview entry point found in session workspace", nil)
 			return
 		}
-	} else if resolved, ok := resolveLocalPreview(r, sessionID(r), sess.Metadata.WorkspacePath, previewURL); ok {
-		previewURL = resolved
+	} else {
+		var resolveErr error
+		previewURL, resolveErr = resolvePreviewTarget(r, sessionID(r), sess.Metadata.WorkspacePath, previewURL)
+		if resolveErr != nil {
+			writePreviewResolveError(w, r, resolveErr)
+			return
+		}
 	}
 	updated, err := c.Svc.SetPreview(r.Context(), sessionID(r), previewURL)
 	if err != nil {
@@ -544,20 +556,8 @@ func writeSessionPRError(w http.ResponseWriter, r *http.Request, err error) {
 }
 
 func discoverPreviewEntry(workspacePath string) (string, bool) {
-	if strings.TrimSpace(workspacePath) == "" {
-		return "", false
-	}
-	for _, candidate := range []string{"index.html", "public/index.html", "dist/index.html", "build/index.html"} {
-		file, ok := confinedPreviewPath(workspacePath, candidate)
-		if !ok {
-			continue
-		}
-		info, err := os.Stat(file)
-		if err == nil && !info.IsDir() {
-			return candidate, true
-		}
-	}
-	return "", false
+	entry, ok := previewutil.DiscoverEntry(workspacePath)
+	return entry.Path, ok
 }
 
 // resolveLocalPreview maps a workspace-local path (e.g. "index.html" or
@@ -583,6 +583,49 @@ func resolveLocalPreview(r *http.Request, id domain.SessionID, workspacePath, ra
 	return previewFileURL(r, id, entry), true
 }
 
+func resolvePreviewTarget(r *http.Request, id domain.SessionID, workspacePath, raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if isAbsolutePreviewPath(raw) {
+		return absolutePreviewFileURL(raw)
+	}
+	if resolved, ok := resolveLocalPreview(r, id, workspacePath, raw); ok {
+		return resolved, nil
+	}
+	return raw, nil
+}
+
+func isAbsolutePreviewPath(raw string) bool {
+	return filepath.IsAbs(raw) || isWindowsAbsolutePath(raw)
+}
+
+func isWindowsAbsolutePath(raw string) bool {
+	return len(raw) >= 3 && ((raw[0] >= 'a' && raw[0] <= 'z') || (raw[0] >= 'A' && raw[0] <= 'Z')) && raw[1] == ':' && (raw[2] == '\\' || raw[2] == '/')
+}
+
+func absolutePreviewFileURL(raw string) (string, error) {
+	file, err := filepath.Abs(raw)
+	if err != nil {
+		return "", errPreviewFileNotFound
+	}
+	info, err := os.Stat(file)
+	if err != nil || info.IsDir() {
+		return "", errPreviewFileNotFound
+	}
+	filePath := filepath.ToSlash(file)
+	if filepath.VolumeName(file) != "" || isWindowsAbsolutePath(filePath) {
+		filePath = "/" + filePath
+	}
+	return (&url.URL{Scheme: "file", Path: filePath}).String(), nil
+}
+
+func writePreviewResolveError(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, errPreviewFileNotFound) {
+		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "PREVIEW_FILE_NOT_FOUND", "Preview file not found", nil)
+		return
+	}
+	envelope.WriteError(w, r, err)
+}
+
 // hasURLScheme reports whether raw begins with an RFC-3986 "scheme:" prefix
 // (http:, https:, file:, or a host:port like localhost:5173). It mirrors the
 // renderer's withDefaultScheme heuristic so the daemon and browser panel agree
@@ -602,41 +645,11 @@ func hasURLScheme(raw string) bool {
 }
 
 func confinedPreviewPath(workspacePath, assetPath string) (string, bool) {
-	root, err := filepath.Abs(workspacePath)
-	if err != nil || root == "" {
-		return "", false
-	}
-	clean := strings.TrimPrefix(path.Clean("/"+strings.TrimSpace(assetPath)), "/")
-	if clean == "" || clean == "." {
-		clean = "index.html"
-	}
-	file := filepath.Join(root, filepath.FromSlash(clean))
-	absFile, err := filepath.Abs(file)
-	if err != nil {
-		return "", false
-	}
-	rel, err := filepath.Rel(root, absFile)
-	if err != nil || rel == "." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." {
-		return "", false
-	}
-	return absFile, true
+	return previewutil.ConfinedPath(workspacePath, assetPath)
 }
 
 func previewFileURL(r *http.Request, id domain.SessionID, entry string) string {
-	u := url.URL{
-		Scheme: "http",
-		Host:   r.Host,
-		Path:   "/api/v1/sessions/" + url.PathEscape(string(id)) + "/preview/files/" + escapePath(entry),
-	}
-	return u.String()
-}
-
-func escapePath(raw string) string {
-	parts := strings.Split(raw, "/")
-	for i, part := range parts {
-		parts[i] = url.PathEscape(part)
-	}
-	return strings.Join(parts, "/")
+	return previewutil.FileURL("http://"+r.Host, id, entry)
 }
 
 func sessionView(s domain.Session) SessionView {

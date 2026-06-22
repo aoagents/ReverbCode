@@ -179,6 +179,34 @@ describe("useBrowserView", () => {
 		expect(bridge.navigate).toHaveBeenCalledTimes(3);
 	});
 
+	it("navigates legacy preview URLs when the daemon omits preview revisions", async () => {
+		const bridge = setupBridge();
+		const { result, rerender } = renderHook(
+			({ previewUrl }) => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false, previewUrl }),
+			{ initialProps: { previewUrl: undefined as string | undefined } },
+		);
+		await waitFor(() => expect(result.current.viewId).toBe("42:sess-1"));
+		expect(bridge.navigate).not.toHaveBeenCalled();
+
+		rerender({ previewUrl: "http://localhost:5173/" });
+		await waitFor(() =>
+			expect(bridge.navigate).toHaveBeenCalledWith({ viewId: "42:sess-1", url: "http://localhost:5173/" }),
+		);
+		expect(bridge.navigate).toHaveBeenCalledTimes(1);
+
+		rerender({ previewUrl: "http://localhost:5173/" });
+		expect(bridge.navigate).toHaveBeenCalledTimes(1);
+
+		rerender({ previewUrl: "C:\\Users\\Lenovo\\Downloads\\sm5\\paper_explainer.html" });
+		await waitFor(() =>
+			expect(bridge.navigate).toHaveBeenCalledWith({
+				viewId: "42:sess-1",
+				url: "C:\\Users\\Lenovo\\Downloads\\sm5\\paper_explainer.html",
+			}),
+		);
+		expect(bridge.navigate).toHaveBeenCalledTimes(2);
+	});
+
 	it("clears the view when the preview is reset (ao preview clear) and does not navigate", async () => {
 		const bridge = setupBridge();
 		const { rerender } = renderHook(

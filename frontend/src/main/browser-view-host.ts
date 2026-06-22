@@ -249,10 +249,31 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 }
 
 function withDefaultScheme(raw: string): string {
+	if (isWindowsAbsolutePath(raw) || isPosixAbsolutePath(raw)) return localPathToFileURL(raw);
 	if (/^https?:\/\//i.test(raw)) return raw;
 	if (isLocalhostLike(raw)) return `http://${raw}`;
 	if (/^[a-zA-Z][a-zA-Z\d+.-]*:/.test(raw)) return raw;
 	return `https://${raw}`;
+}
+
+function isWindowsAbsolutePath(raw: string): boolean {
+	return /^[a-zA-Z]:[\\/]/.test(raw);
+}
+
+function isPosixAbsolutePath(raw: string): boolean {
+	return raw.startsWith("/");
+}
+
+function localPathToFileURL(raw: string): string {
+	if (isWindowsAbsolutePath(raw)) {
+		const normalized = raw.replace(/\\/g, "/");
+		return `file:///${encodePathSegments(normalized).replace(/^([A-Za-z])%3A(?=\/)/, "$1:")}`;
+	}
+	return `file://${encodePathSegments(raw)}`;
+}
+
+function encodePathSegments(pathname: string): string {
+	return pathname.split("/").map(encodeURIComponent).join("/");
 }
 
 function isLocalhostLike(raw: string): boolean {

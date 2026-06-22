@@ -23,8 +23,7 @@ func newPreviewCommand(ctx *commandContext) *cobra.Command {
 		Use:   "preview [url]",
 		Short: "Open a URL (or the workspace's index.html) in the desktop browser panel for the current session",
 		Long: "Open a URL in the desktop browser panel for the current session.\n\n" +
-			"With no argument it re-opens whatever this session last previewed,\n" +
-			"falling back to the workspace's index.html. A workspace-relative path\n" +
+			"With no argument it opens the workspace's index.html. A workspace-relative path\n" +
 			"(e.g. ./dist/index.html) is served as a local file. Use `ao preview\n" +
 			"clear` to empty the panel.",
 		Args: cobra.MaximumNArgs(1),

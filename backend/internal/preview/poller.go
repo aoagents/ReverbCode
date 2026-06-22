@@ -1,0 +1,175 @@
+package preview
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"net/url"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+)
+
+const DefaultPollInterval = 250 * time.Millisecond
+
+type sessionPreviewSource interface {
+	ListAllSessions(ctx context.Context) ([]domain.SessionRecord, error)
+}
+
+type previewSetter interface {
+	SetPreview(ctx context.Context, id domain.SessionID, previewURL string) (domain.Session, error)
+}
+
+type PollerConfig struct {
+	Interval time.Duration
+	Logger   *slog.Logger
+}
+
+// Poller watches active worker workspaces for static frontend entrypoints and
+// persists preview URL refreshes through the normal session service path.
+type Poller struct {
+	source   sessionPreviewSource
+	setter   previewSetter
+	baseURL  string
+	interval time.Duration
+	logger   *slog.Logger
+	seen     map[domain.SessionID]entryState
+}
+
+type entryState struct {
+	path    string
+	modUnix int64
+	size    int64
+}
+
+func NewPoller(source sessionPreviewSource, setter previewSetter, baseURL string, cfg PollerConfig) *Poller {
+	p := &Poller{
+		source:   source,
+		setter:   setter,
+		baseURL:  baseURL,
+		interval: cfg.Interval,
+		logger:   cfg.Logger,
+		seen:     map[domain.SessionID]entryState{},
+	}
+	if p.interval <= 0 {
+		p.interval = DefaultPollInterval
+	}
+	if p.logger == nil {
+		p.logger = slog.Default()
+	}
+	return p
+}
+
+// Start runs an immediate poll followed by interval polling until ctx is
+// cancelled. The returned channel closes after the goroutine exits.
+func (p *Poller) Start(ctx context.Context) <-chan struct{} {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		p.pollAndLog(ctx)
+		ticker := time.NewTicker(p.interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				p.pollAndLog(ctx)
+			}
+		}
+	}()
+	return done
+}
+
+func (p *Poller) pollAndLog(ctx context.Context) {
+	if err := p.Poll(ctx); err != nil {
+		p.logger.Error("preview poller: poll failed", "err", err)
+	}
+}
+
+// Poll performs one deterministic scan of active worker sessions.
+func (p *Poller) Poll(ctx context.Context) error {
+	if p.source == nil || p.setter == nil {
+		return nil
+	}
+	sessions, err := p.source.ListAllSessions(ctx)
+	if err != nil {
+		return fmt.Errorf("preview poller list sessions: %w", err)
+	}
+	activeIDs := make(map[domain.SessionID]struct{}, len(sessions))
+	for _, sess := range sessions {
+		if sess.IsTerminated {
+			continue
+		}
+		activeIDs[sess.ID] = struct{}{}
+		if sess.Kind != domain.KindWorker {
+			continue
+		}
+		entry, ok := DiscoverEntry(sess.Metadata.WorkspacePath)
+		if !ok {
+			continue
+		}
+		state := stateFor(entry)
+		previous, seenBefore := p.seen[sess.ID]
+		if seenBefore && previous == state {
+			continue
+		}
+		target := FileURL(p.baseURL, sess.ID, entry.Path)
+		if !p.shouldRefresh(sess, target, seenBefore) {
+			p.seen[sess.ID] = state
+			continue
+		}
+		if _, err := p.setter.SetPreview(ctx, sess.ID, target); err != nil {
+			return fmt.Errorf("preview poller set preview %s: %w", sess.ID, err)
+		}
+		p.seen[sess.ID] = state
+	}
+	for id := range p.seen {
+		if _, ok := activeIDs[id]; !ok {
+			delete(p.seen, id)
+		}
+	}
+	return nil
+}
+
+func (p *Poller) shouldRefresh(sess domain.SessionRecord, target string, seenBefore bool) bool {
+	current := strings.TrimSpace(sess.Metadata.PreviewURL)
+	if current == "" {
+		return !seenBefore
+	}
+	if current == target || isWorkspacePreviewURL(current, sess.ID) {
+		return true
+	}
+	return isStaleWorkspacePath(current)
+}
+
+func stateFor(entry Entry) entryState {
+	return entryState{path: entry.Path, modUnix: entry.ModTime.UnixNano(), size: entry.Size}
+}
+
+func isWorkspacePreviewURL(raw string, id domain.SessionID) bool {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return false
+	}
+	previewPath := parsed.Path
+	if previewPath == "" {
+		previewPath = raw
+	}
+	prefix := "/api/v1/sessions/" + url.PathEscape(string(id)) + "/preview/files/"
+	return strings.HasPrefix(previewPath, prefix)
+}
+
+func isStaleWorkspacePath(raw string) bool {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || strings.Contains(raw, "://") || filepath.IsAbs(raw) || isWindowsAbs(raw) {
+		return false
+	}
+	return !strings.Contains(raw, ":")
+}
+
+func isWindowsAbs(raw string) bool {
+	return len(raw) >= 3 && ((raw[0] >= 'a' && raw[0] <= 'z') || (raw[0] >= 'A' && raw[0] <= 'Z')) && raw[1] == ':' && (raw[2] == '\\' || raw[2] == '/')
+}
