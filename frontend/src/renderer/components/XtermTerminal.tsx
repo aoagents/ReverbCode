@@ -85,9 +85,65 @@ function bracketPastedText(text: string, bracketedPasteMode: boolean): string {
 }
 
 function isTerminalCopyShortcut(event: KeyboardEvent): boolean {
+	if (event.key === "Insert") return event.ctrlKey && !event.altKey && !event.metaKey;
 	if (event.key.toLowerCase() !== "c") return false;
 	if (event.metaKey) return true;
+	if (event.ctrlKey && event.shiftKey && !event.altKey) return true;
+	return isWindowsPlatform() && event.ctrlKey && !event.shiftKey && !event.altKey && !event.metaKey;
+}
+
+function isWindowsPlatform(): boolean {
+	const platform =
+		(navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ?? navigator.platform;
+	return platform.toLowerCase().startsWith("win");
+}
+
+function isTerminalPasteShortcut(event: KeyboardEvent): boolean {
+	if (event.key === "Insert") return event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey;
+	if (event.key.toLowerCase() !== "v") return false;
+	if (event.metaKey) return true;
 	return event.ctrlKey && event.shiftKey;
+}
+
+function consumeTerminalShortcut(event: KeyboardEvent): void {
+	event.preventDefault();
+	event.stopPropagation();
+}
+
+function normalizedTerminalShortcut(event: KeyboardEvent): string | null {
+	if (event.metaKey || event.shiftKey) return null;
+
+	if (event.altKey && !event.ctrlKey) {
+		switch (event.key) {
+			case "ArrowLeft":
+				return "\x1bb";
+			case "ArrowRight":
+				return "\x1bf";
+			case "Backspace":
+				return "\x1b\x7f";
+			case "Delete":
+				return "\x1bd";
+			default:
+				return null;
+		}
+	}
+
+	if (event.ctrlKey && !event.altKey) {
+		switch (event.key) {
+			case "ArrowLeft":
+				return "\x1b[1;5D";
+			case "ArrowRight":
+				return "\x1b[1;5C";
+			case "Backspace":
+				return "\x1b\x7f";
+			case "Delete":
+				return "\x1bd";
+			default:
+				return null;
+		}
+	}
+
+	return null;
 }
 
 function terminalHasFocus(host: HTMLElement): boolean {
@@ -232,9 +288,45 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		const clearCopiedSelection = () => {
 			lastCopiedSelection = "";
 		};
+		const userInputListeners = new Set<(data: string, source: TerminalUserInputSource) => void>();
+		const emitUserInput = (data: string, source: TerminalUserInputSource) => {
+			if (data.length === 0) return;
+			userInputListeners.forEach((listener) => listener(data, source));
+		};
+		const pasteText = (text: string) => {
+			const prepared = preparePastedText(text);
+			const bracketed = term.modes.bracketedPasteMode && term.options.ignoreBracketedPasteMode !== true;
+			emitUserInput(bracketPastedText(prepared, bracketed), "paste");
+		};
+		const pasteFromClipboard = () => {
+			void aoBridge.clipboard
+				.readText()
+				.then(pasteText)
+				.catch((error) => {
+					console.warn("Unable to paste terminal clipboard text", error);
+				});
+		};
 		term.attachCustomKeyEventHandler((event) => {
-			if (!isTerminalCopyShortcut(event) || !copySelection()) return true;
-			event.preventDefault();
+			if (isTerminalCopyShortcut(event)) {
+				if (copySelection()) {
+					consumeTerminalShortcut(event);
+					return false;
+				}
+				if ((event.ctrlKey && event.shiftKey) || (event.key === "Insert" && event.ctrlKey)) {
+					consumeTerminalShortcut(event);
+					return false;
+				}
+				return true;
+			}
+			if (isTerminalPasteShortcut(event)) {
+				consumeTerminalShortcut(event);
+				pasteFromClipboard();
+				return false;
+			}
+			const normalized = normalizedTerminalShortcut(event);
+			if (!normalized) return true;
+			consumeTerminalShortcut(event);
+			emitUserInput(normalized, "terminal");
 			return false;
 		});
 		const copyInput = (event: ClipboardEvent) => {
@@ -338,11 +430,6 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		// misses them. Listen on window directly as a session-long recovery path.
 		window.addEventListener("resize", fitTerminal);
 
-		const userInputListeners = new Set<(data: string, source: TerminalUserInputSource) => void>();
-		const emitUserInput = (data: string, source: TerminalUserInputSource) => {
-			if (data.length === 0) return;
-			userInputListeners.forEach((listener) => listener(data, source));
-		};
 		const terminalInput = term.onData((data) => emitUserInput(data, "terminal"));
 
 		// Translate wheel motion into SGR wheel reports for zellij (see
@@ -377,9 +464,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			event.preventDefault();
 			event.stopPropagation();
 			const text = event.clipboardData?.getData("text/plain") ?? "";
-			const prepared = preparePastedText(text);
-			const bracketed = term.modes.bracketedPasteMode && term.options.ignoreBracketedPasteMode !== true;
-			emitUserInput(bracketPastedText(prepared, bracketed), "paste");
+			pasteText(text);
 		};
 		const compositionInput = (event: CompositionEvent) => {
 			emitUserInput(event.data, "composition");
