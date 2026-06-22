@@ -27,7 +27,11 @@ import { SessionsBoard } from "./SessionsBoard";
 function renderBoard() {
 	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
-	render(<QueryClientProvider client={queryClient}><SessionsBoard /></QueryClientProvider>);
+	render(
+		<QueryClientProvider client={queryClient}>
+			<SessionsBoard />
+		</QueryClientProvider>,
+	);
 	return { invalidateSpy };
 }
 
