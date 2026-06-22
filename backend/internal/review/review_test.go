@@ -74,6 +74,17 @@ func (f *fakeStore) SupersedeReviewRun(_ context.Context, id, body string) (bool
 	}
 	return false, nil
 }
+func (f *fakeStore) SupersedeStaleRunningReviewRuns(_ context.Context, sessionID domain.SessionID, targetSHA, body string) (int64, error) {
+	var n int64
+	for i := range f.runs {
+		if f.runs[i].SessionID == sessionID && f.runs[i].TargetSHA != targetSHA && f.runs[i].Status == domain.ReviewRunRunning && f.runs[i].Verdict == domain.VerdictNone {
+			f.runs[i].Status = domain.ReviewRunFailed
+			f.runs[i].Body = body
+			n++
+		}
+	}
+	return n, nil
+}
 func (f *fakeStore) GetReviewRun(_ context.Context, id string) (domain.ReviewRun, bool, error) {
 	for _, r := range f.runs {
 		if r.ID == id {
@@ -348,6 +359,29 @@ func TestTriggerNotifiesLiveReviewerOnNewCommit(t *testing.T) {
 	}
 	if !res.Created || res.Run.TargetSHA != "sha1" || len(store.runs) != 2 {
 		t.Fatalf("expected a new run for sha1: res=%+v runs=%+v", res, store.runs)
+	}
+}
+
+func TestTriggerSupersedesOlderRunningRunOnNewCommit(t *testing.T) {
+	store := &fakeStore{
+		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", ReviewerHandleID: "review-mer-1"},
+		runs:   []domain.ReviewRun{{ID: "run-old", SessionID: "mer-1", TargetSHA: "sha0", Status: domain.ReviewRunRunning}},
+	}
+	launcher := &fakeLauncher{alive: true, handle: "review-mer-1"}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
+
+	res, err := eng.Trigger(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatalf("Trigger: %v", err)
+	}
+	if !res.Created || res.Run.TargetSHA != "sha1" {
+		t.Fatalf("expected new run for new commit, got %+v", res)
+	}
+	if old := store.runs[0]; old.ID != "run-old" || old.Status != domain.ReviewRunFailed {
+		t.Fatalf("expected older running run to be failed, got %+v", old)
+	}
+	if !launcher.notified || launcher.spawned {
+		t.Fatalf("expected live reviewer pane reused for new commit: %+v", launcher)
 	}
 }
 

@@ -98,6 +98,18 @@ func (s *Store) SupersedeReviewRun(ctx context.Context, id, body string) (bool, 
 	return n > 0, nil
 }
 
+// SupersedeStaleRunningReviewRuns marks older running unverdicted passes for a
+// worker failed before starting a review for a newer commit.
+func (s *Store) SupersedeStaleRunningReviewRuns(ctx context.Context, sessionID domain.SessionID, targetSHA, body string) (int64, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	return s.qw.SupersedeStaleRunningReviewRuns(ctx, gen.SupersedeStaleRunningReviewRunsParams{
+		Body:      body,
+		SessionID: sessionID,
+		TargetSha: targetSHA,
+	})
+}
+
 // MarkReviewRunDelivered records that lifecycle delivered the worker nudge for
 // a completed AO-internal review pass.
 func (s *Store) MarkReviewRunDelivered(ctx context.Context, id string, deliveredAt time.Time) (bool, error) {

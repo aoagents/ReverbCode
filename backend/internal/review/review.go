@@ -34,6 +34,7 @@ type Store interface {
 	InsertReviewRun(ctx context.Context, r domain.ReviewRun) error
 	UpdateReviewRunResult(ctx context.Context, id string, status domain.ReviewRunStatus, verdict domain.ReviewVerdict, body, githubReviewID string) (bool, error)
 	SupersedeReviewRun(ctx context.Context, id, body string) (bool, error)
+	SupersedeStaleRunningReviewRuns(ctx context.Context, sessionID domain.SessionID, targetSHA, body string) (int64, error)
 	GetReviewRun(ctx context.Context, id string) (domain.ReviewRun, bool, error)
 	GetReviewRunBySessionAndSHA(ctx context.Context, id domain.SessionID, targetSHA string) (domain.ReviewRun, bool, error)
 	ListReviewRunsBySession(ctx context.Context, id domain.SessionID) ([]domain.ReviewRun, error)
@@ -205,6 +206,9 @@ func (e *Engine) Trigger(ctx context.Context, workerID domain.SessionID) (Trigge
 				return TriggerResult{Run: latest, ReviewerHandleID: review.ReviewerHandleID, Created: false}, nil
 			}
 		}
+	}
+	if _, err := e.store.SupersedeStaleRunningReviewRuns(ctx, workerID, targetSHA, "superseded by a review trigger for a newer commit"); err != nil {
+		return TriggerResult{}, err
 	}
 
 	harness, err := e.reviewerHarness(ctx, worker)

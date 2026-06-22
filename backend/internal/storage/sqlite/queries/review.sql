@@ -21,6 +21,9 @@ UPDATE review_run SET status = ?, verdict = ?, body = ?, github_review_id = ? WH
 -- name: SupersedeReviewRun :execrows
 UPDATE review_run SET status = 'failed', body = ? WHERE id = ? AND verdict = '' AND status != 'failed';
 
+-- name: SupersedeStaleRunningReviewRuns :execrows
+UPDATE review_run SET status = 'failed', body = ? WHERE session_id = ? AND target_sha != ? AND status = 'running' AND verdict = '';
+
 -- name: MarkReviewRunDelivered :execrows
 UPDATE review_run SET status = 'delivered', delivered_at = ? WHERE id = ? AND status = 'complete' AND delivered_at IS NULL;
 

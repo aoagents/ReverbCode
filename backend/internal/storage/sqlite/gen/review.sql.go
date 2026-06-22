@@ -200,6 +200,24 @@ func (q *Queries) SupersedeReviewRun(ctx context.Context, arg SupersedeReviewRun
 	return result.RowsAffected()
 }
 
+const supersedeStaleRunningReviewRuns = `-- name: SupersedeStaleRunningReviewRuns :execrows
+UPDATE review_run SET status = 'failed', body = ? WHERE session_id = ? AND target_sha != ? AND status = 'running' AND verdict = ''
+`
+
+type SupersedeStaleRunningReviewRunsParams struct {
+	Body      string
+	SessionID domain.SessionID
+	TargetSha string
+}
+
+func (q *Queries) SupersedeStaleRunningReviewRuns(ctx context.Context, arg SupersedeStaleRunningReviewRunsParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, supersedeStaleRunningReviewRuns, arg.Body, arg.SessionID, arg.TargetSha)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const updateReviewRunResult = `-- name: UpdateReviewRunResult :execrows
 UPDATE review_run SET status = ?, verdict = ?, body = ?, github_review_id = ? WHERE id = ? AND status = 'running'
 `
