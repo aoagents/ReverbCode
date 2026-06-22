@@ -118,6 +118,7 @@ describe("XtermTerminal", () => {
 	beforeEach(() => {
 		state.lastTerminal = null;
 		window.ao!.clipboard.writeText = vi.fn().mockResolvedValue(undefined);
+		window.ao!.clipboard.readText = vi.fn().mockResolvedValue("");
 	});
 
 	it("copies selected terminal text on the terminal copy shortcut", () => {
@@ -130,6 +131,7 @@ describe("XtermTerminal", () => {
 			ctrlKey: false,
 			shiftKey: false,
 			preventDefault: vi.fn(),
+			stopPropagation: vi.fn(),
 		} as unknown as KeyboardEvent;
 		const allowed = state.lastTerminal!.keyHandler!(event);
 
@@ -186,12 +188,101 @@ describe("XtermTerminal", () => {
 			ctrlKey: false,
 			shiftKey: false,
 			preventDefault: vi.fn(),
+			stopPropagation: vi.fn(),
 		} as unknown as KeyboardEvent;
 		const allowed = state.lastTerminal!.keyHandler!(event);
 
 		expect(allowed).toBe(false);
 		expect(writeText).toHaveBeenCalledTimes(2);
 		expect(writeText).toHaveBeenLastCalledWith("retry me");
+	});
+
+	it("pastes from the Electron clipboard on Windows/Linux paste shortcuts", async () => {
+		const onInput = vi.fn();
+		window.ao!.clipboard.readText = vi.fn().mockResolvedValue("hello\nworld");
+		render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
+
+		const event = {
+			key: "v",
+			metaKey: false,
+			ctrlKey: true,
+			shiftKey: true,
+			altKey: false,
+			preventDefault: vi.fn(),
+			stopPropagation: vi.fn(),
+		} as unknown as KeyboardEvent;
+		const allowed = state.lastTerminal!.keyHandler!(event);
+		await Promise.resolve();
+
+		expect(allowed).toBe(false);
+		expect(event.preventDefault).toHaveBeenCalled();
+		expect(event.stopPropagation).toHaveBeenCalled();
+		expect(window.ao!.clipboard.readText).toHaveBeenCalled();
+		expect(onInput).toHaveBeenCalledWith("hello\rworld", "paste");
+	});
+
+	it("supports classic Windows terminal copy and paste shortcuts", async () => {
+		const onInput = vi.fn();
+		window.ao!.clipboard.readText = vi.fn().mockResolvedValue("insert paste");
+		render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
+		state.lastTerminal!.selection = "insert copy";
+
+		const copyEvent = {
+			key: "Insert",
+			metaKey: false,
+			ctrlKey: true,
+			shiftKey: false,
+			altKey: false,
+			preventDefault: vi.fn(),
+			stopPropagation: vi.fn(),
+		} as unknown as KeyboardEvent;
+		expect(state.lastTerminal!.keyHandler!(copyEvent)).toBe(false);
+		expect(window.ao!.clipboard.writeText).toHaveBeenCalledWith("insert copy");
+
+		const pasteEvent = {
+			key: "Insert",
+			metaKey: false,
+			ctrlKey: false,
+			shiftKey: true,
+			altKey: false,
+			preventDefault: vi.fn(),
+			stopPropagation: vi.fn(),
+		} as unknown as KeyboardEvent;
+		expect(state.lastTerminal!.keyHandler!(pasteEvent)).toBe(false);
+		await Promise.resolve();
+
+		expect(window.ao!.clipboard.readText).toHaveBeenCalled();
+		expect(onInput).toHaveBeenCalledWith("insert paste", "paste");
+	});
+
+	it.each([
+		["Option/Alt+Left", { key: "ArrowLeft", altKey: true }, "\x1bb"],
+		["Option/Alt+Right", { key: "ArrowRight", altKey: true }, "\x1bf"],
+		["Option/Alt+Backspace", { key: "Backspace", altKey: true }, "\x1b\x7f"],
+		["Option/Alt+Delete", { key: "Delete", altKey: true }, "\x1bd"],
+		["Ctrl+Left", { key: "ArrowLeft", ctrlKey: true }, "\x1b[1;5D"],
+		["Ctrl+Right", { key: "ArrowRight", ctrlKey: true }, "\x1b[1;5C"],
+		["Ctrl+Backspace", { key: "Backspace", ctrlKey: true }, "\x1b\x7f"],
+		["Ctrl+Delete", { key: "Delete", ctrlKey: true }, "\x1bd"],
+	])("normalizes %s into terminal input", (_name, init, expected) => {
+		const onInput = vi.fn();
+		render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
+
+		const event = {
+			metaKey: false,
+			ctrlKey: false,
+			shiftKey: false,
+			altKey: false,
+			preventDefault: vi.fn(),
+			stopPropagation: vi.fn(),
+			...init,
+		} as unknown as KeyboardEvent;
+		const allowed = state.lastTerminal!.keyHandler!(event);
+
+		expect(allowed).toBe(false);
+		expect(event.preventDefault).toHaveBeenCalled();
+		expect(event.stopPropagation).toHaveBeenCalled();
+		expect(onInput).toHaveBeenCalledWith(expected, "terminal");
 	});
 
 	it("forwards generated xterm input data such as wheel scroll reports", () => {
