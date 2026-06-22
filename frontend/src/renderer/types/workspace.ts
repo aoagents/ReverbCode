@@ -109,6 +109,12 @@ export type WorkspaceSession = {
 	 * CDC. When non-empty, the browser panel opens and navigates here.
 	 */
 	previewUrl?: string;
+	/**
+	 * Monotonic counter the daemon bumps on every `ao preview` call (even when
+	 * previewUrl is unchanged), so the browser panel can re-navigate / refresh on
+	 * a repeated preview of the same target.
+	 */
+	previewRevision?: number;
 	/** The session's git diff against its base, when known. */
 	changedFiles?: ChangedFile[];
 	/** Pre-filled commit subject for the Git rail, when known. */

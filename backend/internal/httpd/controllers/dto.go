@@ -123,8 +123,13 @@ type SessionView struct {
 	// PreviewURL is the browser preview target the desktop app opens for this
 	// session, set via POST /sessions/{sessionId}/preview. Empty (omitted) when
 	// no preview has been requested. Pulled from the json:"-" domain Metadata.
-	PreviewURL string           `json:"previewUrl,omitempty"`
-	PRs        []SessionPRFacts `json:"prs"`
+	PreviewURL string `json:"previewUrl,omitempty"`
+	// PreviewRevision bumps on every `ao preview` call (even when previewUrl is
+	// unchanged) so the desktop browser panel can re-navigate / refresh on a
+	// repeated preview of the same target. Pulled from the json:"-" domain
+	// Metadata.
+	PreviewRevision int64            `json:"previewRevision,omitempty"`
+	PRs             []SessionPRFacts `json:"prs"`
 }
 
 // ListSessionsResponse is the body of GET /api/v1/sessions.

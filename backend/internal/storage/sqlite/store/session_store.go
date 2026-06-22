@@ -207,6 +207,7 @@ func rowToRecord(row gen.Session) domain.SessionRecord {
 			AgentSessionID:  row.AgentSessionID,
 			Prompt:          row.Prompt,
 			PreviewURL:      row.PreviewURL,
+			PreviewRevision: row.PreviewRevision,
 		},
 		CreatedAt: row.CreatedAt,
 		UpdatedAt: row.UpdatedAt,
@@ -233,6 +234,7 @@ func recordToInsert(rec domain.SessionRecord, num int64) gen.InsertSessionParams
 		AgentSessionID:  rec.Metadata.AgentSessionID,
 		Prompt:          rec.Metadata.Prompt,
 		PreviewURL:      rec.Metadata.PreviewURL,
+		PreviewRevision: rec.Metadata.PreviewRevision,
 		CreatedAt:       rec.CreatedAt,
 		UpdatedAt:       rec.UpdatedAt,
 	}
@@ -256,6 +258,7 @@ func recordToUpdate(rec domain.SessionRecord) gen.UpdateSessionParams {
 		AgentSessionID:  rec.Metadata.AgentSessionID,
 		Prompt:          rec.Metadata.Prompt,
 		PreviewURL:      rec.Metadata.PreviewURL,
+		PreviewRevision: rec.Metadata.PreviewRevision,
 		UpdatedAt:       rec.UpdatedAt,
 	}
 }

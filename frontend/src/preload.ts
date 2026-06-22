@@ -43,6 +43,7 @@ const api = {
 		setBounds: (input: BrowserBoundsInput) => ipcRenderer.send("browser:setBounds", input),
 		navigate: (input: BrowserNavigateInput) =>
 			ipcRenderer.invoke("browser:navigate", input) as Promise<BrowserNavState>,
+		clear: (viewId: string) => ipcRenderer.invoke("browser:clear", viewId) as Promise<BrowserNavState>,
 		goBack: (viewId: string) => ipcRenderer.invoke("browser:goBack", viewId) as Promise<BrowserNavState>,
 		goForward: (viewId: string) => ipcRenderer.invoke("browser:goForward", viewId) as Promise<BrowserNavState>,
 		reload: (viewId: string) => ipcRenderer.invoke("browser:reload", viewId) as Promise<BrowserNavState>,

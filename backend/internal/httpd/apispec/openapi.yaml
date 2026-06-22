@@ -939,6 +939,44 @@ paths:
       tags:
       - sessions
   /api/v1/sessions/{sessionId}/preview:
+    delete:
+      operationId: clearSessionPreview
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Clear the browser preview URL for a session
+      tags:
+      - sessions
     get:
       operationId: getSessionPreview
       parameters:
@@ -1482,6 +1520,9 @@ components:
           type: string
         kind:
           type: string
+        previewRevision:
+          format: int64
+          type: integer
         previewUrl:
           type: string
         projectId:

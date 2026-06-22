@@ -45,6 +45,14 @@ export const aoBridge: AoBridge =
 				canGoForward: false,
 				isLoading: false,
 			}),
+			clear: async (viewId: string) => ({
+				viewId,
+				url: "",
+				title: "",
+				canGoBack: false,
+				canGoForward: false,
+				isLoading: false,
+			}),
 			goBack: async (viewId: string) => ({
 				viewId,
 				url: "",

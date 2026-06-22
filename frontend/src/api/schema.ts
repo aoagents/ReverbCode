@@ -327,7 +327,8 @@ export interface paths {
         put?: never;
         /** Set (or autodetect) the browser preview URL for a session */
         post: operations["setSessionPreview"];
-        delete?: never;
+        /** Clear the browser preview URL for a session */
+        delete: operations["clearSessionPreview"];
         options?: never;
         head?: never;
         patch?: never;
@@ -524,6 +525,8 @@ export interface components {
             isTerminated: boolean;
             issueId?: string;
             kind: string;
+            /** Format: int64 */
+            previewRevision?: number;
             previewUrl?: string;
             projectId: string;
             prs: components["schemas"]["SessionPRFacts"][];
@@ -2117,6 +2120,56 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    clearSessionPreview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionResponse"];
                 };
             };
             /** @description Not Found */

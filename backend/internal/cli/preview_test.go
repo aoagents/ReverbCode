@@ -14,16 +14,17 @@ import (
 type previewCapture struct {
 	body   string
 	path   string
+	method string
 	called bool
 }
 
-// previewServer wires an httptest server expecting
-// POST /api/v1/sessions/{id}/preview and captures what the CLI sent.
+// previewServer wires an httptest server expecting POST or DELETE on
+// /api/v1/sessions/{id}/preview and captures what the CLI sent.
 func previewServer(t *testing.T, status int, respBody string) (*httptest.Server, *previewCapture) {
 	t.Helper()
 	capture := &previewCapture{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
+		if r.Method != http.MethodPost && r.Method != http.MethodDelete {
 			http.NotFound(w, r)
 			return
 		}
@@ -38,6 +39,7 @@ func previewServer(t *testing.T, status int, respBody string) (*httptest.Server,
 		capture.called = true
 		capture.body = string(body)
 		capture.path = r.URL.Path
+		capture.method = r.Method
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
 		_, _ = io.WriteString(w, respBody)
@@ -86,6 +88,46 @@ func TestPreview_NoArgPostsEmptyURL(t *testing.T) {
 	}
 	if capture.body != `{"url":""}` {
 		t.Errorf("captured body = %q, want %q", capture.body, `{"url":""}`)
+	}
+}
+
+func TestPreviewClear_DeletesSessionPreview(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "aa-47")
+	cfg := setConfigEnv(t)
+	srv, capture := previewServer(t, http.StatusOK, `{"ok":true}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, errOut, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "preview", "clear")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	if capture.method != http.MethodDelete {
+		t.Errorf("method = %q, want DELETE", capture.method)
+	}
+	if capture.path != "/api/v1/sessions/aa-47/preview" {
+		t.Errorf("path = %q, want /api/v1/sessions/aa-47/preview", capture.path)
+	}
+}
+
+func TestPreviewClear_MissingSessionIDIsUsageError(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "")
+	cfg := setConfigEnv(t)
+	srv, capture := previewServer(t, http.StatusOK, `{"ok":true}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, _, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "preview", "clear")
+	if err == nil {
+		t.Fatal("expected usage error when AO_SESSION_ID is unset")
+	}
+	if got := ExitCode(err); got != 2 {
+		t.Fatalf("exit code = %d, want 2", got)
+	}
+	if capture.called {
+		t.Fatal("daemon should not be contacted when AO_SESSION_ID is unset")
 	}
 }
 

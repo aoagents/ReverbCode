@@ -660,6 +660,50 @@ func TestCDCTriggersPopulateChangeLog(t *testing.T) {
 	}
 }
 
+func TestSetSessionPreviewURLBumpsRevisionAndFiresCDCOnSameURL(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	r, _ := s.CreateSession(ctx, sampleRecord("mer"))
+
+	base, _ := s.LatestSeq(ctx)
+	now := time.Now().UTC()
+	for i := 0; i < 2; i++ {
+		ok, err := s.SetSessionPreviewURL(ctx, r.ID, "http://localhost:5173/", now.Add(time.Duration(i)*time.Second))
+		if err != nil || !ok {
+			t.Fatalf("set preview url (call %d): ok=%v err=%v", i, ok, err)
+		}
+	}
+
+	got, found, err := s.GetSession(ctx, r.ID)
+	if err != nil || !found {
+		t.Fatalf("get session: found=%v err=%v", found, err)
+	}
+	if got.Metadata.PreviewURL != "http://localhost:5173/" {
+		t.Fatalf("preview url = %q, want persisted target", got.Metadata.PreviewURL)
+	}
+	if got.Metadata.PreviewRevision != 2 {
+		t.Fatalf("preview revision = %d, want 2 after two sets", got.Metadata.PreviewRevision)
+	}
+
+	// Both sets fire session_updated even though the URL never changed — the
+	// revision bump is what trips the trigger, so a same-URL `ao preview` re-run
+	// still reaches the browser panel.
+	evs, err := s.EventsAfter(ctx, base, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updates := 0
+	for _, e := range evs {
+		if string(e.Type) == "session_updated" {
+			updates++
+		}
+	}
+	if updates != 2 {
+		t.Fatalf("session_updated events = %d, want 2 (one per same-URL set)", updates)
+	}
+}
+
 func TestConcurrentSessionCreateAssignsUniqueNums(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

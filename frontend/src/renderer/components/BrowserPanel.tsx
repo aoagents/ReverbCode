@@ -18,6 +18,7 @@ export function BrowserPanel({ session, active, poppedOut, onTogglePopOut }: Bro
 		active,
 		poppedOut,
 		previewUrl: session.previewUrl,
+		previewRevision: session.previewRevision,
 	});
 	return (
 		<BrowserPanelView

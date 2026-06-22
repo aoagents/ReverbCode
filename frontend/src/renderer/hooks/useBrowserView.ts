@@ -9,9 +9,16 @@ type UseBrowserViewOptions = {
 	poppedOut: boolean;
 	/**
 	 * Preview target driven by the daemon (via `ao preview`, streamed over CDC).
-	 * When set, the view navigates here automatically; changing it re-navigates.
+	 * When set, the view navigates here automatically; an empty value clears it.
 	 */
 	previewUrl?: string;
+	/**
+	 * Monotonic counter the daemon bumps on every `ao preview` call, even when
+	 * previewUrl is unchanged. The view re-navigates whenever it advances, so a
+	 * repeated `ao preview <same-url>` still refreshes (and CDC replays of an
+	 * unrelated session update, which leave it unchanged, are ignored).
+	 */
+	previewRevision?: number;
 };
 
 export type BrowserViewModel = {
@@ -37,7 +44,13 @@ const EMPTY_NAV_STATE: BrowserNavState = {
 
 const HIDDEN_RECT: BrowserRect = { x: 0, y: 0, width: 0, height: 0 };
 
-export function useBrowserView({ sessionId, active, poppedOut, previewUrl }: UseBrowserViewOptions): BrowserViewModel {
+export function useBrowserView({
+	sessionId,
+	active,
+	poppedOut,
+	previewUrl,
+	previewRevision,
+}: UseBrowserViewOptions): BrowserViewModel {
 	const [viewId, setViewId] = useState("");
 	const [navState, setNavState] = useState<BrowserNavState>(EMPTY_NAV_STATE);
 	const slotNodeRef = useRef<HTMLDivElement | null>(null);
@@ -45,7 +58,7 @@ export function useBrowserView({ sessionId, active, poppedOut, previewUrl }: Use
 	const activeRef = useRef(active);
 	const frameRef = useRef<number | null>(null);
 	const observerRef = useRef<ResizeObserver | null>(null);
-	const previewNavRef = useRef<string | null>(null);
+	const previewRevisionRef = useRef<number | null>(null);
 
 	useEffect(() => {
 		activeRef.current = active;
@@ -167,19 +180,26 @@ export function useBrowserView({ sessionId, active, poppedOut, previewUrl }: Use
 		[withView],
 	);
 
-	// Drive navigation from the daemon-set preview URL. Re-navigate only when the
-	// target actually changes; skip when it already matches what the view shows
-	// (the CDC stream replays the same session payload on unrelated updates).
+	const clear = useCallback(() => withView((id) => window.ao!.browser.clear(id)), [withView]);
+
+	// Drive the view from the daemon-set preview target, keyed on the preview
+	// revision (bumped on every `ao preview` call). Acting on the revision rather
+	// than the URL means a repeated `ao preview <same-url>` still refreshes, an
+	// `ao preview clear` (empty URL) blanks the view, and CDC replays of
+	// unrelated session updates (revision unchanged) are ignored — so the panel
+	// never reloads on an unrelated activity flip.
 	useEffect(() => {
+		if (!viewId) return;
+		const revision = previewRevision ?? 0;
+		if (previewRevisionRef.current === revision) return;
+		previewRevisionRef.current = revision;
 		const target = previewUrl?.trim();
-		if (!target || !viewId) return;
-		if (previewNavRef.current === target || navState.url === target) {
-			previewNavRef.current = target;
-			return;
+		if (target) {
+			void navigate(target);
+		} else if (revision > 0) {
+			void clear();
 		}
-		previewNavRef.current = target;
-		void navigate(target);
-	}, [navState.url, navigate, previewUrl, viewId]);
+	}, [clear, navigate, previewRevision, previewUrl, viewId]);
 
 	const destroy = useCallback(() => {
 		const id = viewIdRef.current;

@@ -66,6 +66,7 @@ func (c *SessionsController) Register(r chi.Router) {
 	r.Get("/sessions/{sessionId}", c.get)
 	r.Get("/sessions/{sessionId}/preview", c.preview)
 	r.Post("/sessions/{sessionId}/preview", c.setPreview)
+	r.Delete("/sessions/{sessionId}/preview", c.clearPreview)
 	r.Get("/sessions/{sessionId}/preview/files/*", c.previewFile)
 	r.Get("/sessions/{sessionId}/pr", c.listPRs)
 	r.Post("/sessions/{sessionId}/pr/claim", c.claimPR)
@@ -178,10 +179,19 @@ func (c *SessionsController) previewFile(w http.ResponseWriter, r *http.Request)
 }
 
 // setPreview persists the browser preview URL the desktop app opens for a
-// session. An explicit url is used verbatim; an empty url autodetects a static
-// entry point in the session workspace (index.html and friends) and serves it
-// through the preview/files route. The resolved URL is persisted and fans out a
-// session_updated CDC event so the dashboard's browser panel reacts live.
+// session and fans out a session_updated CDC event so the dashboard's browser
+// panel reacts live. The target is resolved as follows:
+//
+//   - An empty url reuses the session's existing preview target (so a bare
+//     `ao preview` re-opens whatever this agent/context last previewed),
+//     falling back to autodetecting a static entry point (index.html and
+//     friends) only when nothing has been previewed yet.
+//   - An explicit workspace-local path (e.g. `index.html`, `./dist/index.html`)
+//     is served through the preview/files route so local files load.
+//   - Anything else (http(s)/file URLs, host:port dev servers) is kept verbatim.
+//
+// Every call bumps the session's preview revision, so re-running `ao preview`
+// with the same target still refreshes the panel.
 func (c *SessionsController) setPreview(w http.ResponseWriter, r *http.Request) {
 	if c.Svc == nil {
 		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/{sessionId}/preview")
@@ -193,7 +203,7 @@ func (c *SessionsController) setPreview(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	// Get first so a missing session is rejected with the normal 404 before any
-	// write, and so autodetect has the workspace path to probe.
+	// write, and so autodetect/local resolution has the workspace path to probe.
 	sess, err := c.Svc.Get(r.Context(), sessionID(r))
 	if err != nil {
 		envelope.WriteError(w, r, err)
@@ -202,14 +212,36 @@ func (c *SessionsController) setPreview(w http.ResponseWriter, r *http.Request) 
 	// ponytail: no URL sanitization on preview target; agent-trusted for now
 	previewURL := strings.TrimSpace(in.URL)
 	if previewURL == "" {
-		entry, ok := discoverPreviewEntry(sess.Metadata.WorkspacePath)
-		if !ok {
+		if existing := strings.TrimSpace(sess.Metadata.PreviewURL); existing != "" {
+			previewURL = existing
+		} else if entry, ok := discoverPreviewEntry(sess.Metadata.WorkspacePath); ok {
+			previewURL = previewFileURL(r, sessionID(r), entry)
+		} else {
 			envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "NO_PREVIEW_ENTRY", "No preview entry point found in session workspace", nil)
 			return
 		}
-		previewURL = previewFileURL(r, sessionID(r), entry)
+	} else if resolved, ok := resolveLocalPreview(r, sessionID(r), sess.Metadata.WorkspacePath, previewURL); ok {
+		previewURL = resolved
 	}
 	updated, err := c.Svc.SetPreview(r.Context(), sessionID(r), previewURL)
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, SessionResponse{Session: sessionView(updated)})
+}
+
+// clearPreview resets a session's browser preview to empty (`ao preview
+// clear`). Unlike setPreview with an empty url it never autodetects: it persists
+// an empty target so the desktop browser panel returns to its blank state. The
+// write still bumps the preview revision, so the panel hears the change over
+// CDC even though the url field is now empty.
+func (c *SessionsController) clearPreview(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "DELETE", "/api/v1/sessions/{sessionId}/preview")
+		return
+	}
+	updated, err := c.Svc.SetPreview(r.Context(), sessionID(r), "")
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return
@@ -528,6 +560,47 @@ func discoverPreviewEntry(workspacePath string) (string, bool) {
 	return "", false
 }
 
+// resolveLocalPreview maps a workspace-local path (e.g. "index.html" or
+// "./dist/index.html") to its preview/files proxy URL when the path resolves to
+// a regular file inside the session workspace. It returns ok=false for anything
+// that already looks like a URL (an http(s)/file scheme, or a host:port dev
+// server) and for paths that escape the workspace or do not point at a file, so
+// the caller keeps those targets verbatim.
+func resolveLocalPreview(r *http.Request, id domain.SessionID, workspacePath, raw string) (string, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || hasURLScheme(raw) {
+		return "", false
+	}
+	file, ok := confinedPreviewPath(workspacePath, raw)
+	if !ok {
+		return "", false
+	}
+	info, err := os.Stat(file)
+	if err != nil || info.IsDir() {
+		return "", false
+	}
+	entry := strings.TrimPrefix(path.Clean("/"+raw), "/")
+	return previewFileURL(r, id, entry), true
+}
+
+// hasURLScheme reports whether raw begins with an RFC-3986 "scheme:" prefix
+// (http:, https:, file:, or a host:port like localhost:5173). It mirrors the
+// renderer's withDefaultScheme heuristic so the daemon and browser panel agree
+// on what counts as a URL versus a workspace-relative path.
+func hasURLScheme(raw string) bool {
+	for i := 0; i < len(raw); i++ {
+		c := raw[i]
+		if c == ':' {
+			return i > 0
+		}
+		isSchemeChar := c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '+' || c == '.' || c == '-'
+		if !isSchemeChar {
+			return false
+		}
+	}
+	return false
+}
+
 func confinedPreviewPath(workspacePath, assetPath string) (string, bool) {
 	root, err := filepath.Abs(workspacePath)
 	if err != nil || root == "" {
@@ -567,7 +640,7 @@ func escapePath(raw string) string {
 }
 
 func sessionView(s domain.Session) SessionView {
-	return SessionView{Session: s, Branch: s.Metadata.Branch, PreviewURL: s.Metadata.PreviewURL, PRs: sessionPRFacts(s.PRs)}
+	return SessionView{Session: s, Branch: s.Metadata.Branch, PreviewURL: s.Metadata.PreviewURL, PreviewRevision: s.Metadata.PreviewRevision, PRs: sessionPRFacts(s.PRs)}
 }
 
 func sessionViews(sessions []domain.Session) []SessionView {
