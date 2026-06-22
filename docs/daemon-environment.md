@@ -87,8 +87,8 @@ Forwarding the environment is not the bug. The daemon and agents genuinely need:
 - locale/proxy (`LANG`, `LC_*`, `HTTPS_PROXY`);
 - AO's own vars (telemetry, `AO_DATA_DIR`, `AO_RUN_FILE`, session ids).
 
-The bug is the *source* of what we forward: under a GUI launch, `process.env` is
-launchd's minimal env, not the shell's. The fix is to forward a *good* base env,
+The bug is the _source_ of what we forward: under a GUI launch, `process.env` is
+launchd's minimal env, not the shell's. The fix is to forward a _good_ base env,
 not to stop forwarding.
 
 ## Proposed solution: resolve the login-shell environment

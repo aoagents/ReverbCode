@@ -40,7 +40,9 @@ describe("withFallbackPath", () => {
 		// /opt/homebrew/bin and /usr/bin are already present and stay put; the rest
 		// of the floor is appended in floor order, with no duplicates added.
 		const result = withFallbackPath("/opt/homebrew/bin:/custom/bin:/usr/bin");
-		expect(result).toBe("/opt/homebrew/bin:/custom/bin:/usr/bin:/opt/homebrew/sbin:/usr/local/bin:/bin:/usr/sbin:/sbin");
+		expect(result).toBe(
+			"/opt/homebrew/bin:/custom/bin:/usr/bin:/opt/homebrew/sbin:/usr/local/bin:/bin:/usr/sbin:/sbin",
+		);
 	});
 
 	it("yields the full floor for undefined input", () => {
