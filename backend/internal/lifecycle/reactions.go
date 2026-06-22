@@ -104,8 +104,7 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 					// terminal (the dedup signature stays on the raw bytes).
 					msg += "\n\nFailing output:\n" + domain.SanitizeControlChars(ch.LogTail)
 				}
-				_, err := m.sendOnce(ctx, id, o.URL, "ci:"+o.URL+":"+ch.Name, ch.CommitHash+":"+ch.LogTail, msg, 0)
-				return err
+				return m.sendOnce(ctx, id, o.URL, "ci:"+o.URL+":"+ch.Name, ch.CommitHash+":"+ch.LogTail, msg, 0)
 			}
 		}
 	}
@@ -122,8 +121,7 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 		if sig == "" {
 			sig = string(o.Review)
 		}
-		_, err := m.sendOnce(ctx, id, o.URL, "review:"+o.URL, sig, msg, reviewMaxNudge)
-		return err
+		return m.sendOnce(ctx, id, o.URL, "review:"+o.URL, sig, msg, reviewMaxNudge)
 	}
 	if o.Mergeability == domain.MergeConflicting {
 		// Only the bottom of a stack is eligible for the rebase nudge. A PR
@@ -138,7 +136,7 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 		if blocked {
 			return nil
 		}
-		_, err = m.sendOnce(ctx, id, o.URL, "merge-conflict:"+o.URL, string(o.Mergeability), "Your PR has merge conflicts. Rebase onto the base branch and resolve them.", 0)
+		err = m.sendOnce(ctx, id, o.URL, "merge-conflict:"+o.URL, string(o.Mergeability), "Your PR has merge conflicts. Rebase onto the base branch and resolve them.", 0)
 		return err
 	}
 	return nil
@@ -171,7 +169,7 @@ func (m *Manager) ApplyReviewResult(ctx context.Context, workerID domain.Session
 	}
 	key := "review:" + r.PRURL + ":ao:" + r.RunID
 	sig := strings.Join([]string{r.TargetSHA, r.RunID, r.GithubReviewID, r.Body}, "\x00")
-	_, err = m.sendOnce(ctx, workerID, r.PRURL, key, sig, msg, reviewMaxNudge)
+	err = m.sendOnce(ctx, workerID, r.PRURL, key, sig, msg, reviewMaxNudge)
 	if err != nil {
 		return ReviewDeliveryNoop, err
 	}
@@ -423,8 +421,7 @@ func (m *Manager) ApplyTrackerFacts(ctx context.Context, id domain.SessionID, o 
 			// the PR-row signature load/persist is skipped, so the dedup
 			// survives only for the lifetime of this Manager. Cross-restart
 			// persistence ships with #35.
-			_, err := m.sendOnce(ctx, id, "", "tracker-bot:"+o.Issue.URL, strings.Join(ids, ","), msg, 0)
-			return err
+			return m.sendOnce(ctx, id, "", "tracker-bot:"+o.Issue.URL, strings.Join(ids, ","), msg, 0)
 		}
 	}
 	return nil
@@ -497,29 +494,29 @@ func firstReviewAuthor(comments []ports.PRCommentObservation) string {
 	return ""
 }
 
-func (m *Manager) sendOnce(ctx context.Context, id domain.SessionID, prURL, key, sig, msg string, maxAttempts int) (bool, error) {
+func (m *Manager) sendOnce(ctx context.Context, id domain.SessionID, prURL, key, sig, msg string, maxAttempts int) error {
 	if m.messenger == nil {
-		return false, nil
+		return nil
 	}
 	m.react.mu.Lock()
 	defer m.react.mu.Unlock()
 
 	if prURL != "" && !m.react.loaded[prURL] {
 		if err := m.loadPRSignaturesLocked(ctx, prURL); err != nil {
-			return false, err
+			return err
 		}
 		m.react.loaded[prURL] = true
 	}
 
 	if m.react.seen[key] == sig {
-		return false, nil
+		return nil
 	}
 	attempts := m.react.attempts[key]
 	if maxAttempts > 0 && attempts >= maxAttempts {
-		return false, nil
+		return nil
 	}
 	if err := m.messenger.Send(ctx, id, msg); err != nil {
-		return false, err
+		return err
 	}
 	// Order: Send → in-memory mutation → durable persist. Sending first means a
 	// transient persist failure does NOT swallow a real send (the agent saw the
@@ -531,10 +528,10 @@ func (m *Manager) sendOnce(ctx context.Context, id domain.SessionID, prURL, key,
 	m.react.attempts[key] = attempts + 1
 	if prURL != "" {
 		if err := m.persistPRSignaturesLocked(ctx, prURL); err != nil {
-			return true, err
+			return err
 		}
 	}
-	return true, nil
+	return nil
 }
 
 // loadPRSignaturesLocked merges any previously persisted reaction-dedup state
