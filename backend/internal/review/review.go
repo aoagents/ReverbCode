@@ -9,7 +9,7 @@
 package review
 
 import (
-	"context"
+	stdctx "context"
 	"errors"
 	"fmt"
 	"sync"
@@ -29,30 +29,30 @@ var (
 // Store is the persistence surface the engine needs. *sqlite.Store satisfies it
 // in production; tests use a fake.
 type Store interface {
-	UpsertReview(ctx context.Context, r domain.Review) error
-	GetReviewBySession(ctx context.Context, id domain.SessionID) (domain.Review, bool, error)
-	InsertReviewRun(ctx context.Context, r domain.ReviewRun) error
-	UpdateReviewRunResult(ctx context.Context, id string, status domain.ReviewRunStatus, verdict domain.ReviewVerdict, body, githubReviewID string) (bool, error)
-	SupersedeReviewRun(ctx context, id, body string) (bool, error)
-	SupersedeStaleRunningReviewRuns(ctx context.Context, sessionID domain.SessionID, targetSHA, body string) (int64, error)
-	GetReviewRun(ctx context.Context, id string) (domain.ReviewRun, bool, error)
-	GetReviewRunBySessionAndSHA(ctx context.Context, id domain.SessionID, targetSHA string) (domain.ReviewRun, bool, error)
-	ListReviewRunsBySession(ctx context.Context, id domain.SessionID) ([]domain.ReviewRun, error)
+	UpsertReview(ctx stdctx.Context, r domain.Review) error
+	GetReviewBySession(ctx stdctx.Context, id domain.SessionID) (domain.Review, bool, error)
+	InsertReviewRun(ctx stdctx.Context, r domain.ReviewRun) error
+	UpdateReviewRunResult(ctx stdctx.Context, id string, status domain.ReviewRunStatus, verdict domain.ReviewVerdict, body, githubReviewID string) (bool, error)
+	SupersedeReviewRun(ctx stdctx.Context, id, body string) (bool, error)
+	SupersedeStaleRunningReviewRuns(ctx stdctx.Context, sessionID domain.SessionID, targetSHA, body string) (int64, error)
+	GetReviewRun(ctx stdctx.Context, id string) (domain.ReviewRun, bool, error)
+	GetReviewRunBySessionAndSHA(ctx stdctx.Context, id domain.SessionID, targetSHA string) (domain.ReviewRun, bool, error)
+	ListReviewRunsBySession(ctx stdctx.Context, id domain.SessionID) ([]domain.ReviewRun, error)
 }
 
 // Sessions resolves the worker session under review.
 type Sessions interface {
-	GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error)
+	GetSession(ctx stdctx.Context, id domain.SessionID) (domain.SessionRecord, bool, error)
 }
 
 // PRs resolves the PR a worker owns.
 type PRs interface {
-	ListPRsBySession(ctx context.Context, id domain.SessionID) ([]domain.PullRequest, error)
+	ListPRsBySession(ctx stdctx.Context, id domain.SessionID) ([]domain.PullRequest, error)
 }
 
 // Projects resolves the per-project reviewer config.
 type Projects interface {
-	GetProject(ctx context.Context, id string) (domain.ProjectRecord, bool, error)
+	GetProject(ctx stdctx.Context, id string) (domain.ProjectRecord, bool, error)
 }
 
 // Deps wires the engine.
@@ -149,7 +149,7 @@ type SessionReviews struct {
 //     new commit; if not, a fresh reviewer is spawned;
 //   - the run is recorded before launch so startup failures leave a visible
 //     failed pass instead of an empty gap.
-func (e *Engine) Trigger(ctx context.Context, workerID domain.SessionID) (TriggerResult, error) {
+func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID) (TriggerResult, error) {
 	if workerID == "" {
 		return TriggerResult{}, fmt.Errorf("%w: worker session id is required", ErrInvalid)
 	}
@@ -294,7 +294,7 @@ func (e *Engine) Trigger(ctx context.Context, workerID domain.SessionID) (Trigge
 // Submit records the reviewer's result for a specific worker review pass. The
 // API service owns any post-persist lifecycle delivery; the core engine only
 // validates ownership and persists the result.
-func (e *Engine) Submit(ctx context.Context, workerID domain.SessionID, runID string, verdict domain.ReviewVerdict, body, githubReviewID string) (domain.ReviewRun, error) {
+func (e *Engine) Submit(ctx stdctx.Context, workerID domain.SessionID, runID string, verdict domain.ReviewVerdict, body, githubReviewID string) (domain.ReviewRun, error) {
 	if workerID == "" {
 		return domain.ReviewRun{}, fmt.Errorf("%w: worker session id is required", ErrInvalid)
 	}
@@ -337,7 +337,7 @@ func (e *Engine) Submit(ctx context.Context, workerID domain.SessionID, runID st
 }
 
 // List returns a worker's review state: the live reviewer handle and its passes.
-func (e *Engine) List(ctx context.Context, workerID domain.SessionID) (SessionReviews, error) {
+func (e *Engine) List(ctx stdctx.Context, workerID domain.SessionID) (SessionReviews, error) {
 	if workerID == "" {
 		return SessionReviews{}, fmt.Errorf("%w: worker session id is required", ErrInvalid)
 	}
@@ -354,7 +354,7 @@ func (e *Engine) List(ctx context.Context, workerID domain.SessionID) (SessionRe
 	return SessionReviews{ReviewerHandleID: handle, Runs: runs}, nil
 }
 
-func (e *Engine) workerPR(ctx context.Context, workerID domain.SessionID) (domain.PullRequest, error) {
+func (e *Engine) workerPR(ctx stdctx.Context, workerID domain.SessionID) (domain.PullRequest, error) {
 	prs, err := e.prs.ListPRsBySession(ctx, workerID)
 	if err != nil {
 		return domain.PullRequest{}, err
@@ -368,7 +368,7 @@ func (e *Engine) workerPR(ctx context.Context, workerID domain.SessionID) (domai
 // reviewerHarness resolves which harness reviews the worker's PR: a configured
 // reviewer wins, otherwise the worker's own harness is reused (falling back to
 // claude-code), per domain.ResolveReviewerHarness.
-func (e *Engine) reviewerHarness(ctx context.Context, worker domain.SessionRecord) (domain.ReviewerHarness, error) {
+func (e *Engine) reviewerHarness(ctx stdctx.Context, worker domain.SessionRecord) (domain.ReviewerHarness, error) {
 	var cfg domain.ProjectConfig
 	if e.projects != nil {
 		if proj, ok, err := e.projects.GetProject(ctx, string(worker.ProjectID)); err != nil {
@@ -380,7 +380,7 @@ func (e *Engine) reviewerHarness(ctx context.Context, worker domain.SessionRecor
 	return cfg.ResolveReviewerHarness(worker.Harness), nil
 }
 
-func (e *Engine) upsertReview(ctx context.Context, worker domain.SessionRecord, harness domain.ReviewerHarness, prURL, handleID string, now time.Time) (domain.Review, error) {
+func (e *Engine) upsertReview(ctx stdctx.Context, worker domain.SessionRecord, harness domain.ReviewerHarness, prURL, handleID string, now time.Time) (domain.Review, error) {
 	existing, ok, err := e.store.GetReviewBySession(ctx, worker.ID)
 	if err != nil {
 		return domain.Review{}, err
