@@ -82,6 +82,16 @@ describe("buildDaemonEnv", () => {
 			expect(env.PATH?.split(":")).toContain(dir);
 		}
 	});
+
+	it("defaults TERM when neither shell nor process env sets it (Finder launch)", () => {
+		const env = buildDaemonEnv(minimalProcessEnv, null, {});
+		expect(env.TERM).toBe("xterm-256color");
+	});
+
+	it("lets a real TERM from the process env win over the default", () => {
+		const env = buildDaemonEnv({ ...minimalProcessEnv, TERM: "screen-256color" }, null, {});
+		expect(env.TERM).toBe("screen-256color");
+	});
 });
 
 describe("resolveShellPath", () => {
