@@ -27,8 +27,8 @@ dials the pipe directly. Windows-only code can only be compile-checked here.
 Tasks:
 - B1: conpty protocol codec + ring buffer (cross-platform, fully unit-tested) — COMPLETE (926ee31..d67941b, 16 tests, -race clean, review APPROVED)
 - B2: windows pty-host registry — COMPLETE (..6552e26, 10 tests -race clean, win+linux+darwin build)
-- B3: ao pty-host subcommand (go-pty ConPTY + go-winio pipe + fan-out + shutdown) — windows-only, compile-checked — NOT STARTED
-- B4: conpty runtime adapter (Create/Destroy/IsAlive/SendMessage/GetOutput/Attach over pipe) — NOT STARTED
+- B3: pty-host serve engine (loopback TCP, NOT named pipe; ConPTY behind interface seam) — COMPLETE (41ce417..6cd6e2a, 35 tests -race clean incl. ordering regression test, review APPROVED; loopback decision documented; Windows go-pty file compile-checked only)
+- B4: conpty runtime adapter (Create/Destroy/IsAlive/SendMessage/GetOutput/Attach over loopback) — IN PROGRESS
 - B5: terminal Attacher/Stream interface change + tmux/zellij/conpty Attach impls — Darwin-testable — NOT STARTED
 - B6: select conpty on Windows + delete zellij + doctor/spawn + register pty-host subcommand — NOT STARTED
 

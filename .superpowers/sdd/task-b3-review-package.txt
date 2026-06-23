@@ -1,0 +1,1391 @@
+=== COMMITS ===
+a7b052b feat(conpty): add pty-host serve engine with loopback TCP transport (B3)
+
+=== STAT ===
+backend/internal/adapters/runtime/conpty/host.go   | 256 +++++++++++
+ .../adapters/runtime/conpty/host_conpty_other.go   |  12 +
+ .../adapters/runtime/conpty/host_conpty_windows.go |  94 ++++
+ .../internal/adapters/runtime/conpty/host_main.go  |  84 ++++
+ .../internal/adapters/runtime/conpty/host_test.go  | 481 +++++++++++++++++++++
+ 5 files changed, 927 insertions(+)
+
+=== DIFF ===
+backend/internal/adapters/runtime/conpty/host.go   | 256 +++++++++++
+ .../adapters/runtime/conpty/host_conpty_other.go   |  12 +
+ .../adapters/runtime/conpty/host_conpty_windows.go |  94 ++++
+ .../internal/adapters/runtime/conpty/host_main.go  |  84 ++++
+ .../internal/adapters/runtime/conpty/host_test.go  | 481 +++++++++++++++++++++
+ 5 files changed, 927 insertions(+)
+
+diff --git a/backend/internal/adapters/runtime/conpty/host.go b/backend/internal/adapters/runtime/conpty/host.go
+new file mode 100644
+index 0000000..b05d9c6
+--- /dev/null
++++ b/backend/internal/adapters/runtime/conpty/host.go
+@@ -0,0 +1,256 @@
++// Package conpty - host.go implements the serve engine for the pty-host
++// detached process. It owns the agent's PTY (via the ptyConn seam), exposes
++// it over a loopback TCP socket using the B1 binary protocol, replays
++// scrollback to new clients, fans output to all connected clients, and shuts
++// down gracefully (ConPTY dispose first, then clients, then listener).
++//
++// This file is cross-platform; only the real conptyConn impl is Windows-tagged.
++package conpty
++
++import (
++	"context"
++	"encoding/json"
++	"io"
++	"net"
++	"sync"
++	"time"
++)
++
++// ptyConn is the host's handle to the running agent's pseudo-terminal.
++// The real impl (conptyConn) lives in host_conpty_windows.go; tests use a fake.
++type ptyConn interface {
++	io.Reader            // PTY output (raw bytes from the terminal)
++	io.Writer            // PTY input (keystrokes to the terminal)
++	Resize(cols, rows int) error
++	Close() error        // dispose the ConPTY
++	Done() <-chan struct{} // closed when the child process exits
++	ExitCode() (int, bool) // (code, true) once exited; (0, false) while running
++	PID() int
++}
++
++// ServeConfig carries everything the host needs.
++type ServeConfig struct {
++	SessionID string
++	Listener  net.Listener // caller provides (loopback); engine owns Accept loop
++	PTY       ptyConn
++	Ring      *Ring
++}
++
++// Serve runs the host event loop until the listener closes or Shutdown is
++// invoked via the returned ShutdownFunc. It pumps PTY output into the ring
++// and broadcasts to all clients, accepts new clients (replaying ring snapshot),
++// and dispatches client messages. On PTY exit it broadcasts a status update
++// but stays alive (keep-alive, mirroring tmux behavior). Returns when shut down.
++func Serve(ctx context.Context, cfg ServeConfig) error {
++	h := &host{
++		cfg:      cfg,
++		clients:  make(map[net.Conn]struct{}),
++		shutdownC: make(chan struct{}),
++	}
++	return h.run(ctx)
++}
++
++// host holds the mutable state for a single pty-host session.
++type host struct {
++	cfg      ServeConfig
++	mu       sync.Mutex
++	clients  map[net.Conn]struct{}
++
++	shutdownOnce sync.Once
++	shutdownC    chan struct{} // closed when Shutdown is called
++}
++
++// run is the main event loop.
++func (h *host) run(ctx context.Context) error {
++	// Pump PTY output to ring + broadcast.
++	go h.pumpPTY()
++
++	// Watch for ctx cancellation and trigger shutdown.
++	go func() {
++		select {
++		case <-ctx.Done():
++			h.shutdown()
++		case <-h.shutdownC:
++		}
++	}()
++
++	// Accept loop.
++	for {
++		conn, err := h.cfg.Listener.Accept()
++		if err != nil {
++			// Listener closed: either shutdown or external close.
++			return nil
++		}
++		go h.handleConn(conn)
++	}
++}
++
++// shutdown is idempotent: disposes the ConPTY, closes clients, closes the
++// listener. Mirrors the pty-host.ts shutdown() function.
++// ponytail: 50ms sleep after pty.Close() gives the OS ConPTY helper
++// (conpty_console_list_agent.exe) time to release cleanly; avoids the
++// 0x800700e8 error dialog on Windows.
++func (h *host) shutdown() {
++	h.shutdownOnce.Do(func() {
++		close(h.shutdownC)
++
++		// 1. Dispose the ConPTY first (critical ordering).
++		_ = h.cfg.PTY.Close()
++
++		// 2. Brief grace so the OS ConPTY helper can clean up.
++		time.Sleep(50 * time.Millisecond)
++
++		// 3. Close all client connections.
++		h.mu.Lock()
++		for c := range h.clients {
++			_ = c.Close()
++		}
++		h.clients = make(map[net.Conn]struct{})
++		h.mu.Unlock()
++
++		// 4. Close the listener to unblock Accept.
++		_ = h.cfg.Listener.Close()
++	})
++}
++
++// pumpPTY reads PTY output continuously, appends to the ring, and broadcasts
++// to clients. On PTY exit it flushes the partial line and sends a status
++// update but does NOT close the listener (keep-alive).
++func (h *host) pumpPTY() {
++	buf := make([]byte, 32*1024)
++	for {
++		n, err := h.cfg.PTY.Read(buf)
++		if n > 0 {
++			chunk := make([]byte, n)
++			copy(chunk, buf[:n])
++			h.cfg.Ring.Append(chunk)
++			h.broadcast(EncodeMessage(MsgTerminalData, chunk))
++		}
++		if err != nil {
++			break
++		}
++	}
++
++	// PTY reader is done (process exited or PTY closed). Wait for the Done
++	// signal so ExitCode is populated before we send the status broadcast.
++	<-h.cfg.PTY.Done()
++
++	h.cfg.Ring.FlushPartial()
++
++	code, _ := h.cfg.PTY.ExitCode()
++	pid := h.cfg.PTY.PID()
++	h.broadcast(statusFrame(false, pid, &code))
++	// Keep-alive: do NOT shutdown here. The host stays up so clients can
++	// still connect and read scrollback.
++}
++
++// broadcast sends msg to all connected clients, removing any that error.
++func (h *host) broadcast(msg []byte) {
++	h.mu.Lock()
++	defer h.mu.Unlock()
++	for c := range h.clients {
++		if _, err := c.Write(msg); err != nil {
++			_ = c.Close()
++			delete(h.clients, c)
++		}
++	}
++}
++
++// sendTo sends msg to a single conn (best-effort; removes on error).
++func (h *host) sendTo(conn net.Conn, msg []byte) {
++	if _, err := conn.Write(msg); err != nil {
++		h.mu.Lock()
++		_ = conn.Close()
++		delete(h.clients, conn)
++		h.mu.Unlock()
++	}
++}
++
++// handleConn manages the lifecycle of a single client connection.
++func (h *host) handleConn(conn net.Conn) {
++	// Scrollback replay: send current ring snapshot as a single TerminalData
++	// frame before registering the client in the broadcast set.
++	snap := h.cfg.Ring.Snapshot()
++	if len(snap) > 0 {
++		if _, err := conn.Write(EncodeMessage(MsgTerminalData, snap)); err != nil {
++			_ = conn.Close()
++			return
++		}
++	}
++
++	h.mu.Lock()
++	h.clients[conn] = struct{}{}
++	h.mu.Unlock()
++
++	defer func() {
++		h.mu.Lock()
++		delete(h.clients, conn)
++		h.mu.Unlock()
++		_ = conn.Close()
++	}()
++
++	parser := NewMessageParser(func(msgType byte, payload []byte) {
++		h.handleClientMsg(conn, msgType, payload)
++	})
++
++	buf := make([]byte, 4096)
++	for {
++		n, err := conn.Read(buf)
++		if n > 0 {
++			parser.Feed(buf[:n])
++		}
++		if err != nil {
++			return
++		}
++	}
++}
++
++// handleClientMsg dispatches a decoded client message. Mirrors handleClientMessage
++// from pty-host.ts.
++func (h *host) handleClientMsg(conn net.Conn, msgType byte, payload []byte) {
++	switch msgType {
++	case MsgTerminalInput:
++		if _, alive := h.cfg.PTY.ExitCode(); !alive {
++			_, _ = h.cfg.PTY.Write(payload)
++		}
++
++	case MsgResize:
++		if _, alive := h.cfg.PTY.ExitCode(); !alive {
++			var rp ResizePayload
++			if err := json.Unmarshal(payload, &rp); err == nil {
++				_ = h.cfg.PTY.Resize(rp.Cols, rp.Rows)
++			}
++			// Malformed resize: ignore (matches TS behavior).
++		}
++
++	case MsgGetOutputReq:
++		lines := 50 // default matches TS
++		var req GetOutputReq
++		if err := json.Unmarshal(payload, &req); err == nil && req.Lines > 0 {
++			lines = req.Lines
++		}
++		text := h.cfg.Ring.Tail(lines)
++		h.sendTo(conn, EncodeMessage(MsgGetOutputRes, []byte(text)))
++
++	case MsgStatusReq:
++		code, exited := h.cfg.PTY.ExitCode()
++		alive := !exited
++		pid := h.cfg.PTY.PID()
++		var codePtr *int
++		if exited {
++			codePtr = &code
++		}
++		h.sendTo(conn, statusFrame(alive, pid, codePtr))
++
++	case MsgKillReq:
++		// Trigger graceful shutdown; returns immediately (idempotent).
++		go h.shutdown()
++	}
++}
++
++// statusFrame builds a MsgStatusRes frame.
++func statusFrame(alive bool, pid int, exitCode *int) []byte {
++	sp := StatusPayload{Alive: alive, PID: pid, ExitCode: exitCode}
++	b, _ := json.Marshal(sp)
++	return EncodeMessage(MsgStatusRes, b)
++}
+diff --git a/backend/internal/adapters/runtime/conpty/host_conpty_other.go b/backend/internal/adapters/runtime/conpty/host_conpty_other.go
+new file mode 100644
+index 0000000..aca39d1
+--- /dev/null
++++ b/backend/internal/adapters/runtime/conpty/host_conpty_other.go
+@@ -0,0 +1,12 @@
++//go:build !windows
++
++package conpty
++
++import "errors"
++
++// newConPTY is a stub on non-Windows platforms. The serve engine (host.go) and
++// tests use a fake ptyConn; this stub only exists to keep the package buildable
++// on Darwin/Linux so the engine can be imported and tested without Windows.
++func newConPTY(cwd, shellCmd string, shellArgs []string) (ptyConn, error) {
++	return nil, errors.New("conpty: unsupported on this OS")
++}
+diff --git a/backend/internal/adapters/runtime/conpty/host_conpty_windows.go b/backend/internal/adapters/runtime/conpty/host_conpty_windows.go
+new file mode 100644
+index 0000000..956a04c
+--- /dev/null
++++ b/backend/internal/adapters/runtime/conpty/host_conpty_windows.go
+@@ -0,0 +1,94 @@
++//go:build windows
++
++package conpty
++
++import (
++	"fmt"
++	"os/exec"
++	"sync"
++
++	gopty "github.com/aymanbagabas/go-pty"
++)
++
++// conptyConn is the real ptyConn implementation backed by go-pty's ConPty
++// (Windows ConPTY API). Only compiled on Windows.
++type conptyConn struct {
++	pty  gopty.ConPty
++	cmd  *gopty.Cmd
++
++	once     sync.Once
++	doneC    chan struct{}
++	exitCode int
++	exited   bool
++	exitMu   sync.Mutex
++}
++
++// newConPTY creates a ConPTY session running shellCmd in cwd with shellArgs.
++// It starts the process and returns a ptyConn ready for use.
++func newConPTY(cwd, shellCmd string, shellArgs []string) (ptyConn, error) {
++	// go-pty's New() returns a ConPty on Windows.
++	p, err := gopty.New()
++	if err != nil {
++		return nil, fmt.Errorf("conpty: create pty: %w", err)
++	}
++	cp, ok := p.(gopty.ConPty)
++	if !ok {
++		_ = p.Close()
++		return nil, fmt.Errorf("conpty: expected ConPty on windows, got %T", p)
++	}
++
++	// Set an initial size matching node-pty defaults from pty-host.ts.
++	if err := cp.Resize(220, 50); err != nil {
++		_ = cp.Close()
++		return nil, fmt.Errorf("conpty: initial resize: %w", err)
++	}
++
++	cmd := cp.Command(shellCmd, shellArgs...)
++	cmd.Dir = cwd
++	// Inherit parent env so PATH, HOME, etc. are available.
++	cmd.Env = exec.Command(shellCmd).Environ()
++
++	if err := cmd.Start(); err != nil {
++		_ = cp.Close()
++		return nil, fmt.Errorf("conpty: start command: %w", err)
++	}
++
++	c := &conptyConn{
++		pty:   cp,
++		cmd:   cmd,
++		doneC: make(chan struct{}),
++	}
++
++	go c.wait()
++	return c, nil
++}
++
++func (c *conptyConn) wait() {
++	_ = c.cmd.Wait()
++	code := 0
++	if c.cmd.ProcessState != nil {
++		code = c.cmd.ProcessState.ExitCode()
++	}
++	c.exitMu.Lock()
++	c.exitCode = code
++	c.exited = true
++	c.exitMu.Unlock()
++	c.once.Do(func() { close(c.doneC) })
++}
++
++func (c *conptyConn) Read(b []byte) (int, error)  { return c.pty.Read(b) }
++func (c *conptyConn) Write(b []byte) (int, error) { return c.pty.Write(b) }
++func (c *conptyConn) Close() error                 { return c.pty.Close() }
++func (c *conptyConn) Resize(cols, rows int) error  { return c.pty.Resize(cols, rows) }
++func (c *conptyConn) Done() <-chan struct{}         { return c.doneC }
++func (c *conptyConn) PID() int {
++	if c.cmd.Process == nil {
++		return 0
++	}
++	return c.cmd.Process.Pid
++}
++func (c *conptyConn) ExitCode() (int, bool) {
++	c.exitMu.Lock()
++	defer c.exitMu.Unlock()
++	return c.exitCode, c.exited
++}
+diff --git a/backend/internal/adapters/runtime/conpty/host_main.go b/backend/internal/adapters/runtime/conpty/host_main.go
+new file mode 100644
+index 0000000..802f98d
+--- /dev/null
++++ b/backend/internal/adapters/runtime/conpty/host_main.go
+@@ -0,0 +1,84 @@
++// host_main.go is the RunHost entrypoint for the "ao pty-host" subcommand.
++// It is cross-platform: the loopback TCP bind and signal wiring work on all
++// OSes; only the ConPTY creation (newConPTY) is OS-gated via build tags.
++package conpty
++
++import (
++	"context"
++	"fmt"
++	"io"
++	"net"
++	"os"
++	"os/signal"
++	"syscall"
++)
++
++// RunHost is the "ao pty-host" entrypoint. argv is everything after the
++// subcommand name: <sessionId> <cwd> <shellCmd> [shellArg...]
++//
++// It binds 127.0.0.1:0 (OS assigns the port), creates the ConPTY, prints
++// "READY:<pid> <port>\n" to stdout (the parent process reads this to learn the
++// port), installs SIGTERM/SIGINT handlers, then runs Serve. Returns a process
++// exit code.
++//
++// ponytail: loopback bind only; any local process on this host can connect to
++// the assigned port. A per-session random token handshake is the upgrade path
++// if multi-user isolation is needed.
++func RunHost(args []string, stdout io.Writer) int {
++	if len(args) < 3 {
++		fmt.Fprintf(os.Stderr, "usage: ao pty-host <sessionId> <cwd> <shellCmd> [shellArg...]\n")
++		return 1
++	}
++
++	sessionID := args[0]
++	cwd := args[1]
++	shellCmd := args[2]
++	shellArgs := args[3:]
++
++	// Bind before creating the PTY so we can report READY atomically.
++	ln, err := net.Listen("tcp", "127.0.0.1:0")
++	if err != nil {
++		fmt.Fprintf(os.Stderr, "pty-host [%s]: listen: %v\n", sessionID, err)
++		return 1
++	}
++	port := ln.Addr().(*net.TCPAddr).Port
++
++	pty, err := newConPTY(cwd, shellCmd, shellArgs)
++	if err != nil {
++		_ = ln.Close()
++		fmt.Fprintf(os.Stderr, "pty-host [%s]: newConPTY: %v\n", sessionID, err)
++		return 1
++	}
++
++	// Print READY after both the listener and the PTY are up.
++	fmt.Fprintf(stdout, "READY:%d %d\n", pty.PID(), port)
++
++	ctx, cancel := context.WithCancel(context.Background())
++	defer cancel()
++
++	// Install signal handlers so SIGTERM/SIGINT trigger graceful shutdown.
++	sigC := make(chan os.Signal, 1)
++	signal.Notify(sigC, syscall.SIGTERM, syscall.SIGINT)
++	go func() {
++		select {
++		case sig := <-sigC:
++			fmt.Fprintf(os.Stderr, "pty-host [%s]: signal %v, shutting down\n", sessionID, sig)
++			cancel()
++		case <-ctx.Done():
++		}
++	}()
++
++	ring := NewRing()
++	cfg := ServeConfig{
++		SessionID: sessionID,
++		Listener:  ln,
++		PTY:       pty,
++		Ring:      ring,
++	}
++
++	if err := Serve(ctx, cfg); err != nil {
++		fmt.Fprintf(os.Stderr, "pty-host [%s]: serve: %v\n", sessionID, err)
++		return 1
++	}
++	return 0
++}
+diff --git a/backend/internal/adapters/runtime/conpty/host_test.go b/backend/internal/adapters/runtime/conpty/host_test.go
+new file mode 100644
+index 0000000..2ccbcc4
+--- /dev/null
++++ b/backend/internal/adapters/runtime/conpty/host_test.go
+@@ -0,0 +1,481 @@
++package conpty
++
++import (
++	"context"
++	"encoding/json"
++	"fmt"
++	"io"
++	"net"
++	"sync"
++	"testing"
++	"time"
++)
++
++// ---------------------------------------------------------------------------
++// fakePTY implements ptyConn using in-memory pipes. Used only in tests;
++// the real ConPTY impl is Windows-only.
++// ---------------------------------------------------------------------------
++
++type fakePTY struct {
++	// output is what the fake "terminal" writes to the host (PTY -> host reader)
++	outR *io.PipeReader
++	outW *io.PipeWriter
++
++	// input is what the host writes to the fake terminal (keystrokes)
++	inR *io.PipeReader
++	inW *io.PipeWriter
++
++	resizeMu sync.Mutex
++	resizes  []ResizePayload
++
++	doneOnce sync.Once
++	doneC    chan struct{}
++	exitCode int
++	closed   bool
++	closeMu  sync.Mutex
++
++	pid int
++}
++
++func newFakePTY(pid int) *fakePTY {
++	outR, outW := io.Pipe()
++	inR, inW := io.Pipe()
++	return &fakePTY{
++		outR:  outR,
++		outW:  outW,
++		inR:   inR,
++		inW:   inW,
++		doneC: make(chan struct{}),
++		pid:   pid,
++	}
++}
++
++// WriteOutput simulates the PTY producing output (e.g. shell printing text).
++func (f *fakePTY) WriteOutput(data []byte) (int, error) { return f.outW.Write(data) }
++
++// CloseOutput simulates the PTY process exiting (closes the read side).
++func (f *fakePTY) CloseOutput(code int) {
++	f.exitCode = code
++	f.outW.Close()
++}
++
++// ReadInput lets tests inspect what the host forwarded to the PTY.
++func (f *fakePTY) ReadInput(buf []byte) (int, error) { return f.inR.Read(buf) }
++
++// ptyConn interface implementation.
++func (f *fakePTY) Read(b []byte) (int, error)  { return f.outR.Read(b) }
++func (f *fakePTY) Write(b []byte) (int, error) { return f.inW.Write(b) }
++
++func (f *fakePTY) Resize(cols, rows int) error {
++	f.resizeMu.Lock()
++	defer f.resizeMu.Unlock()
++	f.resizes = append(f.resizes, ResizePayload{Cols: cols, Rows: rows})
++	return nil
++}
++
++func (f *fakePTY) Close() error {
++	f.closeMu.Lock()
++	defer f.closeMu.Unlock()
++	f.closed = true
++	// Close both pipes so pumpPTY and any Read calls unblock.
++	_ = f.outW.Close()
++	_ = f.inW.Close()
++	f.doneOnce.Do(func() { close(f.doneC) })
++	return nil
++}
++
++func (f *fakePTY) Done() <-chan struct{} { return f.doneC }
++
++func (f *fakePTY) ExitCode() (int, bool) {
++	select {
++	case <-f.doneC:
++		return f.exitCode, true
++	default:
++		return 0, false
++	}
++}
++
++func (f *fakePTY) PID() int { return f.pid }
++
++// signalExit simulates the child process exiting, triggering the Done channel
++// and ExitCode returning true.
++func (f *fakePTY) signalExit(code int) {
++	f.exitCode = code
++	f.doneOnce.Do(func() { close(f.doneC) })
++	_ = f.outW.Close() // unblocks pumpPTY's Read
++}
++
++// ---------------------------------------------------------------------------
++// testClient wraps a net.Conn and a MessageParser for easy frame reading.
++// ---------------------------------------------------------------------------
++
++type testClient struct {
++	conn    net.Conn
++	frameC  chan struct{ typ byte; payload []byte }
++	parser  *MessageParser
++}
++
++func newTestClient(t *testing.T, addr string) *testClient {
++	t.Helper()
++	conn, err := net.Dial("tcp", addr)
++	if err != nil {
++		t.Fatalf("dial %s: %v", addr, err)
++	}
++	tc := &testClient{
++		conn:   conn,
++		frameC: make(chan struct{ typ byte; payload []byte }, 64),
++	}
++	tc.parser = NewMessageParser(func(msgType byte, payload []byte) {
++		tc.frameC <- struct{ typ byte; payload []byte }{msgType, payload}
++	})
++	go func() {
++		buf := make([]byte, 4096)
++		for {
++			n, err := conn.Read(buf)
++			if n > 0 {
++				tc.parser.Feed(buf[:n])
++			}
++			if err != nil {
++				close(tc.frameC)
++				return
++			}
++		}
++	}()
++	return tc
++}
++
++// readFrame blocks until a frame arrives or 2s times out.
++func (tc *testClient) readFrame(t *testing.T) (typ byte, payload []byte) {
++	t.Helper()
++	select {
++	case f, ok := <-tc.frameC:
++		if !ok {
++			t.Fatal("client frame channel closed (connection dropped)")
++		}
++		return f.typ, f.payload
++	case <-time.After(2 * time.Second):
++		t.Fatal("timeout waiting for frame")
++		return 0, nil
++	}
++}
++
++// send writes a framed message to the server.
++func (tc *testClient) send(msgType byte, payload []byte) error {
++	_, err := tc.conn.Write(EncodeMessage(msgType, payload))
++	return err
++}
++
++func (tc *testClient) close() { _ = tc.conn.Close() }
++
++// ---------------------------------------------------------------------------
++// Helper: start a Serve with a freshly created listener + fakePTY.
++// ---------------------------------------------------------------------------
++
++type serveFixture struct {
++	pty    *fakePTY
++	ring   *Ring
++	ln     net.Listener
++	addr   string
++	cancel context.CancelFunc
++	done   chan error
++}
++
++func startServe(t *testing.T, pid int) *serveFixture {
++	t.Helper()
++	ln, err := net.Listen("tcp", "127.0.0.1:0")
++	if err != nil {
++		t.Fatalf("listen: %v", err)
++	}
++	pty := newFakePTY(pid)
++	ring := NewRing()
++	ctx, cancel := context.WithCancel(context.Background())
++	done := make(chan error, 1)
++	go func() {
++		done <- Serve(ctx, ServeConfig{
++			SessionID: fmt.Sprintf("test-%d", pid),
++			Listener:  ln,
++			PTY:       pty,
++			Ring:      ring,
++		})
++	}()
++	return &serveFixture{
++		pty:    pty,
++		ring:   ring,
++		ln:     ln,
++		addr:   ln.Addr().String(),
++		cancel: cancel,
++		done:   done,
++	}
++}
++
++// waitDone waits for Serve to return (up to 2s).
++func (f *serveFixture) waitDone(t *testing.T) {
++	t.Helper()
++	select {
++	case <-f.done:
++	case <-time.After(2 * time.Second):
++		t.Fatal("Serve did not return in time")
++	}
++}
++
++// ---------------------------------------------------------------------------
++// Tests
++// ---------------------------------------------------------------------------
++
++// TestScrollbackReplay: seed the ring, connect a client; first frame must be
++// MsgTerminalData containing the ring snapshot.
++func TestScrollbackReplay(t *testing.T) {
++	f := startServe(t, 100)
++	defer f.cancel()
++
++	// Seed ring directly before the client connects.
++	f.ring.Append([]byte("line1\nline2\n"))
++	snap := f.ring.Snapshot()
++
++	c := newTestClient(t, f.addr)
++	defer c.close()
++
++	typ, payload := c.readFrame(t)
++	if typ != MsgTerminalData {
++		t.Fatalf("got type 0x%02x, want MsgTerminalData", typ)
++	}
++	if string(payload) != string(snap) {
++		t.Fatalf("scrollback payload = %q, want %q", payload, snap)
++	}
++}
++
++// TestFanOut: two clients receive the same PTY output.
++func TestFanOut(t *testing.T) {
++	f := startServe(t, 101)
++	defer f.cancel()
++
++	c1 := newTestClient(t, f.addr)
++	defer c1.close()
++	c2 := newTestClient(t, f.addr)
++	defer c2.close()
++
++	// Write PTY output after both clients have connected.
++	// We need to give the server a moment to register both clients; use a
++	// brief sync by sending a status req from each and waiting for responses.
++	// ponytail: channel-based sync via status round-trip avoids sleeps.
++	_ = c1.send(MsgStatusReq, nil)
++	_ = c2.send(MsgStatusReq, nil)
++	// Drain status responses.
++	c1.readFrame(t)
++	c2.readFrame(t)
++
++	msg := []byte("hello from pty\n")
++	if _, err := f.pty.WriteOutput(msg); err != nil {
++		t.Fatalf("WriteOutput: %v", err)
++	}
++
++	// Both clients should receive a MsgTerminalData with msg.
++	for _, c := range []*testClient{c1, c2} {
++		typ, payload := c.readFrame(t)
++		if typ != MsgTerminalData {
++			t.Fatalf("got type 0x%02x, want MsgTerminalData", typ)
++		}
++		if string(payload) != string(msg) {
++			t.Fatalf("payload = %q, want %q", payload, msg)
++		}
++	}
++}
++
++// TestTerminalInput: MsgTerminalInput from a client reaches the fakePTY's input.
++func TestTerminalInput(t *testing.T) {
++	f := startServe(t, 102)
++	defer f.cancel()
++
++	c := newTestClient(t, f.addr)
++	defer c.close()
++
++	keystrokes := []byte("ls -la\r")
++	if err := c.send(MsgTerminalInput, keystrokes); err != nil {
++		t.Fatalf("send: %v", err)
++	}
++
++	buf := make([]byte, len(keystrokes))
++	if _, err := io.ReadFull(f.pty.inR, buf); err != nil {
++		t.Fatalf("read from pty input: %v", err)
++	}
++	if string(buf) != string(keystrokes) {
++		t.Fatalf("pty input = %q, want %q", buf, keystrokes)
++	}
++}
++
++// TestResize: MsgResize calls fakePTY.Resize with the right cols/rows.
++func TestResize(t *testing.T) {
++	f := startServe(t, 103)
++	defer f.cancel()
++
++	c := newTestClient(t, f.addr)
++	defer c.close()
++
++	payload, _ := json.Marshal(ResizePayload{Cols: 132, Rows: 40})
++	if err := c.send(MsgResize, payload); err != nil {
++		t.Fatalf("send: %v", err)
++	}
++
++	// Poll for the resize to arrive (it's async). Channel-based: send a
++	// status req and wait for its reply, which guarantees the resize was
++	// processed (single goroutine handles all messages per connection).
++	_ = c.send(MsgStatusReq, nil)
++	c.readFrame(t) // discard status response
++
++	f.pty.resizeMu.Lock()
++	resizes := f.pty.resizes
++	f.pty.resizeMu.Unlock()
++
++	if len(resizes) != 1 {
++		t.Fatalf("got %d resize calls, want 1", len(resizes))
++	}
++	if resizes[0].Cols != 132 || resizes[0].Rows != 40 {
++		t.Fatalf("resize = %+v, want {132 40}", resizes[0])
++	}
++}
++
++// TestGetOutputReq: MsgGetOutputReq returns MsgGetOutputRes with ring.Tail(n).
++func TestGetOutputReq(t *testing.T) {
++	f := startServe(t, 104)
++	defer f.cancel()
++
++	f.ring.Append([]byte("alpha\nbeta\ngamma\n"))
++
++	c := newTestClient(t, f.addr)
++	defer c.close()
++
++	// Drain scrollback frame.
++	c.readFrame(t)
++
++	reqPayload, _ := json.Marshal(GetOutputReq{Lines: 2})
++	if err := c.send(MsgGetOutputReq, reqPayload); err != nil {
++		t.Fatalf("send: %v", err)
++	}
++
++	typ, payload := c.readFrame(t)
++	if typ != MsgGetOutputRes {
++		t.Fatalf("got type 0x%02x, want MsgGetOutputRes", typ)
++	}
++	want := f.ring.Tail(2)
++	if string(payload) != want {
++		t.Fatalf("GetOutputRes = %q, want %q", payload, want)
++	}
++}
++
++// TestStatusReq_AliveAndExited: MsgStatusReq returns alive:true while running;
++// after the PTY exits, returns alive:false with exitCode. Listener stays open.
++func TestStatusReq_AliveAndExited(t *testing.T) {
++	f := startServe(t, 105)
++	defer f.cancel()
++
++	c := newTestClient(t, f.addr)
++	defer c.close()
++
++	// While running: expect alive:true.
++	if err := c.send(MsgStatusReq, nil); err != nil {
++		t.Fatalf("send: %v", err)
++	}
++	typ, payload := c.readFrame(t)
++	if typ != MsgStatusRes {
++		t.Fatalf("got type 0x%02x, want MsgStatusRes", typ)
++	}
++	var sp StatusPayload
++	if err := json.Unmarshal(payload, &sp); err != nil {
++		t.Fatalf("unmarshal: %v", err)
++	}
++	if !sp.Alive {
++		t.Fatalf("expected alive=true, got false")
++	}
++	if sp.PID != 105 {
++		t.Fatalf("expected pid=105, got %d", sp.PID)
++	}
++
++	// Simulate PTY exit.
++	f.pty.signalExit(42)
++
++	// Drain the broadcast status-res that pumpPTY sends on exit.
++	exitBcast, _ := c.readFrame(t)
++	if exitBcast != MsgStatusRes {
++		t.Fatalf("exit broadcast type = 0x%02x, want MsgStatusRes", exitBcast)
++	}
++
++	// Now a new status req should report alive:false.
++	if err := c.send(MsgStatusReq, nil); err != nil {
++		t.Fatalf("send: %v", err)
++	}
++	typ2, payload2 := c.readFrame(t)
++	if typ2 != MsgStatusRes {
++		t.Fatalf("got type 0x%02x, want MsgStatusRes", typ2)
++	}
++	var sp2 StatusPayload
++	if err := json.Unmarshal(payload2, &sp2); err != nil {
++		t.Fatalf("unmarshal: %v", err)
++	}
++	if sp2.Alive {
++		t.Fatalf("expected alive=false after exit")
++	}
++	if sp2.ExitCode == nil || *sp2.ExitCode != 42 {
++		t.Fatalf("expected exitCode=42, got %v", sp2.ExitCode)
++	}
++
++	// Keep-alive: the listener must still accept new connections.
++	c2 := newTestClient(t, f.addr)
++	defer c2.close()
++	if err := c2.send(MsgStatusReq, nil); err != nil {
++		t.Fatalf("keep-alive send: %v", err)
++	}
++	_, _ = c2.readFrame(t) // just verify it didn't crash
++}
++
++// TestKillReq: MsgKillReq disposes the fakePTY, drops clients, closes
++// listener, and Serve returns.
++func TestKillReq(t *testing.T) {
++	f := startServe(t, 106)
++
++	c := newTestClient(t, f.addr)
++
++	if err := c.send(MsgKillReq, nil); err != nil {
++		t.Fatalf("send: %v", err)
++	}
++
++	// Serve should return within 2s (includes the 50ms grace sleep).
++	f.waitDone(t)
++
++	// PTY Close must have been called.
++	f.pty.closeMu.Lock()
++	closed := f.pty.closed
++	f.pty.closeMu.Unlock()
++	if !closed {
++		t.Fatal("expected pty.Close() to be called on kill")
++	}
++
++	// Listener should be closed: new dial must fail.
++	conn, err := net.DialTimeout("tcp", f.addr, 200*time.Millisecond)
++	if err == nil {
++		_ = conn.Close()
++		t.Fatal("expected listener to be closed after kill, but Dial succeeded")
++	}
++
++	c.close()
++}
++
++// TestShutdownViaCtxCancel: cancelling the context triggers graceful shutdown.
++func TestShutdownViaCtxCancel(t *testing.T) {
++	f := startServe(t, 107)
++
++	c := newTestClient(t, f.addr)
++	defer c.close()
++
++	// Cancel the context.
++	f.cancel()
++
++	f.waitDone(t)
++
++	// PTY Close must have been called.
++	f.pty.closeMu.Lock()
++	closed := f.pty.closed
++	f.pty.closeMu.Unlock()
++	if !closed {
++		t.Fatal("expected pty.Close() on ctx cancel")
++	}
++}
+
+--- Changes ---
+
+backend/internal/adapters/runtime/conpty/host.go
+  @@ -0,0 +1,256 @@
+  +// Package conpty - host.go implements the serve engine for the pty-host
+  +// detached process. It owns the agent's PTY (via the ptyConn seam), exposes
+  +// it over a loopback TCP socket using the B1 binary protocol, replays
+  +// scrollback to new clients, fans output to all connected clients, and shuts
+  +// down gracefully (ConPTY dispose first, then clients, then listener).
+  +//
+  +// This file is cross-platform; only the real conptyConn impl is Windows-tagged.
+  +package conpty
+  +
+  +import (
+  +	"context"
+  +	"encoding/json"
+  +	"io"
+  +	"net"
+  +	"sync"
+  +	"time"
+  +)
+  +
+  +// ptyConn is the host's handle to the running agent's pseudo-terminal.
+  +// The real impl (conptyConn) lives in host_conpty_windows.go; tests use a fake.
+  +type ptyConn interface {
+  +	io.Reader            // PTY output (raw bytes from the terminal)
+  +	io.Writer            // PTY input (keystrokes to the terminal)
+  +	Resize(cols, rows int) error
+  +	Close() error        // dispose the ConPTY
+  +	Done() <-chan struct{} // closed when the child process exits
+  +	ExitCode() (int, bool) // (code, true) once exited; (0, false) while running
+  +	PID() int
+  +}
+  +
+  +// ServeConfig carries everything the host needs.
+  +type ServeConfig struct {
+  +	SessionID string
+  +	Listener  net.Listener // caller provides (loopback); engine owns Accept loop
+  +	PTY       ptyConn
+  +	Ring      *Ring
+  +}
+  +
+  +// Serve runs the host event loop until the listener closes or Shutdown is
+  +// invoked via the returned ShutdownFunc. It pumps PTY output into the ring
+  +// and broadcasts to all clients, accepts new clients (replaying ring snapshot),
+  +// and dispatches client messages. On PTY exit it broadcasts a status update
+  +// but stays alive (keep-alive, mirroring tmux behavior). Returns when shut down.
+  +func Serve(ctx context.Context, cfg ServeConfig) error {
+  +	h := &host{
+  +		cfg:      cfg,
+  +		clients:  make(map[net.Conn]struct{}),
+  +		shutdownC: make(chan struct{}),
+  +	}
+  +	return h.run(ctx)
+  +}
+  +
+  +// host holds the mutable state for a single pty-host session.
+  +type host struct {
+  +	cfg      ServeConfig
+  +	mu       sync.Mutex
+  +	clients  map[net.Conn]struct{}
+  +
+  +	shutdownOnce sync.Once
+  +	shutdownC    chan struct{} // closed when Shutdown is called
+  +}
+  +
+  +// run is the main event loop.
+  +func (h *host) run(ctx context.Context) error {
+  +	// Pump PTY output to ring + broadcast.
+  +	go h.pumpPTY()
+  +
+  +	// Watch for ctx cancellation and trigger shutdown.
+  +	go func() {
+  +		select {
+  +		case <-ctx.Done():
+  +			h.shutdown()
+  +		case <-h.shutdownC:
+  +		}
+  +	}()
+  +
+  +	// Accept loop.
+  +	for {
+  +		conn, err := h.cfg.Listener.Accept()
+  +		if err != nil {
+  +			// Listener closed: either shutdown or external close.
+  +			return nil
+  +		}
+  +		go h.handleConn(conn)
+  +	}
+  +}
+  +
+  +// shutdown is idempotent: disposes the ConPTY, closes clients, closes the
+  +// listener. Mirrors the pty-host.ts shutdown() function.
+  +// ponytail: 50ms sleep after pty.Close() gives the OS ConPTY helper
+  +// (conpty_console_list_agent.exe) time to release cleanly; avoids the
+  +// 0x800700e8 error dialog on Windows.
+  +func (h *host) shutdown() {
+  +	h.shutdownOnce.Do(func() {
+  +		close(h.shutdownC)
+  +
+  +		// 1. Dispose the ConPTY first (critical ordering).
+  +		_ = h.cfg.PTY.Close()
+  +
+  +		// 2. Brief grace so the OS ConPTY helper can clean up.
+  ... (156 lines truncated)
+  +256 -0
+
+backend/internal/adapters/runtime/conpty/host_conpty_other.go
+  @@ -0,0 +1,12 @@
+  +//go:build !windows
+  +
+  +package conpty
+  +
+  +import "errors"
+  +
+  +// newConPTY is a stub on non-Windows platforms. The serve engine (host.go) and
+  +// tests use a fake ptyConn; this stub only exists to keep the package buildable
+  +// on Darwin/Linux so the engine can be imported and tested without Windows.
+  +func newConPTY(cwd, shellCmd string, shellArgs []string) (ptyConn, error) {
+  +	return nil, errors.New("conpty: unsupported on this OS")
+  +}
+  +12 -0
+
+backend/internal/adapters/runtime/conpty/host_conpty_windows.go
+  @@ -0,0 +1,94 @@
+  +//go:build windows
+  +
+  +package conpty
+  +
+  +import (
+  +	"fmt"
+  +	"os/exec"
+  +	"sync"
+  +
+  +	gopty "github.com/aymanbagabas/go-pty"
+  +)
+  +
+  +// conptyConn is the real ptyConn implementation backed by go-pty's ConPty
+  +// (Windows ConPTY API). Only compiled on Windows.
+  +type conptyConn struct {
+  +	pty  gopty.ConPty
+  +	cmd  *gopty.Cmd
+  +
+  +	once     sync.Once
+  +	doneC    chan struct{}
+  +	exitCode int
+  +	exited   bool
+  +	exitMu   sync.Mutex
+  +}
+  +
+  +// newConPTY creates a ConPTY session running shellCmd in cwd with shellArgs.
+  +// It starts the process and returns a ptyConn ready for use.
+  +func newConPTY(cwd, shellCmd string, shellArgs []string) (ptyConn, error) {
+  +	// go-pty's New() returns a ConPty on Windows.
+  +	p, err := gopty.New()
+  +	if err != nil {
+  +		return nil, fmt.Errorf("conpty: create pty: %w", err)
+  +	}
+  +	cp, ok := p.(gopty.ConPty)
+  +	if !ok {
+  +		_ = p.Close()
+  +		return nil, fmt.Errorf("conpty: expected ConPty on windows, got %T", p)
+  +	}
+  +
+  +	// Set an initial size matching node-pty defaults from pty-host.ts.
+  +	if err := cp.Resize(220, 50); err != nil {
+  +		_ = cp.Close()
+  +		return nil, fmt.Errorf("conpty: initial resize: %w", err)
+  +	}
+  +
+  +	cmd := cp.Command(shellCmd, shellArgs...)
+  +	cmd.Dir = cwd
+  +	// Inherit parent env so PATH, HOME, etc. are available.
+  +	cmd.Env = exec.Command(shellCmd).Environ()
+  +
+  +	if err := cmd.Start(); err != nil {
+  +		_ = cp.Close()
+  +		return nil, fmt.Errorf("conpty: start command: %w", err)
+  +	}
+  +
+  +	c := &conptyConn{
+  +		pty:   cp,
+  +		cmd:   cmd,
+  +		doneC: make(chan struct{}),
+  +	}
+  +
+  +	go c.wait()
+  +	return c, nil
+  +}
+  +
+  +func (c *conptyConn) wait() {
+  +	_ = c.cmd.Wait()
+  +	code := 0
+  +	if c.cmd.ProcessState != nil {
+  +		code = c.cmd.ProcessState.ExitCode()
+  +	}
+  +	c.exitMu.Lock()
+  +	c.exitCode = code
+  +	c.exited = true
+  +	c.exitMu.Unlock()
+  +	c.once.Do(func() { close(c.doneC) })
+  +}
+  +
+  +func (c *conptyConn) Read(b []byte) (int, error)  { return c.pty.Read(b) }
+  +func (c *conptyConn) Write(b []byte) (int, error) { return c.pty.Write(b) }
+  +func (c *conptyConn) Close() error                 { return c.pty.Close() }
+  +func (c *conptyConn) Resize(cols, rows int) error  { return c.pty.Resize(cols, rows) }
+  +func (c *conptyConn) Done() <-chan struct{}         { return c.doneC }
+  +func (c *conptyConn) PID() int {
+  +	if c.cmd.Process == nil {
+  +		return 0
+  +	}
+  +	return c.cmd.Process.Pid
+  +}
+  +func (c *conptyConn) ExitCode() (int, bool) {
+  +	c.exitMu.Lock()
+  +	defer c.exitMu.Unlock()
+  +	return c.exitCode, c.exited
+  +}
+  +94 -0
+
+backend/internal/adapters/runtime/conpty/host_main.go
+  @@ -0,0 +1,84 @@
+  +// host_main.go is the RunHost entrypoint for the "ao pty-host" subcommand.
+  +// It is cross-platform: the loopback TCP bind and signal wiring work on all
+  +// OSes; only the ConPTY creation (newConPTY) is OS-gated via build tags.
+  +package conpty
+  +
+  +import (
+  +	"context"
+  +	"fmt"
+  +	"io"
+  +	"net"
+  +	"os"
+  +	"os/signal"
+  +	"syscall"
+  +)
+  +
+  +// RunHost is the "ao pty-host" entrypoint. argv is everything after the
+  +// subcommand name: <sessionId> <cwd> <shellCmd> [shellArg...]
+  +//
+  +// It binds 127.0.0.1:0 (OS assigns the port), creates the ConPTY, prints
+  +// "READY:<pid> <port>\n" to stdout (the parent process reads this to learn the
+  +// port), installs SIGTERM/SIGINT handlers, then runs Serve. Returns a process
+  +// exit code.
+  +//
+  +// ponytail: loopback bind only; any local process on this host can connect to
+  +// the assigned port. A per-session random token handshake is the upgrade path
+  +// if multi-user isolation is needed.
+  +func RunHost(args []string, stdout io.Writer) int {
+  +	if len(args) < 3 {
+  +		fmt.Fprintf(os.Stderr, "usage: ao pty-host <sessionId> <cwd> <shellCmd> [shellArg...]\n")
+  +		return 1
+  +	}
+  +
+  +	sessionID := args[0]
+  +	cwd := args[1]
+  +	shellCmd := args[2]
+  +	shellArgs := args[3:]
+  +
+  +	// Bind before creating the PTY so we can report READY atomically.
+  +	ln, err := net.Listen("tcp", "127.0.0.1:0")
+  +	if err != nil {
+  +		fmt.Fprintf(os.Stderr, "pty-host [%s]: listen: %v\n", sessionID, err)
+  +		return 1
+  +	}
+  +	port := ln.Addr().(*net.TCPAddr).Port
+  +
+  +	pty, err := newConPTY(cwd, shellCmd, shellArgs)
+  +	if err != nil {
+  +		_ = ln.Close()
+  +		fmt.Fprintf(os.Stderr, "pty-host [%s]: newConPTY: %v\n", sessionID, err)
+  +		return 1
+  +	}
+  +
+  +	// Print READY after both the listener and the PTY are up.
+  +	fmt.Fprintf(stdout, "READY:%d %d\n", pty.PID(), port)
+  +
+  +	ctx, cancel := context.WithCancel(context.Background())
+  +	defer cancel()
+  +
+  +	// Install signal handlers so SIGTERM/SIGINT trigger graceful shutdown.
+  +	sigC := make(chan os.Signal, 1)
+  +	signal.Notify(sigC, syscall.SIGTERM, syscall.SIGINT)
+  +	go func() {
+  +		select {
+  +		case sig := <-sigC:
+  +			fmt.Fprintf(os.Stderr, "pty-host [%s]: signal %v, shutting down\n", sessionID, sig)
+  +			cancel()
+  +		case <-ctx.Done():
+  +		}
+  +	}()
+  +
+  +	ring := NewRing()
+  +	cfg := ServeConfig{
+  +		SessionID: sessionID,
+  +		Listener:  ln,
+  +		PTY:       pty,
+  +		Ring:      ring,
+  +	}
+  +
+  +	if err := Serve(ctx, cfg); err != nil {
+  +		fmt.Fprintf(os.Stderr, "pty-host [%s]: serve: %v\n", sessionID, err)
+  +		return 1
+  +	}
+  +	return 0
+  +}
+  +84 -0
+
+backend/internal/adapters/runtime/conpty/host_test.go
+  @@ -0,0 +1,481 @@
+  +package conpty
+  +
+  +import (
+  +	"context"
+  +	"encoding/json"
+  +	"fmt"
+  +	"io"
+  +	"net"
+  +	"sync"
+  +	"testing"
+  +	"time"
+  +)
+  +
+  +// ---------------------------------------------------------------------------
+  +// fakePTY implements ptyConn using in-memory pipes. Used only in tests;
+  +// the real ConPTY impl is Windows-only.
+  +// ---------------------------------------------------------------------------
+  +
+  +type fakePTY struct {
+  +	// output is what the fake "terminal" writes to the host (PTY -> host reader)
+  +	outR *io.PipeReader
+  +	outW *io.PipeWriter
+  +
+  +	// input is what the host writes to the fake terminal (keystrokes)
+  +	inR *io.PipeReader
+  +	inW *io.PipeWriter
+  +
+  +	resizeMu sync.Mutex
+  +	resizes  []ResizePayload
+  +
+  +	doneOnce sync.Once
+  +	doneC    chan struct{}
+  +	exitCode int
+  +	closed   bool
+  +	closeMu  sync.Mutex
+  +
+  +	pid int
+  +}
+  +
+  +func newFakePTY(pid int) *fakePTY {
+  +	outR, outW := io.Pipe()
+  +	inR, inW := io.Pipe()
+  +	return &fakePTY{
+  +		outR:  outR,
+  +		outW:  outW,
+  +		inR:   inR,
+  +		inW:   inW,
+  +		doneC: make(chan struct{}),
+  +		pid:   pid,
+  +	}
+  +}
+  +
+  +// WriteOutput simulates the PTY producing output (e.g. shell printing text).
+  +func (f *fakePTY) WriteOutput(data []byte) (int, error) { return f.outW.Write(data) }
+  +
+  +// CloseOutput simulates the PTY process exiting (closes the read side).
+  +func (f *fakePTY) CloseOutput(code int) {
+  +	f.exitCode = code
+  +	f.outW.Close()
+  +}
+  +
+  +// ReadInput lets tests inspect what the host forwarded to the PTY.
+  +func (f *fakePTY) ReadInput(buf []byte) (int, error) { return f.inR.Read(buf) }
+  +
+  +// ptyConn interface implementation.
+  +func (f *fakePTY) Read(b []byte) (int, error)  { return f.outR.Read(b) }
+  +func (f *fakePTY) Write(b []byte) (int, error) { return f.inW.Write(b) }
+  +
+  +func (f *fakePTY) Resize(cols, rows int) error {
+  +	f.resizeMu.Lock()
+  +	defer f.resizeMu.Unlock()
+  +	f.resizes = append(f.resizes, ResizePayload{Cols: cols, Rows: rows})
+  +	return nil
+  +}
+  +
+  +func (f *fakePTY) Close() error {
+  +	f.closeMu.Lock()
+  +	defer f.closeMu.Unlock()
+  +	f.closed = true
+  +	// Close both pipes so pumpPTY and any Read calls unblock.
+  +	_ = f.outW.Close()
+  +	_ = f.inW.Close()
+  +	f.doneOnce.Do(func() { close(f.doneC) })
+  +	return nil
+  +}
+  +
+  +func (f *fakePTY) Done() <-chan struct{} { return f.doneC }
+  +
+  +func (f *fakePTY) ExitCode() (int, bool) {
+  +	select {
+  +	case <-f.doneC:
+  +		return f.exitCode, true
+  +	default:
+  +		return 0, false
+  +	}
+  +}
+  +
+  +func (f *fakePTY) PID() int { return f.pid }
+  +
+  +// signalExit simulates the child process exiting, triggering the Done channel
+  ... (381 lines truncated)
+  +481 -0
+[full diff: rtk git diff --no-compact]
