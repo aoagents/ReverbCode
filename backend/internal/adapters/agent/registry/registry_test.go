@@ -52,6 +52,14 @@ func TestGetAgentHooksFootprintIsGitignored(t *testing.T) {
 	}
 }
 
+func TestEveryHarnessReportsAuthStatus(t *testing.T) {
+	for _, ha := range Harnessed() {
+		if _, ok := ha.Agent.(ports.AgentAuthChecker); !ok {
+			t.Errorf("%s does not implement ports.AgentAuthChecker", ha.Harness)
+		}
+	}
+}
+
 // workspaceFiles returns every regular file under root, relative to root.
 func workspaceFiles(t *testing.T, root string) []string {
 	t.Helper()

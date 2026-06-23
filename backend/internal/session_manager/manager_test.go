@@ -86,8 +86,12 @@ func (f *fakeStore) GetDisplayPRFactsForSession(_ context.Context, id domain.Ses
 }
 
 type fakeLCM struct {
-	store     *fakeStore
-	completed int
+	store        *fakeStore
+	completed    int
+	terminated   int
+	termErr      error
+	termFailures int
+	termAlways   bool
 }
 
 func (l *fakeLCM) MarkSpawned(_ context.Context, id domain.SessionID, metadata domain.SessionMetadata) error {
@@ -100,6 +104,14 @@ func (l *fakeLCM) MarkSpawned(_ context.Context, id domain.SessionID, metadata d
 	return nil
 }
 func (l *fakeLCM) MarkTerminated(_ context.Context, id domain.SessionID) error {
+	l.terminated++
+	if l.termErr != nil && l.termAlways {
+		return l.termErr
+	}
+	if l.termErr != nil && l.termFailures > 0 {
+		l.termFailures--
+		return l.termErr
+	}
 	rec := l.store.sessions[id]
 	rec.IsTerminated = true
 	rec.Activity = domain.Activity{State: domain.ActivityExited, LastActivityAt: time.Now()}
@@ -109,8 +121,11 @@ func (l *fakeLCM) MarkTerminated(_ context.Context, id domain.SessionID) error {
 
 type fakeRuntime struct {
 	createErr          error
+	destroyErr         error
 	created, destroyed int
 	lastCfg            ports.RuntimeConfig
+	alive              bool
+	probeErr           error
 }
 
 func (r *fakeRuntime) Create(_ context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
@@ -121,7 +136,13 @@ func (r *fakeRuntime) Create(_ context.Context, cfg ports.RuntimeConfig) (ports.
 	r.created++
 	return ports.RuntimeHandle{ID: "h1"}, nil
 }
-func (r *fakeRuntime) Destroy(context.Context, ports.RuntimeHandle) error { r.destroyed++; return nil }
+func (r *fakeRuntime) Destroy(context.Context, ports.RuntimeHandle) error {
+	r.destroyed++
+	return r.destroyErr
+}
+func (r *fakeRuntime) IsAlive(context.Context, ports.RuntimeHandle) (bool, error) {
+	return r.alive, r.probeErr
+}
 
 type fakeAgent struct{}
 
@@ -479,6 +500,106 @@ func TestKill_OtherWorkspaceErrorStillFails(t *testing.T) {
 		t.Fatalf("kill err = %v, want workspace error surfaced", err)
 	}
 }
+
+func TestRetireOrchestrator_TerminatesOldOrchestratorWhenDestroySucceeds(t *testing.T) {
+	m, st, rt, ws := newManager()
+	st.sessions["mer-1"] = mkLive("mer-1")
+	if err := m.RetireOrchestrator(ctx, "mer-1"); err != nil {
+		t.Fatalf("RetireOrchestrator: %v", err)
+	}
+	if rt.destroyed != 1 || ws.destroyed != 1 {
+		t.Fatalf("destroyed runtime/workspace = %d/%d, want 1/1", rt.destroyed, ws.destroyed)
+	}
+	if !st.sessions["mer-1"].IsTerminated {
+		t.Fatalf("retired session = %+v, want terminated", st.sessions["mer-1"])
+	}
+}
+
+func TestRetireOrchestrator_ReturnsErrorWhenRuntimeStaysAlive(t *testing.T) {
+	m, st, rt, _ := newManager()
+	st.sessions["mer-1"] = mkLive("mer-1")
+	lcm := &fakeLCM{store: st}
+	m.lcm = lcm
+	rt.alive = true
+	if err := m.RetireOrchestrator(ctx, "mer-1"); !errors.Is(err, ErrRetiredSessionStillAlive) {
+		t.Fatalf("RetireOrchestrator err = %v, want ErrRetiredSessionStillAlive", err)
+	}
+	if rt.destroyed != 1 {
+		t.Fatalf("destroy attempts = %d, want 1", rt.destroyed)
+	}
+	if lcm.terminated != 1 {
+		t.Fatalf("termination records = %d, want 1", lcm.terminated)
+	}
+	if got := st.sessions["mer-1"]; !got.IsTerminated {
+		t.Fatalf("retired session = %+v, want terminated after destroy intent", got)
+	}
+}
+
+func TestRetireOrchestrator_TerminatesWhenProbeFailsAfterDestroy(t *testing.T) {
+	m, st, rt, ws := newManager()
+	st.sessions["mer-1"] = mkLive("mer-1")
+	rt.probeErr = errors.New("list sessions failed")
+	if err := m.RetireOrchestrator(ctx, "mer-1"); err != nil {
+		t.Fatalf("RetireOrchestrator: %v", err)
+	}
+	if ws.destroyed != 1 {
+		t.Fatalf("workspace destroy attempts = %d, want 1", ws.destroyed)
+	}
+	if got := st.sessions["mer-1"]; !got.IsTerminated {
+		t.Fatalf("retired session = %+v, want terminated despite probe failure after destroy", got)
+	}
+}
+
+func TestRetireOrchestrator_TerminatesWhenWorkspaceDestroyFailsAfterRuntimeDestroy(t *testing.T) {
+	m, st, _, ws := newManager()
+	st.sessions["mer-1"] = mkLive("mer-1")
+	ws.destroyErr = errors.New("cleanup failed")
+	if err := m.RetireOrchestrator(ctx, "mer-1"); err != nil {
+		t.Fatalf("RetireOrchestrator: %v", err)
+	}
+	if got := st.sessions["mer-1"]; !got.IsTerminated {
+		t.Fatalf("retired session = %+v, want terminated despite workspace cleanup failure", got)
+	}
+}
+
+func TestRetireOrchestrator_ReturnsRecoveryErrorWhenTerminationRecordFailsAfterDestroy(t *testing.T) {
+	m, st, rt, _ := newManager()
+	st.sessions["mer-1"] = mkLive("mer-1")
+	m.lcm = &fakeLCM{store: st, termErr: errors.New("db unavailable"), termAlways: true}
+	if err := m.RetireOrchestrator(ctx, "mer-1"); !errors.Is(err, ErrRetireTerminationUnrecorded) {
+		t.Fatalf("RetireOrchestrator err = %v, want ErrRetireTerminationUnrecorded", err)
+	}
+	if rt.destroyed != 1 {
+		t.Fatalf("destroy attempts = %d, want 1", rt.destroyed)
+	}
+	if got := st.sessions["mer-1"]; got.IsTerminated {
+		t.Fatalf("retired session = %+v, want active because termination record failed", got)
+	}
+}
+
+func TestRetireOrchestrator_RetriesTransientTerminationRecordFailure(t *testing.T) {
+	m, st, rt, _ := newManager()
+	st.sessions["mer-1"] = mkLive("mer-1")
+	m.lcm = &fakeLCM{store: st, termErr: errors.New("database locked"), termFailures: 1}
+	if err := m.RetireOrchestrator(ctx, "mer-1"); err != nil {
+		t.Fatalf("RetireOrchestrator: %v", err)
+	}
+	if rt.destroyed != 1 {
+		t.Fatalf("destroy attempts = %d, want 1", rt.destroyed)
+	}
+	if got := st.sessions["mer-1"]; !got.IsTerminated {
+		t.Fatalf("retired session = %+v, want terminated after retry", got)
+	}
+}
+
+func TestRetireOrchestrator_ReturnsIncompleteHandleWhenHandleMissing(t *testing.T) {
+	m, st, _, _ := newManager()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Activity: domain.Activity{State: domain.ActivityActive}}
+	if err := m.RetireOrchestrator(ctx, "mer-1"); !errors.Is(err, ErrIncompleteHandle) {
+		t.Fatalf("RetireOrchestrator err = %v, want ErrIncompleteHandle", err)
+	}
+}
+
 func TestRestore_ReopensTerminal(t *testing.T) {
 	m, st, rt, _ := newManager()
 	seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "b", AgentSessionID: "agent-x"})

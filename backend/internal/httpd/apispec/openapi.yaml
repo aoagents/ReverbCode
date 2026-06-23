@@ -8,6 +8,31 @@ servers:
 - description: Local daemon (loopback only)
   url: http://127.0.0.1:3001
 paths:
+  /api/v1/agents:
+    get:
+      operationId: listAgents
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListAgentsResponse'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: List supported and locally installed agent adapters
+      tags:
+      - agents
   /api/v1/events:
     get:
       operationId: streamEvents
@@ -1437,6 +1462,22 @@ components:
         permissions:
           type: string
       type: object
+    AgentInfo:
+      properties:
+        authStatus:
+          enum:
+          - authorized
+          - unauthorized
+          - unknown
+          type: string
+        id:
+          type: string
+        label:
+          type: string
+      required:
+      - id
+      - label
+      type: object
     ClaimPRRequest:
       properties:
         allowTakeover:
@@ -1611,6 +1652,25 @@ components:
       required:
       - ok
       - sessionId
+      type: object
+    ListAgentsResponse:
+      properties:
+        authorized:
+          items:
+            $ref: '#/components/schemas/AgentInfo'
+          type: array
+        installed:
+          items:
+            $ref: '#/components/schemas/AgentInfo'
+          type: array
+        supported:
+          items:
+            $ref: '#/components/schemas/AgentInfo'
+          type: array
+      required:
+      - supported
+      - installed
+      - authorized
       type: object
     ListNotificationsResponse:
       properties:
@@ -2417,6 +2477,8 @@ components:
       - repo
       type: object
 tags:
+- description: Supported and locally runnable agent adapters
+  name: agents
 - description: Project registry, configuration, and lifecycle administration
   name: projects
 - description: Agent session lifecycle and messaging

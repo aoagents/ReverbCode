@@ -14,6 +14,19 @@ import (
 // for a live session.
 var ErrAgentBinaryNotFound = errors.New("agent: binary not found on PATH")
 
+// AgentAuthStatus describes whether an installed agent is ready to make
+// authenticated model calls.
+type AgentAuthStatus string
+
+const (
+	// AgentAuthStatusAuthorized means the agent can make authenticated model calls.
+	AgentAuthStatusAuthorized AgentAuthStatus = "authorized"
+	// AgentAuthStatusUnauthorized means the agent is installed but not authenticated.
+	AgentAuthStatusUnauthorized AgentAuthStatus = "unauthorized"
+	// AgentAuthStatusUnknown means the daemon could not determine auth status.
+	AgentAuthStatusUnknown AgentAuthStatus = "unknown"
+)
+
 // Agent is the contract every CLI coding agent adapter (claude-code, codex, …)
 // must satisfy. It supplies the argv and process configuration the Session
 // Manager needs to launch, restore, and read back a native agent session.
@@ -40,6 +53,12 @@ type Agent interface {
 	// SessionInfo reads agent-owned session metadata such as native session id,
 	// display title, or summary. ok=false means no info is available.
 	SessionInfo(ctx context.Context, session SessionRef) (info SessionInfo, ok bool, err error)
+}
+
+// AgentAuthChecker is the optional capability for adapters whose native CLI has
+// a cheap local authentication status probe.
+type AgentAuthChecker interface {
+	AuthStatus(ctx context.Context) (AgentAuthStatus, error)
 }
 
 // AgentResolver maps a session's harness onto the Agent adapter that drives it,

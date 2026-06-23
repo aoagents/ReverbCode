@@ -4,6 +4,23 @@
  */
 
 export interface paths {
+    "/api/v1/agents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List supported and locally installed agent adapters */
+        get: operations["listAgents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/events": {
         parameters: {
             query?: never;
@@ -494,6 +511,12 @@ export interface components {
             model?: string;
             permissions?: string;
         };
+        AgentInfo: {
+            /** @enum {string} */
+            authStatus?: "authorized" | "unauthorized" | "unknown";
+            id: string;
+            label: string;
+        };
         ClaimPRRequest: {
             allowTakeover?: null | boolean;
             pr: string;
@@ -555,6 +578,11 @@ export interface components {
             freed?: boolean;
             ok: boolean;
             sessionId: string;
+        };
+        ListAgentsResponse: {
+            authorized: components["schemas"]["AgentInfo"][];
+            installed: components["schemas"]["AgentInfo"][];
+            supported: components["schemas"]["AgentInfo"][];
         };
         ListNotificationsResponse: {
             notifications: components["schemas"]["NotificationResponse"][];
@@ -868,6 +896,44 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    listAgents: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListAgentsResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
     streamEvents: {
         parameters: {
             query?: {

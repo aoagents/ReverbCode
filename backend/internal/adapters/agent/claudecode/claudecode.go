@@ -26,6 +26,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -60,6 +61,7 @@ func New() *Plugin {
 
 var _ adapters.Adapter = (*Plugin)(nil)
 var _ ports.Agent = (*Plugin)(nil)
+var _ ports.AgentAuthChecker = (*Plugin)(nil)
 
 // Manifest returns the adapter's static self-description.
 func (p *Plugin) Manifest() adapters.Manifest {
@@ -266,6 +268,35 @@ func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (por
 		return ports.SessionInfo{}, false, nil
 	}
 	return info, true, nil
+}
+
+// AuthStatus checks Claude Code's local authentication state without starting a
+// session.
+func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) {
+	binary, err := p.claudeBinary(ctx)
+	if err != nil {
+		return ports.AgentAuthStatusUnknown, err
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	out, err := exec.CommandContext(probeCtx, binary, "auth", "status").CombinedOutput()
+	if probeCtx.Err() != nil {
+		return ports.AgentAuthStatusUnknown, probeCtx.Err()
+	}
+	var status struct {
+		LoggedIn bool `json:"loggedIn"`
+	}
+	if json.Unmarshal(out, &status) == nil {
+		if status.LoggedIn {
+			return ports.AgentAuthStatusAuthorized, nil
+		}
+		return ports.AgentAuthStatusUnauthorized, nil
+	}
+	if err != nil {
+		return ports.AgentAuthStatusUnauthorized, nil
+	}
+	return ports.AgentAuthStatusUnknown, nil
 }
 
 // claudeSessionUUID maps an AO session id onto a stable Claude Code

@@ -23,6 +23,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -55,6 +56,7 @@ func New() *Plugin {
 
 var _ adapters.Adapter = (*Plugin)(nil)
 var _ ports.Agent = (*Plugin)(nil)
+var _ ports.AgentAuthChecker = (*Plugin)(nil)
 
 // Manifest returns the adapter's static self-description.
 func (p *Plugin) Manifest() adapters.Manifest {
@@ -156,6 +158,33 @@ func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (por
 		return ports.SessionInfo{}, false, nil
 	}
 	return info, true, nil
+}
+
+// AuthStatus checks whether opencode has at least one configured provider
+// credential.
+func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) {
+	binary, err := p.opencodeBinary(ctx)
+	if err != nil {
+		return ports.AgentAuthStatusUnknown, err
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	out, err := exec.CommandContext(probeCtx, binary, "providers", "list").CombinedOutput()
+	if probeCtx.Err() != nil {
+		return ports.AgentAuthStatusUnknown, probeCtx.Err()
+	}
+	text := strings.ToLower(string(out))
+	if strings.Contains(text, "0 credentials") {
+		return ports.AgentAuthStatusUnauthorized, nil
+	}
+	if strings.Contains(text, "credential") && err == nil {
+		return ports.AgentAuthStatusAuthorized, nil
+	}
+	if err != nil {
+		return ports.AgentAuthStatusUnknown, nil
+	}
+	return ports.AgentAuthStatusUnknown, nil
 }
 
 // appendPermissionFlags maps AO's permission modes onto opencode's single
