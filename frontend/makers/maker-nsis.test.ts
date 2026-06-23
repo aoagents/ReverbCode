@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
 // Capture buildForge's args without pulling in electron-builder's real machinery.
-const buildForge = vi.fn<(forge: { dir: string }, options: any) => Promise<string[]>>(
-	async () => ["/out/make/Agent Orchestrator Setup.exe"],
-);
+const buildForge = vi.fn<(forge: { dir: string }, options: any) => Promise<string[]>>(async () => [
+	"/out/make/Agent Orchestrator Setup.exe",
+]);
 vi.mock("app-builder-lib", () => ({ buildForge }));
 
 import MakerNSIS from "./maker-nsis";
@@ -27,10 +27,7 @@ describe("MakerNSIS", () => {
 	});
 
 	it("builds an nsis target for the requested arch and forwards config", async () => {
-		const maker = new MakerNSIS(
-			{ appId: "dev.agent-orchestrator.desktop", icon: "assets/icon.ico" },
-			["win32"],
-		);
+		const maker = new MakerNSIS({ appId: "dev.agent-orchestrator.desktop", icon: "assets/icon.ico" }, ["win32"]);
 		// Forge resolves the (possibly arch-dependent) config before make().
 		await maker.prepareConfig(makeOptions.targetArch);
 		const artifacts = await maker.make(makeOptions);
