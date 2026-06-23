@@ -10,12 +10,23 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+// hideWindow suppresses the console window for a console-subsystem child so
+// frequent zellij calls (e.g. the reaper's list-sessions) don't flash on Windows.
+func hideWindow(cmd *exec.Cmd) {
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		HideWindow:    true,
+		CreationFlags: windows.CREATE_NO_WINDOW,
+	}
+}
+
 func startBackgroundProcess(env []string, name string, args ...string) error {
 	script := "Start-Process -FilePath " + psQuote(name) + " -ArgumentList " + psQuote(windowsCommandLine(args)) + " -WindowStyle Hidden"
 	cmd := exec.Command("powershell.exe", "-NoLogo", "-NoProfile", "-EncodedCommand", powerShellEncodedCommand(script))
 	cmd.Env = env
 	cmd.SysProcAttr = &syscall.SysProcAttr{
-		CreationFlags: windows.CREATE_NEW_CONSOLE,
+		// CREATE_NO_WINDOW, not CREATE_NEW_CONSOLE: the latter creates a console
+		// then hides it, which flashed a window.
+		CreationFlags: windows.CREATE_NO_WINDOW,
 		HideWindow:    true,
 	}
 	if err := cmd.Start(); err != nil {

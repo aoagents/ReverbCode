@@ -93,6 +93,7 @@ type execRunner struct{}
 func (execRunner) Run(ctx context.Context, env []string, name string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Env = zellijCommandEnv(os.Environ(), env)
+	hideWindow(cmd)
 	return cmd.CombinedOutput()
 }
 

@@ -506,6 +506,8 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		env: daemonEnv(),
 		shell: launch.shell,
 		detached: true,
+		// Hide the daemon's console on a Windows GUI launch (no flashing terminal).
+		windowsHide: true,
 	});
 	daemonProcess = child;
 
