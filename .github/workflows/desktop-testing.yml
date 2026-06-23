@@ -6,7 +6,7 @@ name: Desktop testing build
 #
 # Per OS the current electron-forge makers produce:
 #   - macOS   → .zip          (the .dmg maker is a follow-up)
-#   - Windows → Setup.exe + .nupkg + RELEASES (Squirrel)
+#   - Windows → NSIS installer (.exe)
 #   - Linux   → .deb and .rpm
 #
 # Each OS builds on its own native runner because build-daemon.mjs compiles the

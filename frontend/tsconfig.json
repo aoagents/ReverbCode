@@ -27,6 +27,7 @@
 		"src/**/*.ts",
 		"src/**/*.tsx",
 		"forge.config.ts",
+		"makers/**/*.ts",
 		"vite.main.config.ts",
 		"vite.preload.config.ts",
 		"vite.renderer.config.ts",

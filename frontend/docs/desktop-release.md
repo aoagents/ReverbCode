@@ -32,8 +32,9 @@ checklist.
    - `GITHUB_TOKEN` is provided automatically; the workflow already grants
      `contents: write` to publish the Release.
 3. **(Optional) Windows / Linux** — the `forge.config.ts` makers already include
-   Squirrel (Windows), deb, and rpm. To publish them, add the matching matrix
-   runners to `frontend-release.yml`; Windows signing needs its own certificate.
+   NSIS (Windows, via `makers/maker-nsis.ts`), deb, and rpm. To publish them, add
+   the matching matrix runners to `frontend-release.yml`; Windows code-signing
+   needs its own certificate (still a follow-up, see issue #401).
 
 ## Cutting a release
 

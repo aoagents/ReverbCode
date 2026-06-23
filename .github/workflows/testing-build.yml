@@ -6,7 +6,7 @@ name: Testing build (all platforms)
 #
 # Per OS:
 #   Linux   -> .deb
-#   Windows -> Setup.exe (+ .nupkg / RELEASES)
+#   Windows -> NSIS installer (.exe)
 #   macOS   -> .zip (arm64; dmg + signing are follow-ups)
 #
 # Unsigned: macOS is quarantined/Gatekeeper-blocked once downloaded
@@ -29,7 +29,9 @@ jobs:
           - os: ubuntu-latest
             target: "@electron-forge/maker-deb"
           - os: windows-latest
-            target: "@electron-forge/maker-squirrel"
+            # Our custom NSIS maker's `name` (see makers/maker-nsis.ts); forge
+            # `--targets` matches the configured maker instance by this name.
+            target: "nsis"
           - os: macos-latest
             target: "@electron-forge/maker-zip"
     runs-on: ${{ matrix.os }}
@@ -58,10 +60,10 @@ jobs:
         # `npm run make` keeps the premake daemon build; --targets restricts to this
         # platform's maker.
         run: npm run make -- --targets ${{ matrix.target }}
-      # Smoke-install the Squirrel installer on a clean, native x64 Windows runner.
+      # Smoke-install the NSIS installer on a clean, native x64 Windows runner.
       # This is a build-vs-host verdict: if it installs here it proves the artifact
       # is good and a failing user machine is host-side (AV/disk/signing); if it
-      # fails here the build/Squirrel config is wrong. continue-on-error so a failed
+      # fails here the build/NSIS config is wrong. continue-on-error so a failed
       # install never blocks publishing the artifacts. The runner has no real-time
       # AV blocking, so a clean install here does NOT prove SmartScreen/Defender
       # won't reject the unsigned binaries on end-user machines.
@@ -71,33 +73,26 @@ jobs:
         timeout-minutes: 5
         shell: pwsh
         run: |
-          $setup = Get-ChildItem -Path out/make/squirrel.windows -Recurse -Filter '*Setup.exe' | Select-Object -First 1
-          if (-not $setup) { Write-Host '::error::no Setup.exe produced under out/make/squirrel.windows'; exit 1 }
-          Write-Host "Running $($setup.FullName) --silent"
-          $proc = Start-Process -FilePath $setup.FullName -ArgumentList '--silent' -PassThru -Wait
-          Write-Host "Setup.exe exit code: $($proc.ExitCode)"
-          $installDir = Join-Path $env:LOCALAPPDATA 'AgentOrchestrator'
-          # Update.exe writes SquirrelSetup.log into the app root dir; the Setup.exe
-          # bootstrapper only logs to SquirrelTemp for the earliest extraction stage.
-          # Grab whichever exists and copy it into the workspace for upload.
-          $log = @(
-            (Join-Path $installDir 'SquirrelSetup.log'),
-            (Join-Path $env:LOCALAPPDATA 'SquirrelTemp\SquirrelSetup.log')
+          $setup = Get-ChildItem -Path out/make -Recurse -Filter '*.exe' |
+            Where-Object { $_.Name -like '*Setup*' } | Select-Object -First 1
+          if (-not $setup) { $setup = Get-ChildItem -Path out/make -Recurse -Filter '*.exe' | Select-Object -First 1 }
+          if (-not $setup) { Write-Host '::error::no NSIS installer (.exe) produced under out/make'; exit 1 }
+          Write-Host "Running $($setup.FullName) /S (silent)"
+          # electron-builder NSIS (assisted installer): /S installs silently.
+          $proc = Start-Process -FilePath $setup.FullName -ArgumentList '/S' -PassThru -Wait
+          Write-Host "Installer exit code: $($proc.ExitCode)"
+          # Per-user assisted install lands under %LOCALAPPDATA%\Programs; a
+          # per-machine install would land under Program Files.
+          $installDir = @(
+            (Join-Path $env:LOCALAPPDATA 'Programs\Agent Orchestrator'),
+            (Join-Path ${env:ProgramFiles} 'Agent Orchestrator')
           ) | Where-Object { Test-Path $_ } | Select-Object -First 1
-          if ($log) { Copy-Item $log squirrel-setup.log; Write-Host "captured log: $log" } else { Write-Host '::warning::no SquirrelSetup.log found in install dir or SquirrelTemp' }
-          if (Test-Path $installDir) {
+          if ($installDir) {
             Write-Host "INSTALL OK: $installDir created"
             Get-ChildItem $installDir | Select-Object Name | Format-Table -AutoSize
           } else {
-            Write-Host "::warning::INSTALL FAILED: $installDir was not created"
+            Write-Host "::warning::INSTALL: no known install dir found (checked LOCALAPPDATA\Programs and Program Files)"
           }
-      - name: Upload SquirrelSetup.log
-        if: runner.os == 'Windows'
-        uses: actions/upload-artifact@v4
-        with:
-          name: squirrel-setup-log-${{ github.sha }}
-          path: frontend/squirrel-setup.log
-          if-no-files-found: warn
       - name: Publish to a 0.0.0-testing-<sha> prerelease
         shell: bash
         env:
@@ -114,7 +109,7 @@ jobs:
           # "already exists" which is fine (|| true). Distinct asset names + --clobber
           # make uploads idempotent across re-runs.
           gh release create "$TAG" --prerelease --target "$GITHUB_SHA" --title "$TAG" \
-            --notes "Unsigned testing build (Linux .deb / Windows Setup.exe / macOS .zip). Not signed; for testing only." \
+            --notes "Unsigned testing build (Linux .deb / Windows NSIS .exe / macOS .zip). Not signed; for testing only." \
             || true
           # NUL-delimited to survive spaces in the app name ("Agent Orchestrator-...").
           find out/make -type f -print0 | while IFS= read -r -d '' f; do

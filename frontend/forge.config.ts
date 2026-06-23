@@ -1,5 +1,6 @@
 import type { ForgeConfig } from "@electron-forge/shared-types";
 import { VitePlugin } from "@electron-forge/plugin-vite";
+import MakerNSIS from "./makers/maker-nsis";
 
 const config: ForgeConfig = {
 	packagerConfig: {
@@ -27,24 +28,25 @@ const config: ForgeConfig = {
 	},
 	rebuildConfig: {},
 	makers: [
-		{
-			name: "@electron-forge/maker-squirrel",
-			config: {
-				name: "AgentOrchestrator",
-				// NuGet requires a non-empty <authors>; without it `nuget pack`
-				// exits 1 and the Squirrel maker fails. Mirror package.json.author.
-				authors: "Agent Orchestrator",
-				setupIcon: "assets/icon.ico",
+		// Windows installer: NSIS via electron-builder (see makers/maker-nsis.ts).
+		// Replaces Squirrel.Windows, which only does per-user installs with no
+		// custom install dir or proper uninstaller (issue #401).
+		new MakerNSIS(
+			{
+				appId: "dev.agent-orchestrator.desktop",
+				productName: "Agent Orchestrator",
+				icon: "assets/icon.ico",
 			},
-		},
+			["win32"],
+		),
 		{ name: "@electron-forge/maker-zip", platforms: ["darwin"], config: {} },
 		{
 			name: "@electron-forge/maker-deb",
 			config: {
 				options: {
-					// Must match packagerConfig.executableName; otherwise the deb
-					// maker looks for `agent-orchestrator-frontend` (the package name)
-					// and fails with "could not find the Electron app binary".
+					// Must match packagerConfig.executableName, or the deb maker
+					// looks for the package name and fails with "could not find
+					// the Electron app binary". (Both are "agent-orchestrator".)
 					bin: "agent-orchestrator",
 					icon: "assets/icon.png",
 					maintainer: "Agent Orchestrator",
