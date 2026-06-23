@@ -78,8 +78,8 @@ func TestNewPicksUpShellFromEnv(t *testing.T) {
 // -- command builder tests --
 
 func TestCommandBuilders(t *testing.T) {
-	if got, want := newSessionArgs("sess-1", "/tmp/ws", "/bin/sh", "echo hi; exec ${SHELL:-/bin/sh} -i"),
-		[]string{"new-session", "-d", "-s", "sess-1", "-x", "220", "-y", "50", "-c", "/tmp/ws", "/bin/sh", "-c", "echo hi; exec ${SHELL:-/bin/sh} -i"}; !reflect.DeepEqual(got, want) {
+	if got, want := newSessionArgs("sess-1", "/tmp/ws", "/bin/sh", `echo hi; exec "${SHELL:-/bin/sh}" -i`),
+		[]string{"new-session", "-d", "-s", "sess-1", "-x", "220", "-y", "50", "-c", "/tmp/ws", "/bin/sh", "-c", `echo hi; exec "${SHELL:-/bin/sh}" -i`}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("newSessionArgs = %#v, want %#v", got, want)
 	}
 	// set-option uses pane-targeting (no = prefix).
@@ -225,7 +225,7 @@ func TestCreateLaunchCommandContainsKeepAliveShell(t *testing.T) {
 	// The launch command is the last argument to new-session (after shellPath -c).
 	args := fr.calls[0].args
 	launchCmd := args[len(args)-1]
-	if !strings.Contains(launchCmd, "exec ${SHELL:-/bin/sh} -i") {
+	if !strings.Contains(launchCmd, `exec "${SHELL:-/bin/sh}" -i`) {
 		t.Fatalf("launch command missing keep-alive shell: %q", launchCmd)
 	}
 	if !strings.Contains(launchCmd, "'myagent'") {
@@ -273,22 +273,8 @@ func TestCreateLaunchCommandExportsEnvVars(t *testing.T) {
 }
 
 func TestCreateDestroysAndReturnsErrorWhenNotAlive(t *testing.T) {
-	r, fr := newTestRuntime(0)
-	// new-session ok, set-option ok, has-session fails (not alive)
-	fr.outputs = [][]byte{nil, nil, []byte("can't find session: sess-1")}
-	fr.err = nil
-	// Override: make has-session return ExitError.
-	// We need has-session to fail to simulate the session not being alive.
-	// Use a different approach: make the third call return an ExitError.
-	r2, fr2 := newTestRuntime(0)
-	fr2.outputs = [][]byte{nil, nil, []byte("can't find session: sess-1")}
-	// We need the has-session to return exitErr + the output. But fakeRunner
-	// returns the same err for all calls. Set a custom err only for the third call
-	// by using a custom fake.
-	_ = r
-	_ = fr
-
 	// Use a specialized fakeRunner that returns an exit error only for the 3rd call.
+	r2, _ := newTestRuntime(0)
 	fr3 := &fakeRunnerSelectiveErr{exitErrAt: 2}
 	fr3.outputs = [][]byte{nil, nil, []byte("can't find session: sess-1")}
 	r2.runner = fr3
@@ -459,7 +445,7 @@ func TestIsAliveReportsOtherExitFailuresAsProbeErrors(t *testing.T) {
 
 	alive, err := r.IsAlive(context.Background(), ports.RuntimeHandle{ID: "sess-1"})
 	if err == nil {
-		t.Fatal("IsAlive: got nil, want probe error — failed probe must not read as dead")
+		t.Fatal("IsAlive: got nil, want probe error; failed probe must not read as dead")
 	}
 	if alive {
 		t.Fatal("alive = true on probe failure")

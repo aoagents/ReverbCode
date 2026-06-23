@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -16,7 +17,7 @@ func TestRuntimeIntegration(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	id := "ao_itest_tmux"
+	id := strings.ReplaceAll(t.Name(), "/", "_")
 	r := New(Options{Timeout: 5 * time.Second})
 
 	// Ensure clean slate: ignore errors (session may not exist).
@@ -28,7 +29,7 @@ func TestRuntimeIntegration(t *testing.T) {
 	})
 
 	h, err := r.Create(ctx, ports.RuntimeConfig{
-		SessionID:     "ao_itest_tmux",
+		SessionID:     domain.SessionID(id),
 		WorkspacePath: t.TempDir(),
 		// Run a trivial command then drop into an interactive shell (the keep-alive
 		// exec is added by buildLaunchCommand, but we also verify here that output
@@ -85,8 +86,9 @@ func TestRuntimeIntegrationExactSessionParsing(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	longID := "ao_tmux_exact_long"
-	prefixID := "ao_tmux_exact"
+	base := strings.ReplaceAll(t.Name(), "/", "_")
+	longID := base + "_long"
+	prefixID := base
 
 	r := New(Options{Timeout: 5 * time.Second})
 	_ = r.Destroy(ctx, ports.RuntimeHandle{ID: longID})
@@ -98,7 +100,7 @@ func TestRuntimeIntegrationExactSessionParsing(t *testing.T) {
 	})
 
 	h, err := r.Create(ctx, ports.RuntimeConfig{
-		SessionID:     "ao_tmux_exact_long",
+		SessionID:     domain.SessionID(longID),
 		WorkspacePath: t.TempDir(),
 		Argv:          []string{"sh", "-c", "echo ready"},
 	})

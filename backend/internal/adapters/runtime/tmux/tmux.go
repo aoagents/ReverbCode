@@ -461,7 +461,7 @@ func buildLaunchCommand(cfg ports.RuntimeConfig, shellPath string) string {
 	// Keep the tmux session alive after the agent exits so the operator can
 	// inspect the terminal. The shell variable expansion picks up $SHELL from
 	// the process env if set, otherwise falls back to /bin/sh.
-	b.WriteString("; exec ${SHELL:-/bin/sh} -i")
+	b.WriteString(`; exec "${SHELL:-/bin/sh}" -i`)
 	return b.String()
 }
 
