@@ -12,7 +12,6 @@ import {
 	type OpenDialogOptions,
 } from "electron";
 import { updateElectronApp } from "update-electron-app";
-import squirrelStartup from "electron-squirrel-startup";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -38,8 +37,9 @@ import { createBrowserViewHost, type BrowserViewHost } from "./main/browser-view
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
 declare const MAIN_WINDOW_VITE_NAME: string;
 
-// Windows GUI/Squirrel launches have no attached console, so process.stdout and
-// process.stderr are dead pipes. The daemon-output console.log/console.error calls
+// Windows GUI launches (e.g. from a Start-menu/desktop shortcut) have no attached
+// console, so process.stdout and process.stderr are dead pipes. The daemon-output
+// console.log/console.error calls
 // below then fail with EPIPE, and with no "error" listener that surfaces as an
 // uncaught exception that crashes the main process. Swallow broken-pipe write
 // errors on the std streams: a dropped log line is harmless, the crash is not.
@@ -48,18 +48,6 @@ const ignoreStdStreamError = (err: NodeJS.ErrnoException): void => {
 };
 process.stdout.on("error", ignoreStdStreamError);
 process.stderr.on("error", ignoreStdStreamError);
-
-// Windows Squirrel runs this exe with a --squirrel-{install,updated,uninstall,
-// obsolete} flag during install/update/uninstall. electron-squirrel-startup
-// creates/removes the shortcuts for that event and returns true; we then quit
-// immediately instead of booting the full app. A full launch (window + daemon
-// spawn) would hang the installer, which runs this hook and waits for it to
-// exit — that hang is the Squirrel-side failure. Returns false on macOS/Linux,
-// so this is a no-op there.
-const isSquirrelStartup: boolean = squirrelStartup;
-if (isSquirrelStartup) {
-	app.quit();
-}
 
 // Must run before app ready so the About panel and default-menu role labels use it.
 app.setName("Agent Orchestrator");
@@ -691,9 +679,6 @@ function initAutoUpdates(): void {
 }
 
 app.whenReady().then(() => {
-	// A Squirrel install/update hook already called app.quit() above; do no
-	// startup work (no window, no daemon spawn) so the hook exits promptly.
-	if (isSquirrelStartup) return;
 	registerRendererProtocol();
 	createWindow();
 	void startDaemon();

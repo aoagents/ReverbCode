@@ -36,6 +36,8 @@ describe("MakerNSIS", () => {
 		const [forgeOptions, options] = buildForge.mock.calls[0];
 		expect(forgeOptions).toEqual({ dir: makeOptions.dir });
 		expect(options.win).toEqual(["nsis:x64"]);
+		// electron-builder must not try to publish; the workflow does that.
+		expect(options.config.publish).toBeNull();
 		expect(options.config.appId).toBe("dev.agent-orchestrator.desktop");
 		// productName falls back to appName when not set on the maker config.
 		expect(options.config.productName).toBe("Agent Orchestrator");

@@ -44,6 +44,11 @@ export default class MakerNSIS extends MakerBase<MakerNSISConfig> {
 					appId: cfg.appId,
 					productName: cfg.productName ?? appName,
 					directories: { output },
+					// Forge owns publishing (the workflow uploads via `gh release`).
+					// `null` stops electron-builder from inferring a GitHub publish
+					// target from package.json `repository` and trying to upload,
+					// which fails in CI with no GH_TOKEN set.
+					publish: null,
 					...(cfg.icon ? { win: { icon: cfg.icon } } : {}),
 					nsis: {
 						// A real installer, not Squirrel's silent per-user drop.
