@@ -7,16 +7,16 @@ can grant. This doc is the checklist and the handoff for that remaining work.
 
 ## Status at a glance
 
-| Piece | State |
-|---|---|
-| Auto-updater code (`update-electron-app`) | Done |
-| GitHub Releases publisher + release workflow | Done |
-| macOS signing + notarization config (`forge.config.ts`) | Done, **blocked on credentials** |
-| macOS entitlements (app + bundled `ao` daemon) | Done |
-| Apple Developer ID identity in keychain | **TODO (you, after holder sends the .cer)** |
-| `ao-notary` notarytool profile on your machine | **TODO (you, after holder sends the API key)** |
-| Windows signing | **Intentionally skipped** (see "Windows" below) |
-| Linux signing | Not required |
+| Piece                                                   | State                                           |
+| ------------------------------------------------------- | ----------------------------------------------- |
+| Auto-updater code (`update-electron-app`)               | Done                                            |
+| GitHub Releases publisher + release workflow            | Done                                            |
+| macOS signing + notarization config (`forge.config.ts`) | Done, **blocked on credentials**                |
+| macOS entitlements (app + bundled `ao` daemon)          | Done                                            |
+| Apple Developer ID identity in keychain                 | **TODO (you, after holder sends the .cer)**     |
+| `ao-notary` notarytool profile on your machine          | **TODO (you, after holder sends the API key)**  |
+| Windows signing                                         | **Intentionally skipped** (see "Windows" below) |
+| Linux signing                                           | Not required                                    |
 
 ## What already works (in this repo)
 
