@@ -277,16 +277,52 @@ describe("XtermTerminal", () => {
 		expect(window.ao!.clipboard.writeText).not.toHaveBeenCalled();
 	});
 
-	it("pastes from the Electron clipboard on Windows/Linux paste shortcuts", async () => {
+	it.each(["Linux x86_64", "Win32"])(
+		"pastes once from the Electron clipboard on Ctrl+Shift+V for %s",
+		async (platform) => {
+			setNavigatorPlatform(platform);
+			const onInput = vi.fn();
+			window.ao!.clipboard.readText = vi.fn().mockResolvedValue("hello\nworld");
+			const { container } = render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
+
+			const event = {
+				key: "v",
+				metaKey: false,
+				ctrlKey: true,
+				shiftKey: true,
+				altKey: false,
+				preventDefault: vi.fn(),
+				stopPropagation: vi.fn(),
+			} as unknown as KeyboardEvent;
+			const allowed = state.lastTerminal!.keyHandler!(event);
+			const pasteEvent = new Event("paste", { bubbles: true, cancelable: true }) as ClipboardEvent;
+			Object.defineProperty(pasteEvent, "clipboardData", {
+				value: { getData: vi.fn().mockReturnValue("native paste") },
+			});
+			container.firstElementChild!.dispatchEvent(pasteEvent);
+			await Promise.resolve();
+
+			expect(allowed).toBe(false);
+			expect(event.preventDefault).toHaveBeenCalled();
+			expect(event.stopPropagation).toHaveBeenCalled();
+			expect(window.ao!.clipboard.readText).toHaveBeenCalledTimes(1);
+			expect(pasteEvent.defaultPrevented).toBe(true);
+			expect(onInput).toHaveBeenCalledTimes(1);
+			expect(onInput).toHaveBeenCalledWith("hello\rworld", "paste");
+		},
+	);
+
+	it("supports plain Ctrl+V paste on Windows", async () => {
+		setNavigatorPlatform("Win32");
 		const onInput = vi.fn();
-		window.ao!.clipboard.readText = vi.fn().mockResolvedValue("hello\nworld");
+		window.ao!.clipboard.readText = vi.fn().mockResolvedValue("windows paste");
 		render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
 
 		const event = {
 			key: "v",
 			metaKey: false,
 			ctrlKey: true,
-			shiftKey: true,
+			shiftKey: false,
 			altKey: false,
 			preventDefault: vi.fn(),
 			stopPropagation: vi.fn(),
@@ -298,7 +334,36 @@ describe("XtermTerminal", () => {
 		expect(event.preventDefault).toHaveBeenCalled();
 		expect(event.stopPropagation).toHaveBeenCalled();
 		expect(window.ao!.clipboard.readText).toHaveBeenCalled();
-		expect(onInput).toHaveBeenCalledWith("hello\rworld", "paste");
+		expect(onInput).toHaveBeenCalledWith("windows paste", "paste");
+	});
+
+	it("suppresses a queued native paste event after a handled paste shortcut", async () => {
+		const onInput = vi.fn();
+		window.ao!.clipboard.readText = vi.fn().mockResolvedValue("shortcut paste");
+		const { container } = render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
+
+		const event = {
+			key: "v",
+			metaKey: false,
+			ctrlKey: true,
+			shiftKey: true,
+			altKey: false,
+			preventDefault: vi.fn(),
+			stopPropagation: vi.fn(),
+		} as unknown as KeyboardEvent;
+		expect(state.lastTerminal!.keyHandler!(event)).toBe(false);
+		await new Promise((resolve) => window.setTimeout(resolve, 0));
+
+		const pasteEvent = new Event("paste", { bubbles: true, cancelable: true }) as ClipboardEvent;
+		Object.defineProperty(pasteEvent, "clipboardData", {
+			value: { getData: vi.fn().mockReturnValue("native paste") },
+		});
+		container.firstElementChild!.dispatchEvent(pasteEvent);
+		await Promise.resolve();
+
+		expect(pasteEvent.defaultPrevented).toBe(true);
+		expect(onInput).toHaveBeenCalledTimes(1);
+		expect(onInput).toHaveBeenCalledWith("shortcut paste", "paste");
 	});
 
 	it("supports classic Windows terminal copy and paste shortcuts", async () => {
