@@ -76,11 +76,15 @@ jobs:
           Write-Host "Running $($setup.FullName) --silent"
           $proc = Start-Process -FilePath $setup.FullName -ArgumentList '--silent' -PassThru -Wait
           Write-Host "Setup.exe exit code: $($proc.ExitCode)"
-          # Update.exe writes the install log here; copy it into the workspace so the
-          # next step can upload it regardless of whether the install succeeded.
-          $log = Join-Path $env:LOCALAPPDATA 'SquirrelTemp\SquirrelSetup.log'
-          if (Test-Path $log) { Copy-Item $log squirrel-setup.log } else { Write-Host '::warning::no SquirrelSetup.log written (failed before Update.exe ran)' }
           $installDir = Join-Path $env:LOCALAPPDATA 'AgentOrchestrator'
+          # Update.exe writes SquirrelSetup.log into the app root dir; the Setup.exe
+          # bootstrapper only logs to SquirrelTemp for the earliest extraction stage.
+          # Grab whichever exists and copy it into the workspace for upload.
+          $log = @(
+            (Join-Path $installDir 'SquirrelSetup.log'),
+            (Join-Path $env:LOCALAPPDATA 'SquirrelTemp\SquirrelSetup.log')
+          ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if ($log) { Copy-Item $log squirrel-setup.log; Write-Host "captured log: $log" } else { Write-Host '::warning::no SquirrelSetup.log found in install dir or SquirrelTemp' }
           if (Test-Path $installDir) {
             Write-Host "INSTALL OK: $installDir created"
             Get-ChildItem $installDir | Select-Object Name | Format-Table -AutoSize
