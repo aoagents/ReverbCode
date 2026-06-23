@@ -25,9 +25,7 @@ const config: ForgeConfig = {
 		osxSign:
 			process.env.APPLE_SIGNING_IDENTITY || process.env.CSC_LINK
 				? {
-						...(process.env.APPLE_SIGNING_IDENTITY
-							? { identity: process.env.APPLE_SIGNING_IDENTITY }
-							: {}),
+						...(process.env.APPLE_SIGNING_IDENTITY ? { identity: process.env.APPLE_SIGNING_IDENTITY } : {}),
 						optionsForFile: (filePath) =>
 							filePath.includes("/daemon/ao")
 								? { entitlements: "assets/entitlements.daemon.plist" }
