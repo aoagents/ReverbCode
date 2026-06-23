@@ -283,7 +283,9 @@ describe("XtermTerminal", () => {
 			setNavigatorPlatform(platform);
 			const onInput = vi.fn();
 			window.ao!.clipboard.readText = vi.fn().mockResolvedValue("hello\nworld");
-			const { container } = render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
+			const { container } = render(
+				<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />,
+			);
 
 			const event = {
 				key: "v",
