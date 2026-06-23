@@ -34,15 +34,14 @@ const (
 	defaultWriteBuffer = 1024
 )
 
-// Manager serves WebSocket clients, spawning one attach PTY per opened pane
+// Manager serves WebSocket clients, opening one attach Stream per opened pane
 // per connection. There is no shared per-pane state to outlive a connection:
-// the Zellij server owns the session (screen, scrollback, modes), and every
-// fresh attach gets its full handshake + repaint. A client reconnect simply
-// attaches again.
+// the runtime owns the session (screen, scrollback, modes), and every fresh
+// attach gets its full handshake + repaint. A client reconnect simply attaches
+// again.
 type Manager struct {
-	src       PTYSource
+	src       Source
 	events    EventSource
-	spawn     spawnFunc
 	log       *slog.Logger
 	heartbeat time.Duration
 
@@ -58,15 +57,12 @@ type Manager struct {
 // Option configures a Manager.
 type Option func(*Manager)
 
-// WithSpawn overrides the PTY spawner (tests inject a fake).
-func WithSpawn(fn spawnFunc) Option { return func(m *Manager) { m.spawn = fn } }
-
 // WithHeartbeat overrides the ping interval.
 func WithHeartbeat(d time.Duration) Option { return func(m *Manager) { m.heartbeat = d } }
 
-// NewManager builds a Manager. src attaches PTYs; events feeds the session
+// NewManager builds a Manager. src opens attach Streams; events feeds the session
 // channel (may be nil to disable it). A nil logger falls back to slog.Default.
-func NewManager(src PTYSource, events EventSource, log *slog.Logger, opts ...Option) *Manager {
+func NewManager(src Source, events EventSource, log *slog.Logger, opts ...Option) *Manager {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -74,7 +70,6 @@ func NewManager(src PTYSource, events EventSource, log *slog.Logger, opts ...Opt
 	m := &Manager{
 		src:         src,
 		events:      events,
-		spawn:       defaultSpawn,
 		log:         log,
 		heartbeat:   defaultHeartbeat,
 		ctx:         ctx,
@@ -205,8 +200,8 @@ func (c *connState) handleTerminal(msg clientMsg) {
 	}
 }
 
-// openTerminal spawns this connection's own attach PTY for the pane. rows/cols
-// are the client's grid from the open frame, applied as the PTY's initial size
+// openTerminal opens this connection's own attach Stream for the pane. rows/cols
+// are the client's grid from the open frame, applied as the Stream's initial size
 // (a resize that raced ahead of the attach would otherwise be lost).
 func (c *connState) openTerminal(id string, rows, cols uint16) {
 	if id == "" {
@@ -223,7 +218,7 @@ func (c *connState) openTerminal(id string, rows, cols uint16) {
 	// a is captured by onExit before assignment; safe because the attach loop —
 	// the only thing that fires onExit — starts after the registration below.
 	var a *attachment
-	a = newAttachment(id, ports.RuntimeHandle{ID: id}, c.mgr.src, c.mgr.spawn,
+	a = newAttachment(id, ports.RuntimeHandle{ID: id}, c.mgr.src,
 		func() {
 			c.enqueue(serverMsg{Ch: chTerminal, ID: id, Type: msgOpened})
 		},

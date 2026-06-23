@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
@@ -97,6 +98,20 @@ type RuntimeConfig struct {
 // the concrete runtime adapter.
 type RuntimeHandle struct {
 	ID string
+}
+
+// Stream is one live terminal attach: PTY-like bytes plus resize. Returned
+// already-open by a Runtime's Attach. tmux/zellij back it with a local PTY around
+// their attach CLI; conpty backs it with a loopback connection to the pty-host.
+type Stream interface {
+	io.ReadWriteCloser
+	Resize(rows, cols uint16) error
+}
+
+// Attacher opens a fresh attach Stream for a session handle, sized rows x cols from
+// birth (0 means size not yet known). ctx cancellation must terminate the stream.
+type Attacher interface {
+	Attach(ctx context.Context, handle RuntimeHandle, rows, cols uint16) (Stream, error)
 }
 
 // The Agent port and its supporting types live in agent.go.

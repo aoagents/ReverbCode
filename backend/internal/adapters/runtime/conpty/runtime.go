@@ -1,6 +1,6 @@
-// runtime.go - conpty Runtime adapter. Implements ports.Runtime (minus Attach,
-// which comes in B5). Drives sessions via the B3 pty-host over loopback TCP,
-// using the B1 protocol and the B2 registry for restart recovery.
+// runtime.go - conpty Runtime adapter. Implements ports.Runtime and
+// ports.Attacher (see attach.go). Drives sessions via the B3 pty-host over
+// loopback TCP, using the B1 protocol and the B2 registry for restart recovery.
 package conpty
 
 import (
@@ -14,7 +14,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-// Ensure Runtime satisfies the port at compile time. Attach is added in B5.
+// Ensure Runtime satisfies the port at compile time (Attach in attach.go).
 var _ ports.Runtime = (*Runtime)(nil)
 
 // validSessionID matches agent-orchestrator's assertValidSessionId.

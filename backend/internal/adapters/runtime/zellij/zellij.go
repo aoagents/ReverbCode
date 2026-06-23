@@ -18,6 +18,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/ptyexec"
 	"github.com/aoagents/agent-orchestrator/backend/internal/agentlaunch"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -69,6 +70,7 @@ type Runtime struct {
 }
 
 var _ ports.Runtime = (*Runtime)(nil)
+var _ ports.Attacher = (*Runtime)(nil)
 
 // DefaultSocketDir returns a short, stable ZELLIJ_SOCKET_DIR for AO's daemon.
 // zellij's own default lives under $TMPDIR (long on macOS), which leaves almost
@@ -371,10 +373,22 @@ func deleteSessionMissingOutput(out string) bool {
 			strings.Contains(s, "not a session"))
 }
 
-// AttachCommand returns the argv a human runs to attach their terminal to the
+// Attach opens a fresh attach Stream by spawning the zellij attach client on a
+// local PTY, sized rows x cols from birth when known. On Windows the per-session
+// env block (ZELLIJ_SOCKET_DIR) is applied to the child. ctx cancellation closes
+// the PTY.
+func (r *Runtime) Attach(ctx context.Context, handle ports.RuntimeHandle, rows, cols uint16) (ports.Stream, error) {
+	argv, env, err := r.attachCommand(handle)
+	if err != nil {
+		return nil, err
+	}
+	return ptyexec.Spawn(ctx, argv, env, rows, cols)
+}
+
+// attachCommand returns the argv a human runs to attach their terminal to the
 // session, plus an optional env block that the spawn should apply (used on
 // Windows where wrapping the attach in an `env` shim is unsafe under ConPTY).
-func (r *Runtime) AttachCommand(handle ports.RuntimeHandle) ([]string, []string, error) {
+func (r *Runtime) attachCommand(handle ports.RuntimeHandle) ([]string, []string, error) {
 	id, _, err := handleID(handle)
 	if err != nil {
 		return nil, nil, err

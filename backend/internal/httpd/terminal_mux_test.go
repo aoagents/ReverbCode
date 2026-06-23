@@ -13,24 +13,25 @@ import (
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/ptyexec"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/terminal"
 )
 
-// stubSource attaches a throwaway shell command instead of a real Zellij pane, so
+// stubSource attaches a throwaway shell command instead of a real mux pane, so
 // the /mux path exercises the genuine upgrade + wsjson + Serve + creack/pty flow
-// without needing Zellij. The pane reports alive until the first attach happens
-// (the mux refuses to attach to a dead pane), then dead, so the command's exit is
-// treated as the pane being gone (no re-attach).
+// without needing a runtime. The pane reports alive until the first attach
+// happens (the mux refuses to attach to a dead pane), then dead, so the
+// command's exit is treated as the pane being gone (no re-attach).
 type stubSource struct {
 	argv     []string
 	attached atomic.Bool
 }
 
-func (s *stubSource) AttachCommand(ports.RuntimeHandle) ([]string, []string, error) {
+func (s *stubSource) Attach(ctx context.Context, _ ports.RuntimeHandle, rows, cols uint16) (ports.Stream, error) {
 	s.attached.Store(true)
-	return s.argv, nil, nil
+	return ptyexec.Spawn(ctx, s.argv, nil, rows, cols)
 }
 
 func (s *stubSource) IsAlive(context.Context, ports.RuntimeHandle) (bool, error) {

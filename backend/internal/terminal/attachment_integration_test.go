@@ -43,7 +43,7 @@ func TestAttachmentStreamsRealZellijPane(t *testing.T) {
 	t.Cleanup(func() { _ = rt.Destroy(context.Background(), handle) })
 
 	var got safeBytes
-	a := newAttachment(name, handle, rt, defaultSpawn, nil, got.add, nil, testLogger())
+	a := newAttachment(name, handle, rt, nil, got.add, nil, testLogger())
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go a.run(ctx)
@@ -98,7 +98,7 @@ func TestAttachmentReattachAdoptsNewSize(t *testing.T) {
 	attachAt := func(rows, cols uint16) (*attachment, *safeBytes, <-chan struct{}, context.CancelFunc) {
 		var got safeBytes
 		opened := make(chan struct{})
-		a := newAttachment(name, handle, rt, defaultSpawn, func() { close(opened) }, got.add, nil, testLogger())
+		a := newAttachment(name, handle, rt, func() { close(opened) }, got.add, nil, testLogger())
 		if err := a.resize(rows, cols); err != nil {
 			t.Fatalf("record size: %v", err)
 		}

@@ -1,6 +1,6 @@
 //go:build windows
 
-package terminal
+package ptyexec
 
 import (
 	"bytes"
@@ -10,12 +10,14 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-func TestDefaultSpawnWindowsStreamsOutput(t *testing.T) {
-	p, err := defaultSpawn(context.Background(), []string{"cmd.exe", "/D", "/Q", "/K"}, nil, 24, 80)
+func TestSpawnWindowsStreamsOutput(t *testing.T) {
+	p, err := Spawn(context.Background(), []string{"cmd.exe", "/D", "/Q", "/K"}, nil, 24, 80)
 	if err != nil {
-		t.Fatalf("defaultSpawn: %v", err)
+		t.Fatalf("Spawn: %v", err)
 	}
 	defer p.Close()
 	if _, err := p.Write([]byte("echo AO_CONPTY_OK\r\n")); err != nil {
@@ -28,17 +30,17 @@ func TestDefaultSpawnWindowsStreamsOutput(t *testing.T) {
 	}
 }
 
-func TestDefaultSpawnWindowsRejectsEmptyCommand(t *testing.T) {
-	_, err := defaultSpawn(context.Background(), nil, nil, 0, 0)
+func TestSpawnWindowsRejectsEmptyCommand(t *testing.T) {
+	_, err := Spawn(context.Background(), nil, nil, 0, 0)
 	if err == nil || !strings.Contains(err.Error(), "empty attach command") {
 		t.Fatalf("expected empty attach command error, got %v", err)
 	}
 }
 
 func TestConPTYCloseIsIdempotent(t *testing.T) {
-	p, err := defaultSpawn(context.Background(), []string{"cmd.exe", "/D", "/Q", "/K"}, nil, 24, 80)
+	p, err := Spawn(context.Background(), []string{"cmd.exe", "/D", "/Q", "/K"}, nil, 24, 80)
 	if err != nil {
-		t.Fatalf("defaultSpawn: %v", err)
+		t.Fatalf("Spawn: %v", err)
 	}
 
 	done := make(chan struct{})
@@ -55,7 +57,7 @@ func TestConPTYCloseIsIdempotent(t *testing.T) {
 	}
 }
 
-func readPTYUntil(t *testing.T, p ptyProcess, marker string, timeout time.Duration) string {
+func readPTYUntil(t *testing.T, p ports.Stream, marker string, timeout time.Duration) string {
 	t.Helper()
 	type result struct {
 		out string

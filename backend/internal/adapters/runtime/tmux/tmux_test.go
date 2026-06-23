@@ -527,7 +527,7 @@ func TestGetOutputArgs(t *testing.T) {
 
 func TestAttachCommandReturnsExpectedArgv(t *testing.T) {
 	r := New(Options{Binary: "/usr/bin/tmux", Timeout: time.Second})
-	argv, env, err := r.AttachCommand(ports.RuntimeHandle{ID: "sess-1"})
+	argv, env, err := r.attachCommand(ports.RuntimeHandle{ID: "sess-1"})
 	if err != nil {
 		t.Fatalf("AttachCommand: %v", err)
 	}
@@ -542,7 +542,7 @@ func TestAttachCommandReturnsExpectedArgv(t *testing.T) {
 
 func TestAttachCommandRejectsInvalidHandle(t *testing.T) {
 	r := New(Options{})
-	_, _, err := r.AttachCommand(ports.RuntimeHandle{ID: ""})
+	_, _, err := r.attachCommand(ports.RuntimeHandle{ID: ""})
 	if err == nil {
 		t.Fatal("AttachCommand empty handle: got nil, want error")
 	}

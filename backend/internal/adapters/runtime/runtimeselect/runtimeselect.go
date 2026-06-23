@@ -15,12 +15,13 @@ import (
 
 // Runtime is the union interface that both tmux and zellij satisfy.
 // It extends ports.Runtime (Create/Destroy/IsAlive) with the additional methods
-// the daemon wires directly.
+// the daemon wires directly, including ports.Attacher (Attach) so the terminal
+// layer can open a Stream against the selected runtime.
 type Runtime interface {
 	ports.Runtime // Create, Destroy, IsAlive
+	ports.Attacher
 	SendMessage(ctx context.Context, handle ports.RuntimeHandle, message string) error
 	GetOutput(ctx context.Context, handle ports.RuntimeHandle, lines int) (string, error)
-	AttachCommand(handle ports.RuntimeHandle) (argv []string, env []string, err error)
 }
 
 // Compile-time assertions: both adapters must implement the union interface.

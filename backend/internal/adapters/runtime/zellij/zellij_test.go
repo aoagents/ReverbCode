@@ -435,7 +435,7 @@ func TestCreateClearsStaleSessionBeforeCreating(t *testing.T) {
 
 func TestAttachCommandUsesEmbeddedClientOptions(t *testing.T) {
 	r := New(Options{})
-	args, _, err := r.AttachCommand(ports.RuntimeHandle{ID: "sess-1/terminal_0"})
+	args, _, err := r.attachCommand(ports.RuntimeHandle{ID: "sess-1/terminal_0"})
 	if err != nil {
 		t.Fatalf("AttachCommand: %v", err)
 	}
@@ -466,7 +466,7 @@ func TestAttachCommandUsesEmbeddedClientOptions(t *testing.T) {
 
 func TestAttachCommandUsesSocketDir(t *testing.T) {
 	r := New(Options{SocketDir: "/tmp/zj"})
-	args, _, err := r.AttachCommand(ports.RuntimeHandle{ID: "sess-1/terminal_0"})
+	args, _, err := r.attachCommand(ports.RuntimeHandle{ID: "sess-1/terminal_0"})
 	if err != nil {
 		t.Fatalf("AttachCommand: %v", err)
 	}

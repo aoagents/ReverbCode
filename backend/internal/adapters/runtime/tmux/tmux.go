@@ -15,6 +15,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/ptyexec"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -48,6 +49,7 @@ type Runtime struct {
 }
 
 var _ ports.Runtime = (*Runtime)(nil)
+var _ ports.Attacher = (*Runtime)(nil)
 
 type runner interface {
 	Run(ctx context.Context, env []string, name string, args ...string) ([]byte, error)
@@ -219,10 +221,21 @@ func (r *Runtime) GetOutput(ctx context.Context, handle ports.RuntimeHandle, lin
 	return tailLines(trimTrailingBlankLines(string(out)), lines), nil
 }
 
-// AttachCommand returns the argv a human runs to attach their terminal to the
+// Attach opens a fresh attach Stream by spawning `tmux attach-session` on a
+// local PTY, sized rows x cols from birth when known. ctx cancellation closes
+// the PTY.
+func (r *Runtime) Attach(ctx context.Context, handle ports.RuntimeHandle, rows, cols uint16) (ports.Stream, error) {
+	argv, env, err := r.attachCommand(handle)
+	if err != nil {
+		return nil, err
+	}
+	return ptyexec.Spawn(ctx, argv, env, rows, cols)
+}
+
+// attachCommand returns the argv a human runs to attach their terminal to the
 // session. No per-session env block is needed for tmux (unlike zellij's Windows
 // ConPTY path), so env is always nil.
-func (r *Runtime) AttachCommand(handle ports.RuntimeHandle) ([]string, []string, error) {
+func (r *Runtime) attachCommand(handle ports.RuntimeHandle) ([]string, []string, error) {
 	id, err := handleID(handle)
 	if err != nil {
 		return nil, nil, err

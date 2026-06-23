@@ -3,7 +3,6 @@ package terminal
 import (
 	"context"
 	"errors"
-	"io"
 	"log/slog"
 	"sync"
 	"time"
@@ -11,38 +10,17 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-// PTYSource is what a terminal needs from the runtime: the argv that attaches a
-// PTY to a session's pane (plus any env that argv needs but is not in the
-// daemon's process env — e.g. a per-session ZELLIJ_SOCKET_DIR on Windows),
-// and a liveness check used to decide whether a dropped PTY should be
-// re-attached or treated as a clean exit. The Zellij runtime adapter
-// satisfies this via AttachCommand/IsAlive; the interface lives here, next to
-// its only consumer, so terminal does not depend on a concrete adapter.
-type PTYSource interface {
-	AttachCommand(handle ports.RuntimeHandle) (argv []string, env []string, err error)
+// Source is what the terminal needs from the runtime: open an attach Stream and
+// a liveness check used to decide whether a dropped Stream should be re-attached
+// or treated as a clean exit. The runtime adapters (tmux/zellij/conpty) satisfy
+// it via Attach/IsAlive; the interface lives here, next to its only consumer, so
+// terminal does not depend on a concrete adapter.
+type Source interface {
+	ports.Attacher
 	IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool, error)
 }
 
-// ptyProcess is a started PTY-backed attach process. It is the injection seam
-// that keeps the attach loop testable without a real process: unit tests supply
-// a scripted in-memory implementation; production uses a creack/pty-backed one
-// (see pty_unix.go).
-type ptyProcess interface {
-	io.ReadWriteCloser
-	Resize(rows, cols uint16) error
-}
-
-// spawnFunc starts a PTY for argv, sized rows×cols from the start (zero means
-// no size was recorded yet — kernel default). Spawning at the client's grid
-// matters: the attach process reads the tty size once at startup, and sizing
-// the PTY only after exec relies on SIGWINCH delivery that can race the
-// process installing its handler — a missed signal leaves the zellij client
-// laid out for a stale size. env, when non-nil, is the full env block for the
-// child (mirrors exec.Cmd.Env: nil means inherit). ctx cancellation must
-// terminate the process.
-type spawnFunc func(ctx context.Context, argv []string, env []string, rows, cols uint16) (ptyProcess, error)
-
-// reattach policy: a PTY that drops is re-attached while the underlying Zellij
+// reattach policy: a Stream that drops is re-attached while the underlying
 // session is still alive, up to maxReattach consecutive failures. An attach that
 // survived longer than reattachResetGrace before dropping resets the counter, so
 // a long-lived pane that blips recovers but a tight crash-loop gives up.
@@ -51,25 +29,24 @@ const (
 	defaultReattachResetTime = 5 * time.Second
 )
 
-// attachment is ONE client's hold on a pane: a private `zellij attach` PTY
-// spawned per mux open, streaming to a single sink. Zellij is the multiplexer —
-// it owns the session's screen state and scrollback, and answers every fresh
-// attach with its init handshake (alt screen, bracketed paste, and other terminal
-// modes enabled by the embedded client options) followed by a faithful repaint.
-// That handshake is why the PTY is per-client and there is no server-side replay
-// buffer: a byte ring can replay recent output, but the one-time mode negotiation
-// at the head of the stream scrolls out of any bounded buffer. A fresh attach per
-// client makes Zellij re-send it, every time, by construction.
+// attachment is ONE client's hold on a pane: a private attach Stream opened per
+// mux open, streaming to a single sink. The runtime is the multiplexer — it owns
+// the session's screen state and scrollback, and answers every fresh attach with
+// its init handshake (alt screen, bracketed paste, scrollback replay) followed by
+// a faithful repaint. That handshake is why the Stream is per-client and there is
+// no terminal-layer replay buffer: a byte ring can replay recent output, but the
+// one-time mode negotiation at the head of the stream scrolls out of any bounded
+// buffer. A fresh attach per client makes the runtime re-send it, every time, by
+// construction.
 //
-// onOpen fires once the attach PTY is actually ready to accept input. onData
+// onOpen fires once the attach Stream is actually ready to accept input. onData
 // must not block: the WS layer funnels frames onto its own buffered writer.
 // onExit fires at most once, when the attach loop gives up (runtime dead,
 // attach failure cap) — never on close().
 type attachment struct {
 	id     string
 	handle ports.RuntimeHandle
-	src    PTYSource
-	spawn  spawnFunc
+	src    Source
 	log    *slog.Logger
 	onOpen func()
 	onData func(data []byte)
@@ -79,7 +56,7 @@ type attachment struct {
 	resetGrace  time.Duration
 
 	mu           sync.Mutex
-	pty          ptyProcess
+	pty          ports.Stream
 	cancel       context.CancelFunc
 	rows         uint16 // last size the client asked for; re-applied on every attach
 	cols         uint16
@@ -90,7 +67,7 @@ type attachment struct {
 	pendingInput [][]byte
 }
 
-func newAttachment(id string, handle ports.RuntimeHandle, src PTYSource, spawn spawnFunc, onOpen func(), onData func([]byte), onExit func(), log *slog.Logger) *attachment {
+func newAttachment(id string, handle ports.RuntimeHandle, src Source, onOpen func(), onData func([]byte), onExit func(), log *slog.Logger) *attachment {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -101,7 +78,6 @@ func newAttachment(id string, handle ports.RuntimeHandle, src PTYSource, spawn s
 		id:          id,
 		handle:      handle,
 		src:         src,
-		spawn:       spawn,
 		log:         log,
 		onOpen:      onOpen,
 		onData:      onData,
@@ -128,7 +104,7 @@ func (a *attachment) run(ctx context.Context) {
 		}
 
 		// Gate EVERY attach (including the first) on the runtime actually
-		// being alive. `zellij attach` resurrects EXITED sessions — re-running
+		// being alive. A mux attach resurrects EXITED sessions — re-running
 		// the serialized agent command — so attaching to a dead handle would
 		// re-create a runtime the daemon already destroyed, outside lifecycle
 		// control. A definitive "not alive" is a clean exit. A probe ERROR is
@@ -154,19 +130,11 @@ func (a *attachment) run(ctx context.Context) {
 			return
 		}
 
-		argv, env, err := a.src.AttachCommand(a.handle)
-		if a.shouldStop(ctx) {
-			return
-		}
-		if err != nil {
-			a.fail("attach command: " + err.Error())
-			return
-		}
 		rows, cols := a.size()
 		if a.shouldStop(ctx) {
 			return
 		}
-		p, err := a.spawn(ctx, argv, env, rows, cols)
+		p, err := a.src.Attach(ctx, a.handle, rows, cols)
 		if a.shouldStop(ctx) {
 			if p != nil {
 				_ = p.Close()
@@ -176,7 +144,7 @@ func (a *attachment) run(ctx context.Context) {
 		if err != nil {
 			failures++
 			if failures > a.maxReattach {
-				a.fail("spawn pty: " + err.Error())
+				a.fail("attach: " + err.Error())
 				return
 			}
 			if !a.backoff(ctx, failures) {
@@ -214,7 +182,7 @@ func (a *attachment) run(ctx context.Context) {
 }
 
 // copyOut pumps PTY output to the sink until the PTY closes or errors.
-func (a *attachment) copyOut(p ptyProcess) {
+func (a *attachment) copyOut(p ports.Stream) {
 	buf := make([]byte, 32*1024)
 	for {
 		n, err := p.Read(buf)
@@ -291,19 +259,19 @@ func (a *attachment) resize(rows, cols uint16) error {
 }
 
 // size returns the client's last requested grid (zero before the first
-// open/resize recorded one). The spawn path reads it so the PTY starts at the
-// client's grid instead of the kernel default.
+// open/resize recorded one). The attach path reads it so the Stream starts at
+// the client's grid instead of the kernel default.
 func (a *attachment) size() (rows, cols uint16) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.rows, a.cols
 }
 
-// setPTY publishes a freshly attached PTY and replays the client's last
-// requested size onto it (see resize) — the spawn already started at the size
+// setPTY publishes a freshly attached Stream and replays the client's last
+// requested size onto it (see resize) — the attach already started at the size
 // read in run, but a resize frame can land between that read and registration
-// here; the replay (Setsize + explicit WINCH) converges the late case.
-func (a *attachment) setPTY(p ptyProcess) bool {
+// here; the replay (Resize) converges the late case.
+func (a *attachment) setPTY(p ports.Stream) bool {
 	a.mu.Lock()
 	if a.closed || a.exited {
 		a.mu.Unlock()
@@ -345,7 +313,7 @@ func (a *attachment) setPTY(p ptyProcess) bool {
 	}
 }
 
-func (a *attachment) clearPTY(p ptyProcess) {
+func (a *attachment) clearPTY(p ports.Stream) {
 	a.mu.Lock()
 	if a.pty == p {
 		a.pty = nil
@@ -355,7 +323,7 @@ func (a *attachment) clearPTY(p ptyProcess) {
 }
 
 // close detaches this client: stop re-attaching and kill the attach PTY. It
-// never touches the Zellij session itself, which the zellij server keeps alive
+// never touches the runtime session itself, which the mux server keeps alive
 // for other clients.
 func (a *attachment) close() {
 	a.mu.Lock()
