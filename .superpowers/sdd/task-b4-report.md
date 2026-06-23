@@ -54,3 +54,50 @@ Concern: `cmd.Process.Release()` on Windows after `cmd.Start()` does not prevent
 ## Interface Compliance
 
 `var _ ports.Runtime = (*Runtime)(nil)` compiles, confirming `Create`, `Destroy`, and `IsAlive` are all implemented with the correct signatures. `SendMessage` and `GetOutput` are exported but not part of the `ports.Runtime` interface - they are called by the daemon's messenger and output layers directly. `Attach` is intentionally omitted (B5).
+
+---
+
+## Review fix: IsAlive reaper-safety (dead-vs-transient split)
+
+### The bug
+`clientIsAlive` returned a bare `bool`, collapsing dial timeout, read-deadline
+expiry, write error, and connection-refused all to `false`. The reaper turns
+`(false, nil)` into `ProbeDead`, which the LCM can promote to a permanent
+`IsTerminated` reap when the agent has also been quiet >60s. A single transient
+2s loopback timeout on a normal idle session would then spuriously kill a live
+session. tmux/zellij avoid this by returning a non-nil error for transient
+failures (recorded as `ProbeFailed`, ignored and retried).
+
+### Fix (files touched, all under conpty/)
+- `client.go`: `clientIsAlive` now returns `(alive bool, transientErr error)`:
+  - valid `MSG_STATUS_RES` -> `(true, nil)`.
+  - dial refused (nothing listening) -> `(false, nil)` definitively gone.
+  - dial timeout / read-deadline expiry / write error / mid-read EOF / no
+    STATUS_RES before conn end -> `(false, err)` transient.
+  - Added `isTimeout` (net.Error.Timeout()) and `isConnRefused`
+    (errors.Is ECONNREFUSED, plus WSAECONNREFUSED 10061 for older Windows).
+    "When unsure, prefer transient": any non-timeout, non-refused dial error
+    returns the error.
+  - `clientGetOutput` "return empty on failure" behavior left unchanged.
+- `runtime.go`: `IsAlive` now propagates `clientIsAlive`'s `(bool, error)`
+  directly; the unknown-session path still returns `(false, nil)`.
+- `runtime_test.go`:
+  - Updated `TestClientIsAlive_TrueAndFalse` for the new 2-value signature
+    (refused -> (false, nil)).
+  - Added regression `TestIsAlive_RefusedIsGone_TimeoutIsTransient`:
+    (a) resolved-but-refused host -> `(false, nil)`;
+    (b) resolved host behind a listener that Accepts but never replies, so the
+    short `isAliveTimeout` read deadline fires -> `(false, non-nil err)`.
+
+### Command outputs (from backend/)
+- `go build ./...`            : Success
+- `GOOS=windows go build ./...`: Success
+- `GOOS=linux go build ./...`  : Success
+- `go test -race ./internal/adapters/runtime/conpty/...` : 49 passed in 2 packages
+- `go vet ./internal/adapters/runtime/conpty/...`        : No issues found
+- New test verbose: TestIsAlive_RefusedIsGone_TimeoutIsTransient PASS (2.00s)
+
+### READY-format confirmation (host_main.go, not modified)
+`host_main.go:54` prints `fmt.Fprintf(stdout, "READY:%d %d\n", pty.PID(), port)`
+i.e. `READY:<pid> <port>` (pid THEN port), which matches spawn_windows.go's
+`READY:(\d+) (\d+)` regex. No action needed (and out of scope for this task).

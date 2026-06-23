@@ -570,14 +570,14 @@ func TestClientGetOutput_HappyPath(t *testing.T) {
 	}
 }
 
-// TestClientIsAlive_TrueAndFalse verifies clientIsAlive returns true for a
-// live host and false for an unreachable address.
+// TestClientIsAlive_TrueAndFalse verifies clientIsAlive returns (true, nil) for
+// a live host and (false, nil) for a refused address (definitively gone).
 func TestClientIsAlive_TrueAndFalse(t *testing.T) {
 	f := startServe(t, 3002)
 	defer f.cancel()
 
-	if !clientIsAlive(f.addr) {
-		t.Fatal("clientIsAlive = false for live host, want true")
+	if alive, err := clientIsAlive(f.addr); err != nil || !alive {
+		t.Fatalf("clientIsAlive(live) = (%v, %v), want (true, nil)", alive, err)
 	}
 
 	f.cancel()
@@ -588,8 +588,72 @@ func TestClientIsAlive_TrueAndFalse(t *testing.T) {
 	}
 	time.Sleep(50 * time.Millisecond)
 
-	if clientIsAlive(f.addr) {
-		t.Fatal("clientIsAlive = true after host closed, want false")
+	// After close the OS refuses the connection on the freed port -> gone.
+	if alive, err := clientIsAlive(f.addr); alive || err != nil {
+		t.Fatalf("clientIsAlive(closed) = (%v, %v), want (false, nil)", alive, err)
+	}
+}
+
+// TestIsAlive_RefusedIsGone_TimeoutIsTransient is the reaper-safety regression
+// test. It asserts the dead-vs-transient split that keeps a single transient
+// loopback hiccup from spuriously reaping a live idle session:
+//
+//	(a) a resolved-but-REFUSED host -> IsAlive == (false, nil)  [ProbeDead]
+//	(b) a resolved host whose probe TIMES OUT -> (false, non-nil) [ProbeFailed]
+func TestIsAlive_RefusedIsGone_TimeoutIsTransient(t *testing.T) {
+	isolateRegistry(t)
+
+	// (a) Refused: bind+close a listener to obtain a port nothing listens on.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	refusedAddr := ln.Addr().String()
+	_ = ln.Close()
+
+	rtRefused := New(Options{Spawner: fakeSpawnerFor(t, nil, livePID())})
+	rtRefused.mu.Lock()
+	rtRefused.sessions["gone"] = &hostSession{addr: refusedAddr, pid: livePID()}
+	rtRefused.mu.Unlock()
+
+	alive, err := rtRefused.IsAlive(context.Background(), ports.RuntimeHandle{ID: "gone"})
+	if alive || err != nil {
+		t.Fatalf("IsAlive(refused) = (%v, %v), want (false, nil) definitively gone", alive, err)
+	}
+
+	// (b) Transient timeout: a listener that Accepts but never replies. The
+	// short isAliveTimeout read deadline fires before any STATUS_RES arrives,
+	// which must surface as a non-nil (transient) error, not a death.
+	silent, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen silent: %v", err)
+	}
+	defer silent.Close()
+	go func() {
+		for {
+			c, err := silent.Accept()
+			if err != nil {
+				return
+			}
+			// Hold the connection open without ever sending a STATUS_RES.
+			go func(c net.Conn) {
+				time.Sleep(isAliveTimeout + time.Second)
+				_ = c.Close()
+			}(c)
+		}
+	}()
+
+	rtSilent := New(Options{Spawner: fakeSpawnerFor(t, nil, livePID())})
+	rtSilent.mu.Lock()
+	rtSilent.sessions["stuck"] = &hostSession{addr: silent.Addr().String(), pid: livePID()}
+	rtSilent.mu.Unlock()
+
+	alive, err = rtSilent.IsAlive(context.Background(), ports.RuntimeHandle{ID: "stuck"})
+	if alive {
+		t.Fatalf("IsAlive(silent) alive=true, want false")
+	}
+	if err == nil {
+		t.Fatal("IsAlive(silent) err=nil, want non-nil transient error so the reaper records ProbeFailed")
 	}
 }
 

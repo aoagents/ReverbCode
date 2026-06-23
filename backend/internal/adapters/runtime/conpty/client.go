@@ -5,7 +5,9 @@ package conpty
 
 import (
 	"encoding/json"
+	"errors"
 	"net"
+	"syscall"
 	"time"
 )
 
@@ -113,36 +115,57 @@ func clientGetOutput(addr string, lines int) (string, error) {
 	}
 }
 
-// clientIsAlive probes the host with MsgStatusReq. Returns true if a valid
-// MsgStatusRes with parseable JSON is received. Connect failure or timeout
-// returns false. Mirrors ptyHostIsAlive from pty-client.ts: host reachable
-// == alive, regardless of the inner agent's alive field.
-func clientIsAlive(addr string) bool {
+// clientIsAlive probes the host with MsgStatusReq and distinguishes three
+// outcomes for the reaper (see IsAlive in runtime.go):
+//
+//   - alive==true,  transientErr==nil: a valid MsgStatusRes was received.
+//   - alive==false, transientErr==nil: the host is DEFINITIVELY gone (the dial
+//     was refused: nothing is listening on the loopback addr).
+//   - alive==false, transientErr!=nil: a TRANSIENT probe failure (network
+//     timeout, or any connected-then-failed I/O error). The reaper records this
+//     as ProbeFailed and retries instead of reaping a possibly-live session.
+//
+// When unsure, we prefer transient (return the error) rather than reporting
+// death. Mirrors ptyHostIsAlive from pty-client.ts on the alive path: host
+// reachable == alive, regardless of the inner agent's alive field.
+func clientIsAlive(addr string) (alive bool, transientErr error) {
 	conn, err := dialHost(addr, isAliveTimeout)
 	if err != nil {
-		return false
+		// A dial timeout is transient (the loopback hiccupped). A refused
+		// connection means nothing is listening -> definitively gone. Any
+		// other dial failure is treated as transient ("when unsure, retry").
+		if isTimeout(err) {
+			return false, err
+		}
+		if isConnRefused(err) {
+			return false, nil
+		}
+		return false, err
 	}
 	defer conn.Close()
 
 	_ = conn.SetDeadline(time.Now().Add(isAliveTimeout))
 
 	if _, err := conn.Write(EncodeMessage(MsgStatusReq, nil)); err != nil {
-		return false
+		// We connected, then the write failed: connected-then-failed I/O is
+		// transient (the host may still be up; the conn was disrupted).
+		return false, err
 	}
 
 	aliveC := make(chan bool, 1)
 	parser := NewMessageParser(func(msgType byte, payload []byte) {
 		if msgType == MsgStatusRes {
 			var sp StatusPayload
-			alive := json.Unmarshal(payload, &sp) == nil
+			ok := json.Unmarshal(payload, &sp) == nil
 			select {
-			case aliveC <- alive:
+			case aliveC <- ok:
 			default:
 			}
 		}
 	})
 
 	buf := make([]byte, 4096)
+	var lastErr error
 	for {
 		n, err := conn.Read(buf)
 		if n > 0 {
@@ -150,19 +173,44 @@ func clientIsAlive(addr string) bool {
 		}
 		select {
 		case result := <-aliveC:
-			return result
+			return result, nil
 		default:
 		}
 		if err != nil {
+			lastErr = err
 			break
 		}
 	}
 	select {
 	case result := <-aliveC:
-		return result
+		return result, nil
 	default:
-		return false
+		// Connected but never got a STATUS_RES: read timeout or mid-read EOF.
+		// This is a connected-then-failed I/O error -> transient.
+		if lastErr == nil {
+			lastErr = errors.New("conpty: no status response before connection ended")
+		}
+		return false, lastErr
 	}
+}
+
+// isTimeout reports whether err is a network timeout (dial timeout or
+// read-deadline expiry). Cross-platform via the net.Error interface.
+func isTimeout(err error) bool {
+	var ne net.Error
+	return errors.As(err, &ne) && ne.Timeout()
+}
+
+// isConnRefused reports whether err is a fast "connection refused" dial
+// failure (nothing listening). errors.Is(ECONNREFUSED) covers Unix and modern
+// Windows; the explicit WSAECONNREFUSED (10061) guards older Windows runtimes
+// where the errno is not mapped to syscall.ECONNREFUSED.
+func isConnRefused(err error) bool {
+	if errors.Is(err, syscall.ECONNREFUSED) {
+		return true
+	}
+	const wsaeconnrefused = syscall.Errno(10061)
+	return errors.Is(err, wsaeconnrefused)
 }
 
 // clientKill sends MsgKillReq best-effort. Connect failure is a no-op

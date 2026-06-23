@@ -141,15 +141,25 @@ func (r *Runtime) Destroy(ctx context.Context, handle ports.RuntimeHandle) error
 	return nil
 }
 
-// IsAlive returns (true, nil) if the pty-host is reachable, (false, nil) if
-// not or if the session is unknown. Never returns a non-nil error that a reaper
-// would treat as a death conclusion: unreachable host == definitively dead.
+// IsAlive distinguishes three outcomes so the reaper never spuriously reaps a
+// live session on a transient probe failure:
+//
+//   - (true, nil):  the pty-host answered a status probe -> alive.
+//   - (false, nil): DEFINITIVELY gone. Either the session resolves to nothing
+//     (no in-memory entry and no registry entry), or the dial was refused
+//     (nothing listening on the loopback addr).
+//   - (false, err): a TRANSIENT probe failure (loopback timeout, connected-
+//     then-failed I/O). The reaper records ProbeFailed and retries rather than
+//     treating it as a death conclusion.
+//
+// tmux/zellij return a non-nil error for transient failures for the same
+// reason; conpty matches that contract here.
 func (r *Runtime) IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool, error) {
 	sess := r.resolve(handle.ID)
 	if sess == nil {
 		return false, nil // no in-memory entry, no registry entry -> definitively gone
 	}
-	return clientIsAlive(sess.addr), nil
+	return clientIsAlive(sess.addr)
 }
 
 // SendMessage chunks message and writes it to the pty-host followed by Enter.
