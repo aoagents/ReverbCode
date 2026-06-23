@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- The ao daemon is a standalone Go binary the app spawns as its own
+	     process (NOT an inherited helper), so it carries its own hardened-
+	     runtime entitlements. Library validation is disabled because the
+	     daemon execs/loads tools (git, zellij, agents) signed by other teams
+	     or unsigned. -->
+	<key>com.apple.security.cs.disable-library-validation</key>
+	<true/>
+	<!-- The daemon recovers the login-shell environment and passes DYLD_* /
+	     env through to the children it launches. -->
+	<key>com.apple.security.cs.allow-dyld-environment-variables</key>
+	<true/>
+</dict>
+</plist>
