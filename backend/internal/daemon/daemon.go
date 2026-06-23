@@ -82,8 +82,8 @@ func Run() error {
 		return err
 	}
 
-	// Terminal streaming: the selected runtime (tmux on macOS/Linux, zellij on Windows) supplies the
-	// PTY-attach command and liveness; the CDC broadcaster feeds the session-state channel. The manager
+	// Terminal streaming: the selected runtime (tmux on macOS/Linux, conpty on Windows) supplies the
+	// attach Stream and liveness; the CDC broadcaster feeds the session-state channel. The manager
 	// is handed to httpd, which mounts it at /mux. Raw PTY bytes never flow
 	// through the CDC change_log -- only session-state events do.
 	runtimeAdapter := runtimeselect.New(log)
