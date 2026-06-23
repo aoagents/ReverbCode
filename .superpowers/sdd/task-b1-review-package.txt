@@ -1,0 +1,912 @@
+=== COMMITS ===
+1050542 feat(conpty): add protocol codec and output ring buffer (pure Go, OS-...
+
+=== STAT ===
+backend/internal/adapters/runtime/conpty/proto.go  |  89 ++++++++++
+ .../internal/adapters/runtime/conpty/proto_test.go | 181 +++++++++++++++++++++
+ backend/internal/adapters/runtime/conpty/ring.go   |  83 ++++++++++
+ .../internal/adapters/runtime/conpty/ring_test.go  | 125 ++++++++++++++
+ 4 files changed, 478 insertions(+)
+
+=== DIFF ===
+backend/internal/adapters/runtime/conpty/proto.go  |  89 ++++++++++
+ .../internal/adapters/runtime/conpty/proto_test.go | 181 +++++++++++++++++++++
+ backend/internal/adapters/runtime/conpty/ring.go   |  83 ++++++++++
+ .../internal/adapters/runtime/conpty/ring_test.go  | 125 ++++++++++++++
+ 4 files changed, 478 insertions(+)
+
+diff --git a/backend/internal/adapters/runtime/conpty/proto.go b/backend/internal/adapters/runtime/conpty/proto.go
+new file mode 100644
+index 0000000..fa47df3
+--- /dev/null
++++ b/backend/internal/adapters/runtime/conpty/proto.go
+@@ -0,0 +1,89 @@
++// Package conpty implements the Windows ConPTY runtime adapter for agent sessions.
++// This file contains the OS-agnostic binary framing protocol codec used by the
++// named-pipe protocol between pty-host.js and this Go client.
++//
++// Frame layout: [1-byte type][4-byte big-endian length][payload]
++package conpty
++
++import "encoding/binary"
++
++// Message type constants. Values must match pty-host.ts MSG_* constants exactly.
++const (
++	MsgTerminalData  byte = 0x01 // host -> client: raw PTY output
++	MsgTerminalInput byte = 0x02 // client -> host: raw keystrokes
++	MsgResize        byte = 0x03 // client -> host: JSON {cols, rows}
++	MsgGetOutputReq  byte = 0x04 // client -> host: JSON {lines}
++	MsgGetOutputRes  byte = 0x05 // host -> client: UTF-8 text
++	MsgStatusReq     byte = 0x06 // client -> host: empty
++	MsgStatusRes     byte = 0x07 // host -> client: JSON {alive, pid, exitCode?}
++	MsgKillReq       byte = 0x08 // client -> host: empty
++)
++
++// JSON payload structs shared with later tasks (kept minimal).
++
++// ResizePayload is the JSON body for MsgResize.
++type ResizePayload struct {
++	Cols int `json:"cols"`
++	Rows int `json:"rows"`
++}
++
++// StatusPayload is the JSON body for MsgStatusRes.
++type StatusPayload struct {
++	Alive    bool `json:"alive"`
++	PID      int  `json:"pid"`
++	ExitCode *int `json:"exitCode,omitempty"`
++}
++
++// GetOutputReq is the JSON body for MsgGetOutputReq.
++type GetOutputReq struct {
++	Lines int `json:"lines"`
++}
++
++// EncodeMessage encodes a single frame into the binary protocol format.
++// It allocates a fresh slice of exactly 5+len(payload) bytes.
++func EncodeMessage(msgType byte, payload []byte) []byte {
++	frame := make([]byte, 5+len(payload))
++	frame[0] = msgType
++	binary.BigEndian.PutUint32(frame[1:5], uint32(len(payload)))
++	copy(frame[5:], payload)
++	return frame
++}
++
++// MessageParser is a streaming parser for the binary framing protocol.
++// It accumulates arbitrary-sized chunks from a pipe/socket stream and fires
++// onMessage exactly once per complete frame, regardless of chunk boundaries.
++// Safe to call Feed from a single goroutine; not concurrency-safe itself.
++type MessageParser struct {
++	buf       []byte
++	onMessage func(msgType byte, payload []byte)
++}
++
++// NewMessageParser returns a parser that calls onMessage for each complete frame.
++// onMessage receives a COPY of the payload so callers may retain it safely.
++func NewMessageParser(onMessage func(msgType byte, payload []byte)) *MessageParser {
++	return &MessageParser{onMessage: onMessage}
++}
++
++// Feed appends chunk to the internal buffer and dispatches all complete frames.
++// It matches the semantics of MessageParser.feed in pty-host.ts exactly:
++// arbitrary chunk boundaries and multiple frames per chunk are both handled.
++func (p *MessageParser) Feed(chunk []byte) {
++	p.buf = append(p.buf, chunk...)
++
++	for len(p.buf) >= 5 {
++		payloadLen := binary.BigEndian.Uint32(p.buf[1:5])
++		frameLen := 5 + int(payloadLen)
++		if len(p.buf) < frameLen {
++			break
++		}
++
++		msgType := p.buf[0]
++		// ponytail: explicit copy so callers that retain the slice are not
++		// corrupted when p.buf grows/reallocates on a later Feed call.
++		payload := make([]byte, payloadLen)
++		copy(payload, p.buf[5:frameLen])
++
++		p.buf = p.buf[frameLen:]
++		p.onMessage(msgType, payload)
++	}
++}
+diff --git a/backend/internal/adapters/runtime/conpty/proto_test.go b/backend/internal/adapters/runtime/conpty/proto_test.go
+new file mode 100644
+index 0000000..83cc748
+--- /dev/null
++++ b/backend/internal/adapters/runtime/conpty/proto_test.go
+@@ -0,0 +1,181 @@
++package conpty
++
++import (
++	"bytes"
++	"encoding/binary"
++	"testing"
++)
++
++// TestEncodeMessage verifies the 5-byte header and payload are written correctly.
++func TestEncodeMessage(t *testing.T) {
++	payload := []byte("hello")
++	frame := EncodeMessage(MsgTerminalData, payload)
++
++	if len(frame) != 5+len(payload) {
++		t.Fatalf("frame len = %d, want %d", len(frame), 5+len(payload))
++	}
++	if frame[0] != MsgTerminalData {
++		t.Errorf("type byte = 0x%02x, want 0x%02x", frame[0], MsgTerminalData)
++	}
++	gotLen := binary.BigEndian.Uint32(frame[1:5])
++	if int(gotLen) != len(payload) {
++		t.Errorf("length field = %d, want %d", gotLen, len(payload))
++	}
++	if !bytes.Equal(frame[5:], payload) {
++		t.Errorf("payload = %q, want %q", frame[5:], payload)
++	}
++}
++
++// TestEncodeMessageZeroPayload verifies a zero-length payload encodes correctly.
++func TestEncodeMessageZeroPayload(t *testing.T) {
++	frame := EncodeMessage(MsgStatusReq, nil)
++	if len(frame) != 5 {
++		t.Fatalf("frame len = %d, want 5", len(frame))
++	}
++	if frame[0] != MsgStatusReq {
++		t.Errorf("type byte = 0x%02x, want 0x%02x", frame[0], MsgStatusReq)
++	}
++	if got := binary.BigEndian.Uint32(frame[1:5]); got != 0 {
++		t.Errorf("length field = %d, want 0", got)
++	}
++}
++
++// collected accumulates (type, payload) pairs received by a MessageParser.
++type collected struct {
++	typ     byte
++	payload []byte
++}
++
++func collect(frames *[]collected) func(byte, []byte) {
++	return func(typ byte, payload []byte) {
++		*frames = append(*frames, collected{typ, payload})
++	}
++}
++
++// TestParserSingleFrame feeds one complete frame and expects one callback.
++func TestParserSingleFrame(t *testing.T) {
++	var got []collected
++	p := NewMessageParser(collect(&got))
++
++	p.Feed(EncodeMessage(MsgTerminalData, []byte("hi")))
++
++	if len(got) != 1 {
++		t.Fatalf("got %d messages, want 1", len(got))
++	}
++	if got[0].typ != MsgTerminalData {
++		t.Errorf("type = 0x%02x, want 0x%02x", got[0].typ, MsgTerminalData)
++	}
++	if !bytes.Equal(got[0].payload, []byte("hi")) {
++		t.Errorf("payload = %q, want %q", got[0].payload, "hi")
++	}
++}
++
++// TestParserTwoFramesOneChunk feeds two frames concatenated and expects two callbacks.
++func TestParserTwoFramesOneChunk(t *testing.T) {
++	var got []collected
++	p := NewMessageParser(collect(&got))
++
++	chunk := append(EncodeMessage(MsgTerminalData, []byte("frame1")),
++		EncodeMessage(MsgTerminalInput, []byte("frame2"))...)
++	p.Feed(chunk)
++
++	if len(got) != 2 {
++		t.Fatalf("got %d messages, want 2", len(got))
++	}
++	if got[0].typ != MsgTerminalData || string(got[0].payload) != "frame1" {
++		t.Errorf("message 0 = {%02x, %q}", got[0].typ, got[0].payload)
++	}
++	if got[1].typ != MsgTerminalInput || string(got[1].payload) != "frame2" {
++		t.Errorf("message 1 = {%02x, %q}", got[1].typ, got[1].payload)
++	}
++}
++
++// TestParserByteAtATime feeds one frame one byte at a time and expects exactly
++// one callback with the correct type and payload.
++func TestParserByteAtATime(t *testing.T) {
++	var got []collected
++	p := NewMessageParser(collect(&got))
++
++	frame := EncodeMessage(MsgResize, []byte(`{"cols":80,"rows":24}`))
++	for _, b := range frame {
++		p.Feed([]byte{b})
++	}
++
++	if len(got) != 1 {
++		t.Fatalf("got %d messages, want 1", len(got))
++	}
++	if got[0].typ != MsgResize {
++		t.Errorf("type = 0x%02x, want 0x%02x", got[0].typ, MsgResize)
++	}
++	want := []byte(`{"cols":80,"rows":24}`)
++	if !bytes.Equal(got[0].payload, want) {
++		t.Errorf("payload = %q, want %q", got[0].payload, want)
++	}
++}
++
++// TestParserInterleavedTypes feeds frames of different types and verifies order.
++func TestParserInterleavedTypes(t *testing.T) {
++	types := []byte{MsgStatusReq, MsgKillReq, MsgGetOutputReq, MsgStatusRes}
++	payloads := [][]byte{nil, nil, []byte(`{"lines":10}`), []byte(`{"alive":true,"pid":42}`)}
++
++	var chunk []byte
++	for i, typ := range types {
++		chunk = append(chunk, EncodeMessage(typ, payloads[i])...)
++	}
++
++	var got []collected
++	p := NewMessageParser(collect(&got))
++	p.Feed(chunk)
++
++	if len(got) != len(types) {
++		t.Fatalf("got %d messages, want %d", len(got), len(types))
++	}
++	for i, g := range got {
++		if g.typ != types[i] {
++			t.Errorf("[%d] type = 0x%02x, want 0x%02x", i, g.typ, types[i])
++		}
++		if !bytes.Equal(g.payload, payloads[i]) {
++			t.Errorf("[%d] payload = %q, want %q", i, g.payload, payloads[i])
++		}
++	}
++}
++
++// TestParserPayloadIsCopy verifies that mutating the fed slice after Feed does
++// NOT corrupt the payload delivered to onMessage.
++func TestParserPayloadIsCopy(t *testing.T) {
++	var got []collected
++	p := NewMessageParser(collect(&got))
++
++	src := []byte("original")
++	frame := EncodeMessage(MsgTerminalData, src)
++	p.Feed(frame)
++
++	// Mutate the frame bytes that were fed.
++	for i := range frame {
++		frame[i] = 0xFF
++	}
++
++	if len(got) != 1 {
++		t.Fatalf("got %d messages, want 1", len(got))
++	}
++	if !bytes.Equal(got[0].payload, []byte("original")) {
++		t.Errorf("payload corrupted after mutating fed slice: got %q", got[0].payload)
++	}
++}
++
++// TestParserZeroLengthFrame verifies a zero-payload frame (e.g. MsgStatusReq) parses.
++func TestParserZeroLengthFrame(t *testing.T) {
++	var got []collected
++	p := NewMessageParser(collect(&got))
++	p.Feed(EncodeMessage(MsgStatusReq, nil))
++
++	if len(got) != 1 {
++		t.Fatalf("got %d messages, want 1", len(got))
++	}
++	if got[0].typ != MsgStatusReq {
++		t.Errorf("type = 0x%02x, want 0x%02x", got[0].typ, MsgStatusReq)
++	}
++	if len(got[0].payload) != 0 {
++		t.Errorf("payload len = %d, want 0", len(got[0].payload))
++	}
++}
+diff --git a/backend/internal/adapters/runtime/conpty/ring.go b/backend/internal/adapters/runtime/conpty/ring.go
+new file mode 100644
+index 0000000..06d28c1
+--- /dev/null
++++ b/backend/internal/adapters/runtime/conpty/ring.go
+@@ -0,0 +1,83 @@
++package conpty
++
++import (
++	"strings"
++	"sync"
++)
++
++// MaxOutputLines is the rolling line-buffer cap, matching MAX_OUTPUT_LINES in pty-host.ts.
++const MaxOutputLines = 1000
++
++// Ring is a bounded rolling buffer of terminal output lines, ANSI codes preserved.
++// It mirrors the appendOutput state machine from pty-host.ts.
++// Concurrent Append and Snapshot/Tail calls are safe.
++type Ring struct {
++	mu          sync.Mutex
++	lines       []string // each entry is "line\n" (or bare text on FlushPartial)
++	partialLine string
++}
++
++// NewRing returns an empty Ring.
++func NewRing() *Ring {
++	return &Ring{}
++}
++
++// Append mirrors appendOutput from pty-host.ts: prepend the current partialLine,
++// split on newlines, store completed lines with "\n" re-appended, keep the last
++// element as the new partialLine, then trim to MaxOutputLines.
++func (r *Ring) Append(raw []byte) {
++	r.mu.Lock()
++	defer r.mu.Unlock()
++
++	text := r.partialLine + string(raw)
++	parts := strings.Split(text, "\n")
++	// The last element is either "" (text ended with \n) or an incomplete line.
++	r.partialLine = parts[len(parts)-1]
++	for _, line := range parts[:len(parts)-1] {
++		r.lines = append(r.lines, line+"\n")
++	}
++	if len(r.lines) > MaxOutputLines {
++		// ponytail: slice off the head; ceiling: O(n) copy on every trim cycle.
++		// Upgrade path: circular buffer if trim rate is very high.
++		r.lines = r.lines[len(r.lines)-MaxOutputLines:]
++	}
++}
++
++// FlushPartial pushes any in-progress partial line as a final entry.
++// Called on PTY exit to mirror the pty-host.ts onExit handler.
++func (r *Ring) FlushPartial() {
++	r.mu.Lock()
++	defer r.mu.Unlock()
++
++	if r.partialLine == "" {
++		return
++	}
++	r.lines = append(r.lines, r.partialLine)
++	r.partialLine = ""
++}
++
++// Snapshot returns all stored lines concatenated as raw bytes for scrollback replay.
++// The in-progress partialLine is NOT included (matches TS outputBuffer.join("")).
++func (r *Ring) Snapshot() []byte {
++	r.mu.Lock()
++	defer r.mu.Unlock()
++
++	return []byte(strings.Join(r.lines, ""))
++}
++
++// Tail returns the last n stored lines joined as a string.
++// Mirrors the MSG_GET_OUTPUT_REQ handler: start = max(0, len-lines).
++// n <= 0 returns "".
++func (r *Ring) Tail(n int) string {
++	r.mu.Lock()
++	defer r.mu.Unlock()
++
++	if n <= 0 {
++		return ""
++	}
++	start := len(r.lines) - n
++	if start < 0 {
++		start = 0
++	}
++	return strings.Join(r.lines[start:], "")
++}
+diff --git a/backend/internal/adapters/runtime/conpty/ring_test.go b/backend/internal/adapters/runtime/conpty/ring_test.go
+new file mode 100644
+index 0000000..d954ee3
+--- /dev/null
++++ b/backend/internal/adapters/runtime/conpty/ring_test.go
+@@ -0,0 +1,125 @@
++package conpty
++
++import (
++	"strings"
++	"testing"
++)
++
++// TestRingAppendPartialThenComplete verifies partial-line accumulation and
++// that Snapshot/Tail reflect only completed lines.
++func TestRingAppendPartialThenComplete(t *testing.T) {
++	r := NewRing()
++	r.Append([]byte("hel"))
++	r.Append([]byte("lo\nwor"))
++
++	snap := string(r.Snapshot())
++	if snap != "hello\n" {
++		t.Errorf("Snapshot = %q, want %q", snap, "hello\n")
++	}
++
++	tail := r.Tail(10)
++	if tail != "hello\n" {
++		t.Errorf("Tail(10) = %q, want %q", tail, "hello\n")
++	}
++
++	// Flush the partial "wor"
++	r.FlushPartial()
++	snap = string(r.Snapshot())
++	if snap != "hello\nwor" {
++		t.Errorf("after FlushPartial Snapshot = %q, want %q", snap, "hello\nwor")
++	}
++}
++
++// TestRingExceedsMaxOutputLines verifies the buffer trims to MaxOutputLines.
++func TestRingExceedsMaxOutputLines(t *testing.T) {
++	r := NewRing()
++	// Push 1005 lines.
++	for i := 0; i < 1005; i++ {
++		r.Append([]byte("x\n"))
++	}
++
++	snap := r.Snapshot()
++	got := strings.Count(string(snap), "\n")
++	if got != MaxOutputLines {
++		t.Errorf("stored %d lines, want %d", got, MaxOutputLines)
++	}
++}
++
++// TestRingFlushPartialNoNewline verifies FlushPartial pushes a trailing line.
++func TestRingFlushPartialNoNewline(t *testing.T) {
++	r := NewRing()
++	r.Append([]byte("line1\npartial"))
++	r.FlushPartial()
++
++	snap := string(r.Snapshot())
++	if !strings.Contains(snap, "partial") {
++		t.Errorf("Snapshot missing 'partial': %q", snap)
++	}
++
++	// Calling FlushPartial again is a no-op.
++	r.FlushPartial()
++	snap2 := string(r.Snapshot())
++	if snap2 != snap {
++		t.Errorf("second FlushPartial changed snapshot: %q -> %q", snap, snap2)
++	}
++}
++
++// TestRingTailEdgeCases covers n > stored count and n <= 0.
++func TestRingTailEdgeCases(t *testing.T) {
++	r := NewRing()
++	r.Append([]byte("a\nb\n"))
++
++	if got := r.Tail(100); got != "a\nb\n" {
++		t.Errorf("Tail(100) = %q, want %q", got, "a\nb\n")
++	}
++	if got := r.Tail(0); got != "" {
++		t.Errorf("Tail(0) = %q, want empty", got)
++	}
++	if got := r.Tail(-1); got != "" {
++		t.Errorf("Tail(-1) = %q, want empty", got)
++	}
++}
++
++// TestRingANSIRoundTrip verifies raw ANSI escape sequences survive storage intact.
++func TestRingANSIRoundTrip(t *testing.T) {
++	ansi := "\x1b[31mhi\x1b[0m\n"
++	r := NewRing()
++	r.Append([]byte(ansi))
++
++	snap := string(r.Snapshot())
++	if snap != ansi {
++		t.Errorf("Snapshot = %q, want %q", snap, ansi)
++	}
++	tail := r.Tail(1)
++	if tail != ansi {
++		t.Errorf("Tail(1) = %q, want %q", tail, ansi)
++	}
++}
++
++// TestRingTailSubset verifies Tail returns exactly the last n lines.
++func TestRingTailSubset(t *testing.T) {
++	r := NewRing()
++	for i := 0; i < 10; i++ {
++		r.Append([]byte("line\n"))
++	}
++
++	tail3 := r.Tail(3)
++	if got := strings.Count(tail3, "\n"); got != 3 {
++		t.Errorf("Tail(3) contains %d newlines, want 3", got)
++	}
++}
++
++// TestRingSnapshotExcludesPartial verifies the in-progress partial line is NOT
++// included in Snapshot (matches TS semantics: only outputBuffer, not partialLine).
++func TestRingSnapshotExcludesPartial(t *testing.T) {
++	r := NewRing()
++	r.Append([]byte("complete\npartial"))
++
++	snap := string(r.Snapshot())
++	if strings.Contains(snap, "partial") {
++		t.Errorf("Snapshot includes partial line: %q", snap)
++	}
++	if !strings.Contains(snap, "complete\n") {
++		t.Errorf("Snapshot missing complete line: %q", snap)
++	}
++}
+
+--- Changes ---
+
+backend/internal/adapters/runtime/conpty/proto.go
+  @@ -0,0 +1,89 @@
+  +// Package conpty implements the Windows ConPTY runtime adapter for agent sessions.
+  +// This file contains the OS-agnostic binary framing protocol codec used by the
+  +// named-pipe protocol between pty-host.js and this Go client.
+  +//
+  +// Frame layout: [1-byte type][4-byte big-endian length][payload]
+  +package conpty
+  +
+  +import "encoding/binary"
+  +
+  +// Message type constants. Values must match pty-host.ts MSG_* constants exactly.
+  +const (
+  +	MsgTerminalData  byte = 0x01 // host -> client: raw PTY output
+  +	MsgTerminalInput byte = 0x02 // client -> host: raw keystrokes
+  +	MsgResize        byte = 0x03 // client -> host: JSON {cols, rows}
+  +	MsgGetOutputReq  byte = 0x04 // client -> host: JSON {lines}
+  +	MsgGetOutputRes  byte = 0x05 // host -> client: UTF-8 text
+  +	MsgStatusReq     byte = 0x06 // client -> host: empty
+  +	MsgStatusRes     byte = 0x07 // host -> client: JSON {alive, pid, exitCode?}
+  +	MsgKillReq       byte = 0x08 // client -> host: empty
+  +)
+  +
+  +// JSON payload structs shared with later tasks (kept minimal).
+  +
+  +// ResizePayload is the JSON body for MsgResize.
+  +type ResizePayload struct {
+  +	Cols int `json:"cols"`
+  +	Rows int `json:"rows"`
+  +}
+  +
+  +// StatusPayload is the JSON body for MsgStatusRes.
+  +type StatusPayload struct {
+  +	Alive    bool `json:"alive"`
+  +	PID      int  `json:"pid"`
+  +	ExitCode *int `json:"exitCode,omitempty"`
+  +}
+  +
+  +// GetOutputReq is the JSON body for MsgGetOutputReq.
+  +type GetOutputReq struct {
+  +	Lines int `json:"lines"`
+  +}
+  +
+  +// EncodeMessage encodes a single frame into the binary protocol format.
+  +// It allocates a fresh slice of exactly 5+len(payload) bytes.
+  +func EncodeMessage(msgType byte, payload []byte) []byte {
+  +	frame := make([]byte, 5+len(payload))
+  +	frame[0] = msgType
+  +	binary.BigEndian.PutUint32(frame[1:5], uint32(len(payload)))
+  +	copy(frame[5:], payload)
+  +	return frame
+  +}
+  +
+  +// MessageParser is a streaming parser for the binary framing protocol.
+  +// It accumulates arbitrary-sized chunks from a pipe/socket stream and fires
+  +// onMessage exactly once per complete frame, regardless of chunk boundaries.
+  +// Safe to call Feed from a single goroutine; not concurrency-safe itself.
+  +type MessageParser struct {
+  +	buf       []byte
+  +	onMessage func(msgType byte, payload []byte)
+  +}
+  +
+  +// NewMessageParser returns a parser that calls onMessage for each complete frame.
+  +// onMessage receives a COPY of the payload so callers may retain it safely.
+  +func NewMessageParser(onMessage func(msgType byte, payload []byte)) *MessageParser {
+  +	return &MessageParser{onMessage: onMessage}
+  +}
+  +
+  +// Feed appends chunk to the internal buffer and dispatches all complete frames.
+  +// It matches the semantics of MessageParser.feed in pty-host.ts exactly:
+  +// arbitrary chunk boundaries and multiple frames per chunk are both handled.
+  +func (p *MessageParser) Feed(chunk []byte) {
+  +	p.buf = append(p.buf, chunk...)
+  +
+  +	for len(p.buf) >= 5 {
+  +		payloadLen := binary.BigEndian.Uint32(p.buf[1:5])
+  +		frameLen := 5 + int(payloadLen)
+  +		if len(p.buf) < frameLen {
+  +			break
+  +		}
+  +
+  +		msgType := p.buf[0]
+  +		// ponytail: explicit copy so callers that retain the slice are not
+  +		// corrupted when p.buf grows/reallocates on a later Feed call.
+  +		payload := make([]byte, payloadLen)
+  +		copy(payload, p.buf[5:frameLen])
+  +
+  +		p.buf = p.buf[frameLen:]
+  +		p.onMessage(msgType, payload)
+  +	}
+  +}
+  +89 -0
+
+backend/internal/adapters/runtime/conpty/proto_test.go
+  @@ -0,0 +1,181 @@
+  +package conpty
+  +
+  +import (
+  +	"bytes"
+  +	"encoding/binary"
+  +	"testing"
+  +)
+  +
+  +// TestEncodeMessage verifies the 5-byte header and payload are written correctly.
+  +func TestEncodeMessage(t *testing.T) {
+  +	payload := []byte("hello")
+  +	frame := EncodeMessage(MsgTerminalData, payload)
+  +
+  +	if len(frame) != 5+len(payload) {
+  +		t.Fatalf("frame len = %d, want %d", len(frame), 5+len(payload))
+  +	}
+  +	if frame[0] != MsgTerminalData {
+  +		t.Errorf("type byte = 0x%02x, want 0x%02x", frame[0], MsgTerminalData)
+  +	}
+  +	gotLen := binary.BigEndian.Uint32(frame[1:5])
+  +	if int(gotLen) != len(payload) {
+  +		t.Errorf("length field = %d, want %d", gotLen, len(payload))
+  +	}
+  +	if !bytes.Equal(frame[5:], payload) {
+  +		t.Errorf("payload = %q, want %q", frame[5:], payload)
+  +	}
+  +}
+  +
+  +// TestEncodeMessageZeroPayload verifies a zero-length payload encodes correctly.
+  +func TestEncodeMessageZeroPayload(t *testing.T) {
+  +	frame := EncodeMessage(MsgStatusReq, nil)
+  +	if len(frame) != 5 {
+  +		t.Fatalf("frame len = %d, want 5", len(frame))
+  +	}
+  +	if frame[0] != MsgStatusReq {
+  +		t.Errorf("type byte = 0x%02x, want 0x%02x", frame[0], MsgStatusReq)
+  +	}
+  +	if got := binary.BigEndian.Uint32(frame[1:5]); got != 0 {
+  +		t.Errorf("length field = %d, want 0", got)
+  +	}
+  +}
+  +
+  +// collected accumulates (type, payload) pairs received by a MessageParser.
+  +type collected struct {
+  +	typ     byte
+  +	payload []byte
+  +}
+  +
+  +func collect(frames *[]collected) func(byte, []byte) {
+  +	return func(typ byte, payload []byte) {
+  +		*frames = append(*frames, collected{typ, payload})
+  +	}
+  +}
+  +
+  +// TestParserSingleFrame feeds one complete frame and expects one callback.
+  +func TestParserSingleFrame(t *testing.T) {
+  +	var got []collected
+  +	p := NewMessageParser(collect(&got))
+  +
+  +	p.Feed(EncodeMessage(MsgTerminalData, []byte("hi")))
+  +
+  +	if len(got) != 1 {
+  +		t.Fatalf("got %d messages, want 1", len(got))
+  +	}
+  +	if got[0].typ != MsgTerminalData {
+  +		t.Errorf("type = 0x%02x, want 0x%02x", got[0].typ, MsgTerminalData)
+  +	}
+  +	if !bytes.Equal(got[0].payload, []byte("hi")) {
+  +		t.Errorf("payload = %q, want %q", got[0].payload, "hi")
+  +	}
+  +}
+  +
+  +// TestParserTwoFramesOneChunk feeds two frames concatenated and expects two callbacks.
+  +func TestParserTwoFramesOneChunk(t *testing.T) {
+  +	var got []collected
+  +	p := NewMessageParser(collect(&got))
+  +
+  +	chunk := append(EncodeMessage(MsgTerminalData, []byte("frame1")),
+  +		EncodeMessage(MsgTerminalInput, []byte("frame2"))...)
+  +	p.Feed(chunk)
+  +
+  +	if len(got) != 2 {
+  +		t.Fatalf("got %d messages, want 2", len(got))
+  +	}
+  +	if got[0].typ != MsgTerminalData || string(got[0].payload) != "frame1" {
+  +		t.Errorf("message 0 = {%02x, %q}", got[0].typ, got[0].payload)
+  +	}
+  +	if got[1].typ != MsgTerminalInput || string(got[1].payload) != "frame2" {
+  +		t.Errorf("message 1 = {%02x, %q}", got[1].typ, got[1].payload)
+  +	}
+  +}
+  +
+  +// TestParserByteAtATime feeds one frame one byte at a time and expects exactly
+  +// one callback with the correct type and payload.
+  +func TestParserByteAtATime(t *testing.T) {
+  +	var got []collected
+  +	p := NewMessageParser(collect(&got))
+  +
+  +	frame := EncodeMessage(MsgResize, []byte(`{"cols":80,"rows":24}`))
+  +	for _, b := range frame {
+  ... (81 lines truncated)
+  +181 -0
+
+backend/internal/adapters/runtime/conpty/ring.go
+  @@ -0,0 +1,83 @@
+  +package conpty
+  +
+  +import (
+  +	"strings"
+  +	"sync"
+  +)
+  +
+  +// MaxOutputLines is the rolling line-buffer cap, matching MAX_OUTPUT_LINES in pty-host.ts.
+  +const MaxOutputLines = 1000
+  +
+  +// Ring is a bounded rolling buffer of terminal output lines, ANSI codes preserved.
+  +// It mirrors the appendOutput state machine from pty-host.ts.
+  +// Concurrent Append and Snapshot/Tail calls are safe.
+  +type Ring struct {
+  +	mu          sync.Mutex
+  +	lines       []string // each entry is "line\n" (or bare text on FlushPartial)
+  +	partialLine string
+  +}
+  +
+  +// NewRing returns an empty Ring.
+  +func NewRing() *Ring {
+  +	return &Ring{}
+  +}
+  +
+  +// Append mirrors appendOutput from pty-host.ts: prepend the current partialLine,
+  +// split on newlines, store completed lines with "\n" re-appended, keep the last
+  +// element as the new partialLine, then trim to MaxOutputLines.
+  +func (r *Ring) Append(raw []byte) {
+  +	r.mu.Lock()
+  +	defer r.mu.Unlock()
+  +
+  +	text := r.partialLine + string(raw)
+  +	parts := strings.Split(text, "\n")
+  +	// The last element is either "" (text ended with \n) or an incomplete line.
+  +	r.partialLine = parts[len(parts)-1]
+  +	for _, line := range parts[:len(parts)-1] {
+  +		r.lines = append(r.lines, line+"\n")
+  +	}
+  +	if len(r.lines) > MaxOutputLines {
+  +		// ponytail: slice off the head; ceiling: O(n) copy on every trim cycle.
+  +		// Upgrade path: circular buffer if trim rate is very high.
+  +		r.lines = r.lines[len(r.lines)-MaxOutputLines:]
+  +	}
+  +}
+  +
+  +// FlushPartial pushes any in-progress partial line as a final entry.
+  +// Called on PTY exit to mirror the pty-host.ts onExit handler.
+  +func (r *Ring) FlushPartial() {
+  +	r.mu.Lock()
+  +	defer r.mu.Unlock()
+  +
+  +	if r.partialLine == "" {
+  +		return
+  +	}
+  +	r.lines = append(r.lines, r.partialLine)
+  +	r.partialLine = ""
+  +}
+  +
+  +// Snapshot returns all stored lines concatenated as raw bytes for scrollback replay.
+  +// The in-progress partialLine is NOT included (matches TS outputBuffer.join("")).
+  +func (r *Ring) Snapshot() []byte {
+  +	r.mu.Lock()
+  +	defer r.mu.Unlock()
+  +
+  +	return []byte(strings.Join(r.lines, ""))
+  +}
+  +
+  +// Tail returns the last n stored lines joined as a string.
+  +// Mirrors the MSG_GET_OUTPUT_REQ handler: start = max(0, len-lines).
+  +// n <= 0 returns "".
+  +func (r *Ring) Tail(n int) string {
+  +	r.mu.Lock()
+  +	defer r.mu.Unlock()
+  +
+  +	if n <= 0 {
+  +		return ""
+  +	}
+  +	start := len(r.lines) - n
+  +	if start < 0 {
+  +		start = 0
+  +	}
+  +	return strings.Join(r.lines[start:], "")
+  +}
+  +83 -0
+
+backend/internal/adapters/runtime/conpty/ring_test.go
+  @@ -0,0 +1,125 @@
+  +package conpty
+  +
+  +import (
+  +	"strings"
+  +	"testing"
+  +)
+  +
+  +// TestRingAppendPartialThenComplete verifies partial-line accumulation and
+  +// that Snapshot/Tail reflect only completed lines.
+  +func TestRingAppendPartialThenComplete(t *testing.T) {
+  +	r := NewRing()
+  +	r.Append([]byte("hel"))
+  +	r.Append([]byte("lo\nwor"))
+  +
+  +	snap := string(r.Snapshot())
+  +	if snap != "hello\n" {
+  +		t.Errorf("Snapshot = %q, want %q", snap, "hello\n")
+  +	}
+  +
+  +	tail := r.Tail(10)
+  +	if tail != "hello\n" {
+  +		t.Errorf("Tail(10) = %q, want %q", tail, "hello\n")
+  +	}
+  +
+  +	// Flush the partial "wor"
+  +	r.FlushPartial()
+  +	snap = string(r.Snapshot())
+  +	if snap != "hello\nwor" {
+  +		t.Errorf("after FlushPartial Snapshot = %q, want %q", snap, "hello\nwor")
+  +	}
+  +}
+  +
+  +// TestRingExceedsMaxOutputLines verifies the buffer trims to MaxOutputLines.
+  +func TestRingExceedsMaxOutputLines(t *testing.T) {
+  +	r := NewRing()
+  +	// Push 1005 lines.
+  +	for i := 0; i < 1005; i++ {
+  +		r.Append([]byte("x\n"))
+  +	}
+  +
+  +	snap := r.Snapshot()
+  +	got := strings.Count(string(snap), "\n")
+  +	if got != MaxOutputLines {
+  +		t.Errorf("stored %d lines, want %d", got, MaxOutputLines)
+  +	}
+  +}
+  +
+  +// TestRingFlushPartialNoNewline verifies FlushPartial pushes a trailing line.
+  +func TestRingFlushPartialNoNewline(t *testing.T) {
+  +	r := NewRing()
+  +	r.Append([]byte("line1\npartial"))
+  +	r.FlushPartial()
+  +
+  +	snap := string(r.Snapshot())
+  +	if !strings.Contains(snap, "partial") {
+  +		t.Errorf("Snapshot missing 'partial': %q", snap)
+  +	}
+  +
+  +	// Calling FlushPartial again is a no-op.
+  +	r.FlushPartial()
+  +	snap2 := string(r.Snapshot())
+  +	if snap2 != snap {
+  +		t.Errorf("second FlushPartial changed snapshot: %q -> %q", snap, snap2)
+  +	}
+  +}
+  +
+  +// TestRingTailEdgeCases covers n > stored count and n <= 0.
+  +func TestRingTailEdgeCases(t *testing.T) {
+  +	r := NewRing()
+  +	r.Append([]byte("a\nb\n"))
+  +
+  +	if got := r.Tail(100); got != "a\nb\n" {
+  +		t.Errorf("Tail(100) = %q, want %q", got, "a\nb\n")
+  +	}
+  +	if got := r.Tail(0); got != "" {
+  +		t.Errorf("Tail(0) = %q, want empty", got)
+  +	}
+  +	if got := r.Tail(-1); got != "" {
+  +		t.Errorf("Tail(-1) = %q, want empty", got)
+  +	}
+  +}
+  +
+  +// TestRingANSIRoundTrip verifies raw ANSI escape sequences survive storage intact.
+  +func TestRingANSIRoundTrip(t *testing.T) {
+  +	ansi := "\x1b[31mhi\x1b[0m\n"
+  +	r := NewRing()
+  +	r.Append([]byte(ansi))
+  +
+  +	snap := string(r.Snapshot())
+  +	if snap != ansi {
+  +		t.Errorf("Snapshot = %q, want %q", snap, ansi)
+  +	}
+  +	tail := r.Tail(1)
+  +	if tail != ansi {
+  +		t.Errorf("Tail(1) = %q, want %q", tail, ansi)
+  +	}
+  +}
+  +
+  +// TestRingTailSubset verifies Tail returns exactly the last n lines.
+  +func TestRingTailSubset(t *testing.T) {
+  ... (25 lines truncated)
+  +125 -0
+[full diff: rtk git diff --no-compact]

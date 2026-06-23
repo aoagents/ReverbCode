@@ -1,0 +1,2380 @@
+=== COMMITS ===
+4b21e4b chore: tidy runtime-neutral comments and doctor import grouping
+b459abf feat(runtime): wire tmux on Darwin/Linux via runtimeselect, keep zell...
+44c3e61 fix(tmux): address four code-review findings in tmux runtime adapter
+bc23964 feat(runtime): add tmux adapter package
+
+=== STAT (excluding sdd scratch) ===
+.../runtime/runtimeselect/runtimeselect.go         |  46 ++
+ backend/internal/adapters/runtime/tmux/commands.go |  64 +++
+ backend/internal/adapters/runtime/tmux/tmux.go     | 482 ++++++++++++++++
+ .../adapters/runtime/tmux/tmux_integration_test.go | 143 +++++
+ .../internal/adapters/runtime/tmux/tmux_test.go    | 616 +++++++++++++++++++++
+ backend/internal/cli/doctor.go                     |  30 +-
+ backend/internal/cli/doctor_test.go                |  38 +-
+ backend/internal/cli/spawn.go                      |  21 +-
+ backend/internal/daemon/daemon.go                  |  24 +-
+ backend/internal/daemon/lifecycle_wiring.go        |   6 +-
+ backend/internal/daemon/wiring_test.go             |   7 +-
+ 11 files changed, 1427 insertions(+), 50 deletions(-)
+
+=== DIFF (backend only) ===
+.../runtime/runtimeselect/runtimeselect.go         |  46 ++
+ backend/internal/adapters/runtime/tmux/commands.go |  64 +++
+ backend/internal/adapters/runtime/tmux/tmux.go     | 482 ++++++++++++++++
+ .../adapters/runtime/tmux/tmux_integration_test.go | 143 +++++
+ .../internal/adapters/runtime/tmux/tmux_test.go    | 616 +++++++++++++++++++++
+ backend/internal/cli/doctor.go                     |  30 +-
+ backend/internal/cli/doctor_test.go                |  38 +-
+ backend/internal/cli/spawn.go                      |  21 +-
+ backend/internal/daemon/daemon.go                  |  24 +-
+ backend/internal/daemon/lifecycle_wiring.go        |   6 +-
+ backend/internal/daemon/wiring_test.go             |   7 +-
+ 11 files changed, 1427 insertions(+), 50 deletions(-)
+
+diff --git a/backend/internal/adapters/runtime/runtimeselect/runtimeselect.go b/backend/internal/adapters/runtime/runtimeselect/runtimeselect.go
+new file mode 100644
+index 0000000..e6ca4a0
+--- /dev/null
++++ b/backend/internal/adapters/runtime/runtimeselect/runtimeselect.go
+@@ -0,0 +1,46 @@
++// Package runtimeselect picks the correct runtime backend by platform:
++// tmux on Darwin/Linux, zellij on Windows (interim; ConPTY adapter is a later phase).
++package runtimeselect
++
++import (
++	"context"
++	"log/slog"
++	"os"
++	"runtime"
++
++	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/tmux"
++	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/zellij"
++	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
++)
++
++// Runtime is the union interface that both tmux and zellij satisfy.
++// It extends ports.Runtime (Create/Destroy/IsAlive) with the additional methods
++// the daemon wires directly.
++type Runtime interface {
++	ports.Runtime // Create, Destroy, IsAlive
++	SendMessage(ctx context.Context, handle ports.RuntimeHandle, message string) error
++	GetOutput(ctx context.Context, handle ports.RuntimeHandle, lines int) (string, error)
++	AttachCommand(handle ports.RuntimeHandle) (argv []string, env []string, err error)
++}
++
++// Compile-time assertions: both adapters must implement the union interface.
++var _ Runtime = (*tmux.Runtime)(nil)
++var _ Runtime = (*zellij.Runtime)(nil)
++
++// New returns the per-platform runtime: tmux on Darwin/Linux, zellij on Windows.
++// log is used only for the Windows zellij socket-dir warning; nil is safe.
++func New(log *slog.Logger) Runtime {
++	if runtime.GOOS != "windows" {
++		return tmux.New(tmux.Options{})
++	}
++	// ponytail: mirrors daemon.go's zellij socket-dir setup; Windows ConPTY replaces this in a later phase.
++	dir := zellij.DefaultSocketDir()
++	if dir != "" {
++		if err := os.MkdirAll(dir, 0o700); err != nil {
++			if log != nil {
++				log.Warn("could not create zellij socket dir; spawns may fail", "dir", dir, "error", err)
++			}
++		}
++	}
++	return zellij.New(zellij.Options{SocketDir: dir})
++}
+diff --git a/backend/internal/adapters/runtime/tmux/commands.go b/backend/internal/adapters/runtime/tmux/commands.go
+new file mode 100644
+index 0000000..1c2cf30
+--- /dev/null
++++ b/backend/internal/adapters/runtime/tmux/commands.go
+@@ -0,0 +1,64 @@
++package tmux
++
++import "fmt"
++
++// newSessionArgs builds args for `tmux new-session -d -s <id> -x 220 -y 50
++// -c <cwd> <shell> -c <launchCmd>`. The shell -c form runs the launch command
++// inside the configured shell so exported env vars and quoting work correctly.
++func newSessionArgs(id, cwd, shellPath, launchCmd string) []string {
++	return []string{
++		"new-session", "-d",
++		"-s", id,
++		"-x", "220",
++		"-y", "50",
++		"-c", cwd,
++		shellPath, "-c", launchCmd,
++	}
++}
++
++// setStatusOffArgs hides the tmux status bar for the given session.
++// set-option uses pane-targeting syntax which does not accept the `=` prefix,
++// so we pass the session name directly.
++func setStatusOffArgs(id string) []string {
++	return []string{"set-option", "-t", id, "status", "off"}
++}
++
++// killSessionArgs builds args for `tmux kill-session -t =<id>`. The `=` prefix
++// requests exact-name matching so a session "foo" does not accidentally match
++// "foobar" (tmux otherwise does unique-prefix matching).
++func killSessionArgs(id string) []string {
++	return []string{"kill-session", "-t", exactSessionTarget(id)}
++}
++
++// hasSessionArgs builds args for `tmux has-session -t =<id>`. The `=` prefix
++// requests exact-name matching (see killSessionArgs).
++func hasSessionArgs(id string) []string {
++	return []string{"has-session", "-t", exactSessionTarget(id)}
++}
++
++// exactSessionTarget wraps id in tmux's exact-match prefix `=` so session-
++// selection commands (-t) target only the session with that precise name.
++// Only kill-session and has-session support this prefix; pane-targeting
++// commands (send-keys, capture-pane, set-option) use a plain session name.
++func exactSessionTarget(id string) string {
++	return "=" + id
++}
++
++// sendKeysLiteralArgs builds args for `tmux send-keys -t <id> -l <chunk>`.
++// The -l flag stops tmux interpreting words like "Enter" as key names so the
++// text is sent verbatim.
++func sendKeysLiteralArgs(id, chunk string) []string {
++	return []string{"send-keys", "-t", id, "-l", chunk}
++}
++
++// sendEnterArgs builds args for `tmux send-keys -t <id> Enter` to submit the
++// queued input.
++func sendEnterArgs(id string) []string {
++	return []string{"send-keys", "-t", id, "Enter"}
++}
++
++// capturePaneArgs builds args for `tmux capture-pane -t <id> -p -S -<lines>`.
++// -p prints to stdout; -S -<n> starts n lines back in history.
++func capturePaneArgs(id string, lines int) []string {
++	return []string{"capture-pane", "-t", id, "-p", "-S", fmt.Sprintf("-%d", lines)}
++}
+diff --git a/backend/internal/adapters/runtime/tmux/tmux.go b/backend/internal/adapters/runtime/tmux/tmux.go
+new file mode 100644
+index 0000000..be6e2fd
+--- /dev/null
++++ b/backend/internal/adapters/runtime/tmux/tmux.go
+@@ -0,0 +1,482 @@
++// Package tmux implements ports.Runtime using tmux sessions on Darwin/Linux.
++package tmux
++
++import (
++	"context"
++	"crypto/sha256"
++	"encoding/hex"
++	"errors"
++	"fmt"
++	"os"
++	"os/exec"
++	"regexp"
++	"sort"
++	"strings"
++	"time"
++	"unicode/utf8"
++
++	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
++	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
++)
++
++const (
++	defaultTimeout    = 5 * time.Second
++	defaultChunkBytes = 16 * 1024
++)
++
++var sessionIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
++
++var getenv = os.Getenv
++
++// Options configures a tmux Runtime. Every field has a sensible default (see
++// New), so the zero value is usable.
++type Options struct {
++	Binary    string        // default "tmux" (resolved via exec.LookPath)
++	Shell     string        // default $SHELL else /bin/sh
++	Timeout   time.Duration // default 5s
++	ChunkSize int           // default 16*1024
++}
++
++// Runtime runs agent sessions inside tmux sessions, driving them via the tmux
++// CLI. It implements ports.Runtime.
++type Runtime struct {
++	binary    string
++	shell     string
++	timeout   time.Duration
++	chunkSize int
++	runner    runner
++}
++
++var _ ports.Runtime = (*Runtime)(nil)
++
++type runner interface {
++	Run(ctx context.Context, env []string, name string, args ...string) ([]byte, error)
++	Start(env []string, name string, args ...string) error
++}
++
++type execRunner struct{}
++
++func (execRunner) Run(ctx context.Context, env []string, name string, args ...string) ([]byte, error) {
++	cmd := exec.CommandContext(ctx, name, args...)
++	cmd.Env = append(append([]string(nil), os.Environ()...), env...)
++	return cmd.CombinedOutput()
++}
++
++func (execRunner) Start(env []string, name string, args ...string) error {
++	cmd := exec.Command(name, args...)
++	cmd.Env = append(append([]string(nil), os.Environ()...), env...)
++	return cmd.Start()
++}
++
++// New builds a tmux Runtime, filling unset Options with defaults: binary "tmux"
++// (resolved via exec.LookPath), shell from $SHELL (else /bin/sh), and the
++// default timeout and output chunk size.
++func New(opts Options) *Runtime {
++	binary := opts.Binary
++	if binary == "" {
++		if path, err := exec.LookPath("tmux"); err == nil {
++			binary = path
++		} else {
++			binary = "tmux"
++		}
++	}
++	timeout := opts.Timeout
++	if timeout == 0 {
++		timeout = defaultTimeout
++	}
++	shellPath := opts.Shell
++	if shellPath == "" {
++		shellPath = getenv("SHELL")
++	}
++	if shellPath == "" {
++		shellPath = "/bin/sh"
++	}
++	chunkSize := opts.ChunkSize
++	if chunkSize <= 0 {
++		chunkSize = defaultChunkBytes
++	}
++	return &Runtime{
++		binary:    binary,
++		shell:     shellPath,
++		timeout:   timeout,
++		chunkSize: chunkSize,
++		runner:    execRunner{},
++	}
++}
++
++// Create starts a new tmux session in the workspace, running the agent's
++// launch command with a keep-alive shell, and returns a handle to it.
++func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
++	id, err := tmuxSessionName(cfg.SessionID)
++	if err != nil {
++		return ports.RuntimeHandle{}, err
++	}
++	if cfg.WorkspacePath == "" {
++		return ports.RuntimeHandle{}, errors.New("tmux runtime: workspace path is required")
++	}
++	if len(cfg.Argv) == 0 {
++		return ports.RuntimeHandle{}, errors.New("tmux runtime: launch command is required")
++	}
++	if err := validateEnvKeys(cfg.Env); err != nil {
++		return ports.RuntimeHandle{}, err
++	}
++
++	launchCmd := buildLaunchCommand(cfg, r.shell)
++	args := newSessionArgs(id, cfg.WorkspacePath, r.shell, launchCmd)
++	if _, err := r.run(ctx, args...); err != nil {
++		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: create session %s: %w", id, err)
++	}
++
++	// Hide the status bar in the embedded terminal: it clutters the view and
++	// was not designed for the in-browser display context.
++	if _, err := r.run(ctx, setStatusOffArgs(id)...); err != nil {
++		_ = r.Destroy(context.Background(), ports.RuntimeHandle{ID: id})
++		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: set status %s: %w", id, err)
++	}
++
++	handle := ports.RuntimeHandle{ID: id}
++	alive, err := r.IsAlive(ctx, handle)
++	if err != nil {
++		_ = r.Destroy(context.Background(), handle)
++		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: verify session %s: %w", id, err)
++	}
++	if !alive {
++		_ = r.Destroy(context.Background(), handle)
++		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: session %s exited before ready", id)
++	}
++	return handle, nil
++}
++
++// Destroy kills the handle's tmux session. An already-gone session is treated
++// as success (idempotent).
++func (r *Runtime) Destroy(ctx context.Context, handle ports.RuntimeHandle) error {
++	id, err := handleID(handle)
++	if err != nil {
++		return err
++	}
++	out, err := r.run(ctx, killSessionArgs(id)...)
++	if err != nil {
++		var exitErr *exec.ExitError
++		if errors.As(err, &exitErr) && killSessionMissingOutput(string(out)) {
++			return nil
++		}
++		return fmt.Errorf("tmux runtime: destroy session %s: %w", id, err)
++	}
++	return nil
++}
++
++// IsAlive reports whether the handle's session still exists via `tmux
++// has-session`. Exit 0 means alive. A non-zero exit with output indicating the
++// session or server is missing is a definitive false, nil. Any other non-zero
++// exit is a probe error (not proof of death) so callers (the reaper feeding
++// the LCM) treat it as a failed probe and never kill a session on a transient
++// error.
++func (r *Runtime) IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool, error) {
++	id, err := handleID(handle)
++	if err != nil {
++		return false, err
++	}
++	out, err := r.run(ctx, hasSessionArgs(id)...)
++	if err != nil {
++		var exitErr *exec.ExitError
++		if errors.As(err, &exitErr) && sessionMissingOutput(string(out)) {
++			return false, nil
++		}
++		return false, fmt.Errorf("tmux runtime: probe session %s: %w", id, err)
++	}
++	return true, nil
++}
++
++// SendMessage sends literal text to the session (chunked via send-keys -l) then
++// presses Enter to submit.
++//
++// ponytail: send-keys -l chunked is simpler than load-buffer/paste-buffer; the
++// ceiling is very large messages may be slower, but chunk size defaults to 16 KB
++// which is ample for agent prompts.
++func (r *Runtime) SendMessage(ctx context.Context, handle ports.RuntimeHandle, message string) error {
++	id, err := handleID(handle)
++	if err != nil {
++		return err
++	}
++	for _, chunk := range chunks(message, r.chunkSize) {
++		if _, err := r.run(ctx, sendKeysLiteralArgs(id, chunk)...); err != nil {
++			return fmt.Errorf("tmux runtime: send message %s: %w", id, err)
++		}
++	}
++	if _, err := r.run(ctx, sendEnterArgs(id)...); err != nil {
++		return fmt.Errorf("tmux runtime: send enter %s: %w", id, err)
++	}
++	return nil
++}
++
++// GetOutput returns the last `lines` lines of the session pane's captured
++// output.
++func (r *Runtime) GetOutput(ctx context.Context, handle ports.RuntimeHandle, lines int) (string, error) {
++	id, err := handleID(handle)
++	if err != nil {
++		return "", err
++	}
++	if lines <= 0 {
++		return "", errors.New("tmux runtime: lines must be positive")
++	}
++	out, err := r.run(ctx, capturePaneArgs(id, lines)...)
++	if err != nil {
++		return "", fmt.Errorf("tmux runtime: capture output %s: %w", id, err)
++	}
++	return tailLines(trimTrailingBlankLines(string(out)), lines), nil
++}
++
++// AttachCommand returns the argv a human runs to attach their terminal to the
++// session. No per-session env block is needed for tmux (unlike zellij's Windows
++// ConPTY path), so env is always nil.
++func (r *Runtime) AttachCommand(handle ports.RuntimeHandle) ([]string, []string, error) {
++	id, err := handleID(handle)
++	if err != nil {
++		return nil, nil, err
++	}
++	return []string{r.binary, "attach-session", "-t", id}, nil, nil
++}
++
++// run wraps runner.Run with a per-call timeout context.
++func (r *Runtime) run(ctx context.Context, args ...string) ([]byte, error) {
++	cmdCtx, cancel := context.WithTimeout(ctx, r.timeout)
++	defer cancel()
++	out, err := r.runner.Run(cmdCtx, nil, r.binary, args...)
++	if cmdCtx.Err() != nil {
++		return out, cmdCtx.Err()
++	}
++	if err != nil {
++		return out, commandError{err: err, output: strings.TrimSpace(string(out))}
++	}
++	return out, nil
++}
++
++// -- session name helpers --
++
++func tmuxSessionName(id domain.SessionID) (string, error) {
++	raw := string(id)
++	if raw == "" {
++		return "", errors.New("tmux runtime: session id is required")
++	}
++	return SessionName(raw), nil
++}
++
++// SessionName returns the tmux session name the runtime registers for a given
++// session id, applying the same sanitisation Create does. Callers that print an
++// attach hint must use this rather than the raw id.
++func SessionName(id string) string {
++	if sessionIDPattern.MatchString(id) && len(id) <= 48 {
++		return id
++	}
++	return sanitizedSessionName(id)
++}
++
++func sanitizedSessionName(raw string) string {
++	var b strings.Builder
++	lastDash := false
++	for _, r := range raw {
++		valid := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-'
++		if valid {
++			b.WriteRune(r)
++			lastDash = false
++			continue
++		}
++		if !lastDash {
++			b.WriteByte('-')
++			lastDash = true
++		}
++	}
++	base := strings.Trim(b.String(), "-")
++	if base == "" {
++		base = "session"
++	}
++	if len(base) > 32 {
++		base = strings.TrimRight(base[:32], "-")
++	}
++	sum := sha256.Sum256([]byte(raw))
++	return base + "-" + hex.EncodeToString(sum[:4])
++}
++
++func handleID(handle ports.RuntimeHandle) (string, error) {
++	id := handle.ID
++	if id == "" {
++		return "", errors.New("tmux runtime: session id is required")
++	}
++	if !sessionIDPattern.MatchString(id) {
++		return "", fmt.Errorf("tmux runtime: invalid handle id %q", id)
++	}
++	return id, nil
++}
++
++// -- output detection helpers --
++
++// sessionMissingOutput reports whether a non-zero `tmux has-session` or
++// `tmux kill-session` exit is definitively "session does not exist" rather
++// than a transient probe failure.
++func sessionMissingOutput(out string) bool {
++	s := strings.ToLower(out)
++	return strings.Contains(s, "can't find session") ||
++		strings.Contains(s, "no server running") ||
++		strings.Contains(s, "error connecting") ||
++		strings.Contains(s, "session not found")
++}
++
++// killSessionMissingOutput reports whether a non-zero `tmux kill-session`
++// failed because the session was already gone.
++func killSessionMissingOutput(out string) bool {
++	return sessionMissingOutput(out)
++}
++
++// -- text helpers (ported from zellij) --
++
++func chunks(s string, maxBytes int) []string {
++	if s == "" {
++		return []string{""}
++	}
++	if maxBytes <= 0 || len(s) <= maxBytes {
++		return []string{s}
++	}
++	parts := []string{}
++	for s != "" {
++		if len(s) <= maxBytes {
++			parts = append(parts, s)
++			break
++		}
++		end := maxBytes
++		for end > 0 && !utf8.ValidString(s[:end]) {
++			end--
++		}
++		if end == 0 {
++			_, size := utf8.DecodeRuneInString(s)
++			end = size
++		}
++		parts = append(parts, s[:end])
++		s = s[end:]
++	}
++	return parts
++}
++
++func tailLines(s string, n int) string {
++	if n <= 0 || s == "" {
++		return ""
++	}
++	lines := strings.SplitAfter(s, "\n")
++	if lines[len(lines)-1] == "" {
++		lines = lines[:len(lines)-1]
++	}
++	if len(lines) <= n {
++		return s
++	}
++	return strings.Join(lines[len(lines)-n:], "")
++}
++
++func trimTrailingBlankLines(s string) string {
++	if s == "" {
++		return ""
++	}
++	lines := strings.SplitAfter(s, "\n")
++	if lines[len(lines)-1] == "" {
++		lines = lines[:len(lines)-1]
++	}
++	for len(lines) > 0 && strings.TrimRight(lines[len(lines)-1], "\r\n") == "" {
++		lines = lines[:len(lines)-1]
++	}
++	return strings.Join(lines, "")
++}
++
++// -- env / quoting helpers --
++
++func validateEnvKeys(env map[string]string) error {
++	for key := range env {
++		if !validEnvKey(key) {
++			return fmt.Errorf("tmux runtime: invalid env key %q", key)
++		}
++	}
++	return nil
++}
++
++func validEnvKey(key string) bool {
++	if key == "" {
++		return false
++	}
++	for i, r := range key {
++		if r == '_' || (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') {
++			continue
++		}
++		if i > 0 && r >= '0' && r <= '9' {
++			continue
++		}
++		return false
++	}
++	return true
++}
++
++func sortedKeys(m map[string]string) []string {
++	keys := make([]string, 0, len(m))
++	for k := range m {
++		keys = append(keys, k)
++	}
++	sort.Strings(keys)
++	return keys
++}
++
++func shellQuote(s string) string {
++	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
++}
++
++// buildLaunchCommand builds the shell command string passed to `sh -c` (or the
++// configured shell). It exports env vars, then runs argv, then execs a
++// keep-alive interactive shell so the tmux session survives the agent exiting.
++//
++// ponytail: PATH handling matches the zellij unix path: PATH from cfg.Env is
++// exported last, after all other keys, so an explicit override takes effect.
++func buildLaunchCommand(cfg ports.RuntimeConfig, shellPath string) string {
++	path := cfg.Env["PATH"]
++	if path == "" {
++		path = getenv("PATH")
++	}
++
++	var b strings.Builder
++	for _, key := range sortedKeys(cfg.Env) {
++		if key == "PATH" {
++			continue
++		}
++		b.WriteString("export ")
++		b.WriteString(key)
++		b.WriteString("=")
++		b.WriteString(shellQuote(cfg.Env[key]))
++		b.WriteString("; ")
++	}
++	if path != "" {
++		b.WriteString("export PATH=")
++		b.WriteString(shellQuote(path))
++		b.WriteString("; ")
++	}
++	// Quote each argv word so spaces inside a word are preserved.
++	parts := make([]string, len(cfg.Argv))
++	for i, a := range cfg.Argv {
++		parts[i] = shellQuote(a)
++	}
++	b.WriteString(strings.Join(parts, " "))
++	// Keep the tmux session alive after the agent exits so the operator can
++	// inspect the terminal. The shell variable expansion picks up $SHELL from
++	// the process env if set, otherwise falls back to /bin/sh.
++	b.WriteString(`; exec "${SHELL:-/bin/sh}" -i`)
++	return b.String()
++}
++
++// -- error type --
++
++type commandError struct {
++	err    error
++	output string
++}
++
++func (e commandError) Error() string {
++	if e.output == "" {
++		return e.err.Error()
++	}
++	return e.err.Error() + ": " + e.output
++}
++
++func (e commandError) Unwrap() error { return e.err }
+diff --git a/backend/internal/adapters/runtime/tmux/tmux_integration_test.go b/backend/internal/adapters/runtime/tmux/tmux_integration_test.go
+new file mode 100644
+index 0000000..1f491f8
+--- /dev/null
++++ b/backend/internal/adapters/runtime/tmux/tmux_integration_test.go
+@@ -0,0 +1,143 @@
++package tmux
++
++import (
++	"context"
++	"os/exec"
++	"strings"
++	"testing"
++	"time"
++
++	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
++	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
++)
++
++func TestRuntimeIntegration(t *testing.T) {
++	if _, err := exec.LookPath("tmux"); err != nil {
++		t.Skip("tmux unavailable")
++	}
++
++	ctx := context.Background()
++	id := strings.ReplaceAll(t.Name(), "/", "_")
++	r := New(Options{Timeout: 5 * time.Second})
++
++	// Ensure clean slate: ignore errors (session may not exist).
++	_ = r.Destroy(ctx, ports.RuntimeHandle{ID: id})
++
++	t.Cleanup(func() {
++		// Always destroy so a test failure never leaks a tmux session.
++		_ = r.Destroy(context.Background(), ports.RuntimeHandle{ID: id})
++	})
++
++	h, err := r.Create(ctx, ports.RuntimeConfig{
++		SessionID:     domain.SessionID(id),
++		WorkspacePath: t.TempDir(),
++		// Run a trivial command then drop into an interactive shell (the keep-alive
++		// exec is added by buildLaunchCommand, but we also verify here that output
++		// appears).
++		Argv: []string{"sh", "-c", "echo hello-from-tmux"},
++		Env:  map[string]string{"AO_SESSION_ID": id},
++	})
++	if err != nil {
++		t.Fatalf("Create: %v", err)
++	}
++
++	alive, err := r.IsAlive(ctx, h)
++	if err != nil {
++		t.Fatalf("IsAlive: %v", err)
++	}
++	if !alive {
++		t.Fatal("alive = false, want true after create")
++	}
++
++	// Wait for the echo output to appear (the session may take a moment to
++	// write it to the pane history).
++	out := waitForOutput(t, r, h, "hello-from-tmux", 5*time.Second)
++	if !strings.Contains(out, "hello-from-tmux") {
++		t.Fatalf("output = %q, want hello-from-tmux", out)
++	}
++
++	// Send a command and verify it echoes back.
++	if err := r.SendMessage(ctx, h, "echo hello-send"); err != nil {
++		t.Fatalf("SendMessage: %v", err)
++	}
++	out = waitForOutput(t, r, h, "hello-send", 5*time.Second)
++	if !strings.Contains(out, "hello-send") {
++		t.Fatalf("output after SendMessage = %q, want hello-send", out)
++	}
++
++	// Destroy and verify liveness goes false.
++	if err := r.Destroy(ctx, h); err != nil {
++		t.Fatalf("Destroy: %v", err)
++	}
++	alive, err = r.IsAlive(ctx, h)
++	if err != nil {
++		t.Fatalf("IsAlive after destroy: %v", err)
++	}
++	if alive {
++		t.Fatal("alive after destroy = true, want false")
++	}
++}
++
++// TestRuntimeIntegrationExactSessionParsing verifies that IsAlive uses exact
++// session matching and does not treat a prefix as a live session.
++func TestRuntimeIntegrationExactSessionParsing(t *testing.T) {
++	if _, err := exec.LookPath("tmux"); err != nil {
++		t.Skip("tmux unavailable")
++	}
++
++	ctx := context.Background()
++	base := strings.ReplaceAll(t.Name(), "/", "_")
++	longID := base + "_long"
++	prefixID := base
++
++	r := New(Options{Timeout: 5 * time.Second})
++	_ = r.Destroy(ctx, ports.RuntimeHandle{ID: longID})
++	_ = r.Destroy(ctx, ports.RuntimeHandle{ID: prefixID})
++
++	t.Cleanup(func() {
++		_ = r.Destroy(context.Background(), ports.RuntimeHandle{ID: longID})
++		_ = r.Destroy(context.Background(), ports.RuntimeHandle{ID: prefixID})
++	})
++
++	h, err := r.Create(ctx, ports.RuntimeConfig{
++		SessionID:     domain.SessionID(longID),
++		WorkspacePath: t.TempDir(),
++		Argv:          []string{"sh", "-c", "echo ready"},
++	})
++	if err != nil {
++		t.Fatalf("Create: %v", err)
++	}
++
++	// tmux has-session -t <prefix> should NOT match <longID> because tmux
++	// requires the exact session name when using -t with a plain string (not a
++	// glob). Verify by probing the prefix handle directly.
++	prefixAlive, err := r.IsAlive(ctx, ports.RuntimeHandle{ID: prefixID})
++	if err != nil {
++		// tmux may return an error (session not found) rather than exit 0.
++		// That is acceptable here: the point is the prefix must not be alive.
++		t.Logf("IsAlive prefix returned error (acceptable): %v", err)
++	}
++	if prefixAlive {
++		_ = r.Destroy(ctx, h)
++		t.Fatal("prefix handle reported alive; tmux session matching is not exact")
++	}
++}
++
++// waitForOutput polls GetOutput until out contains want or the deadline passes.
++func waitForOutput(t *testing.T, r *Runtime, h ports.RuntimeHandle, want string, deadline time.Duration) string {
++	t.Helper()
++	end := time.Now().Add(deadline)
++	var out string
++	for time.Now().Before(end) {
++		var err error
++		out, err = r.GetOutput(context.Background(), h, 50)
++		if err != nil {
++			t.Fatalf("GetOutput: %v", err)
++		}
++		if strings.Contains(out, want) {
++			return out
++		}
++		time.Sleep(100 * time.Millisecond)
++	}
++	return out
++}
+diff --git a/backend/internal/adapters/runtime/tmux/tmux_test.go b/backend/internal/adapters/runtime/tmux/tmux_test.go
+new file mode 100644
+index 0000000..72b165b
+--- /dev/null
++++ b/backend/internal/adapters/runtime/tmux/tmux_test.go
+@@ -0,0 +1,616 @@
++package tmux
++
++import (
++	"context"
++	"errors"
++	"os/exec"
++	"reflect"
++	"strings"
++	"testing"
++	"time"
++
++	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
++	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
++)
++
++// -- fakeRunner test seam (mirrors zellij_test.go exactly) --
++
++type fakeRunner struct {
++	calls   []runnerCall
++	outputs [][]byte
++	err     error
++}
++
++type runnerCall struct {
++	env  []string
++	name string
++	args []string
++}
++
++func (f *fakeRunner) Run(_ context.Context, env []string, name string, args ...string) ([]byte, error) {
++	f.calls = append(f.calls, runnerCall{env: append([]string(nil), env...), name: name, args: append([]string(nil), args...)})
++	var out []byte
++	if len(f.outputs) > 0 {
++		out = f.outputs[0]
++		f.outputs = f.outputs[1:]
++	}
++	if f.err != nil {
++		return out, f.err
++	}
++	return out, nil
++}
++
++func (f *fakeRunner) Start(env []string, name string, args ...string) error {
++	f.calls = append(f.calls, runnerCall{env: append([]string(nil), env...), name: name, args: append([]string(nil), args...)})
++	if len(f.outputs) > 0 {
++		f.outputs = f.outputs[1:]
++	}
++	return f.err
++}
++
++// -- helpers --
++
++func newTestRuntime(chunkSize int) (*Runtime, *fakeRunner) {
++	fr := &fakeRunner{}
++	r := New(Options{Binary: "tmux-test", Timeout: time.Second, Shell: "/bin/sh", ChunkSize: chunkSize})
++	r.runner = fr
++	return r, fr
++}
++
++// -- Options / New tests --
++
++func TestNewDefaultsToPortableShell(t *testing.T) {
++	t.Setenv("SHELL", "")
++	r := New(Options{})
++	if got := r.shell; got != "/bin/sh" {
++		t.Fatalf("default shell = %q, want /bin/sh", got)
++	}
++}
++
++func TestNewPicksUpShellFromEnv(t *testing.T) {
++	t.Setenv("SHELL", "/bin/zsh")
++	r := New(Options{})
++	if got := r.shell; got != "/bin/zsh" {
++		t.Fatalf("shell = %q, want /bin/zsh", got)
++	}
++}
++
++// -- command builder tests --
++
++func TestCommandBuilders(t *testing.T) {
++	if got, want := newSessionArgs("sess-1", "/tmp/ws", "/bin/sh", `echo hi; exec "${SHELL:-/bin/sh}" -i`),
++		[]string{"new-session", "-d", "-s", "sess-1", "-x", "220", "-y", "50", "-c", "/tmp/ws", "/bin/sh", "-c", `echo hi; exec "${SHELL:-/bin/sh}" -i`}; !reflect.DeepEqual(got, want) {
++		t.Fatalf("newSessionArgs = %#v, want %#v", got, want)
++	}
++	// set-option uses pane-targeting (no = prefix).
++	if got, want := setStatusOffArgs("sess-1"), []string{"set-option", "-t", "sess-1", "status", "off"}; !reflect.DeepEqual(got, want) {
++		t.Fatalf("setStatusOffArgs = %#v, want %#v", got, want)
++	}
++	// kill-session and has-session use exact-match prefix =.
++	if got, want := killSessionArgs("sess-1"), []string{"kill-session", "-t", "=sess-1"}; !reflect.DeepEqual(got, want) {
++		t.Fatalf("killSessionArgs = %#v, want %#v", got, want)
++	}
++	if got, want := hasSessionArgs("sess-1"), []string{"has-session", "-t", "=sess-1"}; !reflect.DeepEqual(got, want) {
++		t.Fatalf("hasSessionArgs = %#v, want %#v", got, want)
++	}
++	if got, want := sendKeysLiteralArgs("sess-1", "hello"), []string{"send-keys", "-t", "sess-1", "-l", "hello"}; !reflect.DeepEqual(got, want) {
++		t.Fatalf("sendKeysLiteralArgs = %#v, want %#v", got, want)
++	}
++	if got, want := sendEnterArgs("sess-1"), []string{"send-keys", "-t", "sess-1", "Enter"}; !reflect.DeepEqual(got, want) {
++		t.Fatalf("sendEnterArgs = %#v, want %#v", got, want)
++	}
++	if got, want := capturePaneArgs("sess-1", 10), []string{"capture-pane", "-t", "sess-1", "-p", "-S", "-10"}; !reflect.DeepEqual(got, want) {
++		t.Fatalf("capturePaneArgs = %#v, want %#v", got, want)
++	}
++}
++
++// -- session name sanitization --
++
++func TestSessionNameSanitizesSpecialChars(t *testing.T) {
++	got, err := tmuxSessionName("repo/issue#42.1")
++	if err != nil {
++		t.Fatalf("tmuxSessionName: %v", err)
++	}
++	if !sessionIDPattern.MatchString(got) {
++		t.Fatalf("sanitized id %q fails pattern", got)
++	}
++	if !strings.HasPrefix(got, "repo-issue-42-1-") {
++		t.Fatalf("sanitized id = %q, want readable prefix", got)
++	}
++	if got == "repo/issue#42.1" {
++		t.Fatal("sanitized id still contains raw unsafe characters")
++	}
++}
++
++func TestSessionNamePassesThroughShortConforming(t *testing.T) {
++	if got := SessionName("myproj-1"); got != "myproj-1" {
++		t.Fatalf("SessionName = %q, want unchanged", got)
++	}
++}
++
++func TestSessionNameMatchesCreateNaming(t *testing.T) {
++	long := domain.SessionID(strings.Repeat("x", 60) + "-1")
++	viaCreate, err := tmuxSessionName(long)
++	if err != nil {
++		t.Fatalf("tmuxSessionName: %v", err)
++	}
++	if got := SessionName(string(long)); got != viaCreate {
++		t.Fatalf("SessionName = %q, but Create uses %q", got, viaCreate)
++	}
++	if SessionName(string(long)) == string(long) {
++		t.Fatal("expected long id to be sanitised to a different name")
++	}
++}
++
++// -- env key validation --
++
++func TestCreateRejectsInvalidEnvKeys(t *testing.T) {
++	r, fr := newTestRuntime(0)
++	_ = fr
++	_, err := r.Create(context.Background(), ports.RuntimeConfig{
++		SessionID:     "sess-1",
++		WorkspacePath: "/tmp/ws",
++		Argv:          []string{"echo", "hi"},
++		Env:           map[string]string{"BAD KEY": "x"},
++	})
++	if err == nil || !strings.Contains(err.Error(), "invalid env key") {
++		t.Fatalf("Create err = %v, want invalid env key", err)
++	}
++}
++
++// -- Create tests --
++
++func TestCreateIssuesNewSessionAndStatusOff(t *testing.T) {
++	// new-session output (ignored), set-option output, has-session output (exit 0 = alive)
++	r, fr := newTestRuntime(0)
++	fr.outputs = [][]byte{nil, nil, nil}
++
++	h, err := r.Create(context.Background(), ports.RuntimeConfig{
++		SessionID:     "sess-1",
++		WorkspacePath: "/tmp/ws",
++		Argv:          []string{"echo", "hi"},
++		Env:           map[string]string{"AO_SESSION_ID": "sess-1"},
++	})
++	if err != nil {
++		t.Fatalf("Create: %v", err)
++	}
++	if h.ID != "sess-1" {
++		t.Fatalf("handle ID = %q, want sess-1", h.ID)
++	}
++	// Expect 3 calls: new-session, set-option, has-session.
++	if len(fr.calls) != 3 {
++		t.Fatalf("calls = %d, want 3", len(fr.calls))
++	}
++
++	// Call 0: new-session
++	if got := fr.calls[0].args[0]; got != "new-session" {
++		t.Fatalf("call[0] = %q, want new-session", got)
++	}
++	// Check -s <id>, -c <cwd> are present.
++	joined := strings.Join(fr.calls[0].args, " ")
++	if !strings.Contains(joined, "-s sess-1") {
++		t.Fatalf("new-session args missing -s sess-1: %v", fr.calls[0].args)
++	}
++	if !strings.Contains(joined, "-c /tmp/ws") {
++		t.Fatalf("new-session args missing -c /tmp/ws: %v", fr.calls[0].args)
++	}
++	// Ensure -x and -y are set.
++	if !strings.Contains(joined, "-x 220") || !strings.Contains(joined, "-y 50") {
++		t.Fatalf("new-session args missing -x/-y: %v", fr.calls[0].args)
++	}
++
++	// Call 1: set-option status off (plain target, pane-targeting does not use =).
++	if got, want := fr.calls[1].args, setStatusOffArgs("sess-1"); !reflect.DeepEqual(got, want) {
++		t.Fatalf("call[1] = %#v, want %#v", got, want)
++	}
++
++	// Call 2: has-session (IsAlive, uses exact-match target =sess-1).
++	if got, want := fr.calls[2].args, hasSessionArgs("sess-1"); !reflect.DeepEqual(got, want) {
++		t.Fatalf("call[2] = %#v, want %#v", got, want)
++	}
++}
++
++func TestCreateLaunchCommandContainsKeepAliveShell(t *testing.T) {
++	r, fr := newTestRuntime(0)
++	fr.outputs = [][]byte{nil, nil, nil}
++
++	_, err := r.Create(context.Background(), ports.RuntimeConfig{
++		SessionID:     "sess-1",
++		WorkspacePath: "/tmp/ws",
++		Argv:          []string{"myagent", "--flag"},
++	})
++	if err != nil {
++		t.Fatalf("Create: %v", err)
++	}
++	// The launch command is the last argument to new-session (after shellPath -c).
++	args := fr.calls[0].args
++	launchCmd := args[len(args)-1]
++	if !strings.Contains(launchCmd, `exec "${SHELL:-/bin/sh}" -i`) {
++		t.Fatalf("launch command missing keep-alive shell: %q", launchCmd)
++	}
++	if !strings.Contains(launchCmd, "'myagent'") {
++		t.Fatalf("launch command missing quoted argv: %q", launchCmd)
++	}
++}
++
++func TestCreateLaunchCommandExportsEnvVars(t *testing.T) {
++	oldGetenv := getenv
++	getenv = func(key string) string {
++		if key == "PATH" {
++			return "/usr/bin:/bin"
++		}
++		return ""
++	}
++	defer func() { getenv = oldGetenv }()
++
++	r, fr := newTestRuntime(0)
++	fr.outputs = [][]byte{nil, nil, nil}
++
++	_, err := r.Create(context.Background(), ports.RuntimeConfig{
++		SessionID:     "sess-1",
++		WorkspacePath: "/tmp/ws",
++		Argv:          []string{"myagent"},
++		Env: map[string]string{
++			"AO_SESSION_ID": "sess-1",
++			"ODD":           "can't",
++			"PATH":          "/custom/bin:/usr/bin",
++		},
++	})
++	if err != nil {
++		t.Fatalf("Create: %v", err)
++	}
++	args := fr.calls[0].args
++	launchCmd := args[len(args)-1]
++	for _, want := range []string{
++		"export AO_SESSION_ID='sess-1';",
++		"export ODD='can'\\''t';",
++		"export PATH='/custom/bin:/usr/bin';",
++	} {
++		if !strings.Contains(launchCmd, want) {
++			t.Fatalf("launch command missing %q in: %q", want, launchCmd)
++		}
++	}
++}
++
++func TestCreateDestroysAndReturnsErrorWhenNotAlive(t *testing.T) {
++	// Use a specialized fakeRunner that returns an exit error only for the 3rd call.
++	r2, _ := newTestRuntime(0)
++	fr3 := &fakeRunnerSelectiveErr{exitErrAt: 2}
++	fr3.outputs = [][]byte{nil, nil, []byte("can't find session: sess-1")}
++	r2.runner = fr3
++
++	_, err := r2.Create(context.Background(), ports.RuntimeConfig{
++		SessionID:     "sess-1",
++		WorkspacePath: "/tmp/ws",
++		Argv:          []string{"myagent"},
++	})
++	if err == nil {
++		t.Fatal("Create: got nil, want error when session not alive after create")
++	}
++	// Verify Destroy was called (kill-session).
++	hasKill := false
++	for _, c := range fr3.calls {
++		if len(c.args) > 0 && c.args[0] == "kill-session" {
++			hasKill = true
++		}
++	}
++	if !hasKill {
++		t.Fatal("expected kill-session cleanup call when session not alive")
++	}
++}
++
++// fakeRunnerSelectiveErr returns an exec.ExitError for the call at index exitErrAt.
++type fakeRunnerSelectiveErr struct {
++	calls     []runnerCall
++	outputs   [][]byte
++	exitErrAt int
++}
++
++func (f *fakeRunnerSelectiveErr) Run(_ context.Context, env []string, name string, args ...string) ([]byte, error) {
++	idx := len(f.calls)
++	f.calls = append(f.calls, runnerCall{env: append([]string(nil), env...), name: name, args: append([]string(nil), args...)})
++	var out []byte
++	if len(f.outputs) > 0 {
++		out = f.outputs[0]
++		f.outputs = f.outputs[1:]
++	}
++	if idx == f.exitErrAt {
++		return out, &exec.ExitError{}
++	}
++	return out, nil
++}
++
++func (f *fakeRunnerSelectiveErr) Start(env []string, name string, args ...string) error {
++	f.calls = append(f.calls, runnerCall{env: append([]string(nil), env...), name: name, args: append([]string(nil), args...)})
++	if len(f.outputs) > 0 {
++		f.outputs = f.outputs[1:]
++	}
++	return nil
++}
++
++// -- Destroy tests --
++
++func TestDestroyIsIdempotentWhenSessionMissing(t *testing.T) {
++	r, fr := newTestRuntime(0)
++	fr.outputs = [][]byte{[]byte("can't find session: sess-1")}
++	fr.err = &exec.ExitError{}
++
++	if err := r.Destroy(context.Background(), ports.RuntimeHandle{ID: "sess-1"}); err != nil {
++		t.Fatalf("Destroy: %v", err)
++	}
++	if len(fr.calls) != 1 || fr.calls[0].args[0] != "kill-session" {
++		t.Fatalf("calls = %#v, want only kill-session", fr.calls)
++	}
++}
++
++func TestDestroyIsIdempotentWhenNoServer(t *testing.T) {
++	r, fr := newTestRuntime(0)
++	fr.outputs = [][]byte{[]byte("no server running on /tmp/tmux-1000/default")}
++	fr.err = &exec.ExitError{}
++
++	if err := r.Destroy(context.Background(), ports.RuntimeHandle{ID: "sess-1"}); err != nil {
++		t.Fatalf("Destroy no-server: %v", err)
++	}
++}
++
++func TestDestroyReportsUnexpectedFailures(t *testing.T) {
++	r, fr := newTestRuntime(0)
++	fr.outputs = [][]byte{[]byte("permission denied")}
++	fr.err = &exec.ExitError{}
++
++	if err := r.Destroy(context.Background(), ports.RuntimeHandle{ID: "sess-1"}); err == nil {
++		t.Fatal("Destroy: got nil, want unexpected failure error")
++	}
++}
++
++func TestDestroyArgs(t *testing.T) {
++	r, fr := newTestRuntime(0)
++	fr.outputs = [][]byte{nil}
++
++	if err := r.Destroy(context.Background(), ports.RuntimeHandle{ID: "sess-1"}); err != nil {
++		t.Fatalf("Destroy: %v", err)
++	}
++	// killSessionArgs uses exact-match target =<id>.
++	if got, want := fr.calls[0].args, killSessionArgs("sess-1"); !reflect.DeepEqual(got, want) {
++		t.Fatalf("destroy args = %#v, want %#v", got, want)
++	}
++}
++
++// -- IsAlive tests --
++
++func TestIsAliveReturnsTrueOnExitZero(t *testing.T) {
++	r, fr := newTestRuntime(0)
++	fr.outputs = [][]byte{nil}
++
++	alive, err := r.IsAlive(context.Background(), ports.RuntimeHandle{ID: "sess-1"})
++	if err != nil {
++		t.Fatalf("IsAlive: %v", err)
++	}
++	if !alive {
++		t.Fatal("alive = false, want true")
++	}
++	if got, want := fr.calls[0].args, hasSessionArgs("sess-1"); !reflect.DeepEqual(got, want) {
++		t.Fatalf("has-session args = %#v, want %#v", got, want)
++	}
++}
++
++func TestIsAliveReturnsFalseNilOnCantFindSession(t *testing.T) {
++	r, fr := newTestRuntime(0)
++	fr.outputs = [][]byte{[]byte("can't find session: sess-1")}
++	fr.err = &exec.ExitError{}
++
++	alive, err := r.IsAlive(context.Background(), ports.RuntimeHandle{ID: "sess-1"})
++	if err != nil {
++		t.Fatalf("IsAlive: %v", err)
++	}
++	if alive {
++		t.Fatal("alive = true, want false")
++	}
++}
++
++func TestIsAliveReturnsFalseNilOnNoServer(t *testing.T) {
++	r, fr := newTestRuntime(0)
++	fr.outputs = [][]byte{[]byte("no server running on /tmp/tmux-1000/default")}
++	fr.err = &exec.ExitError{}
++
++	alive, err := r.IsAlive(context.Background(), ports.RuntimeHandle{ID: "sess-1"})
++	if err != nil {
++		t.Fatalf("IsAlive: %v", err)
++	}
++	if alive {
++		t.Fatal("alive = true, want false")
++	}
++}
++
++func TestIsAliveReturnsFalseNilOnErrorConnecting(t *testing.T) {
++	r, fr := newTestRuntime(0)
++	fr.outputs = [][]byte{[]byte("error connecting to /tmp/tmux-1000/default (No such file or directory)")}
++	fr.err = &exec.ExitError{}
++
++	alive, err := r.IsAlive(context.Background(), ports.RuntimeHandle{ID: "sess-1"})
++	if err != nil {
++		t.Fatalf("IsAlive error connecting: %v", err)
++	}
++	if alive {
++		t.Fatal("alive = true, want false")
++	}
++}
++
++// IsAlive must treat any non-"missing" non-zero exit as a probe error so the
++// reaper never reads a transient failure as proof of death.
++func TestIsAliveReportsOtherExitFailuresAsProbeErrors(t *testing.T) {
++	r, fr := newTestRuntime(0)
++	fr.outputs = [][]byte{[]byte("unexpected internal error")}
++	fr.err = &exec.ExitError{}
++
++	alive, err := r.IsAlive(context.Background(), ports.RuntimeHandle{ID: "sess-1"})
++	if err == nil {
++		t.Fatal("IsAlive: got nil, want probe error; failed probe must not read as dead")
++	}
++	if alive {
++		t.Fatal("alive = true on probe failure")
++	}
++}
++
++// -- SendMessage tests --
++
++func TestSendMessageChunksAndSendsEnter(t *testing.T) {
++	r, fr := newTestRuntime(5) // chunkSize=5
++	// "hello世界": hello=5 bytes, 世=3 bytes, 界=3 bytes => 3 sends + 1 Enter
++	if err := r.SendMessage(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, "hello世界"); err != nil {
++		t.Fatalf("SendMessage: %v", err)
++	}
++	if len(fr.calls) != 4 {
++		t.Fatalf("calls = %d, want 4 (3 chunks + Enter)", len(fr.calls))
++	}
++	if got, want := fr.calls[0].args, sendKeysLiteralArgs("sess-1", "hello"); !reflect.DeepEqual(got, want) {
++		t.Fatalf("chunk 1 args = %#v, want %#v", got, want)
++	}
++	if got, want := fr.calls[1].args, sendKeysLiteralArgs("sess-1", "世"); !reflect.DeepEqual(got, want) {
++		t.Fatalf("chunk 2 args = %#v, want %#v", got, want)
++	}
++	if got, want := fr.calls[2].args, sendKeysLiteralArgs("sess-1", "界"); !reflect.DeepEqual(got, want) {
++		t.Fatalf("chunk 3 args = %#v, want %#v", got, want)
++	}
++	if got, want := fr.calls[3].args, sendEnterArgs("sess-1"); !reflect.DeepEqual(got, want) {
++		t.Fatalf("Enter args = %#v, want %#v", got, want)
++	}
++}
++
++func TestSendMessageUsesLiteralFlag(t *testing.T) {
++	r, fr := newTestRuntime(0)
++	if err := r.SendMessage(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, "Enter"); err != nil {
++		t.Fatalf("SendMessage: %v", err)
++	}
++	// First call must use -l so "Enter" is sent literally, not as a key binding.
++	if fr.calls[0].args[3] != "-l" {
++		t.Fatalf("send-keys args[3] = %q, want -l", fr.calls[0].args[3])
++	}
++}
++
++// -- GetOutput tests --
++
++func TestGetOutputValidatesLines(t *testing.T) {
++	r, _ := newTestRuntime(0)
++	_, err := r.GetOutput(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, 0)
++	if err == nil {
++		t.Fatal("GetOutput lines=0: got nil, want error")
++	}
++}
++
++func TestGetOutputTrimsLines(t *testing.T) {
++	r, fr := newTestRuntime(0)
++	fr.outputs = [][]byte{[]byte("one\ntwo\nthree\n")}
++
++	out, err := r.GetOutput(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, 2)
++	if err != nil {
++		t.Fatalf("GetOutput: %v", err)
++	}
++	if out != "two\nthree\n" {
++		t.Fatalf("output = %q, want last two lines", out)
++	}
++}
++
++func TestGetOutputTrimsTrailingScreenPaddingBeforeTailing(t *testing.T) {
++	r, fr := newTestRuntime(0)
++	fr.outputs = [][]byte{[]byte("ready\nprompt> echo hi\nhi\n\n\n\n")}
++
++	out, err := r.GetOutput(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, 2)
++	if err != nil {
++		t.Fatalf("GetOutput: %v", err)
++	}
++	if out != "prompt> echo hi\nhi\n" {
++		t.Fatalf("output = %q, want last non-padding lines", out)
++	}
++}
++
++func TestGetOutputArgs(t *testing.T) {
++	r, fr := newTestRuntime(0)
++	fr.outputs = [][]byte{[]byte("output\n")}
++
++	_, err := r.GetOutput(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, 10)
++	if err != nil {
++		t.Fatalf("GetOutput: %v", err)
++	}
++	if got, want := fr.calls[0].args, capturePaneArgs("sess-1", 10); !reflect.DeepEqual(got, want) {
++		t.Fatalf("capture-pane args = %#v, want %#v", got, want)
++	}
++}
++
++// -- AttachCommand tests --
++
++func TestAttachCommandReturnsExpectedArgv(t *testing.T) {
++	r := New(Options{Binary: "/usr/bin/tmux", Timeout: time.Second})
++	argv, env, err := r.AttachCommand(ports.RuntimeHandle{ID: "sess-1"})
++	if err != nil {
++		t.Fatalf("AttachCommand: %v", err)
++	}
++	want := []string{"/usr/bin/tmux", "attach-session", "-t", "sess-1"}
++	if !reflect.DeepEqual(argv, want) {
++		t.Fatalf("argv = %#v, want %#v", argv, want)
++	}
++	if env != nil {
++		t.Fatalf("env = %#v, want nil", env)
++	}
++}
++
++func TestAttachCommandRejectsInvalidHandle(t *testing.T) {
++	r := New(Options{})
++	_, _, err := r.AttachCommand(ports.RuntimeHandle{ID: ""})
++	if err == nil {
++		t.Fatal("AttachCommand empty handle: got nil, want error")
++	}
++}
++
++// -- commandError tests --
++
++func TestCommandErrorUnwraps(t *testing.T) {
++	base := errors.New("base")
++	err := commandError{err: base, output: "details"}
++	if !errors.Is(err, base) {
++		t.Fatal("commandError should unwrap base error")
++	}
++	if !strings.Contains(err.Error(), "details") {
++		t.Fatalf("error = %q, want output details", err.Error())
++	}
++}
++
++// -- text helper tests --
++
++func TestChunks(t *testing.T) {
++	if got := chunks("", 5); !reflect.DeepEqual(got, []string{""}){
++		t.Fatalf("chunks empty = %#v", got)
++	}
++	if got := chunks("hello", 10); !reflect.DeepEqual(got, []string{"hello"}) {
++		t.Fatalf("chunks fits = %#v", got)
++	}
++	// UTF-8 boundary: 世 is 3 bytes; with chunkSize=5 "hello世界" splits at 5,6,6
++	got := chunks("hello世界", 5)
++	if len(got) != 3 {
++		t.Fatalf("chunks count = %d, want 3: %#v", len(got), got)
++	}
++	if got[0] != "hello" || got[1] != "世" || got[2] != "界" {
++		t.Fatalf("chunks = %#v, want [hello 世 界]", got)
++	}
++}
++
++func TestTailLines(t *testing.T) {
++	if got := tailLines("a\nb\nc\n", 2); got != "b\nc\n" {
++		t.Fatalf("tailLines = %q, want b/c", got)
++	}
++	if got := tailLines("a\nb\n", 5); got != "a\nb\n" {
++		t.Fatalf("tailLines fewer = %q", got)
++	}
++	if got := tailLines("", 5); got != "" {
++		t.Fatalf("tailLines empty = %q", got)
++	}
++}
++
++func TestTrimTrailingBlankLines(t *testing.T) {
++	if got := trimTrailingBlankLines("a\nb\n\n\n"); got != "a\nb\n" {
++		t.Fatalf("trimTrailingBlankLines = %q, want a/b", got)
++	}
++	if got := trimTrailingBlankLines(""); got != "" {
++		t.Fatalf("trimTrailingBlankLines empty = %q", got)
++	}
++}
+diff --git a/backend/internal/cli/doctor.go b/backend/internal/cli/doctor.go
+index 60b0e29..a52fa52 100644
+--- a/backend/internal/cli/doctor.go
++++ b/backend/internal/cli/doctor.go
+@@ -4,20 +4,21 @@ import (
+ 	"context"
+ 	"encoding/json"
+ 	"errors"
+ 	"fmt"
+ 	"io"
+ 	"io/fs"
+ 	"net/http"
+ 	"os"
+ 	"path/filepath"
+ 	"regexp"
++	"runtime"
+ 	"strconv"
+ 	"strings"
+ 	"time"
+ 
+ 	"github.com/spf13/cobra"
+ 
+ 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/codex"
+ 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/zellij"
+ 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
+ )
+@@ -161,21 +162,21 @@ func (c *commandContext) runDoctor(ctx context.Context) []doctorCheck {
+ 			msg = fmt.Sprintf("%s pid=%d port=%d", msg, st.PID, st.Port)
+ 		}
+ 		if st.Error != "" {
+ 			msg += " (" + st.Error + ")"
+ 		}
+ 		checks = append(checks, doctorCheck{Level: level, Section: doctorSectionCore, Name: "daemon", Message: msg})
+ 	}
+ 
+ 	checks = append(checks,
+ 		c.checkGit(ctx),
+-		c.checkZellij(ctx),
++		c.checkTerminalRuntime(ctx),
+ 		c.checkAOBinary(),
+ 	)
+ 	for _, harness := range doctorHarnesses {
+ 		checks = append(checks, c.checkHarness(ctx, harness))
+ 	}
+ 	checks = append(checks, c.checkCodexLaunchFlags(ctx), c.checkGitHubToken(ctx))
+ 	return checks
+ }
+ 
+ // checkStore inspects the SQLite store WITHOUT opening or migrating it. The
+@@ -283,20 +284,47 @@ func (c *commandContext) checkGit(ctx context.Context) doctorCheck {
+ 	cmp, err := compareDottedVersion(version, minGitVersion)
+ 	if err != nil {
+ 		return doctorCheck{Level: doctorWarn, Section: doctorSectionTools, Name: "git", Message: fmt.Sprintf("%s (version unknown: %s)", path, firstOutputLine(out))}
+ 	}
+ 	if cmp < 0 {
+ 		return doctorCheck{Level: doctorWarn, Section: doctorSectionTools, Name: "git", Message: fmt.Sprintf("%s (version %s; AO expects >= %s for worktrees)", path, version, minGitVersion)}
+ 	}
+ 	return doctorCheck{Level: doctorPass, Section: doctorSectionTools, Name: "git", Message: fmt.Sprintf("%s (version %s; supports worktrees)", path, version)}
+ }
+ 
++// checkTerminalRuntime checks for the runtime multiplexer used on this platform:
++// tmux on Darwin/Linux, zellij on Windows.
++func (c *commandContext) checkTerminalRuntime(ctx context.Context) doctorCheck {
++	if runtime.GOOS == "windows" {
++		return c.checkZellij(ctx)
++	}
++	return c.checkTmux(ctx)
++}
++
++func (c *commandContext) checkTmux(ctx context.Context) doctorCheck {
++	path, err := c.deps.LookPath("tmux")
++	if err != nil || path == "" {
++		return doctorCheck{Level: doctorWarn, Section: doctorSectionTools, Name: "tmux", Message: "not found in PATH"}
++	}
++	reqCtx, cancel := context.WithTimeout(ctx, probeTimeout)
++	defer cancel()
++	out, err := c.deps.CommandOutput(reqCtx, path, "-V")
++	if err != nil {
++		return doctorCheck{Level: doctorFail, Section: doctorSectionTools, Name: "tmux", Message: fmt.Sprintf("%s: %v", path, err)}
++	}
++	version := firstOutputLine(out)
++	if version == "" {
++		version = "version unknown"
++	}
++	return doctorCheck{Level: doctorPass, Section: doctorSectionTools, Name: "tmux", Message: fmt.Sprintf("%s (%s)", path, version)}
++}
++
+ func (c *commandContext) checkZellij(ctx context.Context) doctorCheck {
+ 	path, err := c.deps.LookPath("zellij")
+ 	if err != nil || path == "" {
+ 		return doctorCheck{Level: doctorWarn, Section: doctorSectionTools, Name: "zellij", Message: "not found in PATH"}
+ 	}
+ 	reqCtx, cancel := context.WithTimeout(ctx, probeTimeout)
+ 	defer cancel()
+ 	out, err := c.deps.CommandOutput(reqCtx, path, "--version")
+ 	if err != nil {
+ 		return doctorCheck{Level: doctorFail, Section: doctorSectionTools, Name: "zellij", Message: fmt.Sprintf("%s: %v", path, err)}
+diff --git a/backend/internal/cli/doctor_test.go b/backend/internal/cli/doctor_test.go
+index c1bf169..2e4acf0 100644
+--- a/backend/internal/cli/doctor_test.go
++++ b/backend/internal/cli/doctor_test.go
+@@ -45,67 +45,69 @@ func TestDoctorWarnsOnUnsupportedGitVersion(t *testing.T) {
+ func TestDoctorFailsWhenGitMissing(t *testing.T) {
+ 	setConfigEnv(t)
+ 	c := doctorContext(t, map[string]string{}, nil)
+ 
+ 	check := findDoctorCheck(t, c.runDoctor(context.Background()), "git")
+ 	if check.Level != doctorFail {
+ 		t.Fatalf("git check = %+v, want FAIL", check)
+ 	}
+ }
+ 
+-func TestDoctorChecksZellijVersion(t *testing.T) {
++func TestDoctorChecksTmuxVersion(t *testing.T) {
+ 	setConfigEnv(t)
+-	c := doctorContext(t, map[string]string{"git": "/bin/git", "zellij": "/bin/zellij"}, func(_ context.Context, name string, args ...string) ([]byte, error) {
++	c := doctorContext(t, map[string]string{"git": "/bin/git", "tmux": "/bin/tmux"}, func(_ context.Context, name string, args ...string) ([]byte, error) {
+ 		switch name {
+ 		case "/bin/git":
+ 			return []byte("git version 2.43.0\n"), nil
+-		case "/bin/zellij":
+-			if len(args) != 1 || args[0] != "--version" {
+-				t.Fatalf("unexpected zellij command: %s %v", name, args)
++		case "/bin/tmux":
++			if len(args) != 1 || args[0] != "-V" {
++				t.Fatalf("unexpected tmux command: %s %v", name, args)
+ 			}
+-			return []byte("zellij 0.44.3\n"), nil
++			return []byte("tmux 3.3a\n"), nil
+ 		default:
+ 			t.Fatalf("unexpected command: %s %v", name, args)
+ 			return nil, nil
+ 		}
+ 	})
+ 
+-	check := findDoctorCheck(t, c.runDoctor(context.Background()), "zellij")
+-	if check.Level != doctorPass || !strings.Contains(check.Message, "0.44.3") {
+-		t.Fatalf("zellij check = %+v, want PASS with version", check)
++	check := findDoctorCheck(t, c.runDoctor(context.Background()), "tmux")
++	if check.Level != doctorPass || !strings.Contains(check.Message, "3.3a") {
++		t.Fatalf("tmux check = %+v, want PASS with version", check)
+ 	}
+ }
+ 
+-func TestDoctorFailsUnsupportedZellijVersion(t *testing.T) {
++// TestDoctorChecksTmuxVersionFailsOnError covers the case where tmux is found
++// but the version command fails.
++func TestDoctorChecksTmuxVersionFailsOnError(t *testing.T) {
+ 	setConfigEnv(t)
+-	c := doctorContext(t, map[string]string{"git": "/bin/git", "zellij": "/bin/zellij"}, func(_ context.Context, name string, _ ...string) ([]byte, error) {
++	c := doctorContext(t, map[string]string{"git": "/bin/git", "tmux": "/bin/tmux"}, func(_ context.Context, name string, _ ...string) ([]byte, error) {
+ 		if name == "/bin/git" {
+ 			return []byte("git version 2.43.0\n"), nil
+ 		}
+-		return []byte("zellij 0.44.2\n"), nil
++		return nil, errors.New("exec: tmux: not found")
+ 	})
+ 
+-	check := findDoctorCheck(t, c.runDoctor(context.Background()), "zellij")
+-	if check.Level != doctorFail || !strings.Contains(check.Message, "require >= 0.44.3") {
+-		t.Fatalf("zellij check = %+v, want FAIL with minimum version", check)
++	check := findDoctorCheck(t, c.runDoctor(context.Background()), "tmux")
++	if check.Level != doctorFail {
++		t.Fatalf("tmux check = %+v, want FAIL on version error", check)
+ 	}
+ }
+ 
+-func TestDoctorWarnsWhenZellijMissing(t *testing.T) {
++func TestDoctorWarnsWhenTmuxMissing(t *testing.T) {
+ 	setConfigEnv(t)
+ 	c := doctorContext(t, map[string]string{"git": "/bin/git"}, func(context.Context, string, ...string) ([]byte, error) {
+ 		return []byte("git version 2.43.0\n"), nil
+ 	})
+ 
+-	check := findDoctorCheck(t, c.runDoctor(context.Background()), "zellij")
++	check := findDoctorCheck(t, c.runDoctor(context.Background()), "tmux")
+ 	if check.Level != doctorWarn {
+-		t.Fatalf("zellij check = %+v, want WARN", check)
++		t.Fatalf("tmux check = %+v, want WARN", check)
+ 	}
+ }
+ 
+ func TestDoctorChecksHarnessVersions(t *testing.T) {
+ 	setConfigEnv(t)
+ 	cmdPath := map[string]string{
+ 		"git":    "/bin/git",
+ 		"claude": "/bin/claude",
+ 		"codex":  "/bin/codex",
+ 	}
+diff --git a/backend/internal/cli/spawn.go b/backend/internal/cli/spawn.go
+index b5cc717..ae7bac4 100644
+--- a/backend/internal/cli/spawn.go
++++ b/backend/internal/cli/spawn.go
+@@ -1,20 +1,22 @@
+ package cli
+ 
+ import (
+ 	"context"
+ 	"fmt"
+ 	"net/url"
++	"runtime"
+ 
+ 	"github.com/spf13/cobra"
+ 	"github.com/spf13/pflag"
+ 
++	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/tmux"
+ 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/zellij"
+ )
+ 
+ type spawnOptions struct {
+ 	project    string
+ 	harness    string
+ 	branch     string
+ 	prompt     string
+ 	issue      string
+ 	claimPR    string
+@@ -90,28 +92,31 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
+ 				}
+ 			}
+ 			out := cmd.OutOrStdout()
+ 			claimLabel := ""
+ 			if claimed != "" {
+ 				claimLabel = fmt.Sprintf(" (claimed %s)", claimed)
+ 			}
+ 			if _, err := fmt.Fprintf(out, "spawned session %s (%s)%s\n", res.Session.ID, res.Session.Status, claimLabel); err != nil {
+ 				return err
+ 			}
+-			// The daemon runs zellij under a short, non-default socket dir (see
+-			// zellij.DefaultSocketDir), so a plain `zellij attach` wouldn't find
+-			// the session — prefix the env so the hint is copy-pasteable. Use the
+-			// sanitised name zellij actually registers (zellij.SessionName): a long
+-			// session id maps to a different name than the raw id.
+-			attach := fmt.Sprintf("zellij attach %s", zellij.SessionName(res.Session.ID))
+-			if dir := zellij.DefaultSocketDir(); dir != "" {
+-				attach = fmt.Sprintf("ZELLIJ_SOCKET_DIR=%s %s", dir, attach)
++			// Print a copy-pasteable attach hint for the selected runtime.
++			// On Darwin/Linux: tmux attach-session using the sanitised session name.
++			// On Windows: zellij attach with the short socket dir prefix.
++			var attach string
++			if runtime.GOOS != "windows" {
++				attach = fmt.Sprintf("tmux attach -t %s", tmux.SessionName(res.Session.ID))
++			} else {
++				attach = fmt.Sprintf("zellij attach %s", zellij.SessionName(res.Session.ID))
++				if dir := zellij.DefaultSocketDir(); dir != "" {
++					attach = fmt.Sprintf("ZELLIJ_SOCKET_DIR=%s %s", dir, attach)
++				}
+ 			}
+ 			_, err := fmt.Fprintf(out, "attach with: %s\n", attach)
+ 			return err
+ 		},
+ 	}
+ 	f := cmd.Flags()
+ 	// --agent is an alias for --harness so the more intuitive `ao spawn --agent
+ 	// droid` works identically; both resolve to the same harness flag.
+ 	f.SetNormalizeFunc(func(_ *pflag.FlagSet, name string) pflag.NormalizedName {
+ 		if name == "agent" {
+diff --git a/backend/internal/daemon/daemon.go b/backend/internal/daemon/daemon.go
+index 59791c8..29ca5ef 100644
+--- a/backend/internal/daemon/daemon.go
++++ b/backend/internal/daemon/daemon.go
+@@ -6,21 +6,21 @@ package daemon
+ import (
+ 	"context"
+ 	"fmt"
+ 	"log/slog"
+ 	"net/http"
+ 	"os"
+ 	"os/signal"
+ 	"syscall"
+ 	"time"
+ 
+-	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/zellij"
++	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/runtimeselect"
+ 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
+ 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd"
+ 	"github.com/aoagents/agent-orchestrator/backend/internal/notify"
+ 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+ 	"github.com/aoagents/agent-orchestrator/backend/internal/preview"
+ 	"github.com/aoagents/agent-orchestrator/backend/internal/runfile"
+ 	notificationsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/notification"
+ 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
+ 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
+ 	"github.com/aoagents/agent-orchestrator/backend/internal/terminal"
+@@ -75,55 +75,45 @@ func Run() error {
+ 	// signal.NotifyContext cancels ctx on SIGINT/SIGTERM, which drives the
+ 	// graceful shutdown inside Server.Run and stops the background goroutines.
+ 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+ 	defer stop()
+ 
+ 	cdcPipe, err := startCDC(ctx, store, log)
+ 	if err != nil {
+ 		return err
+ 	}
+ 
+-	// Terminal streaming: the Zellij runtime supplies the PTY-attach command and
+-	// liveness; the CDC broadcaster feeds the session-state channel. The manager
++	// Terminal streaming: the selected runtime (tmux on macOS/Linux, zellij on Windows) supplies the
++	// PTY-attach command and liveness; the CDC broadcaster feeds the session-state channel. The manager
+ 	// is handed to httpd, which mounts it at /mux. Raw PTY bytes never flow
+-	// through the CDC change_log — only session-state events do.
+-	// zellij's default socket dir is too long on macOS for long session ids
+-	// (see zellij.DefaultSocketDir); use a short, stable one and ensure it exists.
+-	zellijSocketDir := zellij.DefaultSocketDir()
+-	if zellijSocketDir != "" {
+-		if err := os.MkdirAll(zellijSocketDir, 0o700); err != nil {
+-			// Don't abort startup, but surface it: every spawn's zellij session
+-			// would otherwise fail later with an opaque socket-bind error.
+-			log.Warn("could not create zellij socket dir; spawns may fail", "dir", zellijSocketDir, "error", err)
+-		}
+-	}
+-	runtimeAdapter := zellij.New(zellij.Options{SocketDir: zellijSocketDir})
++	// through the CDC change_log -- only session-state events do.
++	runtimeAdapter := runtimeselect.New(log)
+ 	termMgr := terminal.NewManager(runtimeAdapter, cdcPipe.Broadcaster, log)
+ 	defer termMgr.Close()
+ 
+ 	// The agent messenger sends validated user input to the session's live
+-	// zellij pane. Keep this path small until durable inbox semantics are needed.
++	// runtime pane. Keep this path small until durable inbox semantics are needed.
+ 	// Built before the Lifecycle Manager so the LCM can use it for SCM-driven
+ 	// agent nudges (CI failure, review feedback, merge conflict).
+ 	messenger := newSessionMessenger(store, runtimeAdapter, log)
+ 	notificationHub := notify.NewHub()
+ 	notifier := notificationsvc.New(notificationsvc.Deps{Store: store})
+ 	notificationWriter := notify.New(notify.Deps{Store: store, Publisher: notificationHub})
+ 
+ 	// Bring up the Lifecycle Manager and the reaper first: it makes the session
+ 	// lifecycle write path live (reducer write -> store -> DB trigger ->
+ 	// change_log -> poller -> broadcaster) and gives startSession the shared LCM.
+ 	lcStack := startLifecycle(ctx, store, runtimeAdapter, messenger, notificationWriter, telemetrySink, log)
+ 	lcStack.scmDone = startSCMObserver(ctx, store, lcStack.LCM, log)
+ 
+ 	// Wire the controller-facing session service over the same store + LCM, the
+-	// zellij runtime, a gitworktree workspace, the per-session agent resolver
++	// selected runtime, a gitworktree workspace, the per-session agent resolver
+ 	// (AO_AGENT validated here for compatibility), and the agent messenger, then mount it
+ 	// on the API.
+ 	sessionSvc, reviewSvc, err := startSession(cfg, runtimeAdapter, store, lcStack.LCM, messenger, telemetrySink, log)
+ 	if err != nil {
+ 		stop()
+ 		lcStack.Stop()
+ 		if cdcErr := cdcPipe.Stop(); cdcErr != nil {
+ 			log.Error("cdc pipeline shutdown", "err", cdcErr)
+ 		}
+ 		return fmt.Errorf("wire session service: %w", err)
+diff --git a/backend/internal/daemon/lifecycle_wiring.go b/backend/internal/daemon/lifecycle_wiring.go
+index 3bf5ff7..5d21160 100644
+--- a/backend/internal/daemon/lifecycle_wiring.go
++++ b/backend/internal/daemon/lifecycle_wiring.go
+@@ -3,21 +3,21 @@ package daemon
+ import (
+ 	"context"
+ 	"fmt"
+ 	"log/slog"
+ 	"path/filepath"
+ 
+ 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
+ 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/activitydispatch"
+ 	agentregistry "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/registry"
+ 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer"
+-	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/zellij"
++	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/runtimeselect"
+ 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/workspace/gitworktree"
+ 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
+ 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+ 	"github.com/aoagents/agent-orchestrator/backend/internal/lifecycle"
+ 	"github.com/aoagents/agent-orchestrator/backend/internal/observe/reaper"
+ 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+ 	reviewcore "github.com/aoagents/agent-orchestrator/backend/internal/review"
+ 	reviewsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/review"
+ 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
+ 	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
+@@ -52,24 +52,24 @@ func startLifecycle(ctx context.Context, store *sqlite.Store, runtime ports.Runt
+ // Stop waits for the reaper goroutine to exit. The caller must cancel the ctx
+ // passed to startLifecycle before calling Stop.
+ func (l *lifecycleStack) Stop() {
+ 	<-l.reaperDone
+ 	if l.scmDone != nil {
+ 		<-l.scmDone
+ 	}
+ }
+ 
+ // startSession builds the controller-facing session service: a session manager
+-// over the real zellij runtime, a per-session gitworktree workspace, the shared
++// over the selected runtime, a per-session gitworktree workspace, the shared
+ // store + LCM, the per-session agent resolver, and the agent messenger. The
+ // returned service is mounted at httpd APIDeps.Sessions.
+-func startSession(cfg config.Config, runtime *zellij.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, messenger ports.AgentMessenger, telemetry ports.EventSink, log *slog.Logger) (*sessionsvc.Service, reviewsvc.Manager, error) {
++func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, messenger ports.AgentMessenger, telemetry ports.EventSink, log *slog.Logger) (*sessionsvc.Service, reviewsvc.Manager, error) {
+ 	defaultAgent := cfg.Agent
+ 	if defaultAgent == "" {
+ 		defaultAgent = config.DefaultAgent
+ 	}
+ 	agents, err := buildAgentResolver(defaultAgent, log)
+ 	if err != nil {
+ 		return nil, nil, err
+ 	}
+ 	ws, err := gitworktree.New(gitworktree.Options{
+ 		// Per-session worktrees live under the data dir, so a single AO_DATA_DIR
+diff --git a/backend/internal/daemon/wiring_test.go b/backend/internal/daemon/wiring_test.go
+index a3acd55..21bd248 100644
+--- a/backend/internal/daemon/wiring_test.go
++++ b/backend/internal/daemon/wiring_test.go
+@@ -3,20 +3,21 @@ package daemon
+ import (
+ 	"context"
+ 	"errors"
+ 	"io"
+ 	"log/slog"
+ 	"sync"
+ 	"testing"
+ 	"time"
+ 
+ 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
++	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/runtimeselect"
+ 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/zellij"
+ 	telemetryadapter "github.com/aoagents/agent-orchestrator/backend/internal/adapters/telemetry"
+ 	"github.com/aoagents/agent-orchestrator/backend/internal/cdc"
+ 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
+ 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+ 	"github.com/aoagents/agent-orchestrator/backend/internal/lifecycle"
+ 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+ 	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
+ 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
+ )
+@@ -142,23 +143,23 @@ func TestWiring_StartSessionBuildsSessionService(t *testing.T) {
+ 	store, err := sqlite.Open(t.TempDir())
+ 	if err != nil {
+ 		t.Fatal(err)
+ 	}
+ 	t.Cleanup(func() { _ = store.Close() })
+ 
+ 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+ 	lcm := lifecycle.New(store, nil)
+ 	cfg := config.Config{DataDir: t.TempDir()}
+ 
+-	runtime := zellij.New(zellij.Options{})
+-	messenger := newSessionMessenger(store, runtime, log)
+-	svc, reviewSvc, err := startSession(cfg, runtime, store, lcm, messenger, telemetryadapter.NoopSink{}, log)
++	rt := runtimeselect.New(nil)
++	messenger := newSessionMessenger(store, rt, log)
++	svc, reviewSvc, err := startSession(cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, log)
+ 	if err != nil {
+ 		t.Fatalf("startSession: %v", err)
+ 	}
+ 	if svc == nil {
+ 		t.Fatal("startSession returned nil session service")
+ 	}
+ 	if reviewSvc == nil {
+ 		t.Fatal("startSession returned nil review service")
+ 	}
+ }
+
+--- Changes ---
+
+backend/internal/adapters/runtime/runtimeselect/runtimeselect.go
+  @@ -0,0 +1,46 @@
+  +// Package runtimeselect picks the correct runtime backend by platform:
+  +// tmux on Darwin/Linux, zellij on Windows (interim; ConPTY adapter is a later phase).
+  +package runtimeselect
+  +
+  +import (
+  +	"context"
+  +	"log/slog"
+  +	"os"
+  +	"runtime"
+  +
+  +	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/tmux"
+  +	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/zellij"
+  +	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+  +)
+  +
+  +// Runtime is the union interface that both tmux and zellij satisfy.
+  +// It extends ports.Runtime (Create/Destroy/IsAlive) with the additional methods
+  +// the daemon wires directly.
+  +type Runtime interface {
+  +	ports.Runtime // Create, Destroy, IsAlive
+  +	SendMessage(ctx context.Context, handle ports.RuntimeHandle, message string) error
+  +	GetOutput(ctx context.Context, handle ports.RuntimeHandle, lines int) (string, error)
+  +	AttachCommand(handle ports.RuntimeHandle) (argv []string, env []string, err error)
+  +}
+  +
+  +// Compile-time assertions: both adapters must implement the union interface.
+  +var _ Runtime = (*tmux.Runtime)(nil)
+  +var _ Runtime = (*zellij.Runtime)(nil)
+  +
+  +// New returns the per-platform runtime: tmux on Darwin/Linux, zellij on Windows.
+  +// log is used only for the Windows zellij socket-dir warning; nil is safe.
+  +func New(log *slog.Logger) Runtime {
+  +	if runtime.GOOS != "windows" {
+  +		return tmux.New(tmux.Options{})
+  +	}
+  +	// ponytail: mirrors daemon.go's zellij socket-dir setup; Windows ConPTY replaces this in a later phase.
+  +	dir := zellij.DefaultSocketDir()
+  +	if dir != "" {
+  +		if err := os.MkdirAll(dir, 0o700); err != nil {
+  +			if log != nil {
+  +				log.Warn("could not create zellij socket dir; spawns may fail", "dir", dir, "error", err)
+  +			}
+  +		}
+  +	}
+  +	return zellij.New(zellij.Options{SocketDir: dir})
+  +}
+  +46 -0
+
+backend/internal/adapters/runtime/tmux/commands.go
+  @@ -0,0 +1,64 @@
+  +package tmux
+  +
+  +import "fmt"
+  +
+  +// newSessionArgs builds args for `tmux new-session -d -s <id> -x 220 -y 50
+  +// -c <cwd> <shell> -c <launchCmd>`. The shell -c form runs the launch command
+  +// inside the configured shell so exported env vars and quoting work correctly.
+  +func newSessionArgs(id, cwd, shellPath, launchCmd string) []string {
+  +	return []string{
+  +		"new-session", "-d",
+  +		"-s", id,
+  +		"-x", "220",
+  +		"-y", "50",
+  +		"-c", cwd,
+  +		shellPath, "-c", launchCmd,
+  +	}
+  +}
+  +
+  +// setStatusOffArgs hides the tmux status bar for the given session.
+  +// set-option uses pane-targeting syntax which does not accept the `=` prefix,
+  +// so we pass the session name directly.
+  +func setStatusOffArgs(id string) []string {
+  +	return []string{"set-option", "-t", id, "status", "off"}
+  +}
+  +
+  +// killSessionArgs builds args for `tmux kill-session -t =<id>`. The `=` prefix
+  +// requests exact-name matching so a session "foo" does not accidentally match
+  +// "foobar" (tmux otherwise does unique-prefix matching).
+  +func killSessionArgs(id string) []string {
+  +	return []string{"kill-session", "-t", exactSessionTarget(id)}
+  +}
+  +
+  +// hasSessionArgs builds args for `tmux has-session -t =<id>`. The `=` prefix
+  +// requests exact-name matching (see killSessionArgs).
+  +func hasSessionArgs(id string) []string {
+  +	return []string{"has-session", "-t", exactSessionTarget(id)}
+  +}
+  +
+  +// exactSessionTarget wraps id in tmux's exact-match prefix `=` so session-
+  +// selection commands (-t) target only the session with that precise name.
+  +// Only kill-session and has-session support this prefix; pane-targeting
+  +// commands (send-keys, capture-pane, set-option) use a plain session name.
+  +func exactSessionTarget(id string) string {
+  +	return "=" + id
+  +}
+  +
+  +// sendKeysLiteralArgs builds args for `tmux send-keys -t <id> -l <chunk>`.
+  +// The -l flag stops tmux interpreting words like "Enter" as key names so the
+  +// text is sent verbatim.
+  +func sendKeysLiteralArgs(id, chunk string) []string {
+  +	return []string{"send-keys", "-t", id, "-l", chunk}
+  +}
+  +
+  +// sendEnterArgs builds args for `tmux send-keys -t <id> Enter` to submit the
+  +// queued input.
+  +func sendEnterArgs(id string) []string {
+  +	return []string{"send-keys", "-t", id, "Enter"}
+  +}
+  +
+  +// capturePaneArgs builds args for `tmux capture-pane -t <id> -p -S -<lines>`.
+  +// -p prints to stdout; -S -<n> starts n lines back in history.
+  +func capturePaneArgs(id string, lines int) []string {
+  +	return []string{"capture-pane", "-t", id, "-p", "-S", fmt.Sprintf("-%d", lines)}
+  +}
+  +64 -0
+
+backend/internal/adapters/runtime/tmux/tmux.go
+  @@ -0,0 +1,482 @@
+  +// Package tmux implements ports.Runtime using tmux sessions on Darwin/Linux.
+  +package tmux
+  +
+  +import (
+  +	"context"
+  +	"crypto/sha256"
+  +	"encoding/hex"
+  +	"errors"
+  +	"fmt"
+  +	"os"
+  +	"os/exec"
+  +	"regexp"
+  +	"sort"
+  +	"strings"
+  +	"time"
+  +	"unicode/utf8"
+  +
+  +	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+  +	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+  +)
+  +
+  +const (
+  +	defaultTimeout    = 5 * time.Second
+  +	defaultChunkBytes = 16 * 1024
+  +)
+  +
+  +var sessionIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+  +
+  +var getenv = os.Getenv
+  +
+  +// Options configures a tmux Runtime. Every field has a sensible default (see
+  +// New), so the zero value is usable.
+  +type Options struct {
+  +	Binary    string        // default "tmux" (resolved via exec.LookPath)
+  +	Shell     string        // default $SHELL else /bin/sh
+  +	Timeout   time.Duration // default 5s
+  +	ChunkSize int           // default 16*1024
+  +}
+  +
+  +// Runtime runs agent sessions inside tmux sessions, driving them via the tmux
+  +// CLI. It implements ports.Runtime.
+  +type Runtime struct {
+  +	binary    string
+  +	shell     string
+  +	timeout   time.Duration
+  +	chunkSize int
+  +	runner    runner
+  +}
+  +
+  +var _ ports.Runtime = (*Runtime)(nil)
+  +
+  +type runner interface {
+  +	Run(ctx context.Context, env []string, name string, args ...string) ([]byte, error)
+  +	Start(env []string, name string, args ...string) error
+  +}
+  +
+  +type execRunner struct{}
+  +
+  +func (execRunner) Run(ctx context.Context, env []string, name string, args ...string) ([]byte, error) {
+  +	cmd := exec.CommandContext(ctx, name, args...)
+  +	cmd.Env = append(append([]string(nil), os.Environ()...), env...)
+  +	return cmd.CombinedOutput()
+  +}
+  +
+  +func (execRunner) Start(env []string, name string, args ...string) error {
+  +	cmd := exec.Command(name, args...)
+  +	cmd.Env = append(append([]string(nil), os.Environ()...), env...)
+  +	return cmd.Start()
+  +}
+  +
+  +// New builds a tmux Runtime, filling unset Options with defaults: binary "tmux"
+  +// (resolved via exec.LookPath), shell from $SHELL (else /bin/sh), and the
+  +// default timeout and output chunk size.
+  +func New(opts Options) *Runtime {
+  +	binary := opts.Binary
+  +	if binary == "" {
+  +		if path, err := exec.LookPath("tmux"); err == nil {
+  +			binary = path
+  +		} else {
+  +			binary = "tmux"
+  +		}
+  +	}
+  +	timeout := opts.Timeout
+  +	if timeout == 0 {
+  +		timeout = defaultTimeout
+  +	}
+  +	shellPath := opts.Shell
+  +	if shellPath == "" {
+  +		shellPath = getenv("SHELL")
+  +	}
+  +	if shellPath == "" {
+  +		shellPath = "/bin/sh"
+  +	}
+  +	chunkSize := opts.ChunkSize
+  +	if chunkSize <= 0 {
+  +		chunkSize = defaultChunkBytes
+  +	}
+  +	return &Runtime{
+  +		binary:    binary,
+  +		shell:     shellPath,
+  ... (382 lines truncated)
+  +482 -0
+
+backend/internal/adapters/runtime/tmux/tmux_integration_test.go
+  @@ -0,0 +1,143 @@
+  +package tmux
+  +
+  +import (
+  +	"context"
+  +	"os/exec"
+  +	"strings"
+  +	"testing"
+  +	"time"
+  +
+  +	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+  +	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+  +)
+  +
+  +func TestRuntimeIntegration(t *testing.T) {
+  +	if _, err := exec.LookPath("tmux"); err != nil {
+  +		t.Skip("tmux unavailable")
+  +	}
+  +
+  +	ctx := context.Background()
+  +	id := strings.ReplaceAll(t.Name(), "/", "_")
+  +	r := New(Options{Timeout: 5 * time.Second})
+  +
+  +	// Ensure clean slate: ignore errors (session may not exist).
+  +	_ = r.Destroy(ctx, ports.RuntimeHandle{ID: id})
+  +
+  +	t.Cleanup(func() {
+  +		// Always destroy so a test failure never leaks a tmux session.
+  +		_ = r.Destroy(context.Background(), ports.RuntimeHandle{ID: id})
+  +	})
+  +
+  +	h, err := r.Create(ctx, ports.RuntimeConfig{
+  +		SessionID:     domain.SessionID(id),
+  +		WorkspacePath: t.TempDir(),
+  +		// Run a trivial command then drop into an interactive shell (the keep-alive
+  +		// exec is added by buildLaunchCommand, but we also verify here that output
+  +		// appears).
+  +		Argv: []string{"sh", "-c", "echo hello-from-tmux"},
+  +		Env:  map[string]string{"AO_SESSION_ID": id},
+  +	})
+  +	if err != nil {
+  +		t.Fatalf("Create: %v", err)
+  +	}
+  +
+  +	alive, err := r.IsAlive(ctx, h)
+  +	if err != nil {
+  +		t.Fatalf("IsAlive: %v", err)
+  +	}
+  +	if !alive {
+  +		t.Fatal("alive = false, want true after create")
+  +	}
+  +
+  +	// Wait for the echo output to appear (the session may take a moment to
+  +	// write it to the pane history).
+  +	out := waitForOutput(t, r, h, "hello-from-tmux", 5*time.Second)
+  +	if !strings.Contains(out, "hello-from-tmux") {
+  +		t.Fatalf("output = %q, want hello-from-tmux", out)
+  +	}
+  +
+  +	// Send a command and verify it echoes back.
+  +	if err := r.SendMessage(ctx, h, "echo hello-send"); err != nil {
+  +		t.Fatalf("SendMessage: %v", err)
+  +	}
+  +	out = waitForOutput(t, r, h, "hello-send", 5*time.Second)
+  +	if !strings.Contains(out, "hello-send") {
+  +		t.Fatalf("output after SendMessage = %q, want hello-send", out)
+  +	}
+  +
+  +	// Destroy and verify liveness goes false.
+  +	if err := r.Destroy(ctx, h); err != nil {
+  +		t.Fatalf("Destroy: %v", err)
+  +	}
+  +	alive, err = r.IsAlive(ctx, h)
+  +	if err != nil {
+  +		t.Fatalf("IsAlive after destroy: %v", err)
+  +	}
+  +	if alive {
+  +		t.Fatal("alive after destroy = true, want false")
+  +	}
+  +}
+  +
+  +// TestRuntimeIntegrationExactSessionParsing verifies that IsAlive uses exact
+  +// session matching and does not treat a prefix as a live session.
+  +func TestRuntimeIntegrationExactSessionParsing(t *testing.T) {
+  +	if _, err := exec.LookPath("tmux"); err != nil {
+  +		t.Skip("tmux unavailable")
+  +	}
+  +
+  +	ctx := context.Background()
+  +	base := strings.ReplaceAll(t.Name(), "/", "_")
+  +	longID := base + "_long"
+  +	prefixID := base
+  +
+  +	r := New(Options{Timeout: 5 * time.Second})
+  +	_ = r.Destroy(ctx, ports.RuntimeHandle{ID: longID})
+  +	_ = r.Destroy(ctx, ports.RuntimeHandle{ID: prefixID})
+  +
+  +	t.Cleanup(func() {
+  +		_ = r.Destroy(context.Background(), ports.RuntimeHandle{ID: longID})
+  +		_ = r.Destroy(context.Background(), ports.RuntimeHandle{ID: prefixID})
+  +	})
+  ... (43 lines truncated)
+  +143 -0
+
+backend/internal/adapters/runtime/tmux/tmux_test.go
+  @@ -0,0 +1,616 @@
+  +package tmux
+  +
+  +import (
+  +	"context"
+  +	"errors"
+  +	"os/exec"
+  +	"reflect"
+  +	"strings"
+  +	"testing"
+  +	"time"
+  +
+  +	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+  +	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+  +)
+  +
+  +// -- fakeRunner test seam (mirrors zellij_test.go exactly) --
+  +
+  +type fakeRunner struct {
+  +	calls   []runnerCall
+  +	outputs [][]byte
+  +	err     error
+  +}
+  +
+  +type runnerCall struct {
+  +	env  []string
+  +	name string
+  +	args []string
+  +}
+  +
+  +func (f *fakeRunner) Run(_ context.Context, env []string, name string, args ...string) ([]byte, error) {
+  +	f.calls = append(f.calls, runnerCall{env: append([]string(nil), env...), name: name, args: append([]string(nil), args...)})
+  +	var out []byte
+  +	if len(f.outputs) > 0 {
+  +		out = f.outputs[0]
+  +		f.outputs = f.outputs[1:]
+  +	}
+  +	if f.err != nil {
+  +		return out, f.err
+  +	}
+  +	return out, nil
+  +}
+  +
+  +func (f *fakeRunner) Start(env []string, name string, args ...string) error {
+  +	f.calls = append(f.calls, runnerCall{env: append([]string(nil), env...), name: name, args: append([]string(nil), args...)})
+  +	if len(f.outputs) > 0 {
+  +		f.outputs = f.outputs[1:]
+  +	}
+  +	return f.err
+  +}
+  +
+  +// -- helpers --
+  +
+  +func newTestRuntime(chunkSize int) (*Runtime, *fakeRunner) {
+  +	fr := &fakeRunner{}
+  +	r := New(Options{Binary: "tmux-test", Timeout: time.Second, Shell: "/bin/sh", ChunkSize: chunkSize})
+  +	r.runner = fr
+  +	return r, fr
+  +}
+  +
+  +// -- Options / New tests --
+  +
+  +func TestNewDefaultsToPortableShell(t *testing.T) {
+  +	t.Setenv("SHELL", "")
+  +	r := New(Options{})
+  +	if got := r.shell; got != "/bin/sh" {
+  +		t.Fatalf("default shell = %q, want /bin/sh", got)
+  +	}
+  +}
+  +
+  +func TestNewPicksUpShellFromEnv(t *testing.T) {
+  +	t.Setenv("SHELL", "/bin/zsh")
+  +	r := New(Options{})
+  +	if got := r.shell; got != "/bin/zsh" {
+  +		t.Fatalf("shell = %q, want /bin/zsh", got)
+  +	}
+  +}
+  +
+  +// -- command builder tests --
+  +
+  +func TestCommandBuilders(t *testing.T) {
+  +	if got, want := newSessionArgs("sess-1", "/tmp/ws", "/bin/sh", `echo hi; exec "${SHELL:-/bin/sh}" -i`),
+  +		[]string{"new-session", "-d", "-s", "sess-1", "-x", "220", "-y", "50", "-c", "/tmp/ws", "/bin/sh", "-c", `echo hi; exec "${SHELL:-/bin/sh}" -i`}; !reflect.DeepEqual(got, want) {
+  +		t.Fatalf("newSessionArgs = %#v, want %#v", got, want)
+  +	}
+  +	// set-option uses pane-targeting (no = prefix).
+  +	if got, want := setStatusOffArgs("sess-1"), []string{"set-option", "-t", "sess-1", "status", "off"}; !reflect.DeepEqual(got, want) {
+  +		t.Fatalf("setStatusOffArgs = %#v, want %#v", got, want)
+  +	}
+  +	// kill-session and has-session use exact-match prefix =.
+  +	if got, want := killSessionArgs("sess-1"), []string{"kill-session", "-t", "=sess-1"}; !reflect.DeepEqual(got, want) {
+  +		t.Fatalf("killSessionArgs = %#v, want %#v", got, want)
+  +	}
+  +	if got, want := hasSessionArgs("sess-1"), []string{"has-session", "-t", "=sess-1"}; !reflect.DeepEqual(got, want) {
+  +		t.Fatalf("hasSessionArgs = %#v, want %#v", got, want)
+  +	}
+  +	if got, want := sendKeysLiteralArgs("sess-1", "hello"), []string{"send-keys", "-t", "sess-1", "-l", "hello"}; !reflect.DeepEqual(got, want) {
+  +		t.Fatalf("sendKeysLiteralArgs = %#v, want %#v", got, want)
+  +	}
+  +	if got, want := sendEnterArgs("sess-1"), []string{"send-keys", "-t", "sess-1", "Enter"}; !reflect.DeepEqual(got, want) {
+  +		t.Fatalf("sendEnterArgs = %#v, want %#v", got, want)
+  ... (516 lines truncated)
+  +616 -0
+
+backend/internal/cli/doctor.go
+  @@ -4,20 +4,21 @@ import (
+  +	"runtime"
+   	"strconv"
+   	"strings"
+   	"time"
+   
+   	"github.com/spf13/cobra"
+   
+   	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/codex"
+   	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/zellij"
+   	"github.com/aoagents/agent-orchestrator/backend/internal/config"
+   )
+  @@ -161,21 +162,21 @@ func (c *commandContext) runDoctor(ctx context.Context) []doctorCheck {
+  -		c.checkZellij(ctx),
+  +		c.checkTerminalRuntime(ctx),
+   		c.checkAOBinary(),
+   	)
+   	for _, harness := range doctorHarnesses {
+   		checks = append(checks, c.checkHarness(ctx, harness))
+   	}
+   	checks = append(checks, c.checkCodexLaunchFlags(ctx), c.checkGitHubToken(ctx))
+   	return checks
+   }
+   
+   // checkStore inspects the SQLite store WITHOUT opening or migrating it. The
+  @@ -283,20 +284,47 @@ func (c *commandContext) checkGit(ctx context.Context) doctorCheck {
+  +// checkTerminalRuntime checks for the runtime multiplexer used on this platform:
+  +// tmux on Darwin/Linux, zellij on Windows.
+  +func (c *commandContext) checkTerminalRuntime(ctx context.Context) doctorCheck {
+  +	if runtime.GOOS == "windows" {
+  +		return c.checkZellij(ctx)
+  +	}
+  +	return c.checkTmux(ctx)
+  +}
+  +
+  +func (c *commandContext) checkTmux(ctx context.Context) doctorCheck {
+  +	path, err := c.deps.LookPath("tmux")
+  +	if err != nil || path == "" {
+  +		return doctorCheck{Level: doctorWarn, Section: doctorSectionTools, Name: "tmux", Message: "not found in PATH"}
+  +	}
+  +	reqCtx, cancel := context.WithTimeout(ctx, probeTimeout)
+  +	defer cancel()
+  +	out, err := c.deps.CommandOutput(reqCtx, path, "-V")
+  +	if err != nil {
+  +		return doctorCheck{Level: doctorFail, Section: doctorSectionTools, Name: "tmux", Message: fmt.Sprintf("%s: %v", path, err)}
+  +	}
+  +	version := firstOutputLine(out)
+  +	if version == "" {
+  +		version = "version unknown"
+  +	}
+  +	return doctorCheck{Level: doctorPass, Section: doctorSectionTools, Name: "tmux", Message: fmt.Sprintf("%s (%s)", path, version)}
+  +}
+  +
+   func (c *commandContext) checkZellij(ctx context.Context) doctorCheck {
+   	path, err := c.deps.LookPath("zellij")
+   	if err != nil || path == "" {
+   		return doctorCheck{Level: doctorWarn, Section: doctorSectionTools, Name: "zellij", Message: "not found in PATH"}
+   	}
+   	reqCtx, cancel := context.WithTimeout(ctx, probeTimeout)
+   	defer cancel()
+   	out, err := c.deps.CommandOutput(reqCtx, path, "--version")
+   	if err != nil {
+   		return doctorCheck{Level: doctorFail, Section: doctorSectionTools, Name: "zellij", Message: fmt.Sprintf("%s: %v", path, err)}
+  +29 -1
+
+backend/internal/cli/doctor_test.go
+  @@ -45,67 +45,69 @@ func TestDoctorWarnsOnUnsupportedGitVersion(t *testing.T) {
+  -func TestDoctorChecksZellijVersion(t *testing.T) {
+  +func TestDoctorChecksTmuxVersion(t *testing.T) {
+   	setConfigEnv(t)
+  -	c := doctorContext(t, map[string]string{"git": "/bin/git", "zellij": "/bin/zellij"}, func(_ context.Context, name string, args ...string) ([]byte, error) {
+  +	c := doctorContext(t, map[string]string{"git": "/bin/git", "tmux": "/bin/tmux"}, func(_ context.Context, name string, args ...string) ([]byte, error) {
+
+... (more changes truncated)
+  +2 -2
+[full diff: rtk git diff --no-compact]
