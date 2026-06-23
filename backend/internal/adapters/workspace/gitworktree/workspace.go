@@ -185,6 +185,44 @@ func (w *Workspace) Destroy(ctx context.Context, info ports.WorkspaceInfo) error
 	return nil
 }
 
+// ForceDestroy removes the session's worktree unconditionally (--force), prunes
+// it from git's worktree list, and falls back to os.RemoveAll if any filesystem
+// residue remains.
+//
+// ponytail: only safe to call AFTER the session's uncommitted work has been
+// captured by Task 2's StashUncommitted. Calling it before capture silently
+// discards agent work. For interactive teardown (ao session kill, ao cleanup)
+// use Destroy, which refuses dirty worktrees via ErrWorkspaceDirty.
+func (w *Workspace) ForceDestroy(ctx context.Context, info ports.WorkspaceInfo) error {
+	if info.ProjectID == "" {
+		return errors.New("gitworktree: project id is required")
+	}
+	if info.Path == "" {
+		return fmt.Errorf("%w: empty path", ErrUnsafePath)
+	}
+	repo, err := w.repoPath(info.ProjectID)
+	if err != nil {
+		return err
+	}
+	path, err := w.validateManagedPath(info.Path)
+	if err != nil {
+		return err
+	}
+	// --force bypasses git's dirty check; errors here are advisory (the path may
+	// already be gone). We proceed to prune regardless.
+	_, _ = w.run(ctx, w.binary, worktreeForceRemoveArgs(repo, path)...)
+	if _, err := w.run(ctx, w.binary, worktreePruneArgs(repo)...); err != nil {
+		return fmt.Errorf("gitworktree: worktree prune: %w", err)
+	}
+	// os.RemoveAll as a backstop: cleans up filesystem residue left behind if
+	// git worktree remove --force still left the directory (e.g. files outside
+	// git tracking).
+	if err := os.RemoveAll(path); err != nil {
+		return fmt.Errorf("gitworktree: force remove path %q: %w", path, err)
+	}
+	return nil
+}
+
 // Restore re-attaches to an existing worktree for the session if one is still
 // present, recreating the handle without disturbing its contents.
 func (w *Workspace) Restore(ctx context.Context, cfg ports.WorkspaceConfig) (ports.WorkspaceInfo, error) {

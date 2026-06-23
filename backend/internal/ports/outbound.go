@@ -121,6 +121,11 @@ type Workspace interface {
 	Create(ctx context.Context, cfg WorkspaceConfig) (WorkspaceInfo, error)
 	Destroy(ctx context.Context, info WorkspaceInfo) error
 	Restore(ctx context.Context, cfg WorkspaceConfig) (WorkspaceInfo, error)
+	// ForceDestroy removes the worktree unconditionally, bypassing the
+	// dirty-worktree refusal that Destroy enforces. It is only safe to call
+	// AFTER the session's uncommitted work has been captured (Task 2's
+	// StashUncommitted). Never call it from interactive teardown paths.
+	ForceDestroy(ctx context.Context, info WorkspaceInfo) error
 }
 
 // Workspace-level sentinels surfaced through Create/Restore/Destroy so callers

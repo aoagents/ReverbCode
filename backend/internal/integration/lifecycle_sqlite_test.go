@@ -63,6 +63,7 @@ func (s *stubWorkspace) Destroy(context.Context, ports.WorkspaceInfo) error {
 func (s *stubWorkspace) Restore(ctx context.Context, cfg ports.WorkspaceConfig) (ports.WorkspaceInfo, error) {
 	return s.Create(ctx, cfg)
 }
+func (s *stubWorkspace) ForceDestroy(context.Context, ports.WorkspaceInfo) error { return nil }
 
 type captureMessenger struct{ msgs []string }
 

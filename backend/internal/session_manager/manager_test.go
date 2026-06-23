@@ -213,6 +213,7 @@ func (w *fakeWorkspace) Destroy(context.Context, ports.WorkspaceInfo) error {
 func (w *fakeWorkspace) Restore(ctx context.Context, cfg ports.WorkspaceConfig) (ports.WorkspaceInfo, error) {
 	return w.Create(ctx, cfg)
 }
+func (w *fakeWorkspace) ForceDestroy(context.Context, ports.WorkspaceInfo) error { return nil }
 
 type fakeMessenger struct{ msgs []string }
 
