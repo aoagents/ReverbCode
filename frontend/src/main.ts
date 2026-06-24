@@ -507,7 +507,12 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 	// process.kill(pid, 0) does not kill; it throws iff the PID is not live.
 	let holderPidAlive = false;
 	if (runFilePid) {
-		try { process.kill(runFilePid, 0); holderPidAlive = true; } catch { holderPidAlive = false; }
+		try {
+			process.kill(runFilePid, 0);
+			holderPidAlive = true;
+		} catch {
+			holderPidAlive = false;
+		}
 	}
 	if (shouldReplacePortHolder(orphanProbe, holderPidAlive)) {
 		// Use the run-file PID when available; fall back to the probe's reported
