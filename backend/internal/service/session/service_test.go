@@ -858,3 +858,17 @@ func containsString(values []string, want string) bool {
 	}
 	return false
 }
+
+func TestToAPIError_NotResumable(t *testing.T) {
+	err := toAPIError(fmt.Errorf("restore foo: %w", sessionmanager.ErrNotResumable))
+	var ae *apierr.Error
+	if !errors.As(err, &ae) {
+		t.Fatalf("want *apierr.Error, got %T: %v", err, err)
+	}
+	if ae.Kind != apierr.KindConflict {
+		t.Errorf("kind = %v, want %v", ae.Kind, apierr.KindConflict)
+	}
+	if ae.Code != "SESSION_NOT_RESUMABLE" {
+		t.Errorf("code = %q, want SESSION_NOT_RESUMABLE", ae.Code)
+	}
+}
