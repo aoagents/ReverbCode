@@ -25,6 +25,10 @@ var (
 	ErrNotRestorable    = errors.New("session: not restorable (not terminal)")
 	ErrTerminated       = errors.New("session: terminated")
 	ErrIncompleteHandle = errors.New("session: incomplete teardown handle")
+	// ErrNotResumable means a terminated session has no saved agent session id
+	// and no prompt, so there is nothing for Restore to relaunch from. Distinct
+	// from ErrNotRestorable (which is "not terminal yet").
+	ErrNotResumable = errors.New("session: nothing to resume from")
 	// ErrProjectNotResolvable means the spawn's project has no usable repo
 	// (unregistered, archived, or missing a path). The API maps it to a 400.
 	ErrProjectNotResolvable = errors.New("session: project repo not resolvable")
@@ -477,7 +481,7 @@ func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.Sess
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", id, ErrIncompleteHandle)
 	}
 	if meta.AgentSessionID == "" && meta.Prompt == "" {
-		return domain.SessionRecord{}, fmt.Errorf("restore %s: nothing to resume from", id)
+		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", id, ErrNotResumable)
 	}
 
 	project, err := m.loadProject(ctx, rec.ProjectID)
