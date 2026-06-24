@@ -1,0 +1,39 @@
+{
+	"name": "@aoagents/ao",
+	"version": "0.10.0",
+	"description": "Agent Orchestrator: a local daemon that supervises parallel coding-agent sessions, driven by the `ao` CLI.",
+	"keywords": [
+		"agent-orchestrator",
+		"ao",
+		"coding-agent",
+		"cli",
+		"daemon"
+	],
+	"license": "MIT",
+	"homepage": "https://github.com/aoagents/ReverbCode#readme",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/aoagents/ReverbCode.git"
+	},
+	"bugs": {
+		"url": "https://github.com/aoagents/ReverbCode/issues"
+	},
+	"bin": {
+		"ao": "bin/ao.js"
+	},
+	"files": [
+		"bin/ao.js",
+		"README.md"
+	],
+	"engines": {
+		"node": ">=18"
+	},
+	"optionalDependencies": {
+		"@aoagents/ao-darwin-arm64": "0.10.0",
+		"@aoagents/ao-darwin-x64": "0.10.0",
+		"@aoagents/ao-linux-x64": "0.10.0",
+		"@aoagents/ao-linux-arm64": "0.10.0",
+		"@aoagents/ao-win32-x64": "0.10.0",
+		"@aoagents/ao-win32-arm64": "0.10.0"
+	}
+}
