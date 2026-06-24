@@ -58,18 +58,28 @@ func (l *lifecycleStack) Stop() {
 	}
 }
 
+// sessionLifecycle is the narrow surface of sessionmanager.Manager used for
+// boot/shutdown wiring. A minimal interface keeps the daemon testable without
+// depending on the concrete manager type.
+type sessionLifecycle interface {
+	RestoreAll(ctx context.Context) error
+	SaveAndTeardownAll(ctx context.Context) error
+}
+
 // startSession builds the controller-facing session service: a session manager
 // over the selected runtime, a per-session gitworktree workspace, the shared
 // store + LCM, the per-session agent resolver, and the agent messenger. The
-// returned service is mounted at httpd APIDeps.Sessions.
-func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, messenger ports.AgentMessenger, telemetry ports.EventSink, log *slog.Logger) (*sessionsvc.Service, reviewsvc.Manager, error) {
+// returned service is mounted at httpd APIDeps.Sessions. It also returns the
+// manager so the caller can wire RestoreAll/SaveAndTeardownAll into the
+// boot/shutdown sequence.
+func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, messenger ports.AgentMessenger, telemetry ports.EventSink, log *slog.Logger) (*sessionsvc.Service, reviewsvc.Manager, sessionLifecycle, error) {
 	defaultAgent := cfg.Agent
 	if defaultAgent == "" {
 		defaultAgent = config.DefaultAgent
 	}
 	agents, err := buildAgentResolver(defaultAgent, log)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	ws, err := gitworktree.New(gitworktree.Options{
 		// Per-session worktrees live under the data dir, so a single AO_DATA_DIR
@@ -81,7 +91,7 @@ func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlit
 		RepoResolver: projectRepoResolver{store: store},
 	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("session workspace: %w", err)
+		return nil, nil, nil, fmt.Errorf("session workspace: %w", err)
 	}
 	mgr := sessionmanager.New(sessionmanager.Deps{
 		Runtime:   runtime,
@@ -113,7 +123,7 @@ func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlit
 	// writer.
 	reviewers, err := reviewer.NewResolver()
 	if err != nil {
-		return nil, nil, fmt.Errorf("reviewer resolver: %w", err)
+		return nil, nil, nil, fmt.Errorf("reviewer resolver: %w", err)
 	}
 	reviewEngine := reviewcore.New(reviewcore.Deps{
 		Store:    store,
@@ -123,7 +133,7 @@ func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlit
 		Launcher: reviewcore.NewLauncher(reviewers, runtime),
 	})
 	reviewSvc := reviewsvc.New(reviewEngine, store, reviewsvc.WithLifecycleReducer(lcm))
-	return sessionSvc, reviewSvc, nil
+	return sessionSvc, reviewSvc, mgr, nil
 }
 
 // runtimeMessageSender is the narrow part of the concrete runtime needed by

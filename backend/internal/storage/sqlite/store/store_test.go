@@ -783,3 +783,41 @@ func TestSessionWorktreesRoundTrip(t *testing.T) {
 		t.Fatalf("after delete = %#v err=%v", got, err)
 	}
 }
+
+// TestUpsertSessionWorktreeEmptyStateDefaultsToActive exercises the guard in
+// UpsertSessionWorktree: when State is left at its zero value "", the store
+// must default it to "active" so the SQLite CHECK constraint is satisfied.
+// Without the guard, the generated upsert would insert "" and the CHECK would
+// reject it. This test catches any regression that removes that guard.
+func TestUpsertSessionWorktreeEmptyStateDefaultsToActive(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "sw")
+	rec, err := s.CreateSession(ctx, sampleRecord("sw"))
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	// State is intentionally left at zero value "" to exercise the guard.
+	row := domain.SessionWorktreeRecord{
+		SessionID:    rec.ID,
+		RepoName:     domain.RootWorkspaceRepoName,
+		Branch:       "ao/sw-1",
+		BaseSHA:      "abc123",
+		WorktreePath: "/managed/sw/sw-1",
+	}
+	if err := s.UpsertSessionWorktree(ctx, row); err != nil {
+		t.Fatalf("upsert with empty State: %v", err)
+	}
+
+	got, ok, err := s.GetSessionWorktree(ctx, rec.ID, domain.RootWorkspaceRepoName)
+	if err != nil {
+		t.Fatalf("get worktree: %v", err)
+	}
+	if !ok {
+		t.Fatal("worktree row not found after upsert")
+	}
+	if got.State != "active" {
+		t.Fatalf("State = %q, want %q", got.State, "active")
+	}
+}

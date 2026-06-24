@@ -24,10 +24,20 @@ type fakeStore struct {
 	projects  map[string]domain.ProjectRecord
 	num       int
 	deleteErr error
+	// worktrees maps session ID to its saved worktree rows (shutdown-saved marker).
+	worktrees map[domain.SessionID][]domain.SessionWorktreeRecord
+	// sharedLog, when non-nil, receives an ordered call entry for each
+	// UpsertSessionWorktree invocation so ordering tests can compare across fakes.
+	sharedLog *[]string
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{sessions: map[domain.SessionID]domain.SessionRecord{}, pr: map[domain.SessionID]domain.PRFacts{}, projects: map[string]domain.ProjectRecord{}}
+	return &fakeStore{
+		sessions:  map[domain.SessionID]domain.SessionRecord{},
+		pr:        map[domain.SessionID]domain.PRFacts{},
+		projects:  map[string]domain.ProjectRecord{},
+		worktrees: map[domain.SessionID][]domain.SessionWorktreeRecord{},
+	}
 }
 func (f *fakeStore) GetProject(_ context.Context, id string) (domain.ProjectRecord, bool, error) {
 	r, ok := f.projects[id]
@@ -83,6 +93,24 @@ func (f *fakeStore) GetDisplayPRFactsForSession(_ context.Context, id domain.Ses
 		return pr, true, nil
 	}
 	return domain.PRFacts{}, false, nil
+}
+func (f *fakeStore) UpsertSessionWorktree(_ context.Context, row domain.SessionWorktreeRecord) error {
+	if f.sharedLog != nil {
+		*f.sharedLog = append(*f.sharedLog, "UpsertSessionWorktree:"+string(row.SessionID))
+	}
+	rows := f.worktrees[row.SessionID]
+	for i, r := range rows {
+		if r.RepoName == row.RepoName {
+			rows[i] = row
+			f.worktrees[row.SessionID] = rows
+			return nil
+		}
+	}
+	f.worktrees[row.SessionID] = append(rows, row)
+	return nil
+}
+func (f *fakeStore) ListSessionWorktrees(_ context.Context, id domain.SessionID) ([]domain.SessionWorktreeRecord, error) {
+	return f.worktrees[id], nil
 }
 
 type fakeLCM struct {
@@ -186,13 +214,23 @@ type missingAgents struct{}
 func (missingAgents) Agent(domain.AgentHarness) (ports.Agent, bool) { return nil, false }
 
 type fakeWorkspace struct {
-	createErr  error
-	destroyErr error
-	destroyed  int
-	lastCfg    ports.WorkspaceConfig
+	createErr    error
+	destroyErr   error
+	destroyed    int
+	lastCfg      ports.WorkspaceConfig
 	// path, when set, is returned as the workspace path so provisioning tests
 	// can point at a real temp directory.
 	path string
+	// stashRef is returned by StashUncommitted (empty means clean worktree).
+	stashRef        string
+	stashErr        error
+	applyErr        error
+	forceDestroyErr error
+	// calls records the sequence of workspace method calls for ordering assertions.
+	calls []string
+	// sharedLog, when non-nil, receives entries alongside calls so ordering
+	// tests can compare workspace calls against store calls in one sequence.
+	sharedLog *[]string
 }
 
 func (w *fakeWorkspace) Create(_ context.Context, cfg ports.WorkspaceConfig) (ports.WorkspaceInfo, error) {
@@ -212,6 +250,26 @@ func (w *fakeWorkspace) Destroy(context.Context, ports.WorkspaceInfo) error {
 }
 func (w *fakeWorkspace) Restore(ctx context.Context, cfg ports.WorkspaceConfig) (ports.WorkspaceInfo, error) {
 	return w.Create(ctx, cfg)
+}
+func (w *fakeWorkspace) ForceDestroy(_ context.Context, info ports.WorkspaceInfo) error {
+	entry := "ForceDestroy:" + string(info.SessionID)
+	w.calls = append(w.calls, entry)
+	if w.sharedLog != nil {
+		*w.sharedLog = append(*w.sharedLog, entry)
+	}
+	return w.forceDestroyErr
+}
+func (w *fakeWorkspace) StashUncommitted(_ context.Context, info ports.WorkspaceInfo) (string, error) {
+	entry := "StashUncommitted:" + string(info.SessionID)
+	w.calls = append(w.calls, entry)
+	if w.sharedLog != nil {
+		*w.sharedLog = append(*w.sharedLog, entry)
+	}
+	return w.stashRef, w.stashErr
+}
+func (w *fakeWorkspace) ApplyPreserved(_ context.Context, info ports.WorkspaceInfo, ref string) error {
+	w.calls = append(w.calls, "ApplyPreserved:"+string(info.SessionID))
+	return w.applyErr
 }
 
 type fakeMessenger struct{ msgs []string }
@@ -1074,5 +1132,367 @@ func TestSpawn_KeepsExplicitBranch(t *testing.T) {
 	}
 	if got := st.sessions[s.ID].Metadata.Branch; got != "feature/x" {
 		t.Fatalf("explicit branch = %q, want feature/x", got)
+	}
+}
+
+// ---- SaveAndTeardownAll / RestoreAll tests ----
+
+// newLifecycleManager builds a manager wired with a recording workspace fake
+// for the shutdown lifecycle tests.
+func newLifecycleManager() (*Manager, *fakeStore, *fakeRuntime, *fakeWorkspace) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	rt := &fakeRuntime{}
+	ws := &fakeWorkspace{}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{
+		Runtime:   rt,
+		Agents:    fakeAgents{},
+		Workspace: ws,
+		Store:     st,
+		Messenger: &fakeMessenger{},
+		Lifecycle: &fakeLCM{store: st},
+		LookPath:  lookPath,
+	})
+	return m, st, rt, ws
+}
+
+// TestSaveAndTeardownAll_CaptureOrderAndMarker verifies (a): for a live session
+// with a workspace, SaveAndTeardownAll must call StashUncommitted BEFORE
+// UpsertSessionWorktree (writing preserved_ref) BEFORE ForceDestroy.
+func TestSaveAndTeardownAll_CaptureOrderAndMarker(t *testing.T) {
+	m, st, _, ws := newLifecycleManager()
+
+	// Wire a shared ordered call log so we can assert cross-fake ordering:
+	// both fakeStore and fakeWorkspace append to the same slice.
+	var sharedLog []string
+	st.sharedLog = &sharedLog
+	ws.sharedLog = &sharedLog
+
+	// A live session with a workspace path and runtime handle.
+	ws.stashRef = "refs/ao/preserved/mer-1"
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:        "mer-1",
+		ProjectID: "mer",
+		Kind:      domain.KindWorker,
+		Metadata:  domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "ao/mer-1/root", RuntimeHandleID: "h1"},
+		Activity:  domain.Activity{State: domain.ActivityActive},
+	}
+
+	if err := m.SaveAndTeardownAll(ctx); err != nil {
+		t.Fatalf("SaveAndTeardownAll err = %v", err)
+	}
+
+	// Stash must come before ForceDestroy in the call log.
+	stashIdx, forceIdx := -1, -1
+	for i, c := range ws.calls {
+		if c == "StashUncommitted:mer-1" {
+			stashIdx = i
+		}
+		if c == "ForceDestroy:mer-1" {
+			forceIdx = i
+		}
+	}
+	if stashIdx == -1 {
+		t.Fatal("StashUncommitted was not called")
+	}
+	if forceIdx == -1 {
+		t.Fatal("ForceDestroy was not called")
+	}
+	if stashIdx >= forceIdx {
+		t.Fatalf("StashUncommitted (call %d) must come before ForceDestroy (call %d)", stashIdx, forceIdx)
+	}
+
+	// UpsertSessionWorktree (DB write) must be committed BEFORE ForceDestroy.
+	// Use the shared ordered log to compare positions across the store and workspace.
+	upsertIdx, sharedForceIdx := -1, -1
+	for i, c := range sharedLog {
+		if c == "UpsertSessionWorktree:mer-1" {
+			upsertIdx = i
+		}
+		if c == "ForceDestroy:mer-1" {
+			sharedForceIdx = i
+		}
+	}
+	if upsertIdx == -1 {
+		t.Fatal("UpsertSessionWorktree was not called")
+	}
+	if sharedForceIdx == -1 {
+		t.Fatal("ForceDestroy was not recorded in shared log")
+	}
+	if upsertIdx >= sharedForceIdx {
+		t.Fatalf("UpsertSessionWorktree (pos %d) must come before ForceDestroy (pos %d) in shared call log %v", upsertIdx, sharedForceIdx, sharedLog)
+	}
+
+	// DB write (UpsertSessionWorktree) must have recorded the correct row.
+	rows := st.worktrees["mer-1"]
+	if len(rows) == 0 {
+		t.Fatal("UpsertSessionWorktree was not called: no worktree row for mer-1")
+	}
+	if rows[0].PreservedRef != "refs/ao/preserved/mer-1" {
+		t.Fatalf("preserved_ref = %q, want refs/ao/preserved/mer-1", rows[0].PreservedRef)
+	}
+
+	// The session must be marked terminated.
+	if !st.sessions["mer-1"].IsTerminated {
+		t.Fatal("session must be terminated after SaveAndTeardownAll")
+	}
+}
+
+// TestSaveAndTeardownAll_CleanWorktreeWritesEmptyRef verifies that a clean
+// worktree (StashUncommitted returns "") still writes a worktree row (with
+// empty preserved_ref). The row's presence is the shutdown-saved marker.
+func TestSaveAndTeardownAll_CleanWorktreeWritesEmptyRef(t *testing.T) {
+	m, st, _, ws := newLifecycleManager()
+	ws.stashRef = "" // clean worktree
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:        "mer-1",
+		ProjectID: "mer",
+		Kind:      domain.KindWorker,
+		Metadata:  domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "ao/mer-1/root", RuntimeHandleID: "h1"},
+		Activity:  domain.Activity{State: domain.ActivityActive},
+	}
+
+	if err := m.SaveAndTeardownAll(ctx); err != nil {
+		t.Fatalf("SaveAndTeardownAll err = %v", err)
+	}
+
+	rows := st.worktrees["mer-1"]
+	if len(rows) == 0 {
+		t.Fatal("clean worktree must still write a session_worktrees row as the shutdown-saved marker")
+	}
+	if rows[0].PreservedRef != "" {
+		t.Fatalf("preserved_ref = %q, want empty for clean worktree", rows[0].PreservedRef)
+	}
+}
+
+// TestSaveAndTeardownAll_SkipsNoWorkspacePath: sessions without a workspace
+// path are skipped (spawn failed before workspace.Create).
+func TestSaveAndTeardownAll_SkipsNoWorkspacePath(t *testing.T) {
+	m, st, _, ws := newLifecycleManager()
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:        "mer-1",
+		ProjectID: "mer",
+		Kind:      domain.KindWorker,
+		Metadata:  domain.SessionMetadata{}, // no workspace path
+		Activity:  domain.Activity{State: domain.ActivityActive},
+	}
+
+	if err := m.SaveAndTeardownAll(ctx); err != nil {
+		t.Fatalf("SaveAndTeardownAll err = %v", err)
+	}
+
+	if len(ws.calls) != 0 {
+		t.Fatalf("no workspace calls expected for sessions with no workspace path, got %v", ws.calls)
+	}
+	if len(st.worktrees["mer-1"]) != 0 {
+		t.Fatal("no worktree row should be written for sessions with no workspace path")
+	}
+}
+
+// TestSaveAndTeardownAll_SkipsAlreadyTerminated: already-terminated sessions
+// are skipped.
+func TestSaveAndTeardownAll_SkipsAlreadyTerminated(t *testing.T) {
+	m, st, _, ws := newLifecycleManager()
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:           "mer-1",
+		ProjectID:    "mer",
+		Kind:         domain.KindWorker,
+		IsTerminated: true,
+		Metadata:     domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "ao/mer-1/root"},
+		Activity:     domain.Activity{State: domain.ActivityExited},
+	}
+
+	if err := m.SaveAndTeardownAll(ctx); err != nil {
+		t.Fatalf("SaveAndTeardownAll err = %v", err)
+	}
+	if len(ws.calls) != 0 {
+		t.Fatalf("already-terminated sessions must be skipped, got calls %v", ws.calls)
+	}
+}
+
+// TestSaveAndTeardownAll_NoKindFilter: both worker and orchestrator sessions
+// are saved (no kind filter).
+func TestSaveAndTeardownAll_NoKindFilter(t *testing.T) {
+	m, st, _, _ := newLifecycleManager()
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker,
+		Metadata: domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "ao/mer-1/root", RuntimeHandleID: "h1"},
+		Activity: domain.Activity{State: domain.ActivityActive},
+	}
+	st.sessions["mer-2"] = domain.SessionRecord{
+		ID: "mer-2", ProjectID: "mer", Kind: domain.KindOrchestrator,
+		Metadata: domain.SessionMetadata{WorkspacePath: "/ws/mer-2", Branch: "ao/mer-orchestrator", RuntimeHandleID: "h2"},
+		Activity: domain.Activity{State: domain.ActivityActive},
+	}
+
+	if err := m.SaveAndTeardownAll(ctx); err != nil {
+		t.Fatalf("SaveAndTeardownAll err = %v", err)
+	}
+
+	if len(st.worktrees["mer-1"]) == 0 {
+		t.Error("worker session mer-1 must be saved")
+	}
+	if len(st.worktrees["mer-2"]) == 0 {
+		t.Error("orchestrator session mer-2 must be saved")
+	}
+	if !st.sessions["mer-1"].IsTerminated {
+		t.Error("worker session mer-1 must be terminated")
+	}
+	if !st.sessions["mer-2"].IsTerminated {
+		t.Error("orchestrator session mer-2 must be terminated")
+	}
+}
+
+// TestRestoreAll_RestoresBothWorkerAndOrchestrator verifies (b): RestoreAll
+// restores both a worker and an orchestrator session saved by SaveAndTeardownAll.
+func TestRestoreAll_RestoresBothWorkerAndOrchestrator(t *testing.T) {
+	m, st, rt, _ := newLifecycleManager()
+
+	// Seed two terminated sessions that were saved by SaveAndTeardownAll
+	// (presence of session_worktrees rows is the marker).
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:           "mer-1",
+		ProjectID:    "mer",
+		Kind:         domain.KindWorker,
+		Harness:      domain.HarnessClaudeCode,
+		IsTerminated: true,
+		Metadata:     domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "ao/mer-1/root", AgentSessionID: "agent-w"},
+		Activity:     domain.Activity{State: domain.ActivityExited},
+	}
+	st.sessions["mer-2"] = domain.SessionRecord{
+		ID:           "mer-2",
+		ProjectID:    "mer",
+		Kind:         domain.KindOrchestrator,
+		Harness:      domain.HarnessClaudeCode,
+		IsTerminated: true,
+		Metadata:     domain.SessionMetadata{WorkspacePath: "/ws/mer-2", Branch: "ao/mer-orchestrator", AgentSessionID: "agent-o"},
+		Activity:     domain.Activity{State: domain.ActivityExited},
+	}
+	// Write the shutdown-saved marker rows.
+	st.worktrees["mer-1"] = []domain.SessionWorktreeRecord{{SessionID: "mer-1", RepoName: "__root__", PreservedRef: ""}}
+	st.worktrees["mer-2"] = []domain.SessionWorktreeRecord{{SessionID: "mer-2", RepoName: "__root__", PreservedRef: ""}}
+
+	if err := m.RestoreAll(ctx); err != nil {
+		t.Fatalf("RestoreAll err = %v", err)
+	}
+
+	if rt.created != 2 {
+		t.Fatalf("RestoreAll must relaunch both sessions, runtime.Create called %d times", rt.created)
+	}
+	if st.sessions["mer-1"].IsTerminated {
+		t.Error("worker session mer-1 must be live after RestoreAll")
+	}
+	if st.sessions["mer-2"].IsTerminated {
+		t.Error("orchestrator session mer-2 must be live after RestoreAll")
+	}
+}
+
+// TestRestoreAll_SkipsSessionsKilledBeforeShutdown verifies (c): a session
+// the user killed BEFORE shutdown has no session_worktrees row and must NOT
+// be resurrected.
+func TestRestoreAll_SkipsSessionsKilledBeforeShutdown(t *testing.T) {
+	m, st, rt, _ := newLifecycleManager()
+
+	// This session was killed by the user before shutdown: IsTerminated=true,
+	// but no session_worktrees row (SaveAndTeardownAll skipped it).
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:           "mer-1",
+		ProjectID:    "mer",
+		Kind:         domain.KindWorker,
+		Harness:      domain.HarnessClaudeCode,
+		IsTerminated: true,
+		Metadata:     domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "ao/mer-1/root", Prompt: "do it"},
+		Activity:     domain.Activity{State: domain.ActivityExited},
+	}
+	// Deliberately no entry in st.worktrees for mer-1.
+
+	if err := m.RestoreAll(ctx); err != nil {
+		t.Fatalf("RestoreAll err = %v", err)
+	}
+
+	if rt.created != 0 {
+		t.Fatalf("user-killed session must not be restored, runtime.Create called %d times", rt.created)
+	}
+	if !st.sessions["mer-1"].IsTerminated {
+		t.Error("user-killed session must remain terminated")
+	}
+}
+
+// TestRestoreAll_AppliesPreservedRef: when the session_worktrees row has a
+// non-empty preserved_ref, RestoreAll calls ApplyPreserved after workspace
+// restore but before relaunching.
+func TestRestoreAll_AppliesPreservedRef(t *testing.T) {
+	m, st, rt, ws := newLifecycleManager()
+
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:           "mer-1",
+		ProjectID:    "mer",
+		Kind:         domain.KindWorker,
+		Harness:      domain.HarnessClaudeCode,
+		IsTerminated: true,
+		Metadata:     domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "ao/mer-1/root", AgentSessionID: "agent-w"},
+		Activity:     domain.Activity{State: domain.ActivityExited},
+	}
+	st.worktrees["mer-1"] = []domain.SessionWorktreeRecord{
+		{SessionID: "mer-1", RepoName: "__root__", PreservedRef: "refs/ao/preserved/mer-1"},
+	}
+
+	if err := m.RestoreAll(ctx); err != nil {
+		t.Fatalf("RestoreAll err = %v", err)
+	}
+
+	applied := false
+	for _, c := range ws.calls {
+		if c == "ApplyPreserved:mer-1" {
+			applied = true
+		}
+	}
+	if !applied {
+		t.Fatal("ApplyPreserved was not called for session with preserved_ref")
+	}
+	if rt.created != 1 {
+		t.Fatal("session must still be relaunched even after ApplyPreserved")
+	}
+}
+
+// TestRestoreAll_ConflictLogsAndContinues: when ApplyPreserved returns
+// ErrPreservedConflict, RestoreAll logs and continues (still relaunches).
+func TestRestoreAll_ConflictLogsAndContinues(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	rt := &fakeRuntime{}
+	ws := &fakeWorkspace{applyErr: fmt.Errorf("conflict: %w", ports.ErrPreservedConflict)}
+	var logBuf bytes.Buffer
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{
+		Runtime:   rt,
+		Agents:    fakeAgents{},
+		Workspace: ws,
+		Store:     st,
+		Messenger: &fakeMessenger{},
+		Lifecycle: &fakeLCM{store: st},
+		LookPath:  lookPath,
+		Logger:    slog.New(slog.NewTextHandler(&logBuf, nil)),
+	})
+
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:           "mer-1",
+		ProjectID:    "mer",
+		Kind:         domain.KindWorker,
+		Harness:      domain.HarnessClaudeCode,
+		IsTerminated: true,
+		Metadata:     domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "ao/mer-1/root", AgentSessionID: "agent-w"},
+		Activity:     domain.Activity{State: domain.ActivityExited},
+	}
+	st.worktrees["mer-1"] = []domain.SessionWorktreeRecord{
+		{SessionID: "mer-1", RepoName: "__root__", PreservedRef: "refs/ao/preserved/mer-1"},
+	}
+
+	if err := m.RestoreAll(ctx); err != nil {
+		t.Fatalf("RestoreAll err = %v; conflict must not abort", err)
+	}
+	if rt.created != 1 {
+		t.Fatalf("session must still relaunch after conflict, runtime.Create called %d times", rt.created)
 	}
 }

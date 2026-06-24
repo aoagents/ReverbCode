@@ -691,12 +691,67 @@ app.whenReady().then(() => {
 	});
 });
 
-app.on("before-quit", () => {
+// Re-entrancy guard: the first before-quit fires, prevents default, does async
+// work, then calls app.exit(). If app.quit() is called concurrently (e.g. from
+// window-all-closed on non-darwin), the second before-quit fires while the first
+// is still in flight. Without a guard it would preventDefault again and loop.
+// With the guard set to true, the second invocation falls through and lets the
+// quit proceed. app.exit() itself does NOT re-fire before-quit, so the guard
+// mainly protects against a concurrent app.quit() race.
+let quitting = false;
+
+app.on("before-quit", (event) => {
 	browserViewHost?.dispose();
 	browserViewHost = null;
-	if (daemonProcess) {
-		killDaemon(daemonProcess);
+
+	// Re-entrancy: if we already started the async quit sequence, let this
+	// invocation fall through so the app actually exits.
+	if (quitting) return;
+	quitting = true;
+
+	// Capture the current daemon handle and port before any async gap so that
+	// a race with stopDaemon() cannot null them out underneath us.
+	const child = daemonProcess;
+	const port = daemonStatus.state === "ready" ? daemonStatus.port : undefined;
+
+	if (!child) {
+		// No daemon we own: nothing to shut down.
+		return;
 	}
+
+	// Prevent the synchronous quit so we can ask the daemon to save gracefully
+	// before killing it.
+	event.preventDefault();
+
+	const doQuit = async () => {
+		// Best-effort graceful shutdown: POST /shutdown so the daemon flushes
+		// its session state before exiting. An ~8s timeout prevents a hung or
+		// absent daemon from blocking quit indefinitely.
+		// Note: the daemon's internal save bound is 30s (shutdownSaveTimeout), so
+		// if this fetch times out and we proceed to killDaemon (SIGTERM), the first
+		// SIGTERM only cancels the daemon's listen context; the daemon's in-flight
+		// save (on a fresh context) still runs to completion or its own 30s bound.
+		if (port !== undefined) {
+			try {
+				await fetch(`http://127.0.0.1:${port}/shutdown`, {
+					method: "POST",
+					signal: AbortSignal.timeout(8_000),
+				});
+			} catch {
+				// Timeout, network error, or daemon already gone: proceed to kill.
+				console.log(`AO: /shutdown fetch failed (port ${port}); proceeding with SIGTERM.`);
+			}
+		}
+
+		// Kill the daemon process group (reaches the daemon behind any shell
+		// wrapper and its PTY children).
+		killDaemon(child);
+
+		// Exit without re-firing before-quit (app.exit bypasses the event).
+		app.exit(0);
+	};
+
+	void doQuit();
 });
 
 // Last-resort teardown. before-quit covers the normal quit path, but app.exit()

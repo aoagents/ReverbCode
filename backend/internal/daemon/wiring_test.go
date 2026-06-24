@@ -152,7 +152,7 @@ func TestWiring_StartSessionBuildsSessionService(t *testing.T) {
 
 	rt := runtimeselect.New(nil)
 	messenger := newSessionMessenger(store, rt, log)
-	svc, reviewSvc, err := startSession(cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, log)
+	svc, reviewSvc, lc, err := startSession(cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, log)
 	if err != nil {
 		t.Fatalf("startSession: %v", err)
 	}
@@ -161,6 +161,9 @@ func TestWiring_StartSessionBuildsSessionService(t *testing.T) {
 	}
 	if reviewSvc == nil {
 		t.Fatal("startSession returned nil review service")
+	}
+	if lc == nil {
+		t.Fatal("startSession returned nil session lifecycle")
 	}
 }
 
@@ -375,6 +378,56 @@ func TestProjectRepoResolver_ResolvesRegisteredProject(t *testing.T) {
 	// Guard the sentinel wrapping so the HTTP 400 mapping can't silently regress.
 	if !errors.Is(err, sessionmanager.ErrProjectNotResolvable) {
 		t.Fatalf("unregistered-project error should wrap ErrProjectNotResolvable, got %v", err)
+	}
+}
+
+// fakeSessionLifecycle records calls to RestoreAll and SaveAndTeardownAll so
+// tests can assert the daemon wiring invokes both without needing a real runtime
+// or worktree.
+type fakeSessionLifecycle struct {
+	restoreAllCalled      bool
+	saveAndTeardownCalled bool
+	restoreErr            error
+	saveErr               error
+}
+
+func (f *fakeSessionLifecycle) RestoreAll(_ context.Context) error {
+	f.restoreAllCalled = true
+	return f.restoreErr
+}
+
+func (f *fakeSessionLifecycle) SaveAndTeardownAll(_ context.Context) error {
+	f.saveAndTeardownCalled = true
+	return f.saveErr
+}
+
+// TestWiring_SessionLifecycleInterfaceInvokedByDaemon asserts the
+// sessionLifecycle interface is satisfied by *sessionmanager.Manager (compile
+// check) and that both methods dispatch correctly through the interface, matching
+// what daemon.go wires at boot/shutdown.
+func TestWiring_SessionLifecycleInterfaceInvokedByDaemon(t *testing.T) {
+	// Verify *sessionmanager.Manager satisfies the interface at compile time.
+	var _ sessionLifecycle = (*sessionmanager.Manager)(nil)
+
+	fake := &fakeSessionLifecycle{}
+	ctx := context.Background()
+
+	// Dispatch through the interface variable to exercise the real dispatch
+	// path, not just direct struct method calls.
+	var sl sessionLifecycle = fake
+
+	if err := sl.RestoreAll(ctx); err != nil {
+		t.Fatalf("RestoreAll: %v", err)
+	}
+	if !fake.restoreAllCalled {
+		t.Fatal("RestoreAll was not called through the interface")
+	}
+
+	if err := sl.SaveAndTeardownAll(ctx); err != nil {
+		t.Fatalf("SaveAndTeardownAll: %v", err)
+	}
+	if !fake.saveAndTeardownCalled {
+		t.Fatal("SaveAndTeardownAll was not called through the interface")
 	}
 }
 

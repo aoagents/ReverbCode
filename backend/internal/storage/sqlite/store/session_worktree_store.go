@@ -14,6 +14,16 @@ import (
 func (s *Store) UpsertSessionWorktree(ctx context.Context, row domain.SessionWorktreeRecord) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
+	// ponytail: session_worktrees.state is unused multi-repo scaffolding; no
+	// live code path sets domain.SessionWorktreeRecord.State, so it arrives
+	// here as "". The generated upsert includes state in the INSERT column list
+	// and the CHECK constraint rejects "". Default to 'active' (the column
+	// default) so the row stays valid without touching the schema or gen code.
+	// Wire a real value when multi-repo worktree lifecycle states ship.
+	state := row.State
+	if state == "" {
+		state = "active"
+	}
 	return s.qw.UpsertSessionWorktree(ctx, gen.UpsertSessionWorktreeParams{
 		SessionID:    row.SessionID,
 		RepoName:     row.RepoName,
@@ -21,7 +31,7 @@ func (s *Store) UpsertSessionWorktree(ctx context.Context, row domain.SessionWor
 		BaseSha:      row.BaseSHA,
 		WorktreePath: row.WorktreePath,
 		PreservedRef: row.PreservedRef,
-		State:        row.State,
+		State:        state,
 	})
 }
 
@@ -65,6 +75,8 @@ func sessionWorktreeFromGen(row gen.SessionWorktree) domain.SessionWorktreeRecor
 		BaseSHA:      row.BaseSha,
 		WorktreePath: row.WorktreePath,
 		PreservedRef: row.PreservedRef,
-		State:        row.State,
+		// ponytail: state is read back from the DB but no caller uses it;
+		// it is unused multi-repo scaffolding (see UpsertSessionWorktree above).
+		State: row.State,
 	}
 }

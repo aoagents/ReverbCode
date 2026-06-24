@@ -77,6 +77,15 @@ type Store interface {
 	// when the row had already progressed past seed state — preserving the
 	// no-resurrection guarantee for live sessions.
 	DeleteSession(ctx context.Context, id domain.SessionID) (bool, error)
+	// UpsertSessionWorktree records or updates the worktree row for a session.
+	// SaveAndTeardownAll writes the preserved_ref here (even when empty) as the
+	// "shutdown-saved" marker before ForceDestroying the worktree.
+	UpsertSessionWorktree(ctx context.Context, row domain.SessionWorktreeRecord) error
+	// ListSessionWorktrees returns every worktree row for a session. RestoreAll
+	// uses this to identify sessions saved by the last SaveAndTeardownAll: the
+	// presence of any row is the marker; preserved_ref may be empty for clean
+	// worktrees.
+	ListSessionWorktrees(ctx context.Context, id domain.SessionID) ([]domain.SessionWorktreeRecord, error)
 }
 
 // Manager coordinates internal session spawn, restore, kill, and cleanup over
@@ -530,6 +539,164 @@ func (m *Manager) getRecord(ctx context.Context, id domain.SessionID) (domain.Se
 		return domain.SessionRecord{}, fmt.Errorf("get %s: %w", id, ErrNotFound)
 	}
 	return rec, nil
+}
+
+// SaveAndTeardownAll captures uncommitted work and tears down every live
+// session that has a workspace path. It is the shutdown path for the daemon:
+// each session's uncommitted work is stashed into a preserve ref, the ref is
+// written to session_worktrees (the "shutdown-saved" marker) BEFORE the
+// worktree is force-removed. The DB write is committed before the worktree is
+// destroyed so a crash between the two leaves the ref in place and the row
+// present; RestoreAll will replay both.
+//
+// Failures on individual sessions are logged and do not abort the loop.
+// ForceDestroy is never called if capture or the DB write did not succeed.
+func (m *Manager) SaveAndTeardownAll(ctx context.Context) error {
+	recs, err := m.store.ListAllSessions(ctx)
+	if err != nil {
+		return fmt.Errorf("save-teardown-all: list sessions: %w", err)
+	}
+	for _, rec := range recs {
+		if rec.IsTerminated {
+			continue
+		}
+		if rec.Metadata.WorkspacePath == "" || rec.Metadata.Branch == "" {
+			continue
+		}
+		if err := m.saveAndTeardownOne(ctx, rec); err != nil {
+			m.logger.Error("save-teardown-all: session failed, skipping", "sessionID", rec.ID, "error", err)
+		}
+	}
+	return nil
+}
+
+// saveAndTeardownOne runs the capture-then-destroy sequence for a single
+// session. The DB write (UpsertSessionWorktree) is committed before
+// ForceDestroy; if either capture or the DB write fails, ForceDestroy is
+// not called.
+func (m *Manager) saveAndTeardownOne(ctx context.Context, rec domain.SessionRecord) error {
+	ws := workspaceInfo(rec)
+
+	// 1. Capture uncommitted work (ref may be "" for clean worktrees).
+	ref, err := m.workspace.StashUncommitted(ctx, ws)
+	if err != nil {
+		return fmt.Errorf("save %s: stash: %w", rec.ID, err)
+	}
+
+	// 2. Write the shutdown-saved marker to the DB. The row's presence (even
+	// with an empty preserved_ref) is what RestoreAll uses to identify sessions
+	// saved by this run. This MUST be committed before ForceDestroy.
+	row := domain.SessionWorktreeRecord{
+		SessionID:    rec.ID,
+		RepoName:     domain.RootWorkspaceRepoName,
+		Branch:       rec.Metadata.Branch,
+		WorktreePath: rec.Metadata.WorkspacePath,
+		PreservedRef: ref,
+	}
+	if err := m.store.UpsertSessionWorktree(ctx, row); err != nil {
+		return fmt.Errorf("save %s: upsert worktree row: %w", rec.ID, err)
+	}
+
+	// 3. Mark terminal via the LCM (same path Kill uses).
+	if err := m.lcm.MarkTerminated(ctx, rec.ID); err != nil {
+		return fmt.Errorf("save %s: mark terminated: %w", rec.ID, err)
+	}
+
+	// 4. Runtime teardown (best-effort; same pattern as Kill).
+	handle := runtimeHandle(rec.Metadata)
+	if handle.ID != "" {
+		if err := m.runtime.Destroy(ctx, handle); err != nil {
+			m.logger.Warn("save-teardown-all: runtime destroy failed", "sessionID", rec.ID, "error", err)
+		}
+	}
+
+	// 5. Force-remove the worktree (safe: work is captured in step 1 and the
+	// DB write in step 2 is already committed).
+	if err := m.workspace.ForceDestroy(ctx, ws); err != nil {
+		m.logger.Warn("save-teardown-all: force destroy failed", "sessionID", rec.ID, "error", err)
+	}
+	return nil
+}
+
+// RestoreAll relaunches every terminated session that was saved by the last
+// SaveAndTeardownAll. The "shutdown-saved" marker is the presence of a
+// session_worktrees row for the session; sessions the user killed before
+// shutdown have no such row and are left terminated.
+//
+// For each saved session:
+//  1. Ensure the worktree exists via workspace.Restore.
+//  2. If a preserve ref is recorded, replay it via ApplyPreserved; on conflict
+//     log and continue (still relaunch the agent, never delete the ref).
+//  3. Relaunch via the existing Restore method.
+//
+// Failures on individual sessions are logged and do not abort the loop.
+func (m *Manager) RestoreAll(ctx context.Context) error {
+	recs, err := m.store.ListAllSessions(ctx)
+	if err != nil {
+		return fmt.Errorf("restore-all: list sessions: %w", err)
+	}
+	for _, rec := range recs {
+		if !rec.IsTerminated {
+			continue
+		}
+		// Check the shutdown-saved marker: is there a session_worktrees row?
+		rows, err := m.store.ListSessionWorktrees(ctx, rec.ID)
+		if err != nil {
+			m.logger.Error("restore-all: list worktrees failed", "sessionID", rec.ID, "error", err)
+			continue
+		}
+		if len(rows) == 0 {
+			// No marker: this session was killed by the user before shutdown.
+			continue
+		}
+
+		// Collect the preserve ref (may be "" for clean worktrees).
+		var preserveRef string
+		for _, r := range rows {
+			if r.PreservedRef != "" {
+				preserveRef = r.PreservedRef
+				break
+			}
+		}
+
+		// Step 1: ensure the worktree exists. workspace.Restore re-creates it
+		// if it was removed by SaveAndTeardownAll.
+		project, err := m.loadProject(ctx, rec.ProjectID)
+		if err != nil {
+			m.logger.Error("restore-all: load project failed", "sessionID", rec.ID, "error", err)
+			continue
+		}
+		ws, err := m.workspace.Restore(ctx, ports.WorkspaceConfig{
+			ProjectID:     rec.ProjectID,
+			SessionID:     rec.ID,
+			Kind:          rec.Kind,
+			SessionPrefix: sessionPrefix(project),
+			Branch:        rec.Metadata.Branch,
+		})
+		if err != nil {
+			m.logger.Error("restore-all: workspace restore failed", "sessionID", rec.ID, "error", err)
+			continue
+		}
+
+		// Step 2: replay preserve ref when one was recorded.
+		if preserveRef != "" {
+			if applyErr := m.workspace.ApplyPreserved(ctx, ws, preserveRef); applyErr != nil {
+				if errors.Is(applyErr, ports.ErrPreservedConflict) {
+					m.logger.Warn("restore-all: apply preserved produced conflicts; agent relaunched with conflict markers in place",
+						"sessionID", rec.ID, "ref", preserveRef, "error", applyErr)
+				} else {
+					m.logger.Error("restore-all: apply preserved failed", "sessionID", rec.ID, "error", applyErr)
+				}
+				// Continue: always relaunch even on conflict (never delete the ref here).
+			}
+		}
+
+		// Step 3: relaunch via the existing single-session Restore method.
+		if _, err := m.Restore(ctx, rec.ID); err != nil {
+			m.logger.Error("restore-all: relaunch failed", "sessionID", rec.ID, "error", err)
+		}
+	}
+	return nil
 }
 
 // Send delivers a message to a running session's agent via the messenger.
