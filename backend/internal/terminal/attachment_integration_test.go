@@ -107,24 +107,38 @@ func TestAttachmentReattachAdoptsNewSize(t *testing.T) {
 		t.Fatal("client B did not attach")
 	}
 
-	// Generous timeouts: this drives a real shell through tmux and parses its
-	// output, which is slow under -race on CI runners. The waits gate on the
-	// echo write succeeding, then on its SIZE output landing.
-	eventually(t, 15*time.Second, func() bool { return b.write([]byte("echo SIZE:$(stty size)\n")) == nil })
-	eventually(t, 30*time.Second, func() bool {
-		out := gotB.string()
-		i := strings.LastIndex(out, "SIZE:")
+	// Drive the reattached shell until it reports its width. We RESEND the probe
+	// each iteration: onOpen means the stream accepts input, not that the inner
+	// `sh -i` is already at a prompt reading stdin after the reattach, so an early
+	// keystroke can be dropped; retrying covers that. Real tmux + shell output is
+	// also slow under -race on CI, hence the long deadline. On timeout we dump
+	// exactly what the pane produced so the failure is self-explaining (e.g. the
+	// probe echoed but never executed, or stty errored).
+	var captured string
+	gotWidth := false
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		_ = b.write([]byte("echo SIZE:$(stty size)\n"))
+		time.Sleep(250 * time.Millisecond)
+		captured = gotB.string()
+		i := strings.LastIndex(captured, "SIZE:")
 		if i < 0 {
-			return false
+			continue
 		}
-		fields := strings.Fields(strings.TrimPrefix(out[i:], "SIZE:"))
+		fields := strings.Fields(strings.TrimPrefix(captured[i:], "SIZE:"))
 		if len(fields) < 2 {
-			return false
+			continue
 		}
 		cols, err := strconv.Atoi(strings.TrimFunc(fields[1], func(r rune) bool { return r < '0' || r > '9' }))
 		if err != nil {
-			return false
+			continue
 		}
-		return cols > 130 // B's 148 minus any tmux chrome; a stale A-layout reports <=115
-	})
+		if cols > 130 { // B's 148 minus any tmux chrome; a stale A-layout reports <=115
+			gotWidth = true
+			break
+		}
+	}
+	if !gotWidth {
+		t.Fatalf("reattached pane never reported B's width (cols>130) within 30s; captured:\n%q", captured)
+	}
 }
