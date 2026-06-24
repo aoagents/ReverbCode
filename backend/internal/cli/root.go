@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/daemon"
+	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
 	"github.com/aoagents/agent-orchestrator/backend/internal/processalive"
 )
 
@@ -96,11 +97,11 @@ func DefaultDeps() Deps {
 }
 
 func commandOutput(ctx context.Context, name string, args ...string) ([]byte, error) {
-	return exec.CommandContext(ctx, name, args...).CombinedOutput()
+	return aoprocess.CommandContext(ctx, name, args...).CombinedOutput()
 }
 
 func commandOutputInDir(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := aoprocess.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
 	return cmd.CombinedOutput()
 }

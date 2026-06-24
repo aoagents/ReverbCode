@@ -4,13 +4,13 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"regexp"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
 )
 
 // Store is the narrow slice of the rewrite's native storage layer the importer
@@ -235,7 +235,7 @@ func defaultRepoOriginURL(path string) string {
 	if path == "" {
 		return ""
 	}
-	cmd := exec.Command("git", "-C", path, "remote", "get-url", "origin")
+	cmd := aoprocess.Command("git", "-C", path, "remote", "get-url", "origin")
 	out, err := cmd.Output()
 	if err != nil {
 		return ""

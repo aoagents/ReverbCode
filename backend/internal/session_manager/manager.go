@@ -16,6 +16,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
 )
 
 // Sentinel errors returned by the Session Manager; callers match them with
@@ -1176,9 +1177,9 @@ func runPostCreate(ctx context.Context, workspacePath string, commands []string)
 		}
 		var cmd *exec.Cmd
 		if runtime.GOOS == "windows" {
-			cmd = exec.CommandContext(ctx, "cmd", "/c", command)
+			cmd = aoprocess.CommandContext(ctx, "cmd", "/c", command)
 		} else {
-			cmd = exec.CommandContext(ctx, "sh", "-c", command)
+			cmd = aoprocess.CommandContext(ctx, "sh", "-c", command)
 		}
 		cmd.Dir = workspacePath
 		if out, err := cmd.CombinedOutput(); err != nil {

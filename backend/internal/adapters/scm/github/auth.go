@@ -4,10 +4,11 @@ import (
 	"context"
 	"errors"
 	"os"
-	"os/exec"
 	"strings"
 	"sync"
 	"time"
+
+	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
 )
 
 // TokenSource yields a GitHub bearer token on demand. Production wires this
@@ -169,7 +170,7 @@ func (s *GHTokenSource) ttl() time.Duration {
 }
 
 func ghAuthToken(ctx context.Context) (string, error) {
-	out, err := exec.CommandContext(ctx, "gh", "auth", "token").Output()
+	out, err := aoprocess.CommandContext(ctx, "gh", "auth", "token").Output()
 	if err != nil {
 		return "", err
 	}

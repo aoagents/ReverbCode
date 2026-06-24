@@ -12,6 +12,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
 )
 
 const (
@@ -281,14 +282,14 @@ func (w *Workspace) StashUncommitted(ctx context.Context, info ports.WorkspaceIn
 
 	// Stage all tracked and non-ignored untracked files into the temp index.
 	// GIT_INDEX_FILE overrides the index so the real index is never touched.
-	addCmd := exec.CommandContext(ctx, w.binary, addAllTempIndexArgs(info.Path)...)
+	addCmd := aoprocess.CommandContext(ctx, w.binary, addAllTempIndexArgs(info.Path)...)
 	addCmd.Env = append(os.Environ(), "GIT_INDEX_FILE="+tmpIdxPath)
 	if out, err := addCmd.CombinedOutput(); err != nil {
 		return "", commandError{args: append([]string{w.binary}, addAllTempIndexArgs(info.Path)...), output: string(out), err: err}
 	}
 
 	// Write the staged tree to get a tree SHA.
-	writeTreeCmd := exec.CommandContext(ctx, w.binary, writeTreeArgs(info.Path)...)
+	writeTreeCmd := aoprocess.CommandContext(ctx, w.binary, writeTreeArgs(info.Path)...)
 	writeTreeCmd.Env = append(os.Environ(), "GIT_INDEX_FILE="+tmpIdxPath)
 	treeOut, err := writeTreeCmd.CombinedOutput()
 	if err != nil {
@@ -402,7 +403,7 @@ func (w *Workspace) ApplyPreserved(ctx context.Context, info ports.WorkspaceInfo
 // returned commandError. Exit code detection happens in the caller.
 func (w *Workspace) runCherryPickNoCommit(ctx context.Context, worktree, commitSHA string) error {
 	args := cherryPickNoCommitArgs(worktree, commitSHA)
-	cmd := exec.CommandContext(ctx, w.binary, args...)
+	cmd := aoprocess.CommandContext(ctx, w.binary, args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return commandError{args: append([]string{w.binary}, args...), output: string(out), err: err}
@@ -752,7 +753,7 @@ func pathExistsNonEmpty(path string) (bool, error) {
 }
 
 func runCommand(ctx context.Context, binary string, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, binary, args...)
+	cmd := aoprocess.CommandContext(ctx, binary, args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return out, commandError{args: append([]string{binary}, args...), output: string(out), err: err}

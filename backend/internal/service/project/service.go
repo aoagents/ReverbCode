@@ -3,7 +3,6 @@ package project
 import (
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -14,6 +13,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
 )
 
 // Manager is the controller-facing contract for the /api/v1/projects surface.
@@ -294,7 +294,7 @@ func (m *Service) SetConfig(ctx context.Context, id domain.ProjectID, in SetConf
 // other git error returns an empty string — `project add` must not fail just
 // because no origin is configured (the SCM observer skips such projects).
 func resolveGitOriginURL(path string) string {
-	out, err := exec.Command("git", "-C", path, "remote", "get-url", "origin").Output()
+	out, err := aoprocess.Command("git", "-C", path, "remote", "get-url", "origin").Output()
 	if err != nil {
 		return ""
 	}
@@ -313,14 +313,14 @@ func resolveGitOriginURL(path string) string {
 // returns an empty string — `project add` must not fail just because the branch
 // can't be resolved (the caller falls back to DefaultBranchName).
 func resolveDefaultBranch(path string) string {
-	if out, err := exec.Command(
+	if out, err := aoprocess.Command(
 		"git", "-C", path, "symbolic-ref", "--short", "refs/remotes/origin/HEAD",
 	).Output(); err == nil {
 		if ref := strings.TrimSpace(string(out)); ref != "" {
 			return strings.TrimPrefix(ref, "origin/")
 		}
 	}
-	out, err := exec.Command("git", "-C", path, "symbolic-ref", "--short", "HEAD").Output()
+	out, err := aoprocess.Command("git", "-C", path, "symbolic-ref", "--short", "HEAD").Output()
 	if err != nil {
 		return ""
 	}
@@ -412,7 +412,7 @@ func normalizePath(raw string) (string, error) {
 }
 
 func isGitRepo(path string) bool {
-	cmd := exec.Command("git", "-C", path, "rev-parse", "--show-toplevel")
+	cmd := aoprocess.Command("git", "-C", path, "rev-parse", "--show-toplevel")
 	out, err := cmd.Output()
 	if err != nil {
 		return false

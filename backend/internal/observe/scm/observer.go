@@ -12,7 +12,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -20,6 +19,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/observe"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
 )
 
 const (
@@ -1212,7 +1212,7 @@ func normalizePRState(draft, merged, closed bool) string {
 // The observer uses this to backfill projects that were registered before
 // project.Add resolved origin URLs at add time.
 func resolveGitOriginURL(path string) string {
-	out, err := exec.Command("git", "-C", path, "remote", "get-url", "origin").Output()
+	out, err := aoprocess.Command("git", "-C", path, "remote", "get-url", "origin").Output()
 	if err != nil {
 		return ""
 	}
