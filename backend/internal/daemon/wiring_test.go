@@ -152,7 +152,7 @@ func TestWiring_StartSessionBuildsSessionService(t *testing.T) {
 
 	rt := runtimeselect.New(nil)
 	messenger := newSessionMessenger(store, rt, log)
-	svc, reviewSvc, lifecycle, err := startSession(cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, log)
+	svc, reviewSvc, lc, err := startSession(cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, log)
 	if err != nil {
 		t.Fatalf("startSession: %v", err)
 	}
@@ -162,7 +162,7 @@ func TestWiring_StartSessionBuildsSessionService(t *testing.T) {
 	if reviewSvc == nil {
 		t.Fatal("startSession returned nil review service")
 	}
-	if lifecycle == nil {
+	if lc == nil {
 		t.Fatal("startSession returned nil session lifecycle")
 	}
 }
@@ -403,8 +403,8 @@ func (f *fakeSessionLifecycle) SaveAndTeardownAll(_ context.Context) error {
 
 // TestWiring_SessionLifecycleInterfaceInvokedByDaemon asserts the
 // sessionLifecycle interface is satisfied by *sessionmanager.Manager (compile
-// check) and that both methods are callable through the interface, matching what
-// daemon.go wires at boot/shutdown.
+// check) and that both methods dispatch correctly through the interface, matching
+// what daemon.go wires at boot/shutdown.
 func TestWiring_SessionLifecycleInterfaceInvokedByDaemon(t *testing.T) {
 	// Verify *sessionmanager.Manager satisfies the interface at compile time.
 	var _ sessionLifecycle = (*sessionmanager.Manager)(nil)
@@ -412,14 +412,18 @@ func TestWiring_SessionLifecycleInterfaceInvokedByDaemon(t *testing.T) {
 	fake := &fakeSessionLifecycle{}
 	ctx := context.Background()
 
-	if err := fake.RestoreAll(ctx); err != nil {
+	// Dispatch through the interface variable to exercise the real dispatch
+	// path, not just direct struct method calls.
+	var sl sessionLifecycle = fake
+
+	if err := sl.RestoreAll(ctx); err != nil {
 		t.Fatalf("RestoreAll: %v", err)
 	}
 	if !fake.restoreAllCalled {
 		t.Fatal("RestoreAll was not called through the interface")
 	}
 
-	if err := fake.SaveAndTeardownAll(ctx); err != nil {
+	if err := sl.SaveAndTeardownAll(ctx); err != nil {
 		t.Fatalf("SaveAndTeardownAll: %v", err)
 	}
 	if !fake.saveAndTeardownCalled {
