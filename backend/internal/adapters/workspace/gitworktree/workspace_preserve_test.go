@@ -120,6 +120,104 @@ func TestWorkspaceIntegrationStashApplyRoundTrip(t *testing.T) {
 	}
 }
 
+// TestWorkspaceIntegrationApplyPreservedConflict verifies the spec for a
+// conflicting apply (plan edge case 5):
+//
+//  1. Set up a repo where the base HEAD has a tracked file with content "A".
+//  2. StashUncommitted after editing the file to "B" (preserve commit: B over A).
+//  3. After ForceDestroy and Restore, diverge the same file to content "C"
+//     (simulating a base-moved or independently-edited state).
+//  4. ApplyPreserved must:
+//     (a) return an error that satisfies errors.Is(err, ErrPreservedConflict),
+//     (b) leave the preserve ref intact (NOT delete it),
+//     (c) leave textual conflict markers in the conflicting file.
+func TestWorkspaceIntegrationApplyPreservedConflict(t *testing.T) {
+	git := requireGit(t)
+	tmp := t.TempDir()
+	repo := setupOriginClone(t, git, tmp)
+	root := filepath.Join(tmp, "managed")
+	ws, err := New(Options{Binary: git, ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	ctx := context.Background()
+	cfg := ports.WorkspaceConfig{ProjectID: "proj", SessionID: "sess-conflict", Branch: "feature/conflict-test"}
+
+	info, err := ws.Create(ctx, cfg)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	// Write base content "A" into a tracked file and commit it so it is the
+	// HEAD tree that StashUncommitted will use as the parent.
+	conflictFile := filepath.Join(info.Path, "shared.txt")
+	if err := os.WriteFile(conflictFile, []byte("A\n"), 0o644); err != nil {
+		t.Fatalf("write base A: %v", err)
+	}
+	runGit(t, git, info.Path, "add", "shared.txt")
+	runGit(t, git, info.Path, "commit", "-m", "base: A")
+
+	// Edit to "B" without committing: this is what the agent had in flight.
+	if err := os.WriteFile(conflictFile, []byte("B\n"), 0o644); err != nil {
+		t.Fatalf("write B: %v", err)
+	}
+
+	// Preserve: StashUncommitted captures B-over-A into a ref.
+	ref, err := ws.StashUncommitted(ctx, info)
+	if err != nil {
+		t.Fatalf("StashUncommitted: %v", err)
+	}
+	if ref == "" {
+		t.Fatal("StashUncommitted returned empty ref for dirty worktree")
+	}
+
+	// Simulate session close.
+	if err := ws.ForceDestroy(ctx, info); err != nil {
+		t.Fatalf("ForceDestroy: %v", err)
+	}
+
+	// Restore: re-add the worktree (re-open path).
+	restored, err := ws.Restore(ctx, cfg)
+	if err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+
+	// Diverge the same file to content "C" in the restored worktree so that
+	// cherry-pick --no-commit will produce a real three-way conflict (A -> B
+	// from preserve vs A -> C in the current tree).
+	conflictFileRestored := filepath.Join(restored.Path, "shared.txt")
+	if err := os.WriteFile(conflictFileRestored, []byte("C\n"), 0o644); err != nil {
+		t.Fatalf("write C: %v", err)
+	}
+	// Stage the diverging edit so it is in the index; cherry-pick merges against
+	// the index, not just the working tree.
+	runGit(t, git, restored.Path, "add", "shared.txt")
+
+	// ApplyPreserved must detect the conflict and return ErrPreservedConflict.
+	applyErr := ws.ApplyPreserved(ctx, restored, ref)
+	if applyErr == nil {
+		t.Fatal("ApplyPreserved returned nil, want ErrPreservedConflict")
+	}
+	if !errors.Is(applyErr, ErrPreservedConflict) {
+		t.Fatalf("ApplyPreserved error = %v, want errors.Is(..., ErrPreservedConflict)", applyErr)
+	}
+
+	// (b) The preserve ref must still exist.
+	checkRefArgs := revParseVerifyArgs(repo, ref)
+	if _, err := ws.run(ctx, ws.binary, checkRefArgs...); err != nil {
+		t.Fatalf("preserve ref %q was deleted after a conflicting apply, must be kept: %v", ref, err)
+	}
+
+	// (c) The conflicting file must contain textual conflict markers.
+	contents, err := os.ReadFile(conflictFileRestored)
+	if err != nil {
+		t.Fatalf("read conflicting file: %v", err)
+	}
+	if !strings.Contains(string(contents), "<<<<<<<") {
+		t.Fatalf("conflicting file has no conflict markers after ApplyPreserved conflict; content:\n%s", string(contents))
+	}
+}
+
 // TestWorkspaceIntegrationStashCleanWorktree proves that StashUncommitted on a
 // clean worktree returns an empty ref and no error (nothing to preserve).
 func TestWorkspaceIntegrationStashCleanWorktree(t *testing.T) {

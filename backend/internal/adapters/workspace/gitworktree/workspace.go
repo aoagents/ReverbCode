@@ -352,9 +352,10 @@ func (w *Workspace) countIgnoredPaths(ctx context.Context, worktree string) (int
 }
 
 // ApplyPreserved replays the capture created by StashUncommitted onto the
-// (freshly re-added) worktree. On clean success, the preserve ref is deleted.
-// On conflict, the ref is kept, conflict markers are left in place, and
-// ErrPreservedConflict (wrapped) is returned so the caller can surface it.
+// (freshly re-added) worktree using a true three-way merge (cherry-pick --no-commit).
+// On clean success, the preserve ref is deleted.
+// On conflict, the ref is kept, conflict markers are left in the affected files,
+// and ErrPreservedConflict (wrapped) is returned so the caller can surface it.
 //
 // NEVER deletes the preserve ref on a failed or conflicted apply.
 func (w *Workspace) ApplyPreserved(ctx context.Context, info ports.WorkspaceInfo, ref string) error {
@@ -372,20 +373,17 @@ func (w *Workspace) ApplyPreserved(ctx context.Context, info ports.WorkspaceInfo
 	}
 	commitSHA := strings.TrimSpace(string(resolveOut))
 
-	// Apply all files from the preserve commit's tree onto the working tree via
-	// "git checkout <SHA> -- .". This restores tracked-file edits and new files
-	// that were captured by StashUncommitted. On a content conflict git writes
-	// conflict markers and exits non-zero.
-	applyErr := w.runCheckoutTree(ctx, info.Path, commitSHA)
+	// Apply the preserve commit via "git cherry-pick --no-commit <sha>".
+	// cherry-pick computes the diff between the preserve commit and its parent
+	// (the HEAD at save time) and 3-way-merges it onto the current working tree.
+	// On conflict it leaves textual conflict markers in the affected files and
+	// exits non-zero WITHOUT committing or moving HEAD. Conflict detection uses
+	// the exit code only (not output text) to stay locale-independent.
+	applyErr := w.runCherryPickNoCommit(ctx, info.Path, commitSHA)
 	if applyErr != nil {
-		var cmdErr commandError
-		if errors.As(applyErr, &cmdErr) {
-			out := strings.ToLower(cmdErr.output)
-			if strings.Contains(out, "conflict") {
-				return fmt.Errorf("%w: %w", ErrPreservedConflict, applyErr)
-			}
-		}
-		return fmt.Errorf("gitworktree: ApplyPreserved checkout %q: %w", ref, applyErr)
+		// Any non-zero exit from the merge step is a conflict: keep the ref,
+		// leave conflict markers in place, and surface the sentinel.
+		return fmt.Errorf("%w: %w", ErrPreservedConflict, applyErr)
 	}
 
 	// Clean apply: remove the preserve ref so it is never replayed twice.
@@ -400,11 +398,11 @@ func (w *Workspace) ApplyPreserved(ctx context.Context, info ports.WorkspaceInfo
 	return nil
 }
 
-// runCheckoutTree runs "git checkout <commitSHA> -- ." against the worktree and
-// captures combined output so conflict messages are available in the returned
-// commandError.
-func (w *Workspace) runCheckoutTree(ctx context.Context, worktree, commitSHA string) error {
-	args := checkoutTreeArgs(worktree, commitSHA)
+// runCherryPickNoCommit runs "git -C <worktree> cherry-pick --no-commit <sha>"
+// and captures combined output so any conflict details are available in the
+// returned commandError. Exit code detection happens in the caller.
+func (w *Workspace) runCherryPickNoCommit(ctx context.Context, worktree, commitSHA string) error {
+	args := cherryPickNoCommitArgs(worktree, commitSHA)
 	cmd := exec.CommandContext(ctx, w.binary, args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {

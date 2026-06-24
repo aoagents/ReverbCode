@@ -91,12 +91,15 @@ func revParseHeadArgs(worktree string) []string {
 	return []string{"-C", worktree, "rev-parse", "--verify", "HEAD"}
 }
 
-// checkoutTreeArgs restores all files from a commit's tree onto the working
-// tree without switching HEAD. This is the apply step in ApplyPreserved: it
-// reproduces tracked-file edits and new untracked files captured by
-// StashUncommitted, leaving conflict markers on content conflicts.
-func checkoutTreeArgs(worktree, commitSHA string) []string {
-	return []string{"-C", worktree, "checkout", commitSHA, "--", "."}
+// cherryPickNoCommitArgs applies a single commit's diff onto the current
+// working tree via a true three-way merge without committing or moving HEAD.
+// git cherry-pick --no-commit computes the diff between <sha> and its parent
+// and 3-way-merges it onto the current working tree. On conflict it leaves
+// textual conflict markers in the affected files and exits non-zero. New files
+// added in the preserve commit come through as additions. Because -n is used,
+// no sequencer state is left that would require a cherry-pick --quit afterward.
+func cherryPickNoCommitArgs(worktree, commitSHA string) []string {
+	return []string{"-C", worktree, "cherry-pick", "--no-commit", commitSHA}
 }
 
 // ignoredCountArgs lists files skipped because of .gitignore (dry-run, no mutation).
