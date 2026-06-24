@@ -64,6 +64,12 @@ func (s *stubWorkspace) Restore(ctx context.Context, cfg ports.WorkspaceConfig) 
 	return s.Create(ctx, cfg)
 }
 func (s *stubWorkspace) ForceDestroy(context.Context, ports.WorkspaceInfo) error { return nil }
+func (s *stubWorkspace) StashUncommitted(_ context.Context, _ ports.WorkspaceInfo) (string, error) {
+	return "", nil
+}
+func (s *stubWorkspace) ApplyPreserved(_ context.Context, _ ports.WorkspaceInfo, _ string) error {
+	return nil
+}
 
 type captureMessenger struct{ msgs []string }
 

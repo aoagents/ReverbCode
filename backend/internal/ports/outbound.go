@@ -123,9 +123,22 @@ type Workspace interface {
 	Restore(ctx context.Context, cfg WorkspaceConfig) (WorkspaceInfo, error)
 	// ForceDestroy removes the worktree unconditionally, bypassing the
 	// dirty-worktree refusal that Destroy enforces. It is only safe to call
-	// AFTER the session's uncommitted work has been captured (Task 2's
-	// StashUncommitted). Never call it from interactive teardown paths.
+	// AFTER the session's uncommitted work has been captured via StashUncommitted.
+	// Never call it from interactive teardown paths.
 	ForceDestroy(ctx context.Context, info WorkspaceInfo) error
+	// StashUncommitted captures all uncommitted work in the worktree as a git
+	// commit object stored at refs/ao/preserved/<session-id>, WITHOUT mutating
+	// the working tree or the global stash stack. Tracked edits and new
+	// non-ignored files are captured; .gitignore-d files are skipped (the count
+	// of skipped ignored paths is logged). Returns the ref name on success, or
+	// an empty string if the worktree is clean (nothing to preserve).
+	StashUncommitted(ctx context.Context, info WorkspaceInfo) (ref string, err error)
+	// ApplyPreserved replays a capture created by StashUncommitted onto the
+	// worktree identified by info. On clean success the preserve ref is deleted.
+	// On conflict, the ref is kept, conflict markers are left in the working
+	// tree, and ErrPreservedConflict (wrapped) is returned. The ref must never
+	// be deleted on a failed or conflicted apply.
+	ApplyPreserved(ctx context.Context, info WorkspaceInfo, ref string) error
 }
 
 // Workspace-level sentinels surfaced through Create/Restore/Destroy so callers

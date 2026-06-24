@@ -50,6 +50,60 @@ func worktreeListPorcelainArgs(repo string) []string {
 	return []string{"-C", repo, "worktree", "list", "--porcelain"}
 }
 
+// addAllTempIndexArgs stages all tracked and non-ignored untracked files into a
+// temp index file without touching the real index or the working tree.
+// GIT_INDEX_FILE must be set in the command's environment before calling.
+func addAllTempIndexArgs(worktree string) []string {
+	return []string{"-C", worktree, "add", "-A"}
+}
+
+// writeTreeArgs flushes the temp index into a tree object and prints the SHA.
+// GIT_INDEX_FILE must be set in the command's environment.
+func writeTreeArgs(worktree string) []string {
+	return []string{"-C", worktree, "write-tree"}
+}
+
+// commitTreeArgs creates a commit object from a tree SHA. parent is the HEAD
+// SHA to set as parent; message is the commit message. When parent is empty
+// (unborn HEAD), the -p flag is omitted.
+func commitTreeArgs(worktree, treeSHA, parent, message string) []string {
+	args := []string{"-C", worktree, "commit-tree", treeSHA}
+	if parent != "" {
+		args = append(args, "-p", parent)
+	}
+	args = append(args, "-m", message)
+	return args
+}
+
+// updateRefArgs creates or moves a ref to point at a commit SHA.
+func updateRefArgs(worktree, ref, commitSHA string) []string {
+	return []string{"-C", worktree, "update-ref", ref, commitSHA}
+}
+
+// deleteRefArgs deletes a ref unconditionally.
+func deleteRefArgs(worktree, ref string) []string {
+	return []string{"-C", worktree, "update-ref", "-d", ref}
+}
+
+// revParseHeadArgs returns the HEAD commit SHA in the worktree.
+// Exit code 128 means the repo has no commits (unborn HEAD).
+func revParseHeadArgs(worktree string) []string {
+	return []string{"-C", worktree, "rev-parse", "--verify", "HEAD"}
+}
+
+// checkoutTreeArgs restores all files from a commit's tree onto the working
+// tree without switching HEAD. This is the apply step in ApplyPreserved: it
+// reproduces tracked-file edits and new untracked files captured by
+// StashUncommitted, leaving conflict markers on content conflicts.
+func checkoutTreeArgs(worktree, commitSHA string) []string {
+	return []string{"-C", worktree, "checkout", commitSHA, "--", "."}
+}
+
+// ignoredCountArgs lists files skipped because of .gitignore (dry-run, no mutation).
+func ignoredCountArgs(worktree string) []string {
+	return []string{"-C", worktree, "status", "--ignored", "--porcelain"}
+}
+
 func baseRefCandidates(branch, defaultBranch string) []string {
 	candidates := []string{"origin/" + branch}
 	if strings.Contains(defaultBranch, "/") {

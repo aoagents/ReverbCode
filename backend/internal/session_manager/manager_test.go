@@ -214,6 +214,12 @@ func (w *fakeWorkspace) Restore(ctx context.Context, cfg ports.WorkspaceConfig) 
 	return w.Create(ctx, cfg)
 }
 func (w *fakeWorkspace) ForceDestroy(context.Context, ports.WorkspaceInfo) error { return nil }
+func (w *fakeWorkspace) StashUncommitted(_ context.Context, _ ports.WorkspaceInfo) (string, error) {
+	return "", nil
+}
+func (w *fakeWorkspace) ApplyPreserved(_ context.Context, _ ports.WorkspaceInfo, _ string) error {
+	return nil
+}
 
 type fakeMessenger struct{ msgs []string }
 
