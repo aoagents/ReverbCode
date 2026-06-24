@@ -25,6 +25,13 @@ var (
 	ErrNotRestorable    = errors.New("session: not restorable (not terminal)")
 	ErrTerminated       = errors.New("session: terminated")
 	ErrIncompleteHandle = errors.New("session: incomplete teardown handle")
+	// ErrNotResumable means there is nothing for Restore to relaunch from: the
+	// harness adapter cannot resume the session (no native or derivable session
+	// id) AND no prompt was saved to fresh-launch from. Resumability is decided
+	// by the adapter (e.g. Claude Code pins a deterministic --session-id, so it
+	// resumes with no captured token), not by inspecting metadata fields here.
+	// Distinct from ErrNotRestorable (which is "not terminal yet").
+	ErrNotResumable = errors.New("session: nothing to resume from")
 	// ErrProjectNotResolvable means the spawn's project has no usable repo
 	// (unregistered, archived, or missing a path). The API maps it to a 400.
 	ErrProjectNotResolvable = errors.New("session: project repo not resolvable")
@@ -60,6 +67,9 @@ type lifecycleRecorder interface {
 type runtimeController interface {
 	Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error)
 	Destroy(ctx context.Context, handle ports.RuntimeHandle) error
+	// IsAlive reports whether the handle's runtime session still exists. Used by
+	// Reconcile on boot to adopt crash-surviving sessions and reap leaked ones.
+	IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool, error)
 }
 
 // Store is the persistence surface needed by the internal session Manager.
@@ -77,6 +87,15 @@ type Store interface {
 	// when the row had already progressed past seed state — preserving the
 	// no-resurrection guarantee for live sessions.
 	DeleteSession(ctx context.Context, id domain.SessionID) (bool, error)
+	// UpsertSessionWorktree records or updates the worktree row for a session.
+	// SaveAndTeardownAll writes the preserved_ref here (even when empty) as the
+	// "shutdown-saved" marker before ForceDestroying the worktree.
+	UpsertSessionWorktree(ctx context.Context, row domain.SessionWorktreeRecord) error
+	// ListSessionWorktrees returns every worktree row for a session. RestoreAll
+	// uses this to identify sessions saved by the last SaveAndTeardownAll: the
+	// presence of any row is the marker; preserved_ref may be empty for clean
+	// worktrees.
+	ListSessionWorktrees(ctx context.Context, id domain.SessionID) ([]domain.SessionWorktreeRecord, error)
 }
 
 // Manager coordinates internal session spawn, restore, kill, and cleanup over
@@ -467,9 +486,10 @@ func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.Sess
 	if meta.WorkspacePath == "" || meta.Branch == "" {
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", id, ErrIncompleteHandle)
 	}
-	if meta.AgentSessionID == "" && meta.Prompt == "" {
-		return domain.SessionRecord{}, fmt.Errorf("restore %s: nothing to resume from", id)
-	}
+	// Resumability is NOT decided here: a promptless session can still be fully
+	// resumable when the harness pins a deterministic session id (Claude Code).
+	// restoreArgv asks the adapter and returns ErrNotResumable only when the
+	// adapter cannot resume AND there is no prompt to fresh-launch from.
 
 	project, err := m.loadProject(ctx, rec.ProjectID)
 	if err != nil {
@@ -530,6 +550,287 @@ func (m *Manager) getRecord(ctx context.Context, id domain.SessionID) (domain.Se
 		return domain.SessionRecord{}, fmt.Errorf("get %s: %w", id, ErrNotFound)
 	}
 	return rec, nil
+}
+
+// SaveAndTeardownAll captures uncommitted work and tears down every live
+// session that has a workspace path. It is the shutdown path for the daemon:
+// each session's uncommitted work is stashed into a preserve ref, the ref is
+// written to session_worktrees (the "shutdown-saved" marker) BEFORE the
+// worktree is force-removed. The DB write is committed before the worktree is
+// destroyed so a crash between the two leaves the ref in place and the row
+// present; RestoreAll will replay both.
+//
+// Failures on individual sessions are logged and do not abort the loop.
+// ForceDestroy is never called if capture or the DB write did not succeed.
+func (m *Manager) SaveAndTeardownAll(ctx context.Context) error {
+	recs, err := m.store.ListAllSessions(ctx)
+	if err != nil {
+		return fmt.Errorf("save-teardown-all: list sessions: %w", err)
+	}
+	for _, rec := range recs {
+		if rec.IsTerminated {
+			continue
+		}
+		if rec.Metadata.WorkspacePath == "" || rec.Metadata.Branch == "" {
+			continue
+		}
+		if err := m.saveAndTeardownOne(ctx, rec); err != nil {
+			m.logger.Error("save-teardown-all: session failed, skipping", "sessionID", rec.ID, "error", err)
+		}
+	}
+	return nil
+}
+
+// saveAndTeardownOne runs the capture-then-destroy sequence for a single
+// session. The DB write (UpsertSessionWorktree) is committed before
+// ForceDestroy; if either capture or the DB write fails, ForceDestroy is
+// not called.
+func (m *Manager) saveAndTeardownOne(ctx context.Context, rec domain.SessionRecord) error {
+	ws := workspaceInfo(rec)
+
+	// 1. Capture uncommitted work (ref may be "" for clean worktrees).
+	ref, err := m.workspace.StashUncommitted(ctx, ws)
+	if err != nil {
+		return fmt.Errorf("save %s: stash: %w", rec.ID, err)
+	}
+
+	// 2. Write the shutdown-saved marker to the DB. The row's presence (even
+	// with an empty preserved_ref) is what RestoreAll uses to identify sessions
+	// saved by this run. This MUST be committed before ForceDestroy.
+	row := domain.SessionWorktreeRecord{
+		SessionID:    rec.ID,
+		RepoName:     domain.RootWorkspaceRepoName,
+		Branch:       rec.Metadata.Branch,
+		WorktreePath: rec.Metadata.WorkspacePath,
+		PreservedRef: ref,
+	}
+	if err := m.store.UpsertSessionWorktree(ctx, row); err != nil {
+		return fmt.Errorf("save %s: upsert worktree row: %w", rec.ID, err)
+	}
+
+	// 3. Mark terminal via the LCM (same path Kill uses).
+	if err := m.lcm.MarkTerminated(ctx, rec.ID); err != nil {
+		return fmt.Errorf("save %s: mark terminated: %w", rec.ID, err)
+	}
+
+	// 4. Runtime teardown (best-effort; same pattern as Kill).
+	handle := runtimeHandle(rec.Metadata)
+	if handle.ID != "" {
+		if err := m.runtime.Destroy(ctx, handle); err != nil {
+			m.logger.Warn("save-teardown-all: runtime destroy failed", "sessionID", rec.ID, "error", err)
+		}
+	}
+
+	// 5. Force-remove the worktree (safe: work is captured in step 1 and the
+	// DB write in step 2 is already committed).
+	if err := m.workspace.ForceDestroy(ctx, ws); err != nil {
+		m.logger.Warn("save-teardown-all: force destroy failed", "sessionID", rec.ID, "error", err)
+	}
+	return nil
+}
+
+// reconcileLive handles a single non-terminated session on boot. If its runtime
+// session is still alive (tmux is the persistence layer, so it survives a daemon
+// crash) we adopt it: a no-op, the agent keeps running. If the runtime is gone,
+// the agent died with the daemon, so we save-and-tear-down to the SAME end state
+// a graceful shutdown produces: capture uncommitted work into a preserve ref,
+// record the session_worktrees restore marker, mark terminated, and remove the
+// worktree. RestoreAll (which Reconcile runs immediately after) then relaunches
+// it on this same boot, resuming history. Crash recovery thus matches graceful
+// restart instead of silently abandoning the session.
+//
+// If the work capture fails we mark terminated WITHOUT a marker and leave the
+// worktree intact: better to skip the relaunch than to tear down un-preserved
+// work or relaunch onto an inconsistent worktree.
+func (m *Manager) reconcileLive(ctx context.Context, rec domain.SessionRecord) error {
+	if rec.Metadata.WorkspacePath == "" || rec.Metadata.Branch == "" {
+		return nil
+	}
+	handle := runtimeHandle(rec.Metadata)
+	if handle.ID != "" {
+		alive, err := m.runtime.IsAlive(ctx, handle)
+		if err != nil {
+			// A failed probe is not proof of death: leave the session as-is.
+			return fmt.Errorf("reconcile %s: probe: %w", rec.ID, err)
+		}
+		if alive {
+			return nil // adopt: the session survived the crash.
+		}
+	}
+	// Runtime is gone: capture uncommitted work first.
+	ws := workspaceInfo(rec)
+	ref, err := m.workspace.StashUncommitted(ctx, ws)
+	if err != nil {
+		// Could not capture work: do NOT write a restore marker or tear down the
+		// worktree (that would risk losing un-preserved work). Mark terminated so
+		// a dead session is not left looking live; the worktree stays put.
+		m.logger.Warn("reconcile: stash uncommitted failed; terminating without restore marker", "sessionID", rec.ID, "error", err)
+		if mErr := m.lcm.MarkTerminated(ctx, rec.ID); mErr != nil {
+			return fmt.Errorf("reconcile %s: mark terminated: %w", rec.ID, mErr)
+		}
+		return nil
+	}
+	// Work captured. Record the shutdown-saved marker BEFORE tearing down the
+	// worktree, mirroring saveAndTeardownOne, so RestoreAll relaunches it.
+	row := domain.SessionWorktreeRecord{
+		SessionID:    rec.ID,
+		RepoName:     domain.RootWorkspaceRepoName,
+		Branch:       rec.Metadata.Branch,
+		WorktreePath: rec.Metadata.WorkspacePath,
+		PreservedRef: ref,
+	}
+	if err := m.store.UpsertSessionWorktree(ctx, row); err != nil {
+		return fmt.Errorf("reconcile %s: upsert worktree marker: %w", rec.ID, err)
+	}
+	if err := m.lcm.MarkTerminated(ctx, rec.ID); err != nil {
+		return fmt.Errorf("reconcile %s: mark terminated: %w", rec.ID, err)
+	}
+	// Remove the worktree (work is captured in the ref): RestoreAll re-creates it
+	// clean and replays the ref. The dead runtime needs no Destroy.
+	if err := m.workspace.ForceDestroy(ctx, ws); err != nil {
+		m.logger.Warn("reconcile: force destroy failed after marker", "sessionID", rec.ID, "error", err)
+	}
+	return nil
+}
+
+// reconcileReap kills the leaked tmux session of a session the DB already marks
+// terminated. This covers the teardown that marked the row terminated but failed
+// to kill the runtime (e.g. ForceDestroy/Destroy errored after MarkTerminated).
+// Destroy is idempotent, so an already-gone session is a no-op.
+func (m *Manager) reconcileReap(ctx context.Context, rec domain.SessionRecord) error {
+	handle := runtimeHandle(rec.Metadata)
+	if handle.ID == "" {
+		return nil
+	}
+	alive, err := m.runtime.IsAlive(ctx, handle)
+	if err != nil {
+		return fmt.Errorf("reconcile reap %s: probe: %w", rec.ID, err)
+	}
+	if !alive {
+		return nil
+	}
+	if err := m.runtime.Destroy(ctx, handle); err != nil {
+		return fmt.Errorf("reconcile reap %s: destroy: %w", rec.ID, err)
+	}
+	return nil
+}
+
+// Reconcile is the boot-time consistency pass. It replaces the bare RestoreAll
+// call so that however the previous daemon died (clean shutdown, SIGKILL, or
+// crash), live reality matches the DB:
+//
+//  1. Live pass: for each non-terminated session, adopt it if its runtime
+//     survived, else capture work and mark terminated (reconcileLive).
+//  2. Reap pass: for each terminated session whose runtime leaked, kill it
+//     (reconcileReap). Runs before restore so a restored session does not
+//     collide with a leaked tmux of the same name.
+//  3. Restore pass: relaunch shutdown-saved sessions (existing RestoreAll).
+//
+// Best-effort throughout: a per-session failure is logged and never aborts the
+// pass or blocks boot.
+func (m *Manager) Reconcile(ctx context.Context) error {
+	recs, err := m.store.ListAllSessions(ctx)
+	if err != nil {
+		return fmt.Errorf("reconcile: list sessions: %w", err)
+	}
+	for _, rec := range recs {
+		if rec.IsTerminated {
+			continue
+		}
+		if err := m.reconcileLive(ctx, rec); err != nil {
+			m.logger.Error("reconcile: live pass failed, skipping", "sessionID", rec.ID, "error", err)
+		}
+	}
+	for _, rec := range recs {
+		if !rec.IsTerminated {
+			continue
+		}
+		if err := m.reconcileReap(ctx, rec); err != nil {
+			m.logger.Error("reconcile: reap pass failed, skipping", "sessionID", rec.ID, "error", err)
+		}
+	}
+	return m.RestoreAll(ctx)
+}
+
+// RestoreAll relaunches every terminated session that was saved by the last
+// SaveAndTeardownAll. The "shutdown-saved" marker is the presence of a
+// session_worktrees row for the session; sessions the user killed before
+// shutdown have no such row and are left terminated.
+//
+// For each saved session:
+//  1. Ensure the worktree exists via workspace.Restore.
+//  2. If a preserve ref is recorded, replay it via ApplyPreserved; on conflict
+//     log and continue (still relaunch the agent, never delete the ref).
+//  3. Relaunch via the existing Restore method.
+//
+// Failures on individual sessions are logged and do not abort the loop.
+func (m *Manager) RestoreAll(ctx context.Context) error {
+	recs, err := m.store.ListAllSessions(ctx)
+	if err != nil {
+		return fmt.Errorf("restore-all: list sessions: %w", err)
+	}
+	for _, rec := range recs {
+		if !rec.IsTerminated {
+			continue
+		}
+		// Check the shutdown-saved marker: is there a session_worktrees row?
+		rows, err := m.store.ListSessionWorktrees(ctx, rec.ID)
+		if err != nil {
+			m.logger.Error("restore-all: list worktrees failed", "sessionID", rec.ID, "error", err)
+			continue
+		}
+		if len(rows) == 0 {
+			// No marker: this session was killed by the user before shutdown.
+			continue
+		}
+
+		// Collect the preserve ref (may be "" for clean worktrees).
+		var preserveRef string
+		for _, r := range rows {
+			if r.PreservedRef != "" {
+				preserveRef = r.PreservedRef
+				break
+			}
+		}
+
+		// Step 1: ensure the worktree exists. workspace.Restore re-creates it
+		// if it was removed by SaveAndTeardownAll.
+		project, err := m.loadProject(ctx, rec.ProjectID)
+		if err != nil {
+			m.logger.Error("restore-all: load project failed", "sessionID", rec.ID, "error", err)
+			continue
+		}
+		ws, err := m.workspace.Restore(ctx, ports.WorkspaceConfig{
+			ProjectID:     rec.ProjectID,
+			SessionID:     rec.ID,
+			Kind:          rec.Kind,
+			SessionPrefix: sessionPrefix(project),
+			Branch:        rec.Metadata.Branch,
+		})
+		if err != nil {
+			m.logger.Error("restore-all: workspace restore failed", "sessionID", rec.ID, "error", err)
+			continue
+		}
+
+		// Step 2: replay preserve ref when one was recorded.
+		if preserveRef != "" {
+			if applyErr := m.workspace.ApplyPreserved(ctx, ws, preserveRef); applyErr != nil {
+				if errors.Is(applyErr, ports.ErrPreservedConflict) {
+					m.logger.Warn("restore-all: apply preserved produced conflicts; agent relaunched with conflict markers in place",
+						"sessionID", rec.ID, "ref", preserveRef, "error", applyErr)
+				} else {
+					m.logger.Error("restore-all: apply preserved failed", "sessionID", rec.ID, "error", applyErr)
+				}
+				// Continue: always relaunch even on conflict (never delete the ref here).
+			}
+		}
+
+		// Step 3: relaunch via the existing single-session Restore method.
+		if _, err := m.Restore(ctx, rec.ID); err != nil {
+			m.logger.Error("restore-all: relaunch failed", "sessionID", rec.ID, "error", err)
+		}
+	}
+	return nil
 }
 
 // Send delivers a message to a running session's agent via the messenger.
@@ -930,6 +1231,12 @@ func restoreArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, wo
 	}
 	if ok {
 		return cmd, nil
+	}
+	// The adapter reports no session to resume (no native or derivable session
+	// id). A saved prompt lets us relaunch fresh; with neither, there is
+	// genuinely nothing to restore from.
+	if meta.Prompt == "" {
+		return nil, ErrNotResumable
 	}
 	argv, err := agent.GetLaunchCommand(ctx, ports.LaunchConfig{
 		SessionID:     string(id),

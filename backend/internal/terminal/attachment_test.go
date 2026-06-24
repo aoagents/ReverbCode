@@ -13,27 +13,27 @@ import (
 
 func testLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
-func newTestAttachment(src PTYSource, spawn spawnFunc, onData func([]byte), onExit func()) *attachment {
-	return newTestAttachmentWithOpen(src, spawn, nil, onData, onExit)
+func newTestAttachment(src Source, onData func([]byte), onExit func()) *attachment {
+	return newTestAttachmentWithOpen(src, nil, onData, onExit)
 }
 
-func newTestAttachmentWithOpen(src PTYSource, spawn spawnFunc, onOpen func(), onData func([]byte), onExit func()) *attachment {
-	return newAttachment("t1", ports.RuntimeHandle{ID: "t1"}, src, spawn, onOpen, onData, onExit, testLogger())
+func newTestAttachmentWithOpen(src Source, onOpen func(), onData func([]byte), onExit func()) *attachment {
+	return newAttachment("t1", ports.RuntimeHandle{ID: "t1"}, src, onOpen, onData, onExit, testLogger())
 }
 
-func currentPTY(a *attachment) ptyProcess {
+func currentPTY(a *attachment) ports.Stream {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.pty
 }
 
 func TestAttachmentStreamsOutputToSink(t *testing.T) {
-	src := &fakeSource{alive: true}
 	pty := newFakePTY()
 	sp := &fakeSpawner{ptys: []*fakePTY{pty}}
+	src := &fakeSource{alive: true, spawner: sp}
 
 	var sink safeBytes
-	a := newTestAttachment(src, sp.spawn, sink.add, nil)
+	a := newTestAttachment(src, sink.add, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -44,10 +44,10 @@ func TestAttachmentStreamsOutputToSink(t *testing.T) {
 }
 
 func TestAttachmentWriteAndResizeReachPTY(t *testing.T) {
-	src := &fakeSource{alive: true}
 	pty := newFakePTY()
 	sp := &fakeSpawner{ptys: []*fakePTY{pty}}
-	a := newTestAttachment(src, sp.spawn, nil, nil)
+	src := &fakeSource{alive: true, spawner: sp}
+	a := newTestAttachment(src, nil, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -66,13 +66,13 @@ func TestAttachmentWriteAndResizeReachPTY(t *testing.T) {
 }
 
 func TestAttachmentSignalsOpenOnlyAfterPTYIsPublished(t *testing.T) {
-	src := &fakeSource{alive: true}
 	pty := newFakePTY()
 	sp := &fakeSpawner{ptys: []*fakePTY{pty}}
+	src := &fakeSource{alive: true, spawner: sp}
 
 	opened := make(chan bool, 1)
 	var a *attachment
-	a = newTestAttachmentWithOpen(src, sp.spawn, func() {
+	a = newTestAttachmentWithOpen(src, func() {
 		opened <- currentPTY(a) == pty
 	}, nil, nil)
 
@@ -91,16 +91,15 @@ func TestAttachmentSignalsOpenOnlyAfterPTYIsPublished(t *testing.T) {
 }
 
 func TestAttachmentBuffersInputUntilPTYReady(t *testing.T) {
-	src := &fakeSource{alive: true}
 	pty := newFakePTY()
 	spawnStarted := make(chan struct{})
 	releaseSpawn := make(chan struct{})
-	spawn := func(context.Context, []string, []string, uint16, uint16) (ptyProcess, error) {
+	src := &fakeSource{alive: true, attachFn: func(context.Context, uint16, uint16) (ports.Stream, error) {
 		close(spawnStarted)
 		<-releaseSpawn
 		return pty, nil
-	}
-	a := newTestAttachment(src, spawn, nil, nil)
+	}}
+	a := newTestAttachment(src, nil, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -123,10 +122,10 @@ func TestAttachmentBuffersInputUntilPTYReady(t *testing.T) {
 // resize racing the attach) must not be lost: the attach applies it the moment
 // the PTY is up, instead of leaving the pane at the kernel default grid.
 func TestAttachmentAppliesRequestedSizeOnAttach(t *testing.T) {
-	src := &fakeSource{alive: true}
 	pty := newFakePTY()
 	sp := &fakeSpawner{ptys: []*fakePTY{pty}}
-	a := newTestAttachment(src, sp.spawn, nil, nil)
+	src := &fakeSource{alive: true, spawner: sp}
+	a := newTestAttachment(src, nil, nil)
 
 	if err := a.resize(30, 100); err != nil {
 		t.Fatalf("resize before attach: %v", err)
@@ -142,18 +141,18 @@ func TestAttachmentAppliesRequestedSizeOnAttach(t *testing.T) {
 	})
 }
 
-// The PTY must be SPAWNED at the recorded grid, not sized after exec: the
-// attach process (zellij) reads the tty size once at startup, and a post-spawn
-// TIOCSWINSZ depends on SIGWINCH delivery that can race the client installing
-// its handler — a missed signal left the session laid out for the previous
-// client's size (the "terminal doesn't repaint after a resize" desync). Also
-// covers re-attach: a later resize must reach the NEXT spawn, not the first
-// grid forever.
+// The Stream must be OPENED at the recorded grid, not sized after attach: the
+// attach client reads the tty size once at startup, and a post-attach resize
+// depends on SIGWINCH delivery that can race the client installing its handler
+// — a missed signal left the session laid out for the previous client's size
+// (the "terminal doesn't repaint after a resize" desync). Also covers
+// re-attach: a later resize must reach the NEXT attach, not the first grid
+// forever.
 func TestAttachmentSpawnsPTYAtRecordedSize(t *testing.T) {
-	src := &fakeSource{alive: true}
 	first := newFakePTY()
 	sp := &fakeSpawner{ptys: []*fakePTY{first}}
-	a := newTestAttachment(src, sp.spawn, nil, nil)
+	src := &fakeSource{alive: true, spawner: sp}
+	a := newTestAttachment(src, nil, nil)
 	a.resetGrace = time.Hour // keep the failure counter deterministic
 
 	if err := a.resize(37, 115); err != nil {
@@ -183,19 +182,19 @@ func TestAttachmentSpawnsPTYAtRecordedSize(t *testing.T) {
 }
 
 func TestAttachmentSkipsReattachOnCleanExit(t *testing.T) {
-	src := &fakeSource{alive: true} // alive for the first attach
 	pty := newFakePTY()
 	sp := &fakeSpawner{ptys: []*fakePTY{pty}}
+	src := &fakeSource{alive: true, spawner: sp} // alive for the first attach
 
 	exited := make(chan struct{})
-	a := newTestAttachment(src, sp.spawn, nil, func() { close(exited) })
+	a := newTestAttachment(src, nil, func() { close(exited) })
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go a.run(ctx)
 
 	eventually(t, time.Second, func() bool { return sp.calls() == 1 })
-	src.setAlive(false) // Zellij session gone -> no re-attach
+	src.setAlive(false) // runtime session gone -> no re-attach
 	pty.Close()         // pane ends
 	select {
 	case <-exited:
@@ -207,17 +206,17 @@ func TestAttachmentSkipsReattachOnCleanExit(t *testing.T) {
 	}
 }
 
-// TestAttachmentNeverAttachesToDeadRuntime covers the resurrection bug: `zellij
-// attach` on a killed-but-cached session resurrects it, re-running the agent
+// TestAttachmentNeverAttachesToDeadRuntime covers the resurrection bug: a mux
+// attach on a killed-but-cached session resurrects it, re-running the agent
 // command. An attachment whose runtime probes definitively dead must therefore
-// report exited WITHOUT ever spawning an attach PTY — even on the very first
+// report exited WITHOUT ever opening an attach Stream — even on the very first
 // open (the original code only checked liveness on re-attach).
 func TestAttachmentNeverAttachesToDeadRuntime(t *testing.T) {
-	src := &fakeSource{alive: false}
 	sp := &fakeSpawner{}
+	src := &fakeSource{alive: false, spawner: sp}
 
 	exited := make(chan struct{})
-	a := newTestAttachment(src, sp.spawn, nil, func() { close(exited) })
+	a := newTestAttachment(src, nil, func() { close(exited) })
 
 	go a.run(context.Background())
 	select {
@@ -226,7 +225,7 @@ func TestAttachmentNeverAttachesToDeadRuntime(t *testing.T) {
 		t.Fatal("expected exit when runtime is dead before first attach")
 	}
 	if got := sp.calls(); got != 0 {
-		t.Fatalf("attach must never run against a dead runtime, got %d spawns", got)
+		t.Fatalf("attach must never run against a dead runtime, got %d attaches", got)
 	}
 }
 
@@ -235,10 +234,10 @@ func TestAttachmentNeverAttachesToDeadRuntime(t *testing.T) {
 // not flip the terminal to exited, and the attach proceeds once the probe
 // recovers.
 func TestAttachmentRetriesProbeErrorsBeforeAttaching(t *testing.T) {
-	src := &fakeSource{aliveErr: io.ErrUnexpectedEOF}
 	pty := newFakePTY()
 	sp := &fakeSpawner{ptys: []*fakePTY{pty}}
-	a := newTestAttachment(src, sp.spawn, nil, nil)
+	src := &fakeSource{aliveErr: io.ErrUnexpectedEOF, spawner: sp}
+	a := newTestAttachment(src, nil, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -250,7 +249,7 @@ func TestAttachmentRetriesProbeErrorsBeforeAttaching(t *testing.T) {
 		t.Fatal("probe error must not be treated as runtime death")
 	}
 	if got := sp.calls(); got != 0 {
-		t.Fatalf("attach must wait for a successful probe, got %d spawns", got)
+		t.Fatalf("attach must wait for a successful probe, got %d attaches", got)
 	}
 
 	// Probe recovers -> the attach goes through.
@@ -262,10 +261,10 @@ func TestAttachmentRetriesProbeErrorsBeforeAttaching(t *testing.T) {
 }
 
 func TestAttachmentReattachesWhileSessionAlive(t *testing.T) {
-	src := &fakeSource{alive: true} // session still alive -> re-attach on drop
 	p1, p2 := newFakePTY(), newFakePTY()
 	sp := &fakeSpawner{ptys: []*fakePTY{p1, p2}}
-	a := newTestAttachment(src, sp.spawn, nil, nil)
+	src := &fakeSource{alive: true, spawner: sp} // session still alive -> re-attach on drop
+	a := newTestAttachment(src, nil, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -295,34 +294,36 @@ func TestAttachmentReattachesWhileSessionAlive(t *testing.T) {
 	eventually(t, 2*time.Second, func() bool { return a.isExited() })
 }
 
-func TestAttachmentFailsWhenAttachCommandErrors(t *testing.T) {
+// A persistent Attach error is treated like the old spawn-error path: it backs
+// off and retries up to the failure cap, then reports exited. (The old
+// AttachCommand-error path failed immediately; folding the argv build into
+// Attach means an attach failure now shares the spawn-failure retry policy,
+// which is the correct behavior for a transient dial/exec failure.)
+func TestAttachmentFailsWhenAttachErrors(t *testing.T) {
 	src := &fakeSource{alive: true, attachErr: io.ErrUnexpectedEOF}
-	sp := &fakeSpawner{}
 
 	exited := make(chan struct{})
-	a := newTestAttachment(src, sp.spawn, nil, func() { close(exited) })
+	a := newTestAttachment(src, nil, func() { close(exited) })
+	a.maxReattach = 2 // keep the retry budget small so the test is fast
 
 	go a.run(context.Background())
 	select {
 	case <-exited:
-	case <-time.After(time.Second):
-		t.Fatal("expected exit when attach command fails")
-	}
-	if sp.calls() != 0 {
-		t.Fatalf("spawn should not run when attach command errors, got %d calls", sp.calls())
+	case <-time.After(3 * time.Second):
+		t.Fatal("expected exit after attach errors exhaust the retry budget")
 	}
 }
 
 // close() is a detach, not a pane death: it must stop the attach loop and kill
-// the client's PTY without firing onExit — the Zellij session is still alive
+// the client's PTY without firing onExit — the runtime session is still alive
 // and an exited frame would wrongly flip the client UI to its terminal state.
 func TestAttachmentCloseDoesNotFireExit(t *testing.T) {
-	src := &fakeSource{alive: true}
 	pty := newFakePTY()
 	sp := &fakeSpawner{ptys: []*fakePTY{pty}}
+	src := &fakeSource{alive: true, spawner: sp}
 
 	exited := make(chan struct{})
-	a := newTestAttachment(src, sp.spawn, nil, func() { close(exited) })
+	a := newTestAttachment(src, nil, func() { close(exited) })
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -346,7 +347,7 @@ func TestAttachmentCloseDoesNotFireExit(t *testing.T) {
 	default:
 	}
 	if got := sp.calls(); got != 1 {
-		t.Fatalf("close must stop re-attaching, got %d spawns", got)
+		t.Fatalf("close must stop re-attaching, got %d attaches", got)
 	}
 }
 
@@ -371,11 +372,10 @@ func (p *closeOrderPTY) Close() error {
 }
 
 func TestAttachmentCloseClosesPTYBeforeCancel(t *testing.T) {
-	src := &fakeSource{alive: true}
 	beforeCancel := make(chan struct{})
 	afterCancel := make(chan struct{})
 	var spawnCtx context.Context
-	spawn := func(ctx context.Context, _ []string, _ []string, _, _ uint16) (ptyProcess, error) {
+	src := &fakeSource{alive: true, attachFn: func(ctx context.Context, _, _ uint16) (ports.Stream, error) {
 		spawnCtx = ctx
 		return &closeOrderPTY{
 			fakePTY: newFakePTY(),
@@ -383,8 +383,8 @@ func TestAttachmentCloseClosesPTYBeforeCancel(t *testing.T) {
 			before:  beforeCancel,
 			after:   afterCancel,
 		}, nil
-	}
-	a := newTestAttachment(src, spawn, nil, nil)
+	}}
+	a := newTestAttachment(src, nil, nil)
 
 	done := make(chan struct{})
 	go func() {

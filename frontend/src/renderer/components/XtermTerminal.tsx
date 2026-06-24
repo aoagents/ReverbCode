@@ -70,11 +70,10 @@ function loadRenderer(term: Terminal): void {
 const terminalThemes = buildTerminalThemes();
 const SUPPRESS_NATIVE_PASTE_MS = 100;
 
-// Erase scrollback (3J) + display (2J) and home the cursor — yyork's
-// terminalResetSequence. Deliberately NOT term.reset(): every pane PTY is a
-// fresh per-client `zellij attach` whose handshake re-asserts terminal modes
-// anyway, but a full RIS would drop them for the window until that handshake
-// arrives. The clear only wipes pixels; modes stay up.
+// Erase scrollback (3J) + display (2J) and home the cursor. Deliberately NOT
+// term.reset(): every pane PTY is a fresh per-client attach whose handshake
+// re-asserts terminal modes anyway, but a full RIS would drop them until that
+// handshake arrives. The clear only wipes pixels; modes stay up.
 const CLEAR_SEQUENCE = "\x1b[3J\x1b[2J\x1b[H";
 
 function preparePastedText(text: string): string {
@@ -163,14 +162,13 @@ type XtermInternal = Terminal & {
 	};
 };
 
-// zellij (started with `--mouse-mode true`, see backend embeddedClientOptions)
-// acts on SGR mouse-wheel reports written to its stdin and scrolls the focused
-// pane, but it does NOT enable host mouse reporting, so xterm's own mouse
-// protocol stays NONE and it never reports the wheel itself. With scrollback:0
-// xterm would instead convert the wheel into cursor-arrow keys (its alt-buffer
-// fallback), which move the agent's cursor/history rather than scrolling. So we
-// synthesize the SGR wheel reports here. SGR button 64 = wheel up, 65 = down;
-// reports are 1-based and a single cell is enough for a borderless single pane.
+// We never scroll locally (scrollback:0). Instead we synthesize SGR mouse-wheel
+// reports and write them to the pane; tmux (with `mouse on`, set by the runtime
+// adapter) acts on them and scrolls its scrollback via copy-mode. With
+// scrollback:0 xterm would otherwise convert the wheel into cursor-arrow keys
+// (its alt-buffer fallback), which move the agent's cursor rather than scrolling.
+// SGR button 64 = wheel up, 65 = down; reports are 1-based and a single cell is
+// enough for a borderless single pane.
 const SGR_WHEEL_UP = 64;
 const SGR_WHEEL_DOWN = 65;
 
@@ -243,12 +241,12 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				// background, the way VS Code's terminal does; without it dim colors
 				// render washed out.
 				minimumContrastRatio: 4.5,
-				// The mux PTY runs `zellij attach` (backend AttachCommand), a
-				// full-screen alt-buffer app that owns scrollback itself — same as
-				// yyork. xterm's own buffer never accumulates history (the alt screen
-				// doesn't feed scrollback), and wheel events reach zellij as mouse
-				// reports instead of scrolling locally. 0 also stops FitAddon
-				// reserving ~14px on the right for a scrollbar that can never appear.
+				// The pane PTY runs a full-screen alt-buffer app (tmux attach) that
+				// owns scrollback itself, so xterm's own buffer never accumulates
+				// history (the alt screen doesn't feed scrollback) and wheel events
+				// are forwarded as mouse reports instead of scrolling locally. 0 also
+				// stops FitAddon reserving ~14px on the right for a scrollbar that can
+				// never appear.
 				scrollback: 0,
 				theme: props.theme === "dark" ? terminalThemes.dark : terminalThemes.light,
 			});
@@ -264,7 +262,17 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		const unicode = new Unicode11Addon();
 		term.loadAddon(unicode);
 		term.unicode.activeVersion = "11";
-		term.loadAddon(new WebLinksAddon());
+		// Open links in the OS browser. The default WebLinksAddon handler calls
+		// window.open() with no URL and then assigns location.href, but the
+		// Electron main process denies every window.open and only forwards the URL
+		// passed to it (main.ts setWindowOpenHandler), so the default handler's
+		// empty open is dropped and clicks silently no-op. Pass the matched URL to
+		// window.open directly so the main process routes it to shell.openExternal.
+		term.loadAddon(
+			new WebLinksAddon((_event, uri) => {
+				window.open(uri, "_blank", "noopener");
+			}),
+		);
 		term.loadAddon(new SearchAddon());
 
 		term.open(host);
@@ -379,8 +387,8 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		// 50/250ms catch the common settle; 600/1200ms are a session-bounded
 		// backstop. By 600ms the WebGL atlas and font metrics are unambiguously
 		// warm, so even if the convergence loop below detached at a briefly-stable
-		// wrong measurement, this re-measures the real cell box and corrects —
-		// which fires the PTY resize that makes zellij repaint cleanly (clearing
+		// wrong measurement, this re-measures the real cell box and corrects,
+		// firing the PTY resize that makes the pane repaint cleanly (clearing
 		// any ghost frame). fit() is idempotent: a no-op when the grid is already
 		// right, so a correct terminal never reflows.
 		const settleTimers = [50, 250, 600, 1200].map((ms) => window.setTimeout(fitTerminal, ms));
@@ -454,7 +462,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		// composition, shortcuts, and wheel reports are emitted explicitly below.
 		const keyInput = term.onKey(({ key }) => emitUserInput(key, "keyboard"));
 
-		// Translate wheel motion into SGR wheel reports for zellij (see
+		// Translate wheel motion into SGR wheel reports for the pane (see
 		// sgrWheelReport), one report per scrolled line. WheelEvent.deltaMode
 		// varies by platform/device: trackpads and normalized wheels report
 		// pixels (mode 0, the macOS case), while many Linux/Windows mouse wheels

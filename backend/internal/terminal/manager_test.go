@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/cdc"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 // fakeConn is an in-memory wsConn driven by channels.
@@ -68,10 +69,10 @@ func recv(t *testing.T, c *fakeConn, ch, typ string, d time.Duration) serverMsg 
 }
 
 func TestServeOpenStreamsAndWritesTerminal(t *testing.T) {
-	src := &fakeSource{alive: true}
 	pty := newFakePTY()
 	sp := &fakeSpawner{ptys: []*fakePTY{pty}}
-	mgr := NewManager(src, nil, testLogger(), WithSpawn(sp.spawn), WithHeartbeat(0))
+	src := &fakeSource{alive: true, spawner: sp}
+	mgr := NewManager(src, nil, testLogger(), WithHeartbeat(0))
 	defer mgr.Close()
 
 	conn := newFakeConn()
@@ -100,16 +101,15 @@ func TestServeOpenStreamsAndWritesTerminal(t *testing.T) {
 }
 
 func TestServeBuffersInputUntilAttachReady(t *testing.T) {
-	src := &fakeSource{alive: true}
 	pty := newFakePTY()
 	spawnStarted := make(chan struct{})
 	releaseSpawn := make(chan struct{})
-	spawn := func(context.Context, []string, []string, uint16, uint16) (ptyProcess, error) {
+	src := &fakeSource{alive: true, attachFn: func(context.Context, uint16, uint16) (ports.Stream, error) {
 		close(spawnStarted)
 		<-releaseSpawn
 		return pty, nil
-	}
-	mgr := NewManager(src, nil, testLogger(), WithSpawn(spawn), WithHeartbeat(0))
+	}}
+	mgr := NewManager(src, nil, testLogger(), WithHeartbeat(0))
 	defer mgr.Close()
 
 	conn := newFakeConn()
@@ -148,9 +148,9 @@ func nextTerminal(t *testing.T, c *fakeConn) serverMsg {
 // same id on this connection is served instead of being silently dropped by the
 // already-open guard.
 func TestServeOpenDeadRuntimeReportsExitedAndAllowsReopen(t *testing.T) {
-	src := &fakeSource{alive: false}
 	sp := &fakeSpawner{ptys: []*fakePTY{newFakePTY()}}
-	mgr := NewManager(src, nil, testLogger(), WithSpawn(sp.spawn), WithHeartbeat(0))
+	src := &fakeSource{alive: false, spawner: sp}
+	mgr := NewManager(src, nil, testLogger(), WithHeartbeat(0))
 	defer mgr.Close()
 
 	conn := newFakeConn()
@@ -163,7 +163,7 @@ func TestServeOpenDeadRuntimeReportsExitedAndAllowsReopen(t *testing.T) {
 		t.Fatalf("first frame = %q, want exited", m.Type)
 	}
 	if got := sp.calls(); got != 0 {
-		t.Fatalf("attach must never run against a dead runtime, got %d spawns", got)
+		t.Fatalf("attach must never run against a dead runtime, got %d attaches", got)
 	}
 
 	src.setAlive(true)
@@ -177,10 +177,10 @@ func TestServeOpenDeadRuntimeReportsExitedAndAllowsReopen(t *testing.T) {
 // exit, so a later open for the same id is served rather than dropped by the
 // already-open guard.
 func TestServeExitAfterOpenClearsEntryAllowingReopen(t *testing.T) {
-	src := &fakeSource{alive: true} // alive for the first attach
 	p := newFakePTY()
 	sp := &fakeSpawner{ptys: []*fakePTY{p}}
-	mgr := NewManager(src, nil, testLogger(), WithSpawn(sp.spawn), WithHeartbeat(0))
+	src := &fakeSource{alive: true, spawner: sp} // alive for the first attach
+	mgr := NewManager(src, nil, testLogger(), WithHeartbeat(0))
 	defer mgr.Close()
 
 	conn := newFakeConn()
@@ -209,10 +209,10 @@ func TestServeExitAfterOpenClearsEntryAllowingReopen(t *testing.T) {
 // to shake the exit/reopen interleavings out.
 func TestServeReopenAfterImmediateExitNeverStuck(t *testing.T) {
 	for i := 0; i < 400; i++ {
-		src := &fakeSource{}
-		src.setAlive(false) // dead runtime -> the open exits without attaching
 		sp := &fakeSpawner{}
-		mgr := NewManager(src, nil, testLogger(), WithSpawn(sp.spawn), WithHeartbeat(0))
+		src := &fakeSource{spawner: sp}
+		src.setAlive(false) // dead runtime -> the open exits without attaching
+		mgr := NewManager(src, nil, testLogger(), WithHeartbeat(0))
 
 		conn := newFakeConn()
 		ctx, cancel := context.WithCancel(context.Background())
@@ -233,7 +233,7 @@ func TestServeReopenAfterImmediateExitNeverStuck(t *testing.T) {
 }
 
 func TestServeRejectsOpenWithoutID(t *testing.T) {
-	mgr := NewManager(&fakeSource{}, nil, testLogger(), WithSpawn((&fakeSpawner{}).spawn), WithHeartbeat(0))
+	mgr := NewManager(&fakeSource{}, nil, testLogger(), WithHeartbeat(0))
 	defer mgr.Close()
 	conn := newFakeConn()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -249,7 +249,7 @@ func TestServeRejectsOpenWithoutID(t *testing.T) {
 
 func TestServeForwardsSessionChannelFromCDC(t *testing.T) {
 	bc := cdc.NewBroadcaster()
-	mgr := NewManager(&fakeSource{}, bc, testLogger(), WithSpawn((&fakeSpawner{}).spawn), WithHeartbeat(0))
+	mgr := NewManager(&fakeSource{}, bc, testLogger(), WithHeartbeat(0))
 	defer mgr.Close()
 
 	conn := newFakeConn()
@@ -271,7 +271,7 @@ func TestServeForwardsSessionChannelFromCDC(t *testing.T) {
 }
 
 func TestServeSystemPingGetsPong(t *testing.T) {
-	mgr := NewManager(&fakeSource{}, nil, testLogger(), WithSpawn((&fakeSpawner{}).spawn), WithHeartbeat(0))
+	mgr := NewManager(&fakeSource{}, nil, testLogger(), WithHeartbeat(0))
 	defer mgr.Close()
 	conn := newFakeConn()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -283,7 +283,7 @@ func TestServeSystemPingGetsPong(t *testing.T) {
 }
 
 func TestServeHeartbeatPings(t *testing.T) {
-	mgr := NewManager(&fakeSource{}, nil, testLogger(), WithSpawn((&fakeSpawner{}).spawn), WithHeartbeat(10*time.Millisecond))
+	mgr := NewManager(&fakeSource{}, nil, testLogger(), WithHeartbeat(10*time.Millisecond))
 	defer mgr.Close()
 	conn := newFakeConn()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -294,7 +294,7 @@ func TestServeHeartbeatPings(t *testing.T) {
 }
 
 func TestServeClosesConnOnReadEnd(t *testing.T) {
-	mgr := NewManager(&fakeSource{}, nil, testLogger(), WithSpawn((&fakeSpawner{}).spawn), WithHeartbeat(0))
+	mgr := NewManager(&fakeSource{}, nil, testLogger(), WithHeartbeat(0))
 	defer mgr.Close()
 	conn := newFakeConn()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -309,15 +309,15 @@ func TestServeClosesConnOnReadEnd(t *testing.T) {
 }
 
 // Each connection opening the same pane gets its OWN attach PTY — that is the
-// per-client model: zellij replays its init handshake + full repaint to every
+// per-client model: the runtime replays its init handshake + full repaint to every
 // fresh attach, so no client depends on bytes another client consumed. Output
 // pushed to one client's PTY must reach only that client, and closing one
 // client's terminal must not touch the other's PTY.
 func TestServePerClientAttachIsolation(t *testing.T) {
-	src := &fakeSource{alive: true}
 	p1, p2 := newFakePTY(), newFakePTY()
 	sp := &fakeSpawner{ptys: []*fakePTY{p1, p2}}
-	mgr := NewManager(src, nil, testLogger(), WithSpawn(sp.spawn), WithHeartbeat(0))
+	src := &fakeSource{alive: true, spawner: sp}
+	mgr := NewManager(src, nil, testLogger(), WithHeartbeat(0))
 	defer mgr.Close()
 
 	connA, connB := newFakeConn(), newFakeConn()
@@ -334,7 +334,7 @@ func TestServePerClientAttachIsolation(t *testing.T) {
 	recv(t, connB, chTerminal, msgOpened, time.Second)
 	eventually(t, time.Second, func() bool { return sp.calls() == 2 })
 
-	// Zellij fans output out per attach; here each fake PTY stands in for one
+	// The runtime fans output out per attach; here each fake PTY stands in for one
 	// attach process, so its bytes must reach exactly its own connection.
 	p1.push([]byte("for-A"))
 	data := recv(t, connA, chTerminal, msgData, time.Second)
@@ -368,10 +368,10 @@ func TestServePerClientAttachIsolation(t *testing.T) {
 // The open frame carries the client's grid; the PTY must start at that size
 // rather than the kernel default, even though the attach is asynchronous.
 func TestServeOpenAppliesInitialSize(t *testing.T) {
-	src := &fakeSource{alive: true}
 	pty := newFakePTY()
 	sp := &fakeSpawner{ptys: []*fakePTY{pty}}
-	mgr := NewManager(src, nil, testLogger(), WithSpawn(sp.spawn), WithHeartbeat(0))
+	src := &fakeSource{alive: true, spawner: sp}
+	mgr := NewManager(src, nil, testLogger(), WithHeartbeat(0))
 	defer mgr.Close()
 
 	conn := newFakeConn()
@@ -390,10 +390,10 @@ func TestServeOpenAppliesInitialSize(t *testing.T) {
 // Manager.Close must kill every live attach PTY: a PTY left open keeps its
 // attach process running and deadlocks daemon shutdown.
 func TestManagerCloseKillsLiveAttachments(t *testing.T) {
-	src := &fakeSource{alive: true}
 	pty := newFakePTY()
 	sp := &fakeSpawner{ptys: []*fakePTY{pty}}
-	mgr := NewManager(src, nil, testLogger(), WithSpawn(sp.spawn), WithHeartbeat(0))
+	src := &fakeSource{alive: true, spawner: sp}
+	mgr := NewManager(src, nil, testLogger(), WithHeartbeat(0))
 
 	conn := newFakeConn()
 	ctx, cancel := context.WithCancel(context.Background())

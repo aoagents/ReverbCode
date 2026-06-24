@@ -1,6 +1,10 @@
 //go:build !windows
 
-package terminal
+// Package ptyexec spawns a local PTY around an attach CLI (tmux/zellij) and
+// exposes it as a ports.Stream. It is the shared spawn the terminal layer used
+// to own directly; extracting it lets each runtime adapter back its Attach with
+// the same creack/pty (unix) or go-pty ConPTY (windows) plumbing.
+package ptyexec
 
 import (
 	"context"
@@ -12,19 +16,21 @@ import (
 	"time"
 
 	"github.com/creack/pty"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-// defaultSpawn starts argv on a real PTY via creack/pty, sized rows×cols from
-// birth when a size is known: `zellij attach` reads the tty size once at
-// startup, and a post-spawn TIOCSWINSZ depends on SIGWINCH delivery that can
-// race the client installing its handler — StartWithSize makes the first read
-// correct by construction. env, when non-nil, replaces the inherited
-// environment (mirrors exec.Cmd.Env semantics). ctx cancellation closes the PTY
-// through the same graceful detach path as an explicit client close. Windows uses
-// a stub (see pty_windows.go) until a ConPTY path is added.
-func defaultSpawn(ctx context.Context, argv, env []string, rows, cols uint16) (ptyProcess, error) {
+// Spawn starts argv on a real PTY via creack/pty, sized rows×cols from birth
+// when a size is known: an attach client reads the tty size once at startup, and
+// a post-spawn TIOCSWINSZ depends on SIGWINCH delivery that can race the client
+// installing its handler; StartWithSize makes the first read correct by
+// construction. env, when non-nil, replaces the inherited environment (mirrors
+// exec.Cmd.Env semantics). ctx cancellation closes the PTY through the same
+// graceful detach path as an explicit client close. Windows uses a ConPTY path
+// (see spawn_windows.go).
+func Spawn(ctx context.Context, argv, env []string, rows, cols uint16) (ports.Stream, error) {
 	if len(argv) == 0 {
-		return nil, errors.New("terminal: empty attach command")
+		return nil, errors.New("ptyexec: empty attach command")
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -65,7 +71,7 @@ func (p *creackPTY) Resize(rows, cols uint16) error {
 	err := pty.Setsize(p.f, &pty.Winsize{Rows: rows, Cols: cols})
 	// Always follow with an explicit SIGWINCH: the kernel only raises one when
 	// the size actually changed, so a re-asserted (identical) grid would never
-	// reach a zellij client that missed or lost the original signal — the
+	// reach an attach client that missed or lost the original signal; the
 	// session would stay laid out for a stale size, with no repaint until the
 	// next real change (the frontend re-sends its grid after each resize burst
 	// for exactly this self-heal; see useTerminalSession). The client re-reads
@@ -77,17 +83,17 @@ func (p *creackPTY) Resize(rows, cols uint16) error {
 }
 
 // detachGrace is how long Close waits for a SIGTERM'd attach process to exit
-// on its own before falling back to SIGKILL. A zellij client that is being
+// on its own before falling back to SIGKILL. An attach client that is being
 // drained detaches in ~50ms; the grace only runs out for a wedged process.
 const detachGrace = 250 * time.Millisecond
 
 // Close stops the attach process and releases the PTY.
 //
-// SIGTERM first, SIGKILL as fallback: a SIGTERM'd `zellij attach` deregisters
-// itself from the zellij server before exiting, while a SIGKILL'd one leaves
+// SIGTERM first, SIGKILL as fallback: a SIGTERM'd attach client deregisters
+// itself from its mux server before exiting, while a SIGKILL'd one leaves
 // deregistration to the server noticing the dead socket. A dead-but-registered
-// client pins the session's size (zellij sizes a session to its smallest
-// client), so the next attach renders for the ghost's grid — the "terminal
+// client pins the session's size (a mux sizes a session to its smallest
+// client), so the next attach renders for the ghost's grid; the "terminal
 // doesn't repaint to the new size" desync. The master stays open through the
 // grace so the run loop's copyOut keeps draining the client's shutdown output
 // (a blocked tty write would stall the graceful exit past the grace).

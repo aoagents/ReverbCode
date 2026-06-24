@@ -10,7 +10,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/activitydispatch"
 	agentregistry "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/registry"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer"
-	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/zellij"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/runtimeselect"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/workspace/gitworktree"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -58,18 +58,29 @@ func (l *lifecycleStack) Stop() {
 	}
 }
 
+// sessionLifecycle is the narrow surface of sessionmanager.Manager used for
+// boot/shutdown wiring. A minimal interface keeps the daemon testable without
+// depending on the concrete manager type.
+type sessionLifecycle interface {
+	Reconcile(ctx context.Context) error
+	RestoreAll(ctx context.Context) error
+	SaveAndTeardownAll(ctx context.Context) error
+}
+
 // startSession builds the controller-facing session service: a session manager
-// over the real zellij runtime, a per-session gitworktree workspace, the shared
+// over the selected runtime, a per-session gitworktree workspace, the shared
 // store + LCM, the per-session agent resolver, and the agent messenger. The
-// returned service is mounted at httpd APIDeps.Sessions.
-func startSession(cfg config.Config, runtime *zellij.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, messenger ports.AgentMessenger, telemetry ports.EventSink, log *slog.Logger) (*sessionsvc.Service, reviewsvc.Manager, error) {
+// returned service is mounted at httpd APIDeps.Sessions. It also returns the
+// manager so the caller can wire Reconcile/SaveAndTeardownAll into the
+// boot/shutdown sequence.
+func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, messenger ports.AgentMessenger, telemetry ports.EventSink, log *slog.Logger) (*sessionsvc.Service, reviewsvc.Manager, sessionLifecycle, error) {
 	defaultAgent := cfg.Agent
 	if defaultAgent == "" {
 		defaultAgent = config.DefaultAgent
 	}
 	agents, err := buildAgentResolver(defaultAgent, log)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	ws, err := gitworktree.New(gitworktree.Options{
 		// Per-session worktrees live under the data dir, so a single AO_DATA_DIR
@@ -81,7 +92,7 @@ func startSession(cfg config.Config, runtime *zellij.Runtime, store *sqlite.Stor
 		RepoResolver: projectRepoResolver{store: store},
 	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("session workspace: %w", err)
+		return nil, nil, nil, fmt.Errorf("session workspace: %w", err)
 	}
 	mgr := sessionmanager.New(sessionmanager.Deps{
 		Runtime:   runtime,
@@ -113,7 +124,7 @@ func startSession(cfg config.Config, runtime *zellij.Runtime, store *sqlite.Stor
 	// writer.
 	reviewers, err := reviewer.NewResolver()
 	if err != nil {
-		return nil, nil, fmt.Errorf("reviewer resolver: %w", err)
+		return nil, nil, nil, fmt.Errorf("reviewer resolver: %w", err)
 	}
 	reviewEngine := reviewcore.New(reviewcore.Deps{
 		Store:    store,
@@ -123,11 +134,11 @@ func startSession(cfg config.Config, runtime *zellij.Runtime, store *sqlite.Stor
 		Launcher: reviewcore.NewLauncher(reviewers, runtime),
 	})
 	reviewSvc := reviewsvc.New(reviewEngine, store, reviewsvc.WithLifecycleReducer(lcm))
-	return sessionSvc, reviewSvc, nil
+	return sessionSvc, reviewSvc, mgr, nil
 }
 
 // runtimeMessageSender is the narrow part of the concrete runtime needed by
-// ao send. zellij.Runtime already implements this via SendMessage.
+// ao send. Both tmux.Runtime and conpty.Runtime implement this via SendMessage.
 type runtimeMessageSender interface {
 	SendMessage(ctx context.Context, handle ports.RuntimeHandle, message string) error
 }

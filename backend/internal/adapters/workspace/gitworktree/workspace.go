@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -25,6 +26,11 @@ const (
 var (
 	ErrUnsafePath = errors.New("gitworktree: unsafe workspace path")
 )
+
+// ErrPreservedConflict is an adapter-local alias of ports.ErrPreservedConflict.
+// Tests inside this package use this name; callers outside use ports.ErrPreservedConflict
+// and errors.Is works because the adapter wraps the ports sentinel.
+var ErrPreservedConflict = ports.ErrPreservedConflict
 
 // ErrBranchCheckedOutElsewhere and ErrBranchNotFetched are adapter-local aliases
 // of the port-level sentinels: they preserve the gitworktree-prefixed message
@@ -181,6 +187,225 @@ func (w *Workspace) Destroy(ctx context.Context, info ports.WorkspaceInfo) error
 	}
 	if err := os.RemoveAll(path); err != nil {
 		return fmt.Errorf("gitworktree: remove unregistered path %q: %w", path, err)
+	}
+	return nil
+}
+
+// ForceDestroy removes the session's worktree unconditionally (--force), prunes
+// it from git's worktree list, and falls back to os.RemoveAll if any filesystem
+// residue remains.
+//
+// ponytail: only safe to call AFTER the session's uncommitted work has been
+// captured via StashUncommitted. Calling it before capture silently
+// discards agent work. For interactive teardown (ao session kill, ao cleanup)
+// use Destroy, which refuses dirty worktrees via ErrWorkspaceDirty.
+func (w *Workspace) ForceDestroy(ctx context.Context, info ports.WorkspaceInfo) error {
+	if info.ProjectID == "" {
+		return errors.New("gitworktree: project id is required")
+	}
+	if info.Path == "" {
+		return fmt.Errorf("%w: empty path", ErrUnsafePath)
+	}
+	repo, err := w.repoPath(info.ProjectID)
+	if err != nil {
+		return err
+	}
+	path, err := w.validateManagedPath(info.Path)
+	if err != nil {
+		return err
+	}
+	// --force bypasses git's dirty check; errors here are advisory (the path may
+	// already be gone). We proceed to prune regardless.
+	_, _ = w.run(ctx, w.binary, worktreeForceRemoveArgs(repo, path)...)
+	if _, err := w.run(ctx, w.binary, worktreePruneArgs(repo)...); err != nil {
+		return fmt.Errorf("gitworktree: worktree prune: %w", err)
+	}
+	// os.RemoveAll as a backstop: cleans up filesystem residue left behind if
+	// git worktree remove --force still left the directory (e.g. files outside
+	// git tracking).
+	if err := os.RemoveAll(path); err != nil {
+		return fmt.Errorf("gitworktree: force remove path %q: %w", path, err)
+	}
+	return nil
+}
+
+// StashUncommitted captures all uncommitted work in the session's worktree
+// into a git commit object WITHOUT mutating the working tree or the global
+// stash stack. The commit is stored at refs/ao/preserved/<session-id>.
+//
+// It builds the preserve commit through a temporary index file so tracked
+// edits AND new non-ignored files are captured while .gitignore-d files are
+// silently skipped (honoured because we never pass -f/--force to git-add).
+//
+// Returns the full ref name (e.g. "refs/ao/preserved/sess-1"). Returns an
+// empty string (and no error) if the worktree is clean.
+func (w *Workspace) StashUncommitted(ctx context.Context, info ports.WorkspaceInfo) (string, error) {
+	if info.Path == "" {
+		return "", fmt.Errorf("%w: empty path", ErrUnsafePath)
+	}
+	if info.SessionID == "" {
+		return "", errors.New("gitworktree: session id is required for StashUncommitted")
+	}
+
+	// Early exit for clean worktrees: nothing to preserve.
+	dirty, err := w.isDirty(ctx, info.Path)
+	if err != nil {
+		return "", fmt.Errorf("gitworktree: StashUncommitted dirty check: %w", err)
+	}
+	if !dirty {
+		return "", nil
+	}
+
+	// Log the count of ignored paths that will be skipped.
+	if skipCount, err := w.countIgnoredPaths(ctx, info.Path); err == nil {
+		slog.InfoContext(ctx, "gitworktree: StashUncommitted skipping ignored paths",
+			"session", string(info.SessionID),
+			"skipped_count", skipCount,
+		)
+	}
+
+	// Reserve a unique path for the temp index in the system temp dir (not ~/.ao).
+	// We must NOT pre-create the file: git requires GIT_INDEX_FILE to either not
+	// exist (it creates it) or be a valid git index. os.CreateTemp gives us a
+	// unique name; we close and remove it immediately so git gets an absent path.
+	tmpIdx, err := os.CreateTemp("", "ao-preserve-idx-*")
+	if err != nil {
+		return "", fmt.Errorf("gitworktree: reserve temp index path: %w", err)
+	}
+	tmpIdxPath := tmpIdx.Name()
+	_ = tmpIdx.Close()
+	// Remove now so git sees an absent path (not a 0-byte corrupt index).
+	_ = os.Remove(tmpIdxPath)
+	// Deferred remove is a best-effort cleanup in case git leaves the file.
+	defer func() { _ = os.Remove(tmpIdxPath) }()
+
+	// Stage all tracked and non-ignored untracked files into the temp index.
+	// GIT_INDEX_FILE overrides the index so the real index is never touched.
+	addCmd := exec.CommandContext(ctx, w.binary, addAllTempIndexArgs(info.Path)...)
+	addCmd.Env = append(os.Environ(), "GIT_INDEX_FILE="+tmpIdxPath)
+	if out, err := addCmd.CombinedOutput(); err != nil {
+		return "", commandError{args: append([]string{w.binary}, addAllTempIndexArgs(info.Path)...), output: string(out), err: err}
+	}
+
+	// Write the staged tree to get a tree SHA.
+	writeTreeCmd := exec.CommandContext(ctx, w.binary, writeTreeArgs(info.Path)...)
+	writeTreeCmd.Env = append(os.Environ(), "GIT_INDEX_FILE="+tmpIdxPath)
+	treeOut, err := writeTreeCmd.CombinedOutput()
+	if err != nil {
+		return "", commandError{args: append([]string{w.binary}, writeTreeArgs(info.Path)...), output: string(treeOut), err: err}
+	}
+	treeSHA := strings.TrimSpace(string(treeOut))
+
+	// Resolve HEAD. An unborn HEAD (no commits yet) means we omit the -p flag
+	// from commit-tree so the preserve commit has no parent.
+	headOut, headErr := w.run(ctx, w.binary, revParseHeadArgs(info.Path)...)
+	headSHA := ""
+	if headErr == nil {
+		headSHA = strings.TrimSpace(string(headOut))
+	}
+	// headErr != nil means unborn HEAD: headSHA stays empty, commit-tree gets no -p.
+
+	// If the preserve tree SHA equals HEAD's tree SHA the working tree is
+	// effectively clean from git's perspective (only ignored files differ).
+	if headSHA != "" {
+		headTreeOut, err := w.run(ctx, w.binary, "-C", info.Path, "rev-parse", headSHA+"^{tree}")
+		if err == nil {
+			headTreeSHA := strings.TrimSpace(string(headTreeOut))
+			if headTreeSHA == treeSHA {
+				// Nothing to preserve beyond ignored files.
+				return "", nil
+			}
+		}
+	}
+
+	// Create a commit object that wraps the preserve tree.
+	msg := "ao preserved " + string(info.SessionID)
+	commitOut, err := w.run(ctx, w.binary, commitTreeArgs(info.Path, treeSHA, headSHA, msg)...)
+	if err != nil {
+		return "", fmt.Errorf("gitworktree: commit-tree: %w", err)
+	}
+	commitSHA := strings.TrimSpace(string(commitOut))
+
+	// Point the preserve ref at the commit.
+	ref := "refs/ao/preserved/" + string(info.SessionID)
+	if _, err := w.run(ctx, w.binary, updateRefArgs(info.Path, ref, commitSHA)...); err != nil {
+		return "", fmt.Errorf("gitworktree: update-ref %q: %w", ref, err)
+	}
+	return ref, nil
+}
+
+// countIgnoredPaths returns the number of entries listed by
+// "git status --ignored --porcelain" that start with "!!" (ignored).
+func (w *Workspace) countIgnoredPaths(ctx context.Context, worktree string) (int, error) {
+	out, err := w.run(ctx, w.binary, ignoredCountArgs(worktree)...)
+	if err != nil {
+		return 0, fmt.Errorf("gitworktree: count ignored: %w", err)
+	}
+	count := 0
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.HasPrefix(line, "!! ") {
+			count++
+		}
+	}
+	return count, nil
+}
+
+// ApplyPreserved replays the capture created by StashUncommitted onto the
+// (freshly re-added) worktree using a true three-way merge (cherry-pick --no-commit).
+// On clean success, the preserve ref is deleted.
+// On conflict, the ref is kept, conflict markers are left in the affected files,
+// and ErrPreservedConflict (wrapped) is returned so the caller can surface it.
+//
+// NEVER deletes the preserve ref on a failed or conflicted apply.
+func (w *Workspace) ApplyPreserved(ctx context.Context, info ports.WorkspaceInfo, ref string) error {
+	if info.Path == "" {
+		return fmt.Errorf("%w: empty path", ErrUnsafePath)
+	}
+	if ref == "" {
+		return errors.New("gitworktree: ApplyPreserved: ref must not be empty")
+	}
+
+	// Resolve the ref to its commit SHA.
+	resolveOut, err := w.run(ctx, w.binary, revParseVerifyArgs(info.Path, ref)...)
+	if err != nil {
+		return fmt.Errorf("gitworktree: ApplyPreserved resolve ref %q: %w", ref, err)
+	}
+	commitSHA := strings.TrimSpace(string(resolveOut))
+
+	// Apply the preserve commit via "git cherry-pick --no-commit <sha>".
+	// cherry-pick computes the diff between the preserve commit and its parent
+	// (the HEAD at save time) and 3-way-merges it onto the current working tree.
+	// On conflict it leaves textual conflict markers in the affected files and
+	// exits non-zero WITHOUT committing or moving HEAD. Conflict detection uses
+	// the exit code only (not output text) to stay locale-independent.
+	applyErr := w.runCherryPickNoCommit(ctx, info.Path, commitSHA)
+	if applyErr != nil {
+		// Any non-zero exit from the merge step is a conflict: keep the ref,
+		// leave conflict markers in place, and surface the sentinel.
+		return fmt.Errorf("%w: %w", ErrPreservedConflict, applyErr)
+	}
+
+	// Clean apply: remove the preserve ref so it is never replayed twice.
+	if _, err := w.run(ctx, w.binary, deleteRefArgs(info.Path, ref)...); err != nil {
+		// Log but do not fail: the work is already applied. A dangling preserve
+		// ref is harmless; the next StashUncommitted will overwrite it.
+		slog.WarnContext(ctx, "gitworktree: ApplyPreserved could not delete preserve ref",
+			"ref", ref,
+			"err", err,
+		)
+	}
+	return nil
+}
+
+// runCherryPickNoCommit runs "git -C <worktree> cherry-pick --no-commit <sha>"
+// and captures combined output so any conflict details are available in the
+// returned commandError. Exit code detection happens in the caller.
+func (w *Workspace) runCherryPickNoCommit(ctx context.Context, worktree, commitSHA string) error {
+	args := cherryPickNoCommitArgs(worktree, commitSHA)
+	cmd := exec.CommandContext(ctx, w.binary, args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return commandError{args: append([]string{w.binary}, args...), output: string(out), err: err}
 	}
 	return nil
 }

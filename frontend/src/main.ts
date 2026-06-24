@@ -14,7 +14,7 @@ import {
 import { updateElectronApp } from "update-electron-app";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -28,6 +28,7 @@ import {
 	resolveDaemonFromPort,
 	resolveDaemonFromRunFile,
 } from "./shared/daemon-attach";
+import { shouldReplacePortHolder } from "./shared/daemon-takeover";
 import { buildDaemonEnv, resolveShellEnv, type ShellRunner } from "./shared/shell-env";
 import { DEFAULT_POSTHOG_HOST, DEFAULT_POSTHOG_PROJECT_KEY } from "./shared/posthog-config";
 import { buildTelemetryBootstrap } from "./shared/telemetry";
@@ -484,6 +485,60 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		return daemonStatus;
 	}
 
+	// Wedged-orphan kill+replace: both attach paths returned null, but a process
+	// may still be holding the port. The only reachable case here is a hung/wedged
+	// holder whose run-file PID is still alive but is not answering /healthz (e.g.
+	// our own daemon that bound the port and then deadlocked). Two cases are
+	// intentionally NOT handled: an identity-mismatched but healthy AO daemon is
+	// already surfaced as an error status upstream by resolveDaemonFromPort (not
+	// killed here), and a foreign non-AO process holding the port with a dead
+	// run-file PID is not replaced (out of scope). When no holder is detectable,
+	// skip straight to spawn.
+	const orphanProbe = await readDaemonProbe(expectedDaemonPort(process.env), "healthz");
+	const runFilePath_ = runFilePath();
+	let runFilePid: number | null = null;
+	if (runFilePath_) {
+		try {
+			runFilePid = parseRunFile(await readFile(runFilePath_, "utf8"))?.pid ?? null;
+		} catch {
+			// run-file absent or unreadable; proceed without a PID.
+		}
+	}
+	// process.kill(pid, 0) does not kill; it throws iff the PID is not live.
+	let holderPidAlive = false;
+	if (runFilePid) {
+		try { process.kill(runFilePid, 0); holderPidAlive = true; } catch { holderPidAlive = false; }
+	}
+	if (shouldReplacePortHolder(orphanProbe, holderPidAlive)) {
+		// Use the run-file PID when available; fall back to the probe's reported
+		// PID as a last resort (a wedged daemon may not have written a fresh run-file).
+		const pidToKill = runFilePid ?? orphanProbe?.pid ?? null;
+		if (pidToKill) {
+			try {
+				process.kill(-pidToKill, "SIGTERM");
+			} catch {
+				try {
+					process.kill(pidToKill, "SIGTERM");
+				} catch {
+					// process already gone; proceed
+				}
+			}
+		}
+		// Poll until the port is free (probe returns null) or 8 s elapses.
+		const TAKEOVER_TIMEOUT_MS = 8_000;
+		const TAKEOVER_POLL_MS = 200;
+		const deadline = Date.now() + TAKEOVER_TIMEOUT_MS;
+		while (Date.now() < deadline) {
+			const still = await readDaemonProbe(expectedDaemonPort(process.env), "healthz");
+			if (!still) break;
+			await new Promise<void>((r) => setTimeout(r, TAKEOVER_POLL_MS));
+		}
+		// Remove the stale run-file so the new daemon can write a fresh one.
+		if (runFilePath_) {
+			await rm(runFilePath_, { force: true });
+		}
+	}
+
 	if (launch.source === "bundled" && !existsSync(launch.command)) {
 		setDaemonStatus({
 			state: "error",
@@ -691,12 +746,67 @@ app.whenReady().then(() => {
 	});
 });
 
-app.on("before-quit", () => {
+// Re-entrancy guard: the first before-quit fires, prevents default, does async
+// work, then calls app.exit(). If app.quit() is called concurrently (e.g. from
+// window-all-closed on non-darwin), the second before-quit fires while the first
+// is still in flight. Without a guard it would preventDefault again and loop.
+// With the guard set to true, the second invocation falls through and lets the
+// quit proceed. app.exit() itself does NOT re-fire before-quit, so the guard
+// mainly protects against a concurrent app.quit() race.
+let quitting = false;
+
+app.on("before-quit", (event) => {
 	browserViewHost?.dispose();
 	browserViewHost = null;
-	if (daemonProcess) {
-		killDaemon(daemonProcess);
+
+	// Re-entrancy: if we already started the async quit sequence, let this
+	// invocation fall through so the app actually exits.
+	if (quitting) return;
+	quitting = true;
+
+	// Capture the current daemon handle and port before any async gap so that
+	// a race with stopDaemon() cannot null them out underneath us.
+	const child = daemonProcess;
+	const port = daemonStatus.state === "ready" ? daemonStatus.port : undefined;
+
+	if (!child) {
+		// No daemon we own: nothing to shut down.
+		return;
 	}
+
+	// Prevent the synchronous quit so we can ask the daemon to save gracefully
+	// before killing it.
+	event.preventDefault();
+
+	const doQuit = async () => {
+		// Best-effort graceful shutdown: POST /shutdown so the daemon flushes
+		// its session state before exiting. An ~8s timeout prevents a hung or
+		// absent daemon from blocking quit indefinitely.
+		// Note: the daemon's internal save bound is 30s (shutdownSaveTimeout), so
+		// if this fetch times out and we proceed to killDaemon (SIGTERM), the first
+		// SIGTERM only cancels the daemon's listen context; the daemon's in-flight
+		// save (on a fresh context) still runs to completion or its own 30s bound.
+		if (port !== undefined) {
+			try {
+				await fetch(`http://127.0.0.1:${port}/shutdown`, {
+					method: "POST",
+					signal: AbortSignal.timeout(8_000),
+				});
+			} catch {
+				// Timeout, network error, or daemon already gone: proceed to kill.
+				console.log(`AO: /shutdown fetch failed (port ${port}); proceeding with SIGTERM.`);
+			}
+		}
+
+		// Kill the daemon process group (reaches the daemon behind any shell
+		// wrapper and its PTY children).
+		killDaemon(child);
+
+		// Exit without re-firing before-quit (app.exit bypasses the event).
+		app.exit(0);
+	};
+
+	void doQuit();
 });
 
 // Last-resort teardown. before-quit covers the normal quit path, but app.exit()

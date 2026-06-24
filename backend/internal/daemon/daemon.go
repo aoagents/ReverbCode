@@ -13,7 +13,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/zellij"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/runtimeselect"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd"
 	"github.com/aoagents/agent-orchestrator/backend/internal/notify"
@@ -82,26 +82,16 @@ func Run() error {
 		return err
 	}
 
-	// Terminal streaming: the Zellij runtime supplies the PTY-attach command and
-	// liveness; the CDC broadcaster feeds the session-state channel. The manager
+	// Terminal streaming: the selected runtime (tmux on macOS/Linux, conpty on Windows) supplies the
+	// attach Stream and liveness; the CDC broadcaster feeds the session-state channel. The manager
 	// is handed to httpd, which mounts it at /mux. Raw PTY bytes never flow
-	// through the CDC change_log — only session-state events do.
-	// zellij's default socket dir is too long on macOS for long session ids
-	// (see zellij.DefaultSocketDir); use a short, stable one and ensure it exists.
-	zellijSocketDir := zellij.DefaultSocketDir()
-	if zellijSocketDir != "" {
-		if err := os.MkdirAll(zellijSocketDir, 0o700); err != nil {
-			// Don't abort startup, but surface it: every spawn's zellij session
-			// would otherwise fail later with an opaque socket-bind error.
-			log.Warn("could not create zellij socket dir; spawns may fail", "dir", zellijSocketDir, "error", err)
-		}
-	}
-	runtimeAdapter := zellij.New(zellij.Options{SocketDir: zellijSocketDir})
+	// through the CDC change_log -- only session-state events do.
+	runtimeAdapter := runtimeselect.New(log)
 	termMgr := terminal.NewManager(runtimeAdapter, cdcPipe.Broadcaster, log)
 	defer termMgr.Close()
 
 	// The agent messenger sends validated user input to the session's live
-	// zellij pane. Keep this path small until durable inbox semantics are needed.
+	// runtime pane. Keep this path small until durable inbox semantics are needed.
 	// Built before the Lifecycle Manager so the LCM can use it for SCM-driven
 	// agent nudges (CI failure, review feedback, merge conflict).
 	messenger := newSessionMessenger(store, runtimeAdapter, log)
@@ -116,10 +106,10 @@ func Run() error {
 	lcStack.scmDone = startSCMObserver(ctx, store, lcStack.LCM, log)
 
 	// Wire the controller-facing session service over the same store + LCM, the
-	// zellij runtime, a gitworktree workspace, the per-session agent resolver
+	// selected runtime, a gitworktree workspace, the per-session agent resolver
 	// (AO_AGENT validated here for compatibility), and the agent messenger, then mount it
 	// on the API.
-	sessionSvc, reviewSvc, err := startSession(cfg, runtimeAdapter, store, lcStack.LCM, messenger, telemetrySink, log)
+	sessionSvc, reviewSvc, sessMgr, err := startSession(cfg, runtimeAdapter, store, lcStack.LCM, messenger, telemetrySink, log)
 	if err != nil {
 		stop()
 		lcStack.Stop()
@@ -151,12 +141,34 @@ func Run() error {
 		return err
 	}
 
+	// Reconcile sessions on boot: adopt crash-surviving runtimes, capture and
+	// terminate dead ones, reap leaked tmux, then restore shutdown-saved
+	// sessions. Best-effort: a failure is logged but never blocks boot. Placed
+	// before srv.Run so sessions are consistent before the server serves.
+	if reconcileErr := sessMgr.Reconcile(ctx); reconcileErr != nil {
+		log.Error("reconcile sessions on boot failed", "err", reconcileErr)
+	}
+
 	runErr := srv.Run(ctx)
+
+	// Save and tear down all live sessions before the store closes. Both SIGTERM
+	// and POST /shutdown funnel through srv.Run returning (SIGTERM cancels ctx,
+	// which srv.Run selects on; POST /shutdown closes the shutdownRequested channel,
+	// which srv.Run also selects on), so this single call site covers both paths.
+	//
+	// Use a fresh context with a bounded deadline: the ctx that caused srv.Run
+	// to return is already cancelled, so passing it would abort the save
+	// immediately and leave every session unsaved.
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownSaveTimeout)
+	defer shutdownCancel()
+	if saveErr := sessMgr.SaveAndTeardownAll(shutdownCtx); saveErr != nil {
+		log.Error("save sessions on shutdown failed", "err", saveErr)
+	}
 
 	// Shut the background goroutines down in order: cancel the context FIRST so
 	// their loops exit, then wait for them to drain. Doing this explicitly (not
 	// via defer) avoids the LIFO trap where a Stop() that blocks on ctx-cancel
-	// runs before the cancel — which would hang any non-signal exit path.
+	// runs before the cancel: a non-signal exit path would hang otherwise.
 	stop()
 	<-previewDone
 	lcStack.Stop()
@@ -165,6 +177,10 @@ func Run() error {
 	}
 	return runErr
 }
+
+// shutdownSaveTimeout bounds the SaveAndTeardownAll call on shutdown so a
+// pathological session cannot stall the process exit indefinitely.
+const shutdownSaveTimeout = 30 * time.Second
 
 // newLogger returns the daemon's slog logger. It writes to stderr so supervisors
 // can capture it separately from any structured stdout protocol added later.

@@ -1,6 +1,6 @@
 //go:build windows
 
-package terminal
+package ptyexec
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	winpty "github.com/aymanbagabas/go-pty"
 )
 
@@ -16,16 +17,16 @@ import (
 // child's stdin) before falling back to Kill.
 const detachGrace = 250 * time.Millisecond
 
-// defaultSpawn starts argv on a Windows ConPTY and exposes the console pipes
-// through the same ptyProcess interface used by the Unix creack/pty path.
-// go-pty creates the pseudo-console at 80x25 internally, so we only Resize
-// when the caller actually has a grid (mirroring StartWithSize on Unix).
-// env, when non-nil, replaces the inherited environment via Win32's native
-// CreateProcess env block (mirrors exec.Cmd.Env semantics) — this is how a
-// per-session ZELLIJ_SOCKET_DIR reaches the zellij attach client.
-func defaultSpawn(ctx context.Context, argv []string, env []string, rows, cols uint16) (ptyProcess, error) {
+// Spawn starts argv on a Windows ConPTY and exposes the console pipes through
+// the same ports.Stream interface used by the Unix creack/pty path. go-pty
+// creates the pseudo-console at 80x25 internally, so we only Resize when the
+// caller actually has a grid (mirroring StartWithSize on Unix). env, when
+// non-nil, replaces the inherited environment via Win32's native CreateProcess
+// env block (mirrors exec.Cmd.Env semantics); this is how a per-session env var
+// reaches the spawned attach client.
+func Spawn(ctx context.Context, argv, env []string, rows, cols uint16) (ports.Stream, error) {
 	if len(argv) == 0 {
-		return nil, errors.New("terminal: empty attach command")
+		return nil, errors.New("ptyexec: empty attach command")
 	}
 	pty, err := winpty.New()
 	if err != nil {

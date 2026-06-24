@@ -1,6 +1,6 @@
 //go:build !windows
 
-package terminal
+package ptyexec
 
 import (
 	"context"
@@ -14,7 +14,7 @@ import (
 // exactly once. Without the sync.Once a second Wait blocks forever, so this test
 // would hang (caught by the watchdog) rather than fail.
 func TestCreackPTYCloseIsIdempotent(t *testing.T) {
-	p, err := defaultSpawn(context.Background(), []string{"/bin/sh", "-c", "sleep 30"}, nil, 0, 0)
+	p, err := Spawn(context.Background(), []string{"/bin/sh", "-c", "sleep 30"}, nil, 0, 0)
 	if err != nil {
 		t.Fatalf("spawn: %v", err)
 	}
@@ -35,12 +35,12 @@ func TestCreackPTYCloseIsIdempotent(t *testing.T) {
 
 // TestCreackPTYResizeSignalsOnIdenticalSize guards the resize self-heal: the
 // kernel only raises SIGWINCH when TIOCSWINSZ actually changes the size, so a
-// re-asserted (identical) grid relies on Resize's explicit signal. A zellij
+// re-asserted (identical) grid relies on Resize's explicit signal. An attach
 // client that lost the original update would otherwise keep its server laid
-// out for a stale size forever — the "terminal doesn't repaint after resizing
+// out for a stale size forever; the "terminal doesn't repaint after resizing
 // the pane" desync.
 func TestCreackPTYResizeSignalsOnIdenticalSize(t *testing.T) {
-	p, err := defaultSpawn(context.Background(),
+	p, err := Spawn(context.Background(),
 		[]string{"/bin/sh", "-c", `trap 'echo WINCHED' WINCH; while :; do sleep 0.05; done`}, nil, 0, 0)
 	if err != nil {
 		t.Fatalf("spawn: %v", err)
@@ -49,7 +49,7 @@ func TestCreackPTYResizeSignalsOnIdenticalSize(t *testing.T) {
 
 	// Give the shell a beat to install the trap, then resize twice to the SAME
 	// size. The first call changes the size (fresh PTYs start at 0x0) and the
-	// second is identical — only the explicit signal can deliver it.
+	// second is identical; only the explicit signal can deliver it.
 	time.Sleep(200 * time.Millisecond)
 	if err := p.Resize(24, 80); err != nil {
 		t.Fatalf("resize 1: %v", err)
@@ -78,11 +78,11 @@ func TestCreackPTYResizeSignalsOnIdenticalSize(t *testing.T) {
 }
 
 // TestCreackPTYSpawnsAtRequestedSize: the child must see the requested grid on
-// its very first TIOCGWINSZ, with no SIGWINCH involved — sizing after exec
+// its very first TIOCGWINSZ, with no SIGWINCH involved; sizing after exec
 // races the client installing its WINCH handler (a missed signal strands the
-// zellij session at the previous client's size).
+// session at the previous client's size).
 func TestCreackPTYSpawnsAtRequestedSize(t *testing.T) {
-	p, err := defaultSpawn(context.Background(), []string{"/bin/sh", "-c", "stty size"}, nil, 40, 140)
+	p, err := Spawn(context.Background(), []string{"/bin/sh", "-c", "stty size"}, nil, 40, 140)
 	if err != nil {
 		t.Fatalf("spawn: %v", err)
 	}
@@ -107,12 +107,12 @@ func TestCreackPTYSpawnsAtRequestedSize(t *testing.T) {
 }
 
 // TestCreackPTYCloseTermsBeforeKill: Close must give the attach process a
-// chance to exit on SIGTERM (a zellij client deregisters from its server on
+// chance to exit on SIGTERM (an attach client deregisters from its server on
 // SIGTERM; a straight SIGKILL leaves a ghost client that pins the session's
 // size), and must still return promptly for a process that ignores SIGTERM.
 func TestCreackPTYCloseTermsBeforeKill(t *testing.T) {
 	t.Run("cooperative process exits within the grace", func(t *testing.T) {
-		p, err := defaultSpawn(context.Background(),
+		p, err := Spawn(context.Background(),
 			[]string{"/bin/sh", "-c", `trap 'exit 0' TERM; while :; do sleep 0.05; done`}, nil, 0, 0)
 		if err != nil {
 			t.Fatalf("spawn: %v", err)
@@ -126,7 +126,7 @@ func TestCreackPTYCloseTermsBeforeKill(t *testing.T) {
 	})
 
 	t.Run("TERM-ignoring process is killed after the grace", func(t *testing.T) {
-		p, err := defaultSpawn(context.Background(),
+		p, err := Spawn(context.Background(),
 			[]string{"/bin/sh", "-c", `trap '' TERM; while :; do sleep 0.05; done`}, nil, 0, 0)
 		if err != nil {
 			t.Fatalf("spawn: %v", err)

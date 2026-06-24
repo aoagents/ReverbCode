@@ -27,6 +27,14 @@ func worktreeRemoveArgs(repo, path string) []string {
 	return []string{"-C", repo, "worktree", "remove", path}
 }
 
+// worktreeForceRemoveArgs passes --force to bypass git's dirty-worktree check.
+// Only ForceDestroy may call this. It is safe only AFTER the session's
+// uncommitted work has been captured (Task 2's StashUncommitted). Callers that
+// have not yet captured work must use worktreeRemoveArgs / Destroy instead.
+func worktreeForceRemoveArgs(repo, path string) []string {
+	return []string{"-C", repo, "worktree", "remove", "--force", path}
+}
+
 func worktreePruneArgs(repo string) []string {
 	return []string{"-C", repo, "worktree", "prune"}
 }
@@ -40,6 +48,63 @@ func statusPorcelainArgs(path string) []string {
 
 func worktreeListPorcelainArgs(repo string) []string {
 	return []string{"-C", repo, "worktree", "list", "--porcelain"}
+}
+
+// addAllTempIndexArgs stages all tracked and non-ignored untracked files into a
+// temp index file without touching the real index or the working tree.
+// GIT_INDEX_FILE must be set in the command's environment before calling.
+func addAllTempIndexArgs(worktree string) []string {
+	return []string{"-C", worktree, "add", "-A"}
+}
+
+// writeTreeArgs flushes the temp index into a tree object and prints the SHA.
+// GIT_INDEX_FILE must be set in the command's environment.
+func writeTreeArgs(worktree string) []string {
+	return []string{"-C", worktree, "write-tree"}
+}
+
+// commitTreeArgs creates a commit object from a tree SHA. parent is the HEAD
+// SHA to set as parent; message is the commit message. When parent is empty
+// (unborn HEAD), the -p flag is omitted.
+func commitTreeArgs(worktree, treeSHA, parent, message string) []string {
+	args := []string{"-C", worktree, "commit-tree", treeSHA}
+	if parent != "" {
+		args = append(args, "-p", parent)
+	}
+	args = append(args, "-m", message)
+	return args
+}
+
+// updateRefArgs creates or moves a ref to point at a commit SHA.
+func updateRefArgs(worktree, ref, commitSHA string) []string {
+	return []string{"-C", worktree, "update-ref", ref, commitSHA}
+}
+
+// deleteRefArgs deletes a ref unconditionally.
+func deleteRefArgs(worktree, ref string) []string {
+	return []string{"-C", worktree, "update-ref", "-d", ref}
+}
+
+// revParseHeadArgs returns the HEAD commit SHA in the worktree.
+// Exit code 128 means the repo has no commits (unborn HEAD).
+func revParseHeadArgs(worktree string) []string {
+	return []string{"-C", worktree, "rev-parse", "--verify", "HEAD"}
+}
+
+// cherryPickNoCommitArgs applies a single commit's diff onto the current
+// working tree via a true three-way merge without committing or moving HEAD.
+// git cherry-pick --no-commit computes the diff between <sha> and its parent
+// and 3-way-merges it onto the current working tree. On conflict it leaves
+// textual conflict markers in the affected files and exits non-zero. New files
+// added in the preserve commit come through as additions. Because -n is used,
+// no sequencer state is left that would require a cherry-pick --quit afterward.
+func cherryPickNoCommitArgs(worktree, commitSHA string) []string {
+	return []string{"-C", worktree, "cherry-pick", "--no-commit", commitSHA}
+}
+
+// ignoredCountArgs lists files skipped because of .gitignore (dry-run, no mutation).
+func ignoredCountArgs(worktree string) []string {
+	return []string{"-C", worktree, "status", "--ignored", "--porcelain"}
 }
 
 func baseRefCandidates(branch, defaultBranch string) []string {

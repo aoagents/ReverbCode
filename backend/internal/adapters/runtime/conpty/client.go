@@ -1,0 +1,233 @@
+// client.go - loopback TCP client helpers that mirror pty-client.ts.
+// Each function dials the host addr fresh (short-lived connection) and
+// returns without maintaining state. Cross-platform: uses only stdlib net.
+package conpty
+
+import (
+	"encoding/json"
+	"errors"
+	"net"
+	"syscall"
+	"time"
+)
+
+const (
+	// ptyInputChunkRunes is the max runes per terminal-input frame.
+	// Mirrors PTY_INPUT_CHUNK_CHARS in pty-client.ts.
+	ptyInputChunkRunes = 512
+	// ptyInputChunkDelay is the inter-chunk delay. Mirrors PTY_INPUT_CHUNK_DELAY_MS.
+	ptyInputChunkDelay = 15 * time.Millisecond
+	// ptyInputEnterDelay is the pause before sending Enter. Mirrors PTY_INPUT_ENTER_DELAY_MS.
+	ptyInputEnterDelay = 300 * time.Millisecond
+
+	dialTimeout      = 3 * time.Second
+	getOutputTimeout = 3 * time.Second
+	isAliveTimeout   = 2 * time.Second
+)
+
+// dialHost opens a TCP connection to addr with a deadline. Callers close it.
+func dialHost(addr string, timeout time.Duration) (net.Conn, error) {
+	return net.DialTimeout("tcp", addr, timeout)
+}
+
+// clientSendMessage chunks message by 512 runes and sends each as a
+// MsgTerminalInput frame with 15ms gaps, then pauses 300ms and sends "\r".
+// Mirrors ptyHostSendMessage from pty-client.ts.
+func clientSendMessage(addr, message string) error {
+	conn, err := dialHost(addr, dialTimeout)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = conn.Close() }()
+
+	runes := []rune(message)
+	for i := 0; i < len(runes); i += ptyInputChunkRunes {
+		end := i + ptyInputChunkRunes
+		if end > len(runes) {
+			end = len(runes)
+		}
+		chunk := string(runes[i:end])
+		frame, err := EncodeMessage(MsgTerminalInput, []byte(chunk))
+		if err != nil {
+			return err
+		}
+		if _, err := conn.Write(frame); err != nil {
+			return err
+		}
+		// Inter-chunk delay only between chunks, not after the last one.
+		if end < len(runes) {
+			time.Sleep(ptyInputChunkDelay)
+		}
+	}
+
+	// Brief pause before Enter (matches TS: Enter sent as a separate frame).
+	time.Sleep(ptyInputEnterDelay)
+	frame, err := EncodeMessage(MsgTerminalInput, []byte("\r"))
+	if err != nil {
+		return err
+	}
+	_, err = conn.Write(frame)
+	return err
+}
+
+// clientGetOutput sends MsgGetOutputReq and reads frames until MsgGetOutputRes.
+// Returns "" on timeout or connection failure (no error), matching the TS.
+// lines <= 0 is handled by the caller (runtime.go rejects it before calling).
+func clientGetOutput(addr string, lines int) (string, error) {
+	conn, err := dialHost(addr, getOutputTimeout)
+	if err != nil {
+		return "", nil // ponytail: connect failure -> "" like the TS
+	}
+	defer func() { _ = conn.Close() }()
+
+	_ = conn.SetDeadline(time.Now().Add(getOutputTimeout))
+
+	req, _ := json.Marshal(GetOutputReq{Lines: lines})
+	reqFrame, _ := EncodeMessage(MsgGetOutputReq, req) // req is small JSON, never overflows uint32
+	if _, err := conn.Write(reqFrame); err != nil {
+		return "", nil
+	}
+
+	resultC := make(chan string, 1)
+	parser := NewMessageParser(func(msgType byte, payload []byte) {
+		if msgType == MsgGetOutputRes {
+			select {
+			case resultC <- string(payload):
+			default:
+			}
+		}
+	})
+
+	buf := make([]byte, 4096)
+	for {
+		n, err := conn.Read(buf)
+		if n > 0 {
+			parser.Feed(buf[:n])
+		}
+		select {
+		case text := <-resultC:
+			return text, nil
+		default:
+		}
+		if err != nil {
+			break
+		}
+	}
+	// Drain the channel one last time after the read loop ends.
+	select {
+	case text := <-resultC:
+		return text, nil
+	default:
+		return "", nil // timeout or EOF before response
+	}
+}
+
+// clientIsAlive probes the host with MsgStatusReq and distinguishes three
+// outcomes for the reaper (see IsAlive in runtime.go):
+//
+//   - alive==true,  transientErr==nil: a valid MsgStatusRes was received.
+//   - alive==false, transientErr==nil: the host is DEFINITIVELY gone (the dial
+//     was refused: nothing is listening on the loopback addr).
+//   - alive==false, transientErr!=nil: a TRANSIENT probe failure (network
+//     timeout, or any connected-then-failed I/O error). The reaper records this
+//     as ProbeFailed and retries instead of reaping a possibly-live session.
+//
+// When unsure, we prefer transient (return the error) rather than reporting
+// death. Mirrors ptyHostIsAlive from pty-client.ts on the alive path: host
+// reachable == alive, regardless of the inner agent's alive field.
+func clientIsAlive(addr string) (alive bool, transientErr error) {
+	conn, err := dialHost(addr, isAliveTimeout)
+	if err != nil {
+		// A dial timeout is transient (the loopback hiccupped). A refused
+		// connection means nothing is listening -> definitively gone. Any
+		// other dial failure is treated as transient ("when unsure, retry").
+		if isTimeout(err) {
+			return false, err
+		}
+		if isConnRefused(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	defer func() { _ = conn.Close() }()
+
+	_ = conn.SetDeadline(time.Now().Add(isAliveTimeout))
+
+	statusReqFrame, _ := EncodeMessage(MsgStatusReq, nil) // nil payload, never overflows
+	if _, err := conn.Write(statusReqFrame); err != nil {
+		// We connected, then the write failed: connected-then-failed I/O is
+		// transient (the host may still be up; the conn was disrupted).
+		return false, err
+	}
+
+	aliveC := make(chan bool, 1)
+	parser := NewMessageParser(func(msgType byte, payload []byte) {
+		if msgType == MsgStatusRes {
+			var sp StatusPayload
+			ok := json.Unmarshal(payload, &sp) == nil
+			select {
+			case aliveC <- ok:
+			default:
+			}
+		}
+	})
+
+	buf := make([]byte, 4096)
+	var lastErr error
+	for {
+		n, err := conn.Read(buf)
+		if n > 0 {
+			parser.Feed(buf[:n])
+		}
+		select {
+		case result := <-aliveC:
+			return result, nil
+		default:
+		}
+		if err != nil {
+			lastErr = err
+			break
+		}
+	}
+	select {
+	case result := <-aliveC:
+		return result, nil
+	default:
+		// Connected but never got a STATUS_RES: read timeout or mid-read EOF.
+		// lastErr is the error that broke the read loop (always non-nil here).
+		return false, lastErr
+	}
+}
+
+// isTimeout reports whether err is a network timeout (dial timeout or
+// read-deadline expiry). Cross-platform via the net.Error interface.
+func isTimeout(err error) bool {
+	var ne net.Error
+	return errors.As(err, &ne) && ne.Timeout()
+}
+
+// isConnRefused reports whether err is a fast "connection refused" dial
+// failure (nothing listening). errors.Is(ECONNREFUSED) covers Unix and modern
+// Windows; the explicit WSAECONNREFUSED (10061) guards older Windows runtimes
+// where the errno is not mapped to syscall.ECONNREFUSED.
+func isConnRefused(err error) bool {
+	if errors.Is(err, syscall.ECONNREFUSED) {
+		return true
+	}
+	const wsaeconnrefused = syscall.Errno(10061)
+	return errors.Is(err, wsaeconnrefused)
+}
+
+// clientKill sends MsgKillReq best-effort. Connect failure is a no-op
+// (host already dead). Mirrors ptyHostKill from pty-client.ts.
+func clientKill(addr string) error {
+	conn, err := dialHost(addr, isAliveTimeout)
+	if err != nil {
+		return nil // already dead
+	}
+	defer func() { _ = conn.Close() }()
+	_ = conn.SetDeadline(time.Now().Add(isAliveTimeout))
+	killFrame, _ := EncodeMessage(MsgKillReq, nil) // nil payload, never overflows
+	_, _ = conn.Write(killFrame)
+	return nil
+}

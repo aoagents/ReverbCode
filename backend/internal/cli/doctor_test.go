@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -52,53 +53,64 @@ func TestDoctorFailsWhenGitMissing(t *testing.T) {
 	}
 }
 
-func TestDoctorChecksZellijVersion(t *testing.T) {
+func TestDoctorChecksTmuxVersion(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("ao doctor emits a conpty check on Windows, not tmux")
+	}
 	setConfigEnv(t)
-	c := doctorContext(t, map[string]string{"git": "/bin/git", "zellij": "/bin/zellij"}, func(_ context.Context, name string, args ...string) ([]byte, error) {
+	c := doctorContext(t, map[string]string{"git": "/bin/git", "tmux": "/bin/tmux"}, func(_ context.Context, name string, args ...string) ([]byte, error) {
 		switch name {
 		case "/bin/git":
 			return []byte("git version 2.43.0\n"), nil
-		case "/bin/zellij":
-			if len(args) != 1 || args[0] != "--version" {
-				t.Fatalf("unexpected zellij command: %s %v", name, args)
+		case "/bin/tmux":
+			if len(args) != 1 || args[0] != "-V" {
+				t.Fatalf("unexpected tmux command: %s %v", name, args)
 			}
-			return []byte("zellij 0.44.3\n"), nil
+			return []byte("tmux 3.3a\n"), nil
 		default:
 			t.Fatalf("unexpected command: %s %v", name, args)
 			return nil, nil
 		}
 	})
 
-	check := findDoctorCheck(t, c.runDoctor(context.Background()), "zellij")
-	if check.Level != doctorPass || !strings.Contains(check.Message, "0.44.3") {
-		t.Fatalf("zellij check = %+v, want PASS with version", check)
+	check := findDoctorCheck(t, c.runDoctor(context.Background()), "tmux")
+	if check.Level != doctorPass || !strings.Contains(check.Message, "3.3a") {
+		t.Fatalf("tmux check = %+v, want PASS with version", check)
 	}
 }
 
-func TestDoctorFailsUnsupportedZellijVersion(t *testing.T) {
+// TestDoctorChecksTmuxVersionFailsOnError covers the case where tmux is found
+// but the version command fails.
+func TestDoctorChecksTmuxVersionFailsOnError(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("ao doctor emits a conpty check on Windows, not tmux")
+	}
 	setConfigEnv(t)
-	c := doctorContext(t, map[string]string{"git": "/bin/git", "zellij": "/bin/zellij"}, func(_ context.Context, name string, _ ...string) ([]byte, error) {
+	c := doctorContext(t, map[string]string{"git": "/bin/git", "tmux": "/bin/tmux"}, func(_ context.Context, name string, _ ...string) ([]byte, error) {
 		if name == "/bin/git" {
 			return []byte("git version 2.43.0\n"), nil
 		}
-		return []byte("zellij 0.44.2\n"), nil
+		return nil, errors.New("exec: tmux: not found")
 	})
 
-	check := findDoctorCheck(t, c.runDoctor(context.Background()), "zellij")
-	if check.Level != doctorFail || !strings.Contains(check.Message, "require >= 0.44.3") {
-		t.Fatalf("zellij check = %+v, want FAIL with minimum version", check)
+	check := findDoctorCheck(t, c.runDoctor(context.Background()), "tmux")
+	if check.Level != doctorFail {
+		t.Fatalf("tmux check = %+v, want FAIL on version error", check)
 	}
 }
 
-func TestDoctorWarnsWhenZellijMissing(t *testing.T) {
+func TestDoctorWarnsWhenTmuxMissing(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("ao doctor emits a conpty check on Windows, not tmux")
+	}
 	setConfigEnv(t)
 	c := doctorContext(t, map[string]string{"git": "/bin/git"}, func(context.Context, string, ...string) ([]byte, error) {
 		return []byte("git version 2.43.0\n"), nil
 	})
 
-	check := findDoctorCheck(t, c.runDoctor(context.Background()), "zellij")
+	check := findDoctorCheck(t, c.runDoctor(context.Background()), "tmux")
 	if check.Level != doctorWarn {
-		t.Fatalf("zellij check = %+v, want WARN", check)
+		t.Fatalf("tmux check = %+v, want WARN", check)
 	}
 }
 

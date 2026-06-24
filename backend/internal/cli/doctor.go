@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -18,7 +19,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/codex"
-	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/zellij"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 )
 
@@ -168,7 +168,7 @@ func (c *commandContext) runDoctor(ctx context.Context) []doctorCheck {
 
 	checks = append(checks,
 		c.checkGit(ctx),
-		c.checkZellij(ctx),
+		c.checkTerminalRuntime(ctx),
 		c.checkAOBinary(),
 	)
 	for _, harness := range doctorHarnesses {
@@ -290,22 +290,36 @@ func (c *commandContext) checkGit(ctx context.Context) doctorCheck {
 	return doctorCheck{Level: doctorPass, Section: doctorSectionTools, Name: "git", Message: fmt.Sprintf("%s (version %s; supports worktrees)", path, version)}
 }
 
-func (c *commandContext) checkZellij(ctx context.Context) doctorCheck {
-	path, err := c.deps.LookPath("zellij")
+// checkTerminalRuntime checks the runtime multiplexer used on this platform:
+// tmux on Darwin/Linux, ConPTY (built-in) on Windows.
+func (c *commandContext) checkTerminalRuntime(ctx context.Context) doctorCheck {
+	if runtime.GOOS == "windows" {
+		return doctorCheck{
+			Level:   doctorPass,
+			Section: doctorSectionTools,
+			Name:    "conpty",
+			Message: "ConPTY (built-in): no external terminal multiplexer required on Windows",
+		}
+	}
+	return c.checkTmux(ctx)
+}
+
+func (c *commandContext) checkTmux(ctx context.Context) doctorCheck {
+	path, err := c.deps.LookPath("tmux")
 	if err != nil || path == "" {
-		return doctorCheck{Level: doctorWarn, Section: doctorSectionTools, Name: "zellij", Message: "not found in PATH"}
+		return doctorCheck{Level: doctorWarn, Section: doctorSectionTools, Name: "tmux", Message: "not found in PATH"}
 	}
 	reqCtx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
-	out, err := c.deps.CommandOutput(reqCtx, path, "--version")
+	out, err := c.deps.CommandOutput(reqCtx, path, "-V")
 	if err != nil {
-		return doctorCheck{Level: doctorFail, Section: doctorSectionTools, Name: "zellij", Message: fmt.Sprintf("%s: %v", path, err)}
+		return doctorCheck{Level: doctorFail, Section: doctorSectionTools, Name: "tmux", Message: fmt.Sprintf("%s: %v", path, err)}
 	}
-	version, err := zellij.CheckVersionOutput(string(out))
-	if err != nil {
-		return doctorCheck{Level: doctorFail, Section: doctorSectionTools, Name: "zellij", Message: fmt.Sprintf("%s: %v", path, err)}
+	version := firstOutputLine(out)
+	if version == "" {
+		version = "version unknown"
 	}
-	return doctorCheck{Level: doctorPass, Section: doctorSectionTools, Name: "zellij", Message: fmt.Sprintf("%s (version %s; require >= %s)", path, version, zellij.RequiredVersion())}
+	return doctorCheck{Level: doctorPass, Section: doctorSectionTools, Name: "tmux", Message: fmt.Sprintf("%s (%s)", path, version)}
 }
 
 // checkHooksLog surfaces recent agent hook delivery failures. `ao hooks`

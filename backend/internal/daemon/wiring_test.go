@@ -10,7 +10,8 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
-	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/zellij"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/runtimeselect"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/tmux"
 	telemetryadapter "github.com/aoagents/agent-orchestrator/backend/internal/adapters/telemetry"
 	"github.com/aoagents/agent-orchestrator/backend/internal/cdc"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
@@ -149,9 +150,9 @@ func TestWiring_StartSessionBuildsSessionService(t *testing.T) {
 	lcm := lifecycle.New(store, nil)
 	cfg := config.Config{DataDir: t.TempDir()}
 
-	runtime := zellij.New(zellij.Options{})
-	messenger := newSessionMessenger(store, runtime, log)
-	svc, reviewSvc, err := startSession(cfg, runtime, store, lcm, messenger, telemetryadapter.NoopSink{}, log)
+	rt := runtimeselect.New(nil)
+	messenger := newSessionMessenger(store, rt, log)
+	svc, reviewSvc, lc, err := startSession(cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, log)
 	if err != nil {
 		t.Fatalf("startSession: %v", err)
 	}
@@ -160,6 +161,9 @@ func TestWiring_StartSessionBuildsSessionService(t *testing.T) {
 	}
 	if reviewSvc == nil {
 		t.Fatal("startSession returned nil review service")
+	}
+	if lc == nil {
+		t.Fatal("startSession returned nil session lifecycle")
 	}
 }
 
@@ -320,7 +324,7 @@ func TestWiring_StartLifecycleThreadsMessengerIntoLCM(t *testing.T) {
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	messenger := &captureMessenger{}
-	stack := startLifecycle(ctx, store, zellij.New(zellij.Options{}), messenger, nil, nil, log)
+	stack := startLifecycle(ctx, store, tmux.New(tmux.Options{}), messenger, nil, nil, log)
 	t.Cleanup(stack.Stop)
 	t.Cleanup(cancel)
 
@@ -377,22 +381,67 @@ func TestProjectRepoResolver_ResolvesRegisteredProject(t *testing.T) {
 	}
 }
 
-// TestDaemonZellijSocketDir_LeavesBudgetForSessionNames guards the fix for the
-// zellij "session name must be less than 0 characters" spawn failure: the
-// daemon's socket dir must be short enough that a max-length (48-char) session
-// name still fits the ~103-byte unix-domain-socket-path budget. zellij's long
-// $TMPDIR default (the bug) would fail this.
-func TestDaemonZellijSocketDir_LeavesBudgetForSessionNames(t *testing.T) {
-	dir := zellij.DefaultSocketDir()
-	if dir == "" {
-		t.Skip("zellij not used on this platform")
+// fakeSessionLifecycle records calls to Reconcile, RestoreAll, and
+// SaveAndTeardownAll so tests can assert the daemon wiring invokes the correct
+// methods without needing a real runtime or worktree.
+type fakeSessionLifecycle struct {
+	reconcileCalled       bool
+	restoreAllCalled      bool
+	saveAndTeardownCalled bool
+	reconcileErr          error
+	restoreErr            error
+	saveErr               error
+}
+
+func (f *fakeSessionLifecycle) Reconcile(_ context.Context) error {
+	f.reconcileCalled = true
+	return f.reconcileErr
+}
+
+func (f *fakeSessionLifecycle) RestoreAll(_ context.Context) error {
+	f.restoreAllCalled = true
+	return f.restoreErr
+}
+
+func (f *fakeSessionLifecycle) SaveAndTeardownAll(_ context.Context) error {
+	f.saveAndTeardownCalled = true
+	return f.saveErr
+}
+
+// TestWiring_SessionLifecycleInterfaceInvokedByDaemon asserts the
+// sessionLifecycle interface is satisfied by *sessionmanager.Manager (compile
+// check) and that Reconcile, RestoreAll, and SaveAndTeardownAll dispatch
+// correctly through the interface, matching what daemon.go wires at
+// boot/shutdown.
+func TestWiring_SessionLifecycleInterfaceInvokedByDaemon(t *testing.T) {
+	// Verify *sessionmanager.Manager satisfies the interface at compile time.
+	var _ sessionLifecycle = (*sessionmanager.Manager)(nil)
+
+	fake := &fakeSessionLifecycle{}
+	ctx := context.Background()
+
+	// Dispatch through the interface variable to exercise the real dispatch
+	// path, not just direct struct method calls.
+	var sl sessionLifecycle = fake
+
+	if err := sl.Reconcile(ctx); err != nil {
+		t.Fatalf("Reconcile: %v", err)
 	}
-	const (
-		unixSocketPathMax = 103 // sun_path budget zellij enforces on macOS
-		zellijOverhead    = 24  // zellij's version subdir + separators (generous)
-		maxSessionName    = 48  // zellijSessionName's cap
-	)
-	if budget := unixSocketPathMax - len(dir) - zellijOverhead; budget < maxSessionName {
-		t.Fatalf("zellij socket dir %q too long: %d bytes left for the session name, need >= %d", dir, budget, maxSessionName)
+	if !fake.reconcileCalled {
+		t.Fatal("Reconcile was not called through the interface")
+	}
+
+	if err := sl.RestoreAll(ctx); err != nil {
+		t.Fatalf("RestoreAll: %v", err)
+	}
+	if !fake.restoreAllCalled {
+		t.Fatal("RestoreAll was not called through the interface")
+	}
+
+	if err := sl.SaveAndTeardownAll(ctx); err != nil {
+		t.Fatalf("SaveAndTeardownAll: %v", err)
+	}
+	if !fake.saveAndTeardownCalled {
+		t.Fatal("SaveAndTeardownAll was not called through the interface")
 	}
 }

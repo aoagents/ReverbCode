@@ -15,14 +15,43 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 )
 
-type stubRuntime struct{ created, destroyed int }
+type stubRuntime struct {
+	created   int
+	destroyed int
+	// aliveByHandle scripts IsAlive per handle ID. If a handle ID is absent,
+	// IsAlive returns true (default: alive), matching the pre-existing behavior
+	// that all other tests relied on.
+	aliveByHandle    map[string]bool
+	destroyedHandles []string
+}
 
 func (s *stubRuntime) Create(context.Context, ports.RuntimeConfig) (ports.RuntimeHandle, error) {
 	s.created++
 	return ports.RuntimeHandle{ID: "h1"}, nil
 }
-func (s *stubRuntime) Destroy(context.Context, ports.RuntimeHandle) error         { s.destroyed++; return nil }
-func (s *stubRuntime) IsAlive(context.Context, ports.RuntimeHandle) (bool, error) { return true, nil }
+func (s *stubRuntime) Destroy(_ context.Context, h ports.RuntimeHandle) error {
+	s.destroyed++
+	s.destroyedHandles = append(s.destroyedHandles, h.ID)
+	return nil
+}
+func (s *stubRuntime) IsAlive(_ context.Context, h ports.RuntimeHandle) (bool, error) {
+	if s.aliveByHandle != nil {
+		if alive, ok := s.aliveByHandle[h.ID]; ok {
+			return alive, nil
+		}
+	}
+	return true, nil
+}
+
+// wasDestroyed reports whether Destroy was called with the given handle ID.
+func (s *stubRuntime) wasDestroyed(handleID string) bool {
+	for _, id := range s.destroyedHandles {
+		if id == handleID {
+			return true
+		}
+	}
+	return false
+}
 
 type stubAgent struct{}
 
@@ -63,6 +92,13 @@ func (s *stubWorkspace) Destroy(context.Context, ports.WorkspaceInfo) error {
 func (s *stubWorkspace) Restore(ctx context.Context, cfg ports.WorkspaceConfig) (ports.WorkspaceInfo, error) {
 	return s.Create(ctx, cfg)
 }
+func (s *stubWorkspace) ForceDestroy(context.Context, ports.WorkspaceInfo) error { return nil }
+func (s *stubWorkspace) StashUncommitted(_ context.Context, _ ports.WorkspaceInfo) (string, error) {
+	return "", nil
+}
+func (s *stubWorkspace) ApplyPreserved(_ context.Context, _ ports.WorkspaceInfo, _ string) error {
+	return nil
+}
 
 type captureMessenger struct{ msgs []string }
 
@@ -74,6 +110,7 @@ func (c *captureMessenger) Send(_ context.Context, _ domain.SessionID, msg strin
 type stack struct {
 	store *sqlite.Store
 	sm    *sessionsvc.Service
+	mgr   *sessionmanager.Manager
 	lcm   *lifecycle.Manager
 	prm   *prsvc.Manager
 	rt    *stubRuntime
@@ -107,7 +144,7 @@ func newStack(t *testing.T) *stack {
 	ws := &stubWorkspace{}
 	mgr := sessionmanager.New(sessionmanager.Deps{Runtime: rt, Agents: stubAgents{}, Workspace: ws, Store: store, Messenger: msg, Lifecycle: lcm, LookPath: func(string) (string, error) { return "/usr/bin/true", nil }})
 	sm := sessionsvc.New(mgr, store)
-	return &stack{store: store, sm: sm, lcm: lcm, prm: prm, rt: rt, ws: ws, msg: msg}
+	return &stack{store: store, sm: sm, mgr: mgr, lcm: lcm, prm: prm, rt: rt, ws: ws, msg: msg}
 }
 
 func TestSpawnPRKillRoundTrip(t *testing.T) {
@@ -165,6 +202,93 @@ func TestRestoreRoundTripPreservesMetadata(t *testing.T) {
 	}
 	if restored.IsTerminated || restored.Metadata.AgentSessionID != "agent-x" {
 		t.Fatalf("restored wrong: %+v", restored)
+	}
+}
+
+// TestReconcile_TerminatesDeadLiveSessionAndReapsLeakedTmux exercises
+// Manager.Reconcile against a real sqlite.Store:
+//
+//   - Session A: is_terminated=0 but its runtime is GONE => Reconcile must
+//     mark it terminated in the DB.
+//   - Session B: is_terminated=1 but its runtime is still ALIVE (leaked teardown)
+//     => Reconcile must call Destroy on its handle.
+func TestReconcile_TerminatesDeadLiveSessionAndReapsLeakedTmux(t *testing.T) {
+	ctx := context.Background()
+	st := newStack(t)
+
+	// Script liveness: handle "hdl-A" is dead; handle "hdl-B" is alive.
+	st.rt.aliveByHandle = map[string]bool{
+		"hdl-A": false,
+		"hdl-B": true,
+	}
+
+	now := time.Now().UTC()
+
+	// Seed session A: live in the DB (is_terminated=0) but runtime is gone.
+	// WorkspacePath and Branch must be non-empty so reconcileLive actually probes
+	// IsAlive (it short-circuits on missing path/branch).
+	recA := domain.SessionRecord{
+		ProjectID:    "mer",
+		Kind:         domain.KindWorker,
+		Harness:      domain.HarnessClaudeCode,
+		IsTerminated: false,
+		Metadata: domain.SessionMetadata{
+			Branch:          "ao/mer-a/root",
+			WorkspacePath:   "/ws/mer-a",
+			RuntimeHandleID: "hdl-A",
+		},
+		Activity:  domain.Activity{State: domain.ActivityIdle, LastActivityAt: now},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	recA, err := st.store.CreateSession(ctx, recA)
+	if err != nil {
+		t.Fatalf("seed session A: %v", err)
+	}
+
+	// Seed session B: terminated in the DB (is_terminated=1) but runtime leaked.
+	recB := domain.SessionRecord{
+		ProjectID:    "mer",
+		Kind:         domain.KindWorker,
+		Harness:      domain.HarnessClaudeCode,
+		IsTerminated: true,
+		Metadata: domain.SessionMetadata{
+			Branch:          "ao/mer-b/root",
+			WorkspacePath:   "/ws/mer-b",
+			RuntimeHandleID: "hdl-B",
+		},
+		Activity:  domain.Activity{State: domain.ActivityIdle, LastActivityAt: now},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	recB, err = st.store.CreateSession(ctx, recB)
+	if err != nil {
+		t.Fatalf("seed session B: %v", err)
+	}
+	// recB is already built with IsTerminated=true, so CreateSession stores it terminated; the UpdateSession below is redundant but kept for clarity.
+	if err := st.store.UpdateSession(ctx, recB); err != nil {
+		t.Fatalf("patch session B terminated: %v", err)
+	}
+
+	if err := st.mgr.Reconcile(ctx); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	// Session A must now be terminated in the store.
+	gotA, ok, err := st.store.GetSession(ctx, recA.ID)
+	if err != nil {
+		t.Fatalf("get session A: %v", err)
+	}
+	if !ok {
+		t.Fatalf("session A: not found after Reconcile")
+	}
+	if !gotA.IsTerminated {
+		t.Fatalf("session A: want is_terminated=true after Reconcile, got false")
+	}
+
+	// Session B's leaked runtime must have been destroyed.
+	if !st.rt.wasDestroyed("hdl-B") {
+		t.Fatalf("session B: want Destroy called for handle hdl-B; destroyed handles: %v", st.rt.destroyedHandles)
 	}
 }
 

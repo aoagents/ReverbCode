@@ -217,6 +217,12 @@ func setupOriginClone(t *testing.T, git, tmp string) string {
 	runGit(t, git, seed, "remote", "add", "origin", origin)
 	runGit(t, git, seed, "push", "-u", "origin", "main")
 	run(t, git, "clone", origin, repo)
+	// A clone does not copy the seed's local identity, and CI runners have no
+	// global git identity to fall back on, so commit/commit-tree in this repo's
+	// worktrees would fail with "empty ident name". Set it on the clone; worktrees
+	// inherit the common dir config.
+	runGit(t, git, repo, "config", "user.email", "ao@example.com")
+	runGit(t, git, repo, "config", "user.name", "Ao Agents")
 	runGit(t, git, repo, "checkout", "main")
 	return repo
 }

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { XtermTerminal } from "./XtermTerminal";
 
 const state = vi.hoisted(() => ({
+	linkHandler: null as null | ((event: MouseEvent, uri: string) => void),
 	lastTerminal: null as null | {
 		keyHandler?: (event: KeyboardEvent) => boolean;
 		wheelHandler?: (event: WheelEvent) => boolean;
@@ -103,7 +104,11 @@ vi.mock("@xterm/addon-unicode11", () => ({
 }));
 
 vi.mock("@xterm/addon-web-links", () => ({
-	WebLinksAddon: class FakeWebLinksAddon {},
+	WebLinksAddon: class FakeWebLinksAddon {
+		constructor(handler?: (event: MouseEvent, uri: string) => void) {
+			state.linkHandler = handler ?? null;
+		}
+	},
 }));
 
 vi.mock("@xterm/addon-canvas", () => ({
@@ -131,6 +136,7 @@ function setNavigatorPlatform(platform: string) {
 describe("XtermTerminal", () => {
 	beforeEach(() => {
 		state.lastTerminal = null;
+		state.linkHandler = null;
 		setNavigatorPlatform("Linux x86_64");
 		window.ao!.clipboard.writeText = vi.fn().mockResolvedValue(undefined);
 		window.ao!.clipboard.readText = vi.fn().mockResolvedValue("");
@@ -484,6 +490,19 @@ describe("XtermTerminal", () => {
 		onInput.mockClear();
 		expect(state.lastTerminal!.wheelHandler!({ deltaY: -50, ctrlKey: true } as WheelEvent)).toBe(false);
 		expect(onInput).not.toHaveBeenCalled();
+	});
+
+	it("opens terminal links via window.open so Electron routes them to the OS browser", () => {
+		const open = vi.spyOn(window, "open").mockReturnValue(null);
+		render(<XtermTerminal theme="dark" />);
+
+		// The default WebLinksAddon handler opens an empty window first, which the
+		// Electron main process denies; ours must pass the matched URL directly.
+		expect(state.linkHandler).toBeTypeOf("function");
+		state.linkHandler!({} as MouseEvent, "https://example.com");
+
+		expect(open).toHaveBeenCalledWith("https://example.com", "_blank", "noopener");
+		open.mockRestore();
 	});
 
 	it("forces plain drag selection without raw xterm data forwarding", () => {

@@ -65,12 +65,18 @@ export function withFallbackPath(currentPath: string | undefined): string {
 
 // Base = shell env, overlaid by processEnv so Electron/AO runtime vars win, then
 // PATH forced to the shell's PATH (with floor), then explicit overrides.
+//
+// TERM defaults to xterm-256color (what the renderer's xterm.js emulates): a
+// Finder/Dock launch starts under launchd with no controlling tty, so TERM is
+// unset, and the daemon's tmux attach client inherits that and dies with
+// "open terminal failed: terminal does not support clear". Seeded as the base
+// so a real TERM from the shell/process env still wins.
 export function buildDaemonEnv(
 	processEnv: NodeJS.ProcessEnv,
 	shellEnv: Record<string, string> | null,
 	overrides: Record<string, string>,
 ): NodeJS.ProcessEnv {
-	const merged: NodeJS.ProcessEnv = { ...(shellEnv ?? {}), ...processEnv };
+	const merged: NodeJS.ProcessEnv = { TERM: "xterm-256color", ...(shellEnv ?? {}), ...processEnv };
 	merged.PATH = withFallbackPath(shellEnv?.PATH ?? processEnv.PATH);
 	return { ...merged, ...overrides };
 }

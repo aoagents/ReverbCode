@@ -10,23 +10,29 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-// fakeSource is a scripted PTYSource.
+// fakeSource is a scripted terminal Source: Attach hands out fake Streams from
+// an embedded spawner (or a custom attachFn closure); IsAlive is scriptable.
+// attachErr makes Attach fail.
 type fakeSource struct {
-	argv      []string
+	spawner   *fakeSpawner
+	attachFn  func(ctx context.Context, rows, cols uint16) (ports.Stream, error)
 	mu        sync.Mutex
 	alive     bool
 	aliveErr  error
 	attachErr error
 }
 
-func (f *fakeSource) AttachCommand(ports.RuntimeHandle) ([]string, []string, error) {
+func (f *fakeSource) Attach(ctx context.Context, _ ports.RuntimeHandle, rows, cols uint16) (ports.Stream, error) {
 	if f.attachErr != nil {
-		return nil, nil, f.attachErr
+		return nil, f.attachErr
 	}
-	if f.argv == nil {
-		return []string{"zellij", "attach"}, nil, nil
+	if f.attachFn != nil {
+		return f.attachFn(ctx, rows, cols)
 	}
-	return f.argv, nil, nil
+	if f.spawner == nil {
+		f.spawner = &fakeSpawner{}
+	}
+	return f.spawner.spawn(rows, cols)
 }
 
 func (f *fakeSource) IsAlive(context.Context, ports.RuntimeHandle) (bool, error) {
@@ -48,8 +54,8 @@ func (f *fakeSource) setAliveResult(v bool, err error) {
 	f.mu.Unlock()
 }
 
-// fakePTY is a scripted ptyProcess: Read drains the out channel, Write records,
-// Resize records, and Close unblocks reads.
+// fakePTY is a scripted ports.Stream: Read drains the out channel, Write
+// records, Resize records, and Close unblocks reads.
 type fakePTY struct {
 	out    chan []byte
 	closed chan struct{}
@@ -110,16 +116,17 @@ func (p *fakePTY) resizeCalls() [][2]uint16 {
 
 // fakeSpawner hands out pre-built fakePTYs in order; once exhausted it returns
 // idle PTYs that block until closed (so a re-attach loop does not busy-spin).
+// It is the attach seam the fakeSource backs: each Attach call is one spawn.
 type fakeSpawner struct {
 	mu      sync.Mutex
 	ptys    []*fakePTY
 	n       int
 	err     error
 	created []*fakePTY
-	sizes   [][2]uint16 // rows×cols passed to each spawn call, in order
+	sizes   [][2]uint16 // rows×cols passed to each attach call, in order
 }
 
-func (f *fakeSpawner) spawn(_ context.Context, _ []string, _ []string, rows, cols uint16) (ptyProcess, error) {
+func (f *fakeSpawner) spawn(rows, cols uint16) (ports.Stream, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.err != nil {

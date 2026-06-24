@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
@@ -99,6 +100,20 @@ type RuntimeHandle struct {
 	ID string
 }
 
+// Stream is one live terminal attach: PTY-like bytes plus resize. Returned
+// already-open by a Runtime's Attach. tmux/zellij back it with a local PTY around
+// their attach CLI; conpty backs it with a loopback connection to the pty-host.
+type Stream interface {
+	io.ReadWriteCloser
+	Resize(rows, cols uint16) error
+}
+
+// Attacher opens a fresh attach Stream for a session handle, sized rows x cols from
+// birth (0 means size not yet known). ctx cancellation must terminate the stream.
+type Attacher interface {
+	Attach(ctx context.Context, handle RuntimeHandle, rows, cols uint16) (Stream, error)
+}
+
 // The Agent port and its supporting types live in agent.go.
 
 // Workspace is the isolated checkout an agent works in (a git worktree or clone).
@@ -106,6 +121,24 @@ type Workspace interface {
 	Create(ctx context.Context, cfg WorkspaceConfig) (WorkspaceInfo, error)
 	Destroy(ctx context.Context, info WorkspaceInfo) error
 	Restore(ctx context.Context, cfg WorkspaceConfig) (WorkspaceInfo, error)
+	// ForceDestroy removes the worktree unconditionally, bypassing the
+	// dirty-worktree refusal that Destroy enforces. It is only safe to call
+	// AFTER the session's uncommitted work has been captured via StashUncommitted.
+	// Never call it from interactive teardown paths.
+	ForceDestroy(ctx context.Context, info WorkspaceInfo) error
+	// StashUncommitted captures all uncommitted work in the worktree as a git
+	// commit object stored at refs/ao/preserved/<session-id>, WITHOUT mutating
+	// the working tree or the global stash stack. Tracked edits and new
+	// non-ignored files are captured; .gitignore-d files are skipped (the count
+	// of skipped ignored paths is logged). Returns the ref name on success, or
+	// an empty string if the worktree is clean (nothing to preserve).
+	StashUncommitted(ctx context.Context, info WorkspaceInfo) (ref string, err error)
+	// ApplyPreserved replays a capture created by StashUncommitted onto the
+	// worktree identified by info. On clean success the preserve ref is deleted.
+	// On conflict, the ref is kept, conflict markers are left in the working
+	// tree, and ErrPreservedConflict (wrapped) is returned. The ref must never
+	// be deleted on a failed or conflicted apply.
+	ApplyPreserved(ctx context.Context, info WorkspaceInfo, ref string) error
 }
 
 // Workspace-level sentinels surfaced through Create/Restore/Destroy so callers
@@ -125,6 +158,12 @@ var (
 	// it holds uncommitted changes or untracked files. Teardown is never
 	// forced; callers treat the workspace as intentionally preserved.
 	ErrWorkspaceDirty = errors.New("workspace: uncommitted changes present")
+	// ErrPreservedConflict is returned by ApplyPreserved when replaying a
+	// preserved ref onto the worktree produces merge conflicts. The ref is
+	// kept intact (never deleted on conflict); the working tree is left with
+	// conflict markers for manual resolution. Adapters wrap this sentinel via
+	// fmt.Errorf so callers can match it with errors.Is.
+	ErrPreservedConflict = errors.New("workspace: preserved apply produced conflicts")
 )
 
 // WorkspaceConfig is the spec for creating or restoring a session's workspace.

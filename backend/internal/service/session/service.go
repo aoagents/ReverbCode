@@ -453,6 +453,9 @@ func toAPIError(err error) error {
 		return apierr.Conflict("SESSION_TERMINATED", "Session is terminated", nil)
 	case errors.Is(err, sessionmanager.ErrIncompleteHandle):
 		return apierr.Conflict("SESSION_INCOMPLETE_HANDLE", "Session is missing runtime or workspace handles", nil)
+	case errors.Is(err, sessionmanager.ErrNotResumable):
+		return apierr.Conflict("SESSION_NOT_RESUMABLE",
+			"This session has no saved agent session or prompt to resume from", nil)
 	case errors.Is(err, sessionmanager.ErrProjectNotResolvable):
 		return apierr.Invalid("PROJECT_NOT_RESOLVABLE", "Project is not registered or has no repo — register it with `ao project add`", nil)
 	case errors.Is(err, sessionmanager.ErrUnknownHarness):

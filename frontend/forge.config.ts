@@ -14,17 +14,30 @@ const config: ForgeConfig = {
 		// deb/rpm makers below, and the runtime window icon from src/main.ts.
 		icon: "assets/icon",
 		extraResource: ["daemon", "assets/icon.png"],
-		// macOS signing + notarization — set CSC_LINK/CSC_KEY_PASSWORD and
-		// APPLE_ID/APPLE_APP_SPECIFIC_PASSWORD/APPLE_TEAM_ID in CI.
+		// macOS signing + notarization. Two paths are supported:
+		//  - CI: set CSC_LINK/CSC_KEY_PASSWORD and
+		//    APPLE_ID/APPLE_APP_SPECIFIC_PASSWORD/APPLE_TEAM_ID.
+		//  - Local keychain: set APPLE_SIGNING_IDENTITY (a Developer ID Application
+		//    identity in the login keychain) and AO_NOTARY_PROFILE (a notarytool
+		//    keychain profile created with `notarytool store-credentials`).
 		// See frontend/docs/desktop-release.md.
-		osxSign: process.env.CSC_LINK ? {} : undefined,
-		osxNotarize: process.env.APPLE_ID
-			? {
-					appleId: process.env.APPLE_ID,
-					appleIdPassword: process.env.APPLE_APP_SPECIFIC_PASSWORD!,
-					teamId: process.env.APPLE_TEAM_ID!,
-				}
-			: undefined,
+		osxSign: process.env.APPLE_SIGNING_IDENTITY
+			? { identity: process.env.APPLE_SIGNING_IDENTITY }
+			: process.env.CSC_LINK
+				? {}
+				: undefined,
+		osxNotarize: process.env.AO_NOTARY_PROFILE
+			? ({
+					tool: "notarytool",
+					keychainProfile: process.env.AO_NOTARY_PROFILE,
+				} as unknown as ForgeConfig["packagerConfig"]["osxNotarize"])
+			: process.env.APPLE_ID
+				? {
+						appleId: process.env.APPLE_ID,
+						appleIdPassword: process.env.APPLE_APP_SPECIFIC_PASSWORD!,
+						teamId: process.env.APPLE_TEAM_ID!,
+					}
+				: undefined,
 	},
 	rebuildConfig: {},
 	makers: [

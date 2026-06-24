@@ -7,6 +7,7 @@ import { useTerminalSession, type AttachableTerminal, type TerminalSessionState 
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { XtermTerminal } from "./XtermTerminal";
+import { RestoreUnavailableDialog } from "./RestoreUnavailableDialog";
 
 type TerminalPaneProps = {
 	session?: WorkspaceSession;
@@ -69,6 +70,7 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 	const [initFailed, setInitFailed] = useState(false);
 	const [isRestoring, setIsRestoring] = useState(false);
 	const [restoreError, setRestoreError] = useState<string | undefined>();
+	const [restoreUnavailable, setRestoreUnavailable] = useState(false);
 	const queryClient = useQueryClient();
 	const { attach, state, error } = useTerminalSession(attachSession, { daemonReady });
 	const handleId = attachSession?.terminalHandleId;
@@ -90,7 +92,14 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 			const { error: restoreError } = await apiClient.POST("/api/v1/sessions/{sessionId}/restore", {
 				params: { path: { sessionId: session.id } },
 			});
-			if (restoreError) throw new Error(apiErrorMessage(restoreError, "Unable to restore session"));
+			if (restoreError) {
+				const code = (restoreError as { code?: string }).code;
+				if (code === "SESSION_NOT_RESUMABLE") {
+					setRestoreUnavailable(true);
+					return;
+				}
+				throw new Error(apiErrorMessage(restoreError, "Unable to restore session"));
+			}
 			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 		} catch (err) {
 			setRestoreError(err instanceof Error ? err.message : "Unable to restore session");
@@ -163,6 +172,16 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 					</div>
 				)}
 			</div>
+			{session && (
+				<RestoreUnavailableDialog
+					open={restoreUnavailable}
+					session={session}
+					onOpenChange={setRestoreUnavailable}
+					onRecreated={async () => {
+						await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+					}}
+				/>
+			)}
 		</div>
 	);
 }
