@@ -56,5 +56,10 @@ type SessionWorktreeRecord struct {
 	BaseSHA      string
 	WorktreePath string
 	PreservedRef string
-	State        string
+	// ponytail: State mirrors session_worktrees.state, an enum that is unused
+	// multi-repo scaffolding. The save/restore lifecycle reads and writes only
+	// PreservedRef and row presence; State is never set by any live code path
+	// and always resolves to the column default ('active' on insert). Wire it
+	// when multi-repo worktree lifecycle states actually ship.
+	State string
 }
