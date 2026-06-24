@@ -25,9 +25,12 @@ var (
 	ErrNotRestorable    = errors.New("session: not restorable (not terminal)")
 	ErrTerminated       = errors.New("session: terminated")
 	ErrIncompleteHandle = errors.New("session: incomplete teardown handle")
-	// ErrNotResumable means a terminated session has no saved agent session id
-	// and no prompt, so there is nothing for Restore to relaunch from. Distinct
-	// from ErrNotRestorable (which is "not terminal yet").
+	// ErrNotResumable means there is nothing for Restore to relaunch from: the
+	// harness adapter cannot resume the session (no native or derivable session
+	// id) AND no prompt was saved to fresh-launch from. Resumability is decided
+	// by the adapter (e.g. Claude Code pins a deterministic --session-id, so it
+	// resumes with no captured token), not by inspecting metadata fields here.
+	// Distinct from ErrNotRestorable (which is "not terminal yet").
 	ErrNotResumable = errors.New("session: nothing to resume from")
 	// ErrProjectNotResolvable means the spawn's project has no usable repo
 	// (unregistered, archived, or missing a path). The API maps it to a 400.
@@ -483,9 +486,10 @@ func (m *Manager) Restore(ctx context.Context, id domain.SessionID) (domain.Sess
 	if meta.WorkspacePath == "" || meta.Branch == "" {
 		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", id, ErrIncompleteHandle)
 	}
-	if meta.AgentSessionID == "" && meta.Prompt == "" {
-		return domain.SessionRecord{}, fmt.Errorf("restore %s: %w", id, ErrNotResumable)
-	}
+	// Resumability is NOT decided here: a promptless session can still be fully
+	// resumable when the harness pins a deterministic session id (Claude Code).
+	// restoreArgv asks the adapter and returns ErrNotResumable only when the
+	// adapter cannot resume AND there is no prompt to fresh-launch from.
 
 	project, err := m.loadProject(ctx, rec.ProjectID)
 	if err != nil {
@@ -628,9 +632,16 @@ func (m *Manager) saveAndTeardownOne(ctx context.Context, rec domain.SessionReco
 // reconcileLive handles a single non-terminated session on boot. If its runtime
 // session is still alive (tmux is the persistence layer, so it survives a daemon
 // crash) we adopt it: a no-op, the agent keeps running. If the runtime is gone,
-// the agent died with the daemon, so we capture any uncommitted work into a
-// preserve ref (best-effort) and mark the session terminated. We never relaunch
-// here (that is spawn policy) and never delete the worktree.
+// the agent died with the daemon, so we save-and-tear-down to the SAME end state
+// a graceful shutdown produces: capture uncommitted work into a preserve ref,
+// record the session_worktrees restore marker, mark terminated, and remove the
+// worktree. RestoreAll (which Reconcile runs immediately after) then relaunches
+// it on this same boot, resuming history. Crash recovery thus matches graceful
+// restart instead of silently abandoning the session.
+//
+// If the work capture fails we mark terminated WITHOUT a marker and leave the
+// worktree intact: better to skip the relaunch than to tear down un-preserved
+// work or relaunch onto an inconsistent worktree.
 func (m *Manager) reconcileLive(ctx context.Context, rec domain.SessionRecord) error {
 	if rec.Metadata.WorkspacePath == "" || rec.Metadata.Branch == "" {
 		return nil
@@ -646,12 +657,38 @@ func (m *Manager) reconcileLive(ctx context.Context, rec domain.SessionRecord) e
 			return nil // adopt: the session survived the crash.
 		}
 	}
-	// Runtime is gone: preserve work (best-effort) then mark terminated.
-	if _, err := m.workspace.StashUncommitted(ctx, workspaceInfo(rec)); err != nil {
-		m.logger.Warn("reconcile: stash uncommitted failed; marking terminated anyway", "sessionID", rec.ID, "error", err)
+	// Runtime is gone: capture uncommitted work first.
+	ws := workspaceInfo(rec)
+	ref, err := m.workspace.StashUncommitted(ctx, ws)
+	if err != nil {
+		// Could not capture work: do NOT write a restore marker or tear down the
+		// worktree (that would risk losing un-preserved work). Mark terminated so
+		// a dead session is not left looking live; the worktree stays put.
+		m.logger.Warn("reconcile: stash uncommitted failed; terminating without restore marker", "sessionID", rec.ID, "error", err)
+		if mErr := m.lcm.MarkTerminated(ctx, rec.ID); mErr != nil {
+			return fmt.Errorf("reconcile %s: mark terminated: %w", rec.ID, mErr)
+		}
+		return nil
+	}
+	// Work captured. Record the shutdown-saved marker BEFORE tearing down the
+	// worktree, mirroring saveAndTeardownOne, so RestoreAll relaunches it.
+	row := domain.SessionWorktreeRecord{
+		SessionID:    rec.ID,
+		RepoName:     domain.RootWorkspaceRepoName,
+		Branch:       rec.Metadata.Branch,
+		WorktreePath: rec.Metadata.WorkspacePath,
+		PreservedRef: ref,
+	}
+	if err := m.store.UpsertSessionWorktree(ctx, row); err != nil {
+		return fmt.Errorf("reconcile %s: upsert worktree marker: %w", rec.ID, err)
 	}
 	if err := m.lcm.MarkTerminated(ctx, rec.ID); err != nil {
 		return fmt.Errorf("reconcile %s: mark terminated: %w", rec.ID, err)
+	}
+	// Remove the worktree (work is captured in the ref): RestoreAll re-creates it
+	// clean and replays the ref. The dead runtime needs no Destroy.
+	if err := m.workspace.ForceDestroy(ctx, ws); err != nil {
+		m.logger.Warn("reconcile: force destroy failed after marker", "sessionID", rec.ID, "error", err)
 	}
 	return nil
 }
@@ -1194,6 +1231,12 @@ func restoreArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, wo
 	}
 	if ok {
 		return cmd, nil
+	}
+	// The adapter reports no session to resume (no native or derivable session
+	// id). A saved prompt lets us relaunch fresh; with neither, there is
+	// genuinely nothing to restore from.
+	if meta.Prompt == "" {
+		return nil, ErrNotResumable
 	}
 	argv, err := agent.GetLaunchCommand(ctx, ports.LaunchConfig{
 		SessionID:     string(id),

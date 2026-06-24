@@ -228,6 +228,15 @@ type singleAgent struct{ agent ports.Agent }
 
 func (s singleAgent) Agent(domain.AgentHarness) (ports.Agent, bool) { return s.agent, true }
 
+// alwaysResumeAgent mimics Claude Code: it pins a deterministic session id, so
+// GetRestoreCommand can resume any session even with no captured agentSessionId
+// and no prompt.
+type alwaysResumeAgent struct{ fakeAgent }
+
+func (alwaysResumeAgent) GetRestoreCommand(_ context.Context, cfg ports.RestoreConfig) ([]string, bool, error) {
+	return []string{"resume", cfg.Session.ID}, true, nil
+}
+
 // missingAgents resolves no harness, simulating a typo'd or unregistered agent.
 type missingAgents struct{}
 
@@ -900,6 +909,54 @@ func TestRestore_FallbackLaunchCarriesSystemPrompt(t *testing.T) {
 	}
 }
 
+// TestRestore_PromptlessOrchestratorResumesViaAdapter locks the orchestrator
+// fix: a promptless session with no captured agentSessionId is still restorable
+// when the adapter can resume it (Claude pins a deterministic --session-id).
+// Before the fix the metadata-only guard rejected it with ErrNotResumable, so
+// every boot abandoned the orchestrator and spawned a fresh one.
+func TestRestore_PromptlessOrchestratorResumesViaAdapter(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Kind: domain.KindOrchestrator, IsTerminated: true,
+		// No AgentSessionID, no Prompt: exactly how orchestrators are persisted.
+		Metadata: domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "ao/mer-orchestrator"},
+		Activity: domain.Activity{State: domain.ActivityExited},
+	}
+	rt := &fakeRuntime{}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: rt, Agents: singleAgent{agent: alwaysResumeAgent{}}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+
+	if _, err := m.Restore(ctx, "mer-1"); err != nil {
+		t.Fatalf("promptless orchestrator must restore via adapter resume, got err = %v", err)
+	}
+	if rt.created != 1 {
+		t.Fatalf("runtime.Create = %d, want 1 (resumed)", rt.created)
+	}
+	if st.sessions["mer-1"].IsTerminated {
+		t.Error("orchestrator must be live after restore")
+	}
+}
+
+// TestRestore_RefusesPromptlessWhenAdapterCannotResume preserves the typed
+// error: a promptless session whose adapter cannot resume (no native session id)
+// has genuinely nothing to relaunch from and must still return ErrNotResumable.
+func TestRestore_RefusesPromptlessWhenAdapterCannotResume(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker, IsTerminated: true,
+		Metadata: domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "ao/mer-1/root"},
+		Activity: domain.Activity{State: domain.ActivityExited},
+	}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	// fakeAgents resolves to fakeAgent, whose GetRestoreCommand returns ok=false
+	// without an agentSessionId.
+	m := New(Deps{Runtime: &fakeRuntime{}, Agents: fakeAgents{}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+
+	if _, err := m.Restore(ctx, "mer-1"); !errors.Is(err, ErrNotResumable) {
+		t.Fatalf("Restore err = %v, want ErrNotResumable", err)
+	}
+}
+
 // TestRestore_WorkerPointsAtCurrentOrchestrator: a restored worker's
 // coordination hint must reference the orchestrator active at restore time,
 // not the one from its original spawn.
@@ -1548,6 +1605,22 @@ func TestReconcileLive_DeadSessionStashedAndTerminated(t *testing.T) {
 	}
 	if rt.destroyed != 0 {
 		t.Fatalf("Destroy calls = %d, want 0 (dead session: no tmux to kill)", rt.destroyed)
+	}
+	// The crash-orphaned session must be saved for restore, exactly like a
+	// graceful shutdown: a session_worktrees marker carrying the preserve ref,
+	// and the worktree torn down so RestoreAll re-creates it clean.
+	rows := st.worktrees["s1"]
+	if len(rows) != 1 || rows[0].PreservedRef != "refs/ao/preserved/s1" {
+		t.Fatalf("session_worktrees marker for s1 = %+v, want one row with the preserve ref", rows)
+	}
+	foundForceDestroy := false
+	for _, c := range ws.calls {
+		if c == "ForceDestroy:s1" {
+			foundForceDestroy = true
+		}
+	}
+	if !foundForceDestroy {
+		t.Fatalf("reconcileLive must ForceDestroy the worktree after capturing work; calls = %v", ws.calls)
 	}
 }
 
