@@ -1,15 +1,18 @@
 -- name: UpsertReview :exec
 INSERT INTO review (id, session_id, project_id, harness, pr_url, reviewer_handle_id, created_at, updated_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT (session_id) DO UPDATE SET
+ON CONFLICT (session_id, pr_url) DO UPDATE SET
     harness = excluded.harness,
-    pr_url = excluded.pr_url,
     reviewer_handle_id = excluded.reviewer_handle_id,
     updated_at = excluded.updated_at;
 
--- name: GetReviewBySession :one
+-- name: GetReviewBySessionAndPR :one
 SELECT id, session_id, project_id, harness, pr_url, reviewer_handle_id, created_at, updated_at
-FROM review WHERE session_id = ?;
+FROM review WHERE session_id = ? AND pr_url = ?;
+
+-- name: ListReviewsBySession :many
+SELECT id, session_id, project_id, harness, pr_url, reviewer_handle_id, created_at, updated_at
+FROM review WHERE session_id = ? ORDER BY updated_at DESC;
 
 -- name: InsertReviewRun :exec
 INSERT INTO review_run (id, review_id, session_id, harness, pr_url, target_sha, status, verdict, body, github_review_id, created_at)
@@ -22,7 +25,7 @@ UPDATE review_run SET status = ?, verdict = ?, body = ?, github_review_id = ? WH
 UPDATE review_run SET status = 'failed', body = ? WHERE id = ? AND verdict = '' AND status != 'failed';
 
 -- name: SupersedeStaleRunningReviewRuns :execrows
-UPDATE review_run SET status = 'failed', body = ? WHERE session_id = ? AND target_sha != ? AND status = 'running' AND verdict = '';
+UPDATE review_run SET status = 'failed', body = ? WHERE session_id = ? AND pr_url = ? AND target_sha != ? AND status = 'running' AND verdict = '';
 
 -- name: MarkReviewRunDelivered :execrows
 UPDATE review_run SET status = 'delivered', delivered_at = ? WHERE id = ? AND status = 'complete' AND delivered_at IS NULL;
@@ -31,10 +34,14 @@ UPDATE review_run SET status = 'delivered', delivered_at = ? WHERE id = ? AND st
 SELECT id, review_id, session_id, harness, pr_url, target_sha, status, verdict, body, created_at, github_review_id, delivered_at
 FROM review_run WHERE id = ?;
 
--- name: GetReviewRunBySessionAndSHA :one
+-- name: GetReviewRunBySessionPRAndSHA :one
 SELECT id, review_id, session_id, harness, pr_url, target_sha, status, verdict, body, created_at, github_review_id, delivered_at
-FROM review_run WHERE session_id = ? AND target_sha = ? ORDER BY created_at DESC LIMIT 1;
+FROM review_run WHERE session_id = ? AND pr_url = ? AND target_sha = ? ORDER BY created_at DESC LIMIT 1;
 
 -- name: ListReviewRunsBySession :many
 SELECT id, review_id, session_id, harness, pr_url, target_sha, status, verdict, body, created_at, github_review_id, delivered_at
 FROM review_run WHERE session_id = ? ORDER BY created_at DESC;
+
+-- name: ListReviewRunsBySessionAndPR :many
+SELECT id, review_id, session_id, harness, pr_url, target_sha, status, verdict, body, created_at, github_review_id, delivered_at
+FROM review_run WHERE session_id = ? AND pr_url = ? ORDER BY created_at DESC;

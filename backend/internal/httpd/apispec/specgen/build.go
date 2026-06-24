@@ -84,7 +84,11 @@ func Build() ([]byte, error) {
 			// AddReqStructure leaves requestBody.required absent, which
 			// OpenAPI reads as optional. These bodies are mandatory, so force
 			// it — otherwise validators/generators treat the body as skippable.
-			oc.AddReqStructure(op.reqBody, openapi.WithCustomize(markRequestBodyRequired))
+			if op.optionalReqBody {
+				oc.AddReqStructure(op.reqBody)
+			} else {
+				oc.AddReqStructure(op.reqBody, openapi.WithCustomize(markRequestBodyRequired))
+			}
 		}
 		for _, resp := range op.resps {
 			opts := []openapi.ContentOption{openapi.WithHTTPStatus(resp.status)}
@@ -181,9 +185,12 @@ var schemaNames = map[string]string{
 	"ControllersResolveCommentsRequest":  "ResolveCommentsRequest",
 	"ControllersResolveCommentsResponse": "ResolveCommentsResponse",
 	// httpd/controllers — review wire envelopes
-	"ControllersListReviewsResponse": "ListReviewsResponse",
-	"ControllersReviewRunResponse":   "ReviewRunResponse",
-	"ControllersSubmitReviewInput":   "SubmitReviewInput",
+	"ControllersListReviewsResponse":  "ListReviewsResponse",
+	"ControllersListReviewsQuery":     "ListReviewsQuery",
+	"ControllersReviewRunResponse":    "ReviewRunResponse",
+	"ControllersReviewTargetResponse": "ReviewTargetResponse",
+	"ControllersTriggerReviewInput":   "TriggerReviewInput",
+	"ControllersSubmitReviewInput":    "SubmitReviewInput",
 	// domain review entities
 	"DomainReviewRun": "ReviewRun",
 	// service/project entities + DTOs
@@ -262,6 +269,7 @@ type operation struct {
 	tag                       string
 	pathParams                []any // path/query param containers (e.g. ProjectIDParam)
 	reqBody                   any   // JSON request body struct, nil when the op takes none
+	optionalReqBody           bool
 	resps                     []respUnit
 	contentTypes              map[int]string // optional non-JSON response content types by status
 }
@@ -333,7 +341,7 @@ func reviewOperations() []operation {
 		{
 			method: http.MethodGet, path: "/api/v1/sessions/{sessionId}/reviews", id: "listReviews", tag: "reviews",
 			summary:    "List a worker's code-review runs",
-			pathParams: []any{controllers.SessionIDParam{}},
+			pathParams: []any{controllers.SessionIDParam{}, controllers.ListReviewsQuery{}},
 			resps: []respUnit{
 				{http.StatusOK, controllers.ListReviewsResponse{}},
 				{http.StatusUnprocessableEntity, envelope.APIError{}},
@@ -342,8 +350,10 @@ func reviewOperations() []operation {
 		},
 		{
 			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/reviews/trigger", id: "triggerReview", tag: "reviews",
-			summary:    "Trigger a code review of a worker's PR",
-			pathParams: []any{controllers.SessionIDParam{}},
+			summary:         "Trigger a code review of a worker's PR",
+			pathParams:      []any{controllers.SessionIDParam{}},
+			reqBody:         controllers.TriggerReviewInput{},
+			optionalReqBody: true,
 			resps: []respUnit{
 				{http.StatusOK, controllers.ReviewRunResponse{}},
 				{http.StatusCreated, controllers.ReviewRunResponse{}},

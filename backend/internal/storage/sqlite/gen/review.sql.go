@@ -13,13 +13,18 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
-const getReviewBySession = `-- name: GetReviewBySession :one
+const getReviewBySessionAndPR = `-- name: GetReviewBySessionAndPR :one
 SELECT id, session_id, project_id, harness, pr_url, reviewer_handle_id, created_at, updated_at
-FROM review WHERE session_id = ?
+FROM review WHERE session_id = ? AND pr_url = ?
 `
 
-func (q *Queries) GetReviewBySession(ctx context.Context, sessionID domain.SessionID) (Review, error) {
-	row := q.db.QueryRowContext(ctx, getReviewBySession, sessionID)
+type GetReviewBySessionAndPRParams struct {
+	SessionID domain.SessionID
+	PRURL     string
+}
+
+func (q *Queries) GetReviewBySessionAndPR(ctx context.Context, arg GetReviewBySessionAndPRParams) (Review, error) {
+	row := q.db.QueryRowContext(ctx, getReviewBySessionAndPR, arg.SessionID, arg.PRURL)
 	var i Review
 	err := row.Scan(
 		&i.ID,
@@ -59,18 +64,19 @@ func (q *Queries) GetReviewRun(ctx context.Context, id string) (ReviewRun, error
 	return i, err
 }
 
-const getReviewRunBySessionAndSHA = `-- name: GetReviewRunBySessionAndSHA :one
+const getReviewRunBySessionPRAndSHA = `-- name: GetReviewRunBySessionPRAndSHA :one
 SELECT id, review_id, session_id, harness, pr_url, target_sha, status, verdict, body, created_at, github_review_id, delivered_at
-FROM review_run WHERE session_id = ? AND target_sha = ? ORDER BY created_at DESC LIMIT 1
+FROM review_run WHERE session_id = ? AND pr_url = ? AND target_sha = ? ORDER BY created_at DESC LIMIT 1
 `
 
-type GetReviewRunBySessionAndSHAParams struct {
+type GetReviewRunBySessionPRAndSHAParams struct {
 	SessionID domain.SessionID
+	PRURL     string
 	TargetSha string
 }
 
-func (q *Queries) GetReviewRunBySessionAndSHA(ctx context.Context, arg GetReviewRunBySessionAndSHAParams) (ReviewRun, error) {
-	row := q.db.QueryRowContext(ctx, getReviewRunBySessionAndSHA, arg.SessionID, arg.TargetSha)
+func (q *Queries) GetReviewRunBySessionPRAndSHA(ctx context.Context, arg GetReviewRunBySessionPRAndSHAParams) (ReviewRun, error) {
+	row := q.db.QueryRowContext(ctx, getReviewRunBySessionPRAndSHA, arg.SessionID, arg.PRURL, arg.TargetSha)
 	var i ReviewRun
 	err := row.Scan(
 		&i.ID,
@@ -166,6 +172,89 @@ func (q *Queries) ListReviewRunsBySession(ctx context.Context, sessionID domain.
 	return items, nil
 }
 
+const listReviewRunsBySessionAndPR = `-- name: ListReviewRunsBySessionAndPR :many
+SELECT id, review_id, session_id, harness, pr_url, target_sha, status, verdict, body, created_at, github_review_id, delivered_at
+FROM review_run WHERE session_id = ? AND pr_url = ? ORDER BY created_at DESC
+`
+
+type ListReviewRunsBySessionAndPRParams struct {
+	SessionID domain.SessionID
+	PRURL     string
+}
+
+func (q *Queries) ListReviewRunsBySessionAndPR(ctx context.Context, arg ListReviewRunsBySessionAndPRParams) ([]ReviewRun, error) {
+	rows, err := q.db.QueryContext(ctx, listReviewRunsBySessionAndPR, arg.SessionID, arg.PRURL)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReviewRun{}
+	for rows.Next() {
+		var i ReviewRun
+		if err := rows.Scan(
+			&i.ID,
+			&i.ReviewID,
+			&i.SessionID,
+			&i.Harness,
+			&i.PRURL,
+			&i.TargetSha,
+			&i.Status,
+			&i.Verdict,
+			&i.Body,
+			&i.CreatedAt,
+			&i.GithubReviewID,
+			&i.DeliveredAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listReviewsBySession = `-- name: ListReviewsBySession :many
+SELECT id, session_id, project_id, harness, pr_url, reviewer_handle_id, created_at, updated_at
+FROM review WHERE session_id = ? ORDER BY updated_at DESC
+`
+
+func (q *Queries) ListReviewsBySession(ctx context.Context, sessionID domain.SessionID) ([]Review, error) {
+	rows, err := q.db.QueryContext(ctx, listReviewsBySession, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Review{}
+	for rows.Next() {
+		var i Review
+		if err := rows.Scan(
+			&i.ID,
+			&i.SessionID,
+			&i.ProjectID,
+			&i.Harness,
+			&i.PRURL,
+			&i.ReviewerHandleID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const markReviewRunDelivered = `-- name: MarkReviewRunDelivered :execrows
 UPDATE review_run SET status = 'delivered', delivered_at = ? WHERE id = ? AND status = 'complete' AND delivered_at IS NULL
 `
@@ -201,17 +290,23 @@ func (q *Queries) SupersedeReviewRun(ctx context.Context, arg SupersedeReviewRun
 }
 
 const supersedeStaleRunningReviewRuns = `-- name: SupersedeStaleRunningReviewRuns :execrows
-UPDATE review_run SET status = 'failed', body = ? WHERE session_id = ? AND target_sha != ? AND status = 'running' AND verdict = ''
+UPDATE review_run SET status = 'failed', body = ? WHERE session_id = ? AND pr_url = ? AND target_sha != ? AND status = 'running' AND verdict = ''
 `
 
 type SupersedeStaleRunningReviewRunsParams struct {
 	Body      string
 	SessionID domain.SessionID
+	PRURL     string
 	TargetSha string
 }
 
 func (q *Queries) SupersedeStaleRunningReviewRuns(ctx context.Context, arg SupersedeStaleRunningReviewRunsParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, supersedeStaleRunningReviewRuns, arg.Body, arg.SessionID, arg.TargetSha)
+	result, err := q.db.ExecContext(ctx, supersedeStaleRunningReviewRuns,
+		arg.Body,
+		arg.SessionID,
+		arg.PRURL,
+		arg.TargetSha,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -247,9 +342,8 @@ func (q *Queries) UpdateReviewRunResult(ctx context.Context, arg UpdateReviewRun
 const upsertReview = `-- name: UpsertReview :exec
 INSERT INTO review (id, session_id, project_id, harness, pr_url, reviewer_handle_id, created_at, updated_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT (session_id) DO UPDATE SET
+ON CONFLICT (session_id, pr_url) DO UPDATE SET
     harness = excluded.harness,
-    pr_url = excluded.pr_url,
     reviewer_handle_id = excluded.reviewer_handle_id,
     updated_at = excluded.updated_at
 `

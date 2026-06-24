@@ -6,10 +6,10 @@ import (
 )
 
 // ErrDuplicateReviewRun is returned by InsertReviewRun when a run already exists
-// for the same worker session and target commit (the partial unique index from
-// migration 0013). It lets the review engine fall back to the recorded run
-// instead of surfacing a raw storage error after a reviewer may have launched.
-var ErrDuplicateReviewRun = errors.New("domain: review run already exists for session and target sha")
+// for the same worker session, PR, and target commit. It lets the review engine
+// fall back to the recorded run instead of surfacing a raw storage error after a
+// reviewer may have launched.
+var ErrDuplicateReviewRun = errors.New("domain: review run already exists for session, PR, and target sha")
 
 // Review is the per-worker code-review record: one row per worker session
 // (SessionID is unique). A repeat trigger reuses this row; the per-pass facts

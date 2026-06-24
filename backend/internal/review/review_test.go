@@ -16,25 +16,41 @@ import (
 // --- fakes ---
 
 type fakeStore struct {
-	review *domain.Review
-	runs   []domain.ReviewRun
+	reviews []domain.Review
+	runs    []domain.ReviewRun
 	// insertErr, when set, makes the next InsertReviewRun model a concurrent
 	// writer that already recorded a run for this commit: it records that
-	// winner (so a follow-up GetReviewRunBySessionAndSHA finds it) and returns
+	// winner (so a follow-up GetReviewRunBySessionPRAndSHA finds it) and returns
 	// insertErr instead of recording the caller's run.
 	insertErr error
 }
 
 func (f *fakeStore) UpsertReview(_ context.Context, r domain.Review) error {
-	cp := r
-	f.review = &cp
+	for i := range f.reviews {
+		if f.reviews[i].SessionID == r.SessionID && f.reviews[i].PRURL == r.PRURL {
+			f.reviews[i] = r
+			return nil
+		}
+	}
+	f.reviews = append(f.reviews, r)
 	return nil
 }
-func (f *fakeStore) GetReviewBySession(_ context.Context, _ domain.SessionID) (domain.Review, bool, error) {
-	if f.review == nil {
-		return domain.Review{}, false, nil
+func (f *fakeStore) GetReviewBySessionAndPR(_ context.Context, id domain.SessionID, prURL string) (domain.Review, bool, error) {
+	for _, review := range f.reviews {
+		if review.SessionID == id && review.PRURL == prURL {
+			return review, true, nil
+		}
 	}
-	return *f.review, true, nil
+	return domain.Review{}, false, nil
+}
+func (f *fakeStore) ListReviewsBySession(_ context.Context, id domain.SessionID) ([]domain.Review, error) {
+	var out []domain.Review
+	for _, review := range f.reviews {
+		if review.SessionID == id {
+			out = append(out, review)
+		}
+	}
+	return out, nil
 }
 func (f *fakeStore) InsertReviewRun(_ context.Context, r domain.ReviewRun) error {
 	if f.insertErr != nil {
@@ -74,10 +90,10 @@ func (f *fakeStore) SupersedeReviewRun(_ context.Context, id, body string) (bool
 	}
 	return false, nil
 }
-func (f *fakeStore) SupersedeStaleRunningReviewRuns(_ context.Context, sessionID domain.SessionID, targetSHA, body string) (int64, error) {
+func (f *fakeStore) SupersedeStaleRunningReviewRuns(_ context.Context, sessionID domain.SessionID, prURL, targetSHA, body string) (int64, error) {
 	var n int64
 	for i := range f.runs {
-		if f.runs[i].SessionID == sessionID && f.runs[i].TargetSHA != targetSHA && f.runs[i].Status == domain.ReviewRunRunning && f.runs[i].Verdict == domain.VerdictNone {
+		if f.runs[i].SessionID == sessionID && f.runs[i].PRURL == prURL && f.runs[i].TargetSHA != targetSHA && f.runs[i].Status == domain.ReviewRunRunning && f.runs[i].Verdict == domain.VerdictNone {
 			f.runs[i].Status = domain.ReviewRunFailed
 			f.runs[i].Body = body
 			n++
@@ -93,16 +109,31 @@ func (f *fakeStore) GetReviewRun(_ context.Context, id string) (domain.ReviewRun
 	}
 	return domain.ReviewRun{}, false, nil
 }
-func (f *fakeStore) GetReviewRunBySessionAndSHA(_ context.Context, _ domain.SessionID, sha string) (domain.ReviewRun, bool, error) {
+func (f *fakeStore) GetReviewRunBySessionPRAndSHA(_ context.Context, id domain.SessionID, prURL, sha string) (domain.ReviewRun, bool, error) {
 	for i := len(f.runs) - 1; i >= 0; i-- {
-		if f.runs[i].TargetSHA == sha {
+		if f.runs[i].SessionID == id && f.runs[i].PRURL == prURL && f.runs[i].TargetSHA == sha {
 			return f.runs[i], true, nil
 		}
 	}
 	return domain.ReviewRun{}, false, nil
 }
-func (f *fakeStore) ListReviewRunsBySession(_ context.Context, _ domain.SessionID) ([]domain.ReviewRun, error) {
-	return f.runs, nil
+func (f *fakeStore) ListReviewRunsBySession(_ context.Context, id domain.SessionID) ([]domain.ReviewRun, error) {
+	var out []domain.ReviewRun
+	for _, run := range f.runs {
+		if run.SessionID == id {
+			out = append(out, run)
+		}
+	}
+	return out, nil
+}
+func (f *fakeStore) ListReviewRunsBySessionAndPR(_ context.Context, id domain.SessionID, prURL string) ([]domain.ReviewRun, error) {
+	var out []domain.ReviewRun
+	for _, run := range f.runs {
+		if run.SessionID == id && run.PRURL == prURL {
+			out = append(out, run)
+		}
+	}
+	return out, nil
 }
 
 type fakeSessions struct {
@@ -176,7 +207,11 @@ func newEngineForTest(store Store, sessions Sessions, prs PRs, projects Projects
 }
 
 func prAt(sha string) fakePRs {
-	return fakePRs{prs: []domain.PullRequest{{URL: "https://github.com/o/r/pull/1", HeadSHA: sha}}}
+	return prAtURL("https://github.com/o/r/pull/1", sha)
+}
+
+func prAtURL(url, sha string) fakePRs {
+	return fakePRs{prs: []domain.PullRequest{{URL: url, HeadSHA: sha}}}
 }
 
 // --- tests ---
@@ -186,7 +221,7 @@ func TestTriggerSpawnsNewReviewerAndRecordsRunAfterLaunch(t *testing.T) {
 	launcher := &fakeLauncher{handle: "review-mer-1"}
 	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
 
-	res, err := eng.Trigger(context.Background(), "mer-1")
+	res, err := eng.Trigger(context.Background(), "mer-1", "")
 	if err != nil {
 		t.Fatalf("Trigger: %v", err)
 	}
@@ -202,8 +237,8 @@ func TestTriggerSpawnsNewReviewerAndRecordsRunAfterLaunch(t *testing.T) {
 	if launcher.gotSpec.RunID != res.Run.ID {
 		t.Fatalf("launch spec run id %q != run id %q", launcher.gotSpec.RunID, res.Run.ID)
 	}
-	if len(store.runs) != 1 || store.review == nil || store.review.ReviewerHandleID != "review-mer-1" {
-		t.Fatalf("persisted review=%+v runs=%+v", store.review, store.runs)
+	if len(store.runs) != 1 || len(store.reviews) != 1 || store.reviews[0].ReviewerHandleID != "review-mer-1" {
+		t.Fatalf("persisted reviews=%+v runs=%+v", store.reviews, store.runs)
 	}
 }
 
@@ -220,7 +255,7 @@ func TestTriggerConcurrentSameWorkerSpawnsOnce(t *testing.T) {
 	for i := 0; i < n; i++ {
 		go func(i int) {
 			defer wg.Done()
-			results[i], errs[i] = eng.Trigger(context.Background(), "mer-1")
+			results[i], errs[i] = eng.Trigger(context.Background(), "mer-1", "")
 		}(i)
 	}
 	wg.Wait()
@@ -252,7 +287,7 @@ func TestTriggerFallsBackToExistingRunOnUniqueConflict(t *testing.T) {
 	launcher := &fakeLauncher{handle: "review-mer-1"}
 	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
 
-	res, err := eng.Trigger(context.Background(), "mer-1")
+	res, err := eng.Trigger(context.Background(), "mer-1", "")
 	if err != nil {
 		t.Fatalf("Trigger: %v", err)
 	}
@@ -269,16 +304,16 @@ func TestTriggerFallsBackToExistingRunOnUniqueConflict(t *testing.T) {
 
 func TestTriggerIsIdempotentForSameCommit(t *testing.T) {
 	store := &fakeStore{
-		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", ReviewerHandleID: "review-mer-1"},
+		reviews: []domain.Review{{ID: "rev-1", SessionID: "mer-1", PRURL: "https://github.com/o/r/pull/1", ReviewerHandleID: "review-mer-1"}},
 		runs: []domain.ReviewRun{{
-			ID: "run-1", SessionID: "mer-1", TargetSHA: "sha1",
+			ID: "run-1", SessionID: "mer-1", PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha1",
 			Status: domain.ReviewRunComplete, Verdict: domain.VerdictApproved,
 		}},
 	}
 	launcher := &fakeLauncher{alive: true}
 	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
 
-	res, err := eng.Trigger(context.Background(), "mer-1")
+	res, err := eng.Trigger(context.Background(), "mer-1", "")
 	if err != nil {
 		t.Fatalf("Trigger: %v", err)
 	}
@@ -295,13 +330,13 @@ func TestTriggerIsIdempotentForSameCommit(t *testing.T) {
 
 func TestTriggerReusesRunningRowWithNoVerdict(t *testing.T) {
 	store := &fakeStore{
-		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", ReviewerHandleID: "review-mer-1"},
-		runs:   []domain.ReviewRun{{ID: "run-1", SessionID: "mer-1", TargetSHA: "sha1", Status: domain.ReviewRunRunning}},
+		reviews: []domain.Review{{ID: "rev-1", SessionID: "mer-1", PRURL: "https://github.com/o/r/pull/1", ReviewerHandleID: "review-mer-1"}},
+		runs:    []domain.ReviewRun{{ID: "run-1", SessionID: "mer-1", PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha1", Status: domain.ReviewRunRunning}},
 	}
 	launcher := &fakeLauncher{alive: false, handle: "review-mer-2"}
 	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
 
-	res, err := eng.Trigger(context.Background(), "mer-1")
+	res, err := eng.Trigger(context.Background(), "mer-1", "")
 	if err != nil {
 		t.Fatalf("Trigger: %v", err)
 	}
@@ -318,13 +353,13 @@ func TestTriggerReusesRunningRowWithNoVerdict(t *testing.T) {
 
 func TestTriggerSupersedesNonRunningRowWithNoVerdict(t *testing.T) {
 	store := &fakeStore{
-		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", ReviewerHandleID: "review-mer-1"},
-		runs:   []domain.ReviewRun{{ID: "run-1", SessionID: "mer-1", TargetSHA: "sha1", Status: domain.ReviewRunComplete}},
+		reviews: []domain.Review{{ID: "rev-1", SessionID: "mer-1", PRURL: "https://github.com/o/r/pull/1", ReviewerHandleID: "review-mer-1"}},
+		runs:    []domain.ReviewRun{{ID: "run-1", SessionID: "mer-1", PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha1", Status: domain.ReviewRunComplete}},
 	}
 	launcher := &fakeLauncher{alive: true, handle: "review-mer-1"}
 	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
 
-	res, err := eng.Trigger(context.Background(), "mer-1")
+	res, err := eng.Trigger(context.Background(), "mer-1", "")
 	if err != nil {
 		t.Fatalf("Trigger: %v", err)
 	}
@@ -341,13 +376,13 @@ func TestTriggerSupersedesNonRunningRowWithNoVerdict(t *testing.T) {
 
 func TestTriggerNotifiesLiveReviewerOnNewCommit(t *testing.T) {
 	store := &fakeStore{
-		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", ReviewerHandleID: "review-mer-1"},
-		runs:   []domain.ReviewRun{{ID: "run-0", SessionID: "mer-1", TargetSHA: "sha0", Status: domain.ReviewRunComplete}},
+		reviews: []domain.Review{{ID: "rev-1", SessionID: "mer-1", PRURL: "https://github.com/o/r/pull/1", ReviewerHandleID: "review-mer-1"}},
+		runs:    []domain.ReviewRun{{ID: "run-0", SessionID: "mer-1", PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha0", Status: domain.ReviewRunComplete}},
 	}
 	launcher := &fakeLauncher{alive: true}
 	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
 
-	res, err := eng.Trigger(context.Background(), "mer-1")
+	res, err := eng.Trigger(context.Background(), "mer-1", "")
 	if err != nil {
 		t.Fatalf("Trigger: %v", err)
 	}
@@ -364,13 +399,13 @@ func TestTriggerNotifiesLiveReviewerOnNewCommit(t *testing.T) {
 
 func TestTriggerSupersedesOlderRunningRunOnNewCommit(t *testing.T) {
 	store := &fakeStore{
-		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", ReviewerHandleID: "review-mer-1"},
-		runs:   []domain.ReviewRun{{ID: "run-old", SessionID: "mer-1", TargetSHA: "sha0", Status: domain.ReviewRunRunning}},
+		reviews: []domain.Review{{ID: "rev-1", SessionID: "mer-1", PRURL: "https://github.com/o/r/pull/1", ReviewerHandleID: "review-mer-1"}},
+		runs:    []domain.ReviewRun{{ID: "run-old", SessionID: "mer-1", PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha0", Status: domain.ReviewRunRunning}},
 	}
 	launcher := &fakeLauncher{alive: true, handle: "review-mer-1"}
 	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
 
-	res, err := eng.Trigger(context.Background(), "mer-1")
+	res, err := eng.Trigger(context.Background(), "mer-1", "")
 	if err != nil {
 		t.Fatalf("Trigger: %v", err)
 	}
@@ -387,13 +422,13 @@ func TestTriggerSupersedesOlderRunningRunOnNewCommit(t *testing.T) {
 
 func TestTriggerSpawnsWhenReviewerDead(t *testing.T) {
 	store := &fakeStore{
-		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", ReviewerHandleID: "review-mer-1"},
-		runs:   []domain.ReviewRun{{ID: "run-0", SessionID: "mer-1", TargetSHA: "sha0", Status: domain.ReviewRunComplete}},
+		reviews: []domain.Review{{ID: "rev-1", SessionID: "mer-1", PRURL: "https://github.com/o/r/pull/1", ReviewerHandleID: "review-mer-1"}},
+		runs:    []domain.ReviewRun{{ID: "run-0", SessionID: "mer-1", PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha0", Status: domain.ReviewRunComplete}},
 	}
 	launcher := &fakeLauncher{alive: false, handle: "review-mer-1"}
 	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
 
-	if _, err := eng.Trigger(context.Background(), "mer-1"); err != nil {
+	if _, err := eng.Trigger(context.Background(), "mer-1", ""); err != nil {
 		t.Fatalf("Trigger: %v", err)
 	}
 	if !launcher.spawned || launcher.notified {
@@ -406,11 +441,11 @@ func TestTriggerLaunchFailureRecordsFailedRun(t *testing.T) {
 	launcher := &fakeLauncher{spawnErr: fmt.Errorf("claude: %w", ports.ErrAgentBinaryNotFound)}
 	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
 
-	if _, err := eng.Trigger(context.Background(), "mer-1"); !errors.Is(err, ports.ErrAgentBinaryNotFound) {
+	if _, err := eng.Trigger(context.Background(), "mer-1", ""); !errors.Is(err, ports.ErrAgentBinaryNotFound) {
 		t.Fatalf("err = %v, want ports.ErrAgentBinaryNotFound", err)
 	}
-	if store.review == nil || len(store.runs) != 1 {
-		t.Fatalf("expected persisted failed review/run: review=%+v runs=%+v", store.review, store.runs)
+	if len(store.reviews) != 1 || len(store.runs) != 1 {
+		t.Fatalf("expected persisted failed review/run: reviews=%+v runs=%+v", store.reviews, store.runs)
 	}
 	run := store.runs[0]
 	if run.Status != domain.ReviewRunFailed || run.Verdict != domain.VerdictNone {
@@ -423,13 +458,13 @@ func TestTriggerLaunchFailureRecordsFailedRun(t *testing.T) {
 
 func TestTriggerRetriesAfterFailedRunForSameCommit(t *testing.T) {
 	store := &fakeStore{
-		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", ReviewerHandleID: "review-mer-1"},
-		runs:   []domain.ReviewRun{{ID: "run-failed", ReviewID: "rev-1", SessionID: "mer-1", TargetSHA: "sha1", Status: domain.ReviewRunFailed}},
+		reviews: []domain.Review{{ID: "rev-1", SessionID: "mer-1", ReviewerHandleID: "review-mer-1"}},
+		runs:    []domain.ReviewRun{{ID: "run-failed", ReviewID: "rev-1", SessionID: "mer-1", TargetSHA: "sha1", Status: domain.ReviewRunFailed}},
 	}
 	launcher := &fakeLauncher{handle: "review-mer-1"}
 	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
 
-	res, err := eng.Trigger(context.Background(), "mer-1")
+	res, err := eng.Trigger(context.Background(), "mer-1", "")
 	if err != nil {
 		t.Fatalf("Trigger: %v", err)
 	}
@@ -447,7 +482,7 @@ func TestTriggerUsesConfiguredReviewerHarness(t *testing.T) {
 	launcher := &fakeLauncher{handle: "review-mer-1"}
 	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), projects, launcher)
 
-	res, err := eng.Trigger(context.Background(), "mer-1")
+	res, err := eng.Trigger(context.Background(), "mer-1", "")
 	if err != nil {
 		t.Fatalf("Trigger: %v", err)
 	}
@@ -459,29 +494,98 @@ func TestTriggerUsesConfiguredReviewerHarness(t *testing.T) {
 func TestTriggerRejectsBadWorkerState(t *testing.T) {
 	t.Run("unknown worker", func(t *testing.T) {
 		eng := newEngineForTest(&fakeStore{}, fakeSessions{ok: false}, prAt("sha1"), fakeProjects{}, &fakeLauncher{})
-		if _, err := eng.Trigger(context.Background(), "mer-1"); !errors.Is(err, ErrNotFound) {
+		if _, err := eng.Trigger(context.Background(), "mer-1", ""); !errors.Is(err, ErrNotFound) {
 			t.Fatalf("err = %v, want ErrNotFound", err)
 		}
 	})
 	t.Run("no pr", func(t *testing.T) {
 		eng := newEngineForTest(&fakeStore{}, fakeSessions{rec: liveWorker(), ok: true}, fakePRs{}, fakeProjects{}, &fakeLauncher{})
-		if _, err := eng.Trigger(context.Background(), "mer-1"); !errors.Is(err, ErrInvalid) {
+		if _, err := eng.Trigger(context.Background(), "mer-1", ""); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("err = %v, want ErrInvalid", err)
+		}
+	})
+	t.Run("multiple prs require selector", func(t *testing.T) {
+		prs := fakePRs{prs: []domain.PullRequest{
+			{URL: "https://github.com/o/r/pull/1", HeadSHA: "sha1"},
+			{URL: "https://github.com/o/r2/pull/2", HeadSHA: "sha2"},
+		}}
+		eng := newEngineForTest(&fakeStore{}, fakeSessions{rec: liveWorker(), ok: true}, prs, fakeProjects{}, &fakeLauncher{})
+		if _, err := eng.Trigger(context.Background(), "mer-1", ""); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("err = %v, want ErrInvalid", err)
+		}
+	})
+	t.Run("unknown selected pr", func(t *testing.T) {
+		eng := newEngineForTest(&fakeStore{}, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, &fakeLauncher{})
+		if _, err := eng.Trigger(context.Background(), "mer-1", "https://github.com/o/r/pull/404"); !errors.Is(err, ErrInvalid) {
 			t.Fatalf("err = %v, want ErrInvalid", err)
 		}
 	})
 }
 
+func TestTriggerUsesSelectedPRAndScopesIdempotencyByPR(t *testing.T) {
+	store := &fakeStore{
+		reviews: []domain.Review{{ID: "rev-1", SessionID: "mer-1", PRURL: "https://github.com/o/api/pull/1", ReviewerHandleID: "review-api"}},
+		runs:    []domain.ReviewRun{{ID: "run-api", ReviewID: "rev-1", SessionID: "mer-1", PRURL: "https://github.com/o/api/pull/1", TargetSHA: "same-sha", Status: domain.ReviewRunRunning}},
+	}
+	prs := fakePRs{prs: []domain.PullRequest{
+		{URL: "https://github.com/o/api/pull/1", HeadSHA: "same-sha"},
+		{URL: "https://github.com/o/web/pull/2", HeadSHA: "same-sha"},
+	}}
+	launcher := &fakeLauncher{handle: "review-web"}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prs, fakeProjects{}, launcher)
+
+	res, err := eng.Trigger(context.Background(), "mer-1", "https://github.com/o/web/pull/2")
+	if err != nil {
+		t.Fatalf("Trigger: %v", err)
+	}
+	if !res.Created || res.Run.PRURL != "https://github.com/o/web/pull/2" || res.Run.ID == "run-api" {
+		t.Fatalf("selected PR did not get its own run: %+v", res)
+	}
+	if !launcher.spawned || launcher.gotSpec.PRURL != "https://github.com/o/web/pull/2" {
+		t.Fatalf("launcher spec = %+v", launcher.gotSpec)
+	}
+}
+
 func TestListReturnsHandleAndRuns(t *testing.T) {
 	store := &fakeStore{
-		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", ReviewerHandleID: "review-mer-1"},
-		runs:   []domain.ReviewRun{{ID: "run-1", SessionID: "mer-1", TargetSHA: "sha1"}},
+		reviews: []domain.Review{{ID: "rev-1", SessionID: "mer-1", PRURL: "https://github.com/o/r/pull/1", ReviewerHandleID: "review-mer-1"}},
+		runs:    []domain.ReviewRun{{ID: "run-1", SessionID: "mer-1", PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha1"}},
 	}
 	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, &fakeLauncher{})
-	got, err := eng.List(context.Background(), "mer-1")
+	got, err := eng.List(context.Background(), "mer-1", "")
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
-	if got.ReviewerHandleID != "review-mer-1" || len(got.Runs) != 1 {
+	if got.ReviewerHandleID != "review-mer-1" || len(got.Runs) != 1 || len(got.Targets) != 1 {
 		t.Fatalf("list = %+v", got)
+	}
+}
+
+func TestListCanSelectOnePR(t *testing.T) {
+	store := &fakeStore{
+		reviews: []domain.Review{
+			{ID: "rev-api", SessionID: "mer-1", PRURL: "https://github.com/o/api/pull/1", ReviewerHandleID: "review-api"},
+			{ID: "rev-web", SessionID: "mer-1", PRURL: "https://github.com/o/web/pull/2", ReviewerHandleID: "review-web"},
+		},
+		runs: []domain.ReviewRun{
+			{ID: "run-api", SessionID: "mer-1", PRURL: "https://github.com/o/api/pull/1", TargetSHA: "sha1"},
+			{ID: "run-web", SessionID: "mer-1", PRURL: "https://github.com/o/web/pull/2", TargetSHA: "sha2"},
+		},
+	}
+	prs := fakePRs{prs: []domain.PullRequest{
+		{URL: "https://github.com/o/api/pull/1", HeadSHA: "sha1"},
+		{URL: "https://github.com/o/web/pull/2", HeadSHA: "sha2"},
+	}}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prs, fakeProjects{}, &fakeLauncher{})
+
+	got, err := eng.List(context.Background(), "mer-1", "https://github.com/o/web/pull/2")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if got.ReviewerHandleID != "review-web" || len(got.Runs) != 1 || got.Runs[0].ID != "run-web" {
+		t.Fatalf("selected list = %+v", got)
+	}
+	if len(got.Targets) != 1 || got.Targets[0].PRURL != "https://github.com/o/web/pull/2" {
+		t.Fatalf("targets = %+v", got.Targets)
 	}
 }

@@ -1154,6 +1154,14 @@ paths:
         schema:
           description: Session identifier, e.g. project-1.
           type: string
+      - description: Tracked PR URL to list review runs for. Omit to list all PR review
+          targets for the session.
+        in: query
+        name: prUrl
+        schema:
+          description: Tracked PR URL to list review runs for. Omit to list all PR
+            review targets for the session.
+          type: string
       responses:
         "200":
           content:
@@ -1238,6 +1246,11 @@ paths:
         schema:
           description: Session identifier, e.g. project-1.
           type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TriggerReviewInput'
       responses:
         "200":
           content:
@@ -1638,9 +1651,14 @@ components:
           items:
             $ref: '#/components/schemas/ReviewRun'
           type: array
+        targets:
+          items:
+            $ref: '#/components/schemas/ReviewTargetResponse'
+          type: array
       required:
       - reviewerHandleId
       - reviews
+      - targets
       type: object
     ListSessionPRsResponse:
       properties:
@@ -1983,6 +2001,21 @@ components:
       required:
       - review
       - reviewerHandleId
+      type: object
+    ReviewTargetResponse:
+      properties:
+        prUrl:
+          type: string
+        reviewerHandleId:
+          type: string
+        reviews:
+          items:
+            $ref: '#/components/schemas/ReviewRun'
+          type: array
+      required:
+      - prUrl
+      - reviewerHandleId
+      - reviews
       type: object
     RoleOverride:
       properties:
@@ -2402,6 +2435,13 @@ components:
       - verdict
       - body
       - githubReviewId
+      type: object
+    TriggerReviewInput:
+      properties:
+        prUrl:
+          description: Tracked PR URL to review. Required when the session owns multiple
+            PRs.
+          type: string
       type: object
     WorkspaceRepo:
       properties:

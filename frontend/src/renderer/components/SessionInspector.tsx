@@ -394,7 +394,7 @@ function ReviewsView({
 				params: { path: { sessionId: session.id } },
 			});
 			if (error) throw new Error(apiErrorMessage(error, "Unable to load reviews"));
-			return data ?? ({ reviewerHandleId: "", reviews: [] } satisfies ReviewsResponse);
+			return data ?? ({ reviewerHandleId: "", reviews: [], targets: [] } satisfies ReviewsResponse);
 		},
 	});
 	const projectConfigQuery = useQuery({
