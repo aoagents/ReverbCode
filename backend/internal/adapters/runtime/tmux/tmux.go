@@ -129,6 +129,13 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: set status %s: %w", id, err)
 	}
 
+	// Enable mouse mode so the embedded terminal's SGR wheel reports scroll the
+	// pane (see setMouseOnArgs). Without it, wheel scrolling silently no-ops.
+	if _, err := r.run(ctx, setMouseOnArgs(id)...); err != nil {
+		_ = r.Destroy(context.Background(), ports.RuntimeHandle{ID: id})
+		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: set mouse %s: %w", id, err)
+	}
+
 	handle := ports.RuntimeHandle{ID: id}
 	alive, err := r.IsAlive(ctx, handle)
 	if err != nil {
@@ -233,8 +240,7 @@ func (r *Runtime) Attach(ctx context.Context, handle ports.RuntimeHandle, rows, 
 }
 
 // attachCommand returns the argv a human runs to attach their terminal to the
-// session. No per-session env block is needed for tmux (unlike zellij's Windows
-// ConPTY path), so env is always nil.
+// session. tmux needs no per-session env block, so env is always nil.
 func (r *Runtime) attachCommand(handle ports.RuntimeHandle) ([]string, []string, error) {
 	id, err := handleID(handle)
 	if err != nil {
@@ -333,7 +339,7 @@ func killSessionMissingOutput(out string) bool {
 	return sessionMissingOutput(out)
 }
 
-// -- text helpers (ported from zellij) --
+// -- text helpers --
 
 func chunks(s string, maxBytes int) []string {
 	if s == "" {
@@ -434,8 +440,8 @@ func shellQuote(s string) string {
 // configured shell). It exports env vars, then runs argv, then execs a
 // keep-alive interactive shell so the tmux session survives the agent exiting.
 //
-// ponytail: PATH handling matches the zellij unix path: PATH from cfg.Env is
-// exported last, after all other keys, so an explicit override takes effect.
+// PATH from cfg.Env is exported last, after all other keys, so an explicit
+// override takes effect.
 func buildLaunchCommand(cfg ports.RuntimeConfig, shellPath string) string {
 	path := cfg.Env["PATH"]
 	if path == "" {

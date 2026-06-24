@@ -23,6 +23,13 @@ func setStatusOffArgs(id string) []string {
 	return []string{"set-option", "-t", id, "status", "off"}
 }
 
+// setMouseOnArgs enables tmux mouse mode so the terminal's SGR mouse-wheel
+// reports scroll the pane via copy-mode; without it, wheel scrolling no-ops.
+// Pane-targeting, so no `=` prefix (see setStatusOffArgs).
+func setMouseOnArgs(id string) []string {
+	return []string{"set-option", "-t", id, "mouse", "on"}
+}
+
 // killSessionArgs builds args for `tmux kill-session -t =<id>`. The `=` prefix
 // requests exact-name matching so a session "foo" does not accidentally match
 // "foobar" (tmux otherwise does unique-prefix matching).

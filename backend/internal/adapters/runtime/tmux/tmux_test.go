@@ -79,6 +79,9 @@ func TestCommandBuilders(t *testing.T) {
 	if got, want := setStatusOffArgs("sess-1"), []string{"set-option", "-t", "sess-1", "status", "off"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("setStatusOffArgs = %#v, want %#v", got, want)
 	}
+	if got, want := setMouseOnArgs("sess-1"), []string{"set-option", "-t", "sess-1", "mouse", "on"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("setMouseOnArgs = %#v, want %#v", got, want)
+	}
 	// kill-session and has-session use exact-match prefix =.
 	if got, want := killSessionArgs("sess-1"), []string{"kill-session", "-t", "=sess-1"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("killSessionArgs = %#v, want %#v", got, want)
@@ -154,9 +157,9 @@ func TestCreateRejectsInvalidEnvKeys(t *testing.T) {
 // -- Create tests --
 
 func TestCreateIssuesNewSessionAndStatusOff(t *testing.T) {
-	// new-session output (ignored), set-option output, has-session output (exit 0 = alive)
+	// new-session, set-option status, set-option mouse, has-session (exit 0 = alive)
 	r, fr := newTestRuntime(0)
-	fr.outputs = [][]byte{nil, nil, nil}
+	fr.outputs = [][]byte{nil, nil, nil, nil}
 
 	h, err := r.Create(context.Background(), ports.RuntimeConfig{
 		SessionID:     "sess-1",
@@ -170,9 +173,9 @@ func TestCreateIssuesNewSessionAndStatusOff(t *testing.T) {
 	if h.ID != "sess-1" {
 		t.Fatalf("handle ID = %q, want sess-1", h.ID)
 	}
-	// Expect 3 calls: new-session, set-option, has-session.
-	if len(fr.calls) != 3 {
-		t.Fatalf("calls = %d, want 3", len(fr.calls))
+	// Expect 4 calls: new-session, set-option status, set-option mouse, has-session.
+	if len(fr.calls) != 4 {
+		t.Fatalf("calls = %d, want 4", len(fr.calls))
 	}
 
 	// Call 0: new-session
@@ -197,9 +200,14 @@ func TestCreateIssuesNewSessionAndStatusOff(t *testing.T) {
 		t.Fatalf("call[1] = %#v, want %#v", got, want)
 	}
 
-	// Call 2: has-session (IsAlive, uses exact-match target =sess-1).
-	if got, want := fr.calls[2].args, hasSessionArgs("sess-1"); !reflect.DeepEqual(got, want) {
+	// Call 2: set-option mouse on (enables wheel-scroll of the pane).
+	if got, want := fr.calls[2].args, setMouseOnArgs("sess-1"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("call[2] = %#v, want %#v", got, want)
+	}
+
+	// Call 3: has-session (IsAlive, uses exact-match target =sess-1).
+	if got, want := fr.calls[3].args, hasSessionArgs("sess-1"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("call[3] = %#v, want %#v", got, want)
 	}
 }
 
@@ -268,8 +276,8 @@ func TestCreateLaunchCommandExportsEnvVars(t *testing.T) {
 func TestCreateDestroysAndReturnsErrorWhenNotAlive(t *testing.T) {
 	// Use a specialized fakeRunner that returns an exit error only for the 3rd call.
 	r2, _ := newTestRuntime(0)
-	fr3 := &fakeRunnerSelectiveErr{exitErrAt: 2}
-	fr3.outputs = [][]byte{nil, nil, []byte("can't find session: sess-1")}
+	fr3 := &fakeRunnerSelectiveErr{exitErrAt: 3}
+	fr3.outputs = [][]byte{nil, nil, nil, []byte("can't find session: sess-1")}
 	r2.runner = fr3
 
 	_, err := r2.Create(context.Background(), ports.RuntimeConfig{
