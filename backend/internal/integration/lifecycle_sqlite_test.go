@@ -265,8 +265,7 @@ func TestReconcile_TerminatesDeadLiveSessionAndReapsLeakedTmux(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed session B: %v", err)
 	}
-	// CreateSession always inserts is_terminated=0; patch it to terminated.
-	recB.IsTerminated = true
+	// recB is already built with IsTerminated=true, so CreateSession stores it terminated; the UpdateSession below is redundant but kept for clarity.
 	if err := st.store.UpdateSession(ctx, recB); err != nil {
 		t.Fatalf("patch session B terminated: %v", err)
 	}
