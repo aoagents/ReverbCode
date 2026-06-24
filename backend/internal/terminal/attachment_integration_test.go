@@ -107,8 +107,11 @@ func TestAttachmentReattachAdoptsNewSize(t *testing.T) {
 		t.Fatal("client B did not attach")
 	}
 
-	eventually(t, 5*time.Second, func() bool { return b.write([]byte("echo SIZE:$(stty size)\n")) == nil })
-	eventually(t, 10*time.Second, func() bool {
+	// Generous timeouts: this drives a real shell through tmux and parses its
+	// output, which is slow under -race on CI runners. The waits gate on the
+	// echo write succeeding, then on its SIZE output landing.
+	eventually(t, 15*time.Second, func() bool { return b.write([]byte("echo SIZE:$(stty size)\n")) == nil })
+	eventually(t, 30*time.Second, func() bool {
 		out := gotB.string()
 		i := strings.LastIndex(out, "SIZE:")
 		if i < 0 {
