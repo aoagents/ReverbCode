@@ -87,36 +87,34 @@ must REUSE the existing branch, so it goes through the existing-branch attach
           "This session has no saved agent session or prompt to resume from", nil)
   ```
 
-#### 2. Recreate endpoint (orchestrator-only)
-- Route: `POST /api/v1/sessions/{sessionId}/recreate`, registered next to the
-  other session routes in `httpd/controllers/sessions.go`, handled by a new
-  `SessionsController.recreate` that calls `Svc.RecreateOrchestrator`.
-- Service method `RecreateOrchestrator(ctx, id) (domain.Session, error)` wraps
-  the manager method and runs its error through `toAPIError`.
-- Manager method `RecreateOrchestrator(ctx, id domain.SessionID)
-  (domain.SessionRecord, error)`:
-  1. `GetSession`; 404 (`ErrNotFound`) if absent.
-  2. Validate `rec.Kind == domain.KindOrchestrator`; if not, a typed Conflict
-     (`SESSION_NOT_ORCHESTRATOR`, "Only orchestrator sessions can be recreated").
-  3. Validate `rec.IsTerminated`; if still live, a typed Conflict
-     (reuse/`ErrNotRestorable`-style: "Session is still running").
-  4. Validate `meta.Branch != ""` (else `ErrIncompleteHandle`).
-  5. Force-clean any stale worktree dir for the branch, then attach a clean
-     worktree on the EXISTING branch (reuse `workspace.Restore`, which already
-     does the existing-branch `worktree add`).
-  6. Launch a FRESH orchestrator agent as a **new session** on that branch:
-     create a new seed session row (kind=orchestrator, same project, branch =
-     the existing branch), build the orchestrator system prompt + argv, then
-     `runtime.Create` + `lcm.MarkSpawned` (reuse Spawn's launch tail; do not
-     duplicate its logic — factor a shared helper if the tail is not already
-     callable).
-  7. The old session row stays terminated. Return the NEW session record.
-  - **Orchestrator uniqueness:** recreate must honor whatever
-    one-active-orchestrator-per-project rule Spawn enforces (see
-    `activeOrchestratorSessionID`). Recreating from a terminated orchestrator is
-    allowed; if a DIFFERENT orchestrator is already live for the project,
-    recreate returns the same typed conflict Spawn would, rather than creating a
-    second live orchestrator.
+#### 2. Recreate: REUSE the existing `POST /api/v1/orchestrators` (clean=true)
+**Discovery during planning:** the recreate capability already ships. No new
+endpoint or manager method is needed.
+
+- `SessionsController.spawnOrchestrator` already handles `POST /api/v1/orchestrators`
+  with body `{projectId, clean}` (`httpd/controllers/sessions.go`).
+- `Service.SpawnOrchestrator(ctx, projectID, clean)`
+  (`service/session/service.go:263`): when `clean` is true it kills any active
+  orchestrators for the project, then `Spawn(SpawnConfig{ProjectID, Kind:
+  orchestrator})`.
+- `Spawn` with no branch defaults to the canonical orchestrator branch
+  `ao/<prefix>-orchestrator` (`defaultSessionBranch`). That is the SAME branch
+  the dead orchestrator used.
+- `workspace.Create` -> `addWorktree`
+  (`adapters/workspace/gitworktree/workspace.go`) already detects an EXISTING
+  local branch (`refExists("refs/heads/"+branch)`) and attaches it with the
+  no-`-b` `worktreeAddBranchArgs` (preserving committed history); it only uses
+  `-b` for a genuinely new branch, and refuses with `ErrBranchCheckedOutElsewhere`
+  (409) if the branch is live in another worktree.
+
+So "create a new orchestrator on the same branch, cleaning the old worktree" =
+`POST /api/v1/orchestrators {projectId, clean:true}`. The `clean` kill frees the
+dead orchestrator's worktree; the re-spawn reattaches the existing branch. The
+old session row stays terminated; a new orchestrator session id is returned.
+Orchestrator uniqueness is already enforced by the `clean` kill-then-spawn rule.
+
+The ONLY backend change in this feature is item #1 (the typed error). No new
+route, no `RecreateOrchestrator`, no OpenAPI/spec regen.
 - The new endpoint requires regenerating the OpenAPI spec (`npm run api`) and
   will update the `httpd` spec-drift tests. This is expected and correct for a
   new route (unlike the prior lifecycle plan, which added no routes).
@@ -137,12 +135,17 @@ must REUSE the existing branch, so it goes through the existing-branch attach
   - Title: "Session can no longer be restored".
   - Body: explains there is no saved agent session/prompt to resume from.
   - If the session `kind === "orchestrator"`: primary button **"Create new
-    orchestrator"** → `POST /api/v1/sessions/{id}/recreate` with a loading
-    state; on success, invalidate workspace queries and select the returned new
-    session; "Cancel" closes.
+    orchestrator"** → calls the existing `spawnOrchestrator` helper
+    (`frontend/src/renderer/lib/spawn-orchestrator.ts`) extended with a `clean`
+    argument: `spawnOrchestrator(projectId, true)` → `POST /api/v1/orchestrators
+    {projectId, clean:true}`, with a loading state; on success, invalidate
+    workspace queries and select the returned new orchestrator id; "Cancel"
+    closes.
   - If `kind === "worker"`: explanatory text + "Close" only (no recreate).
 - Detect the code via the API error body `code === "SESSION_NOT_RESUMABLE"`
   (same envelope `apiErrorMessage`/error-shape the renderer already reads).
+- `spawn-orchestrator.ts` gains an optional `clean = false` parameter passed
+  through to the request body; the existing single-arg call sites are unchanged.
 
 ## Data flow
 
@@ -153,10 +156,11 @@ User clicks "Restore session"
        not resumable  -> 409 SESSION_NOT_RESUMABLE
                           -> popup opens
                                orchestrator -> "Create new orchestrator"
-                                  -> POST /sessions/{id}/recreate
-                                       -> clean worktree, attach existing branch,
-                                          launch fresh orchestrator as NEW session
-                                       -> 200, select new session
+                                  -> POST /api/v1/orchestrators {projectId, clean:true}
+                                       (existing endpoint: kills active orchestrator,
+                                        re-spawns on canonical branch, reattaches
+                                        existing branch with history)
+                                       -> 201, select new orchestrator
                                worker -> explanatory close-only popup
 ```
 
@@ -172,16 +176,12 @@ User clicks "Restore session"
 ## Testing
 
 - **Backend unit (session_manager):** restore of a terminated session with empty
-  `agent_session_id`+`prompt` returns `ErrNotResumable`; `RecreateOrchestrator`
-  on a terminated orchestrator attaches the existing branch and returns a new
-  orchestrator session; rejects a live session, a worker, and a missing branch
-  with the typed errors.
+  `agent_session_id`+`prompt` returns `ErrNotResumable`.
 - **Backend service:** `toAPIError(ErrNotResumable)` → 409 `SESSION_NOT_RESUMABLE`.
-- **Backend httpd:** the new route appears in the OpenAPI spec; spec-drift tests
-  green after `npm run api`.
 - **Frontend:** typecheck green; the `restoreSession` handler routes a
   `SESSION_NOT_RESUMABLE` response to the dialog and a success to attach; the
-  dialog shows the orchestrator create button only for `kind === "orchestrator"`.
+  dialog shows the orchestrator create button only for `kind === "orchestrator"`;
+  `spawnOrchestrator(projectId, true)` sends `clean:true`.
 - **Manual:** on the packaged build, terminate an orchestrator that has no
   resume state, click Restore, confirm the popup appears (not a 500), click
   "Create new orchestrator", confirm a fresh orchestrator launches on the same
@@ -189,15 +189,17 @@ User clicks "Restore session"
 
 ## Files touched
 
-- `backend/internal/session_manager/manager.go` — `ErrNotResumable`,
-  `RecreateOrchestrator`, shared launch-tail helper if needed.
-- `backend/internal/service/session/service.go` — `toAPIError` case,
-  `RecreateOrchestrator` service method.
-- `backend/internal/httpd/controllers/sessions.go` (+ `dto.go`) — route +
-  handler + response DTO.
-- `backend/internal/httpd/apispec/...` + generated spec via `npm run api`.
-- `frontend/src/renderer/components/TerminalPane.tsx` — handler branch.
+- `backend/internal/session_manager/manager.go` — `ErrNotResumable` sentinel +
+  use it at the "nothing to resume from" return.
+- `backend/internal/service/session/service.go` — `toAPIError` case for
+  `ErrNotResumable` → 409 `SESSION_NOT_RESUMABLE`.
+- `frontend/src/renderer/lib/spawn-orchestrator.ts` — optional `clean` param.
+- `frontend/src/renderer/components/TerminalPane.tsx` — restore handler routes
+  `SESSION_NOT_RESUMABLE` to the dialog.
 - `frontend/src/renderer/components/RestoreUnavailableDialog.tsx` — new dialog.
+
+No new backend route, manager method, or OpenAPI regeneration: the recreate
+reuses the existing `POST /api/v1/orchestrators` (clean=true) path.
 
 ## Constraints (binding)
 
