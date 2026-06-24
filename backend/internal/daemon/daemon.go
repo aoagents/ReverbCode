@@ -109,7 +109,7 @@ func Run() error {
 	// selected runtime, a gitworktree workspace, the per-session agent resolver
 	// (AO_AGENT validated here for compatibility), and the agent messenger, then mount it
 	// on the API.
-	sessionSvc, reviewSvc, err := startSession(cfg, runtimeAdapter, store, lcStack.LCM, messenger, telemetrySink, log)
+	sessionSvc, reviewSvc, sessMgr, err := startSession(cfg, runtimeAdapter, store, lcStack.LCM, messenger, telemetrySink, log)
 	if err != nil {
 		stop()
 		lcStack.Stop()
@@ -141,12 +141,35 @@ func Run() error {
 		return err
 	}
 
+	// Restore sessions saved by the previous daemon shutdown. Best-effort: a
+	// failure is logged but never blocks boot. Both SIGTERM and the graceful
+	// POST /shutdown path cancel ctx, which causes srv.Run to return; placing
+	// RestoreAll here (before srv.Run) ensures sessions are live before the
+	// server starts serving.
+	if restoreErr := sessMgr.RestoreAll(ctx); restoreErr != nil {
+		log.Error("restore sessions on boot failed", "err", restoreErr)
+	}
+
 	runErr := srv.Run(ctx)
+
+	// Save and tear down all live sessions before the store closes. Both SIGTERM
+	// and POST /shutdown funnel through srv.Run returning (the signal cancels ctx,
+	// which srv.Run watches; the HTTP handler cancels the same ctx via the
+	// shutdown endpoint), so this single call site covers both paths.
+	//
+	// Use a fresh context with a bounded deadline: the ctx that caused srv.Run
+	// to return is already cancelled, so passing it would abort the save
+	// immediately and leave every session unsaved.
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownSaveTimeout)
+	defer shutdownCancel()
+	if saveErr := sessMgr.SaveAndTeardownAll(shutdownCtx); saveErr != nil {
+		log.Error("save sessions on shutdown failed", "err", saveErr)
+	}
 
 	// Shut the background goroutines down in order: cancel the context FIRST so
 	// their loops exit, then wait for them to drain. Doing this explicitly (not
 	// via defer) avoids the LIFO trap where a Stop() that blocks on ctx-cancel
-	// runs before the cancel — which would hang any non-signal exit path.
+	// runs before the cancel: a non-signal exit path would hang otherwise.
 	stop()
 	<-previewDone
 	lcStack.Stop()
@@ -155,6 +178,10 @@ func Run() error {
 	}
 	return runErr
 }
+
+// shutdownSaveTimeout bounds the SaveAndTeardownAll call on shutdown so a
+// pathological session cannot stall the process exit indefinitely.
+const shutdownSaveTimeout = 30 * time.Second
 
 // newLogger returns the daemon's slog logger. It writes to stderr so supervisors
 // can capture it separately from any structured stdout protocol added later.
