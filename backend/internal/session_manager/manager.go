@@ -64,6 +64,9 @@ type lifecycleRecorder interface {
 type runtimeController interface {
 	Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error)
 	Destroy(ctx context.Context, handle ports.RuntimeHandle) error
+	// IsAlive reports whether the handle's runtime session still exists. Used by
+	// Reconcile on boot to adopt crash-surviving sessions and reap leaked ones.
+	IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool, error)
 }
 
 // Store is the persistence surface needed by the internal session Manager.
@@ -618,6 +621,37 @@ func (m *Manager) saveAndTeardownOne(ctx context.Context, rec domain.SessionReco
 	// DB write in step 2 is already committed).
 	if err := m.workspace.ForceDestroy(ctx, ws); err != nil {
 		m.logger.Warn("save-teardown-all: force destroy failed", "sessionID", rec.ID, "error", err)
+	}
+	return nil
+}
+
+// reconcileLive handles a single non-terminated session on boot. If its runtime
+// session is still alive (tmux is the persistence layer, so it survives a daemon
+// crash) we adopt it: a no-op, the agent keeps running. If the runtime is gone,
+// the agent died with the daemon, so we capture any uncommitted work into a
+// preserve ref (best-effort) and mark the session terminated. We never relaunch
+// here (that is spawn policy) and never delete the worktree.
+func (m *Manager) reconcileLive(ctx context.Context, rec domain.SessionRecord) error {
+	if rec.Metadata.WorkspacePath == "" || rec.Metadata.Branch == "" {
+		return nil
+	}
+	handle := runtimeHandle(rec.Metadata)
+	if handle.ID != "" {
+		alive, err := m.runtime.IsAlive(ctx, handle)
+		if err != nil {
+			// A failed probe is not proof of death: leave the session as-is.
+			return fmt.Errorf("reconcile %s: probe: %w", rec.ID, err)
+		}
+		if alive {
+			return nil // adopt: the session survived the crash.
+		}
+	}
+	// Runtime is gone: preserve work (best-effort) then mark terminated.
+	if _, err := m.workspace.StashUncommitted(ctx, workspaceInfo(rec)); err != nil {
+		m.logger.Warn("reconcile: stash uncommitted failed; marking terminated anyway", "sessionID", rec.ID, "error", err)
+	}
+	if err := m.lcm.MarkTerminated(ctx, rec.ID); err != nil {
+		return fmt.Errorf("reconcile %s: mark terminated: %w", rec.ID, err)
 	}
 	return nil
 }

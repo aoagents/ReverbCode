@@ -116,6 +116,8 @@ func (f *fakeStore) ListSessionWorktrees(_ context.Context, id domain.SessionID)
 type fakeLCM struct {
 	store     *fakeStore
 	completed int
+	// terminated counts MarkTerminated calls per session id.
+	terminated map[domain.SessionID]int
 }
 
 func (l *fakeLCM) MarkSpawned(_ context.Context, id domain.SessionID, metadata domain.SessionMetadata) error {
@@ -128,6 +130,10 @@ func (l *fakeLCM) MarkSpawned(_ context.Context, id domain.SessionID, metadata d
 	return nil
 }
 func (l *fakeLCM) MarkTerminated(_ context.Context, id domain.SessionID) error {
+	if l.terminated == nil {
+		l.terminated = map[domain.SessionID]int{}
+	}
+	l.terminated[id]++
 	rec := l.store.sessions[id]
 	rec.IsTerminated = true
 	rec.Activity = domain.Activity{State: domain.ActivityExited, LastActivityAt: time.Now()}
@@ -139,6 +145,10 @@ type fakeRuntime struct {
 	createErr          error
 	created, destroyed int
 	lastCfg            ports.RuntimeConfig
+	// aliveByHandle maps a RuntimeHandle.ID to its liveness; missing = false.
+	aliveByHandle map[string]bool
+	aliveErr      error
+	destroyedIDs  []string
 }
 
 func (r *fakeRuntime) Create(_ context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
@@ -149,7 +159,17 @@ func (r *fakeRuntime) Create(_ context.Context, cfg ports.RuntimeConfig) (ports.
 	r.created++
 	return ports.RuntimeHandle{ID: "h1"}, nil
 }
-func (r *fakeRuntime) Destroy(context.Context, ports.RuntimeHandle) error { r.destroyed++; return nil }
+func (r *fakeRuntime) Destroy(_ context.Context, handle ports.RuntimeHandle) error {
+	r.destroyed++
+	r.destroyedIDs = append(r.destroyedIDs, handle.ID)
+	return nil
+}
+func (r *fakeRuntime) IsAlive(_ context.Context, handle ports.RuntimeHandle) (bool, error) {
+	if r.aliveErr != nil {
+		return false, r.aliveErr
+	}
+	return r.aliveByHandle[handle.ID], nil
+}
 
 type fakeAgent struct{}
 
@@ -226,6 +246,8 @@ type fakeWorkspace struct {
 	stashErr        error
 	applyErr        error
 	forceDestroyErr error
+	// stashCalls counts StashUncommitted invocations.
+	stashCalls int
 	// calls records the sequence of workspace method calls for ordering assertions.
 	calls []string
 	// sharedLog, when non-nil, receives entries alongside calls so ordering
@@ -260,6 +282,7 @@ func (w *fakeWorkspace) ForceDestroy(_ context.Context, info ports.WorkspaceInfo
 	return w.forceDestroyErr
 }
 func (w *fakeWorkspace) StashUncommitted(_ context.Context, info ports.WorkspaceInfo) (string, error) {
+	w.stashCalls++
 	entry := "StashUncommitted:" + string(info.SessionID)
 	w.calls = append(w.calls, entry)
 	if w.sharedLog != nil {
@@ -1494,5 +1517,57 @@ func TestRestoreAll_ConflictLogsAndContinues(t *testing.T) {
 	}
 	if rt.created != 1 {
 		t.Fatalf("session must still relaunch after conflict, runtime.Create called %d times", rt.created)
+	}
+}
+
+func TestReconcileLive_DeadSessionStashedAndTerminated(t *testing.T) {
+	st := newFakeStore()
+	rt := &fakeRuntime{aliveByHandle: map[string]bool{}} // handle not alive
+	ws := &fakeWorkspace{stashRef: "refs/ao/preserved/s1"}
+	lcm := &fakeLCM{store: st}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: rt, Agents: fakeAgents{}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: lcm, LookPath: lookPath})
+
+	rec := domain.SessionRecord{
+		ID:           "s1",
+		ProjectID:    "p1",
+		IsTerminated: false,
+		Metadata: domain.SessionMetadata{
+			Branch: "ao/s1/root", WorkspacePath: "/wt/s1", RuntimeHandleID: "s1",
+		},
+	}
+
+	if err := m.reconcileLive(context.Background(), rec); err != nil {
+		t.Fatalf("reconcileLive: %v", err)
+	}
+	if ws.stashCalls != 1 {
+		t.Fatalf("StashUncommitted calls = %d, want 1", ws.stashCalls)
+	}
+	if lcm.terminated["s1"] != 1 {
+		t.Fatalf("MarkTerminated(s1) = %d, want 1", lcm.terminated["s1"])
+	}
+	if rt.destroyed != 0 {
+		t.Fatalf("Destroy calls = %d, want 0 (dead session: no tmux to kill)", rt.destroyed)
+	}
+}
+
+func TestReconcileLive_AliveSessionAdoptedNoop(t *testing.T) {
+	st := newFakeStore()
+	rt := &fakeRuntime{aliveByHandle: map[string]bool{"s2": true}}
+	ws := &fakeWorkspace{}
+	lcm := &fakeLCM{store: st}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: rt, Agents: fakeAgents{}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: lcm, LookPath: lookPath})
+
+	rec := domain.SessionRecord{
+		ID: "s2", ProjectID: "p1", IsTerminated: false,
+		Metadata: domain.SessionMetadata{Branch: "ao/s2/root", WorkspacePath: "/wt/s2", RuntimeHandleID: "s2"},
+	}
+
+	if err := m.reconcileLive(context.Background(), rec); err != nil {
+		t.Fatalf("reconcileLive: %v", err)
+	}
+	if ws.stashCalls != 0 || lcm.terminated["s2"] != 0 || rt.destroyed != 0 {
+		t.Fatalf("adopt should be a no-op: stash=%d term=%d destroy=%d", ws.stashCalls, lcm.terminated["s2"], rt.destroyed)
 	}
 }
