@@ -285,13 +285,7 @@ function PendingColumnSections({
 			)}
 		>
 			<PendingColumnSection label="Working" sessions={working} onOpen={onOpen} />
-			<PendingColumnSection
-				label="Idle"
-				sessions={pending}
-				onOpen={onOpen}
-				separated
-				collapsedWhenEmpty
-			/>
+			<PendingColumnSection label="Idle" sessions={pending} onOpen={onOpen} separated collapsedWhenEmpty />
 		</div>
 	);
 }
