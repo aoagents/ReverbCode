@@ -110,9 +110,17 @@ The desktop supervisor lives under `frontend/` and is started separately:
 
 ```bash
 cd frontend
+nvm use 20 || nvm install 20
 npm install
 npm run dev   # electron-forge start
 ```
+
+The Electron frontend is currently developed and packaged on **Node 20.x**.
+Newer Node 24/26 runtimes currently hit upstream Electron / Electron Forge
+install bugs that can leave `node_modules/electron` half-installed and make
+`npm run dev` fail with `Electron failed to install correctly`. The frontend
+package fails fast on unsupported Node versions so contributors see the fix
+before a partial install corrupts `node_modules`.
 
 Heads-up: `npm run dev` does **not** start the daemon for you. Start it first
 (`ao start`, see above) — the renderer attaches to the running daemon over
