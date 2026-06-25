@@ -9,7 +9,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
-func TestInsertReviewRunDuplicateSHAMapsToSentinel(t *testing.T) {
+func TestInsertReviewRunDuplicatePRSHAMapsToSentinel(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	seedProject(t, s, "mer")
@@ -26,19 +26,26 @@ func TestInsertReviewRunDuplicateSHAMapsToSentinel(t *testing.T) {
 	}
 	run := domain.ReviewRun{
 		ID: "run-1", ReviewID: "rev-1", SessionID: rec.ID, Harness: domain.ReviewerClaudeCode,
-		TargetSHA: "sha1", Status: domain.ReviewRunRunning, Verdict: domain.VerdictNone, CreatedAt: now,
+		PRURL: "https://example/pr/1", TargetSHA: "sha1", Status: domain.ReviewRunRunning, Verdict: domain.VerdictNone, CreatedAt: now,
 	}
 	if err := s.InsertReviewRun(ctx, run); err != nil {
 		t.Fatalf("first insert: %v", err)
 	}
 
-	// A second run for the same (session_id, target_sha) hits the partial unique
-	// index (migration 0013) and must surface as the sentinel so the engine can
-	// fall back to the existing run.
+	// A second run for the same (session_id, pr_url, target_sha) hits the
+	// partial unique index (migration 0020) and must surface as the sentinel so
+	// the engine can fall back to the existing run.
 	dup := run
 	dup.ID = "run-2"
 	if err := s.InsertReviewRun(ctx, dup); !errors.Is(err, domain.ErrDuplicateReviewRun) {
 		t.Fatalf("duplicate insert err = %v, want ErrDuplicateReviewRun", err)
+	}
+
+	otherPR := run
+	otherPR.ID = "run-other-pr"
+	otherPR.PRURL = "https://example/pr/2"
+	if err := s.InsertReviewRun(ctx, otherPR); err != nil {
+		t.Fatalf("same sha on different PR should insert: %v", err)
 	}
 
 	if ok, err := s.UpdateReviewRunResult(ctx, "run-1", domain.ReviewRunFailed, domain.VerdictNone, "claude: not found", ""); err != nil {
@@ -102,7 +109,7 @@ func TestReviewUpsertReusesRowAndRunRoundTrip(t *testing.T) {
 
 	// A run inserts running and updates to complete/changes_requested.
 	if err := s.InsertReviewRun(ctx, domain.ReviewRun{
-		ID: "run-1", ReviewID: got.ID, SessionID: rec.ID, Harness: domain.ReviewerHarness("greptile"),
+		ID: "run-1", ReviewID: got.ID, SessionID: rec.ID, BatchID: "batch-1", Harness: domain.ReviewerHarness("greptile"),
 		PRURL: got.PRURL, TargetSHA: "sha1", Status: domain.ReviewRunRunning, Verdict: domain.VerdictNone,
 		CreatedAt: now,
 	}); err != nil {
@@ -118,18 +125,18 @@ func TestReviewUpsertReusesRowAndRunRoundTrip(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("get run: ok=%v err=%v", ok, err)
 	}
-	if gotRun.ID != "run-1" || gotRun.SessionID != rec.ID || gotRun.TargetSHA != "sha1" {
+	if gotRun.ID != "run-1" || gotRun.SessionID != rec.ID || gotRun.BatchID != "batch-1" || gotRun.TargetSHA != "sha1" {
 		t.Fatalf("get run = %+v", gotRun)
 	}
 
-	bySHA, ok, err := s.GetReviewRunBySessionAndSHA(ctx, rec.ID, "sha1")
+	bySHA, ok, err := s.GetReviewRunBySessionPRAndSHA(ctx, rec.ID, got.PRURL, "sha1")
 	if err != nil || !ok {
 		t.Fatalf("by sha: ok=%v err=%v", ok, err)
 	}
 	if bySHA.Status != domain.ReviewRunComplete || bySHA.Verdict != domain.VerdictChangesRequested || bySHA.Body != "please fix" || bySHA.GithubReviewID != "rev-987" {
 		t.Fatalf("run result not persisted: %+v", bySHA)
 	}
-	if _, ok, _ := s.GetReviewRunBySessionAndSHA(ctx, rec.ID, "other"); ok {
+	if _, ok, _ := s.GetReviewRunBySessionPRAndSHA(ctx, rec.ID, got.PRURL, "other"); ok {
 		t.Fatal("unexpected run for a different sha")
 	}
 
@@ -139,6 +146,13 @@ func TestReviewUpsertReusesRowAndRunRoundTrip(t *testing.T) {
 	}
 	if len(runs) != 1 || runs[0].ID != "run-1" {
 		t.Fatalf("list runs = %+v", runs)
+	}
+	batchRuns, err := s.ListReviewRunsByBatch(ctx, rec.ID, "batch-1")
+	if err != nil {
+		t.Fatalf("list batch runs: %v", err)
+	}
+	if len(batchRuns) != 1 || batchRuns[0].ID != "run-1" || batchRuns[0].BatchID != "batch-1" {
+		t.Fatalf("batch runs = %+v", batchRuns)
 	}
 
 	if ok, err := s.UpdateReviewRunResult(ctx, "run-1", domain.ReviewRunComplete, domain.VerdictApproved, "again", ""); err != nil {
@@ -154,7 +168,7 @@ func TestReviewGettersMissing(t *testing.T) {
 	if _, ok, err := s.GetReviewBySession(ctx, "mer-1"); err != nil || ok {
 		t.Fatalf("missing review: ok=%v err=%v", ok, err)
 	}
-	if _, ok, err := s.GetReviewRunBySessionAndSHA(ctx, "mer-1", "sha1"); err != nil || ok {
+	if _, ok, err := s.GetReviewRunBySessionPRAndSHA(ctx, "mer-1", "pr1", "sha1"); err != nil || ok {
 		t.Fatalf("missing run: ok=%v err=%v", ok, err)
 	}
 	if _, ok, err := s.GetReviewRun(ctx, "run-missing"); err != nil || ok {
