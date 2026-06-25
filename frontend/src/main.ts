@@ -33,6 +33,7 @@ import { buildDaemonEnv, resolveShellEnv, type ShellRunner } from "./shared/shel
 import { DEFAULT_POSTHOG_HOST, DEFAULT_POSTHOG_PROJECT_KEY } from "./shared/posthog-config";
 import { buildTelemetryBootstrap } from "./shared/telemetry";
 import { createBrowserViewHost, type BrowserViewHost } from "./main/browser-view-host";
+import { pathInside, samePath } from "./shared/path-identity";
 
 // Globals injected at compile time by @electron-forge/plugin-vite.
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
@@ -305,21 +306,6 @@ function daemonEnv(): NodeJS.ProcessEnv {
 		return { ...process.env, ...telemetryOverrides() };
 	}
 	return buildDaemonEnv(process.env, cachedShellEnv, telemetryOverrides());
-}
-
-function pathKey(value: string): string {
-	const resolved = path.resolve(value);
-	return process.platform === "win32" ? resolved.toLowerCase() : resolved;
-}
-
-function samePath(a: string, b: string): boolean {
-	return pathKey(a) === pathKey(b);
-}
-
-function pathInside(child: string, parent: string): boolean {
-	const childKey = pathKey(child);
-	const parentKey = pathKey(parent);
-	return childKey === parentKey || childKey.startsWith(parentKey + path.sep);
 }
 
 function processAlive(pid: number): boolean {
