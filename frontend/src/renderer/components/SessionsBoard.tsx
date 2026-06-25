@@ -18,9 +18,7 @@ type SessionsBoardProps = {
 	projectId?: string;
 };
 
-// The four kanban columns, left→right by flow (work → review → merge), ported
-// verbatim from agent-orchestrator (SIMPLE_KANBAN_LEVELS + AttentionZone +
-// mc-board.css). "done" is archived, not a column.
+// The four kanban columns, left→right by flow (pending → review → merge). "done" is archived, not a column.
 type Column = {
 	level: AttentionZone;
 	label: string;
@@ -32,7 +30,7 @@ type Column = {
 const COLUMNS: Column[] = [
 	{
 		level: "working",
-		label: "Working",
+		label: "Pending",
 		glow: "color-mix(in srgb, var(--orange) 7%, transparent)",
 		dot: "var(--orange)",
 		dotGlow: true,
@@ -233,6 +231,7 @@ function ZoneColumn({
 }) {
 	return (
 		<section
+			aria-label={`${col.label} sessions`}
 			className="flex min-w-0 flex-col overflow-hidden rounded-[13px]"
 			style={{ background: `linear-gradient(180deg, ${col.glow}, transparent 130px), var(--kanban-column-bg)` }}
 		>
@@ -247,13 +246,98 @@ function ZoneColumn({
 				<span className={cn("text-[11px] font-semibold uppercase tracking-[0.08em]", col.titleClass)}>{col.label}</span>
 				<span className="ml-auto font-mono text-[11px] leading-none text-passive">{sessions.length}</span>
 			</div>
-			<div className="min-h-0 flex-1 overflow-y-auto px-[11px] pb-3">
-				<div className="flex flex-col gap-2.5">
-					{sessions.map((session) => (
-						<SessionCard key={session.id} session={session} onOpen={() => onOpen(session)} />
-					))}
+			{col.level === "working" ? (
+				<PendingColumnSections sessions={sessions} onOpen={onOpen} />
+			) : (
+				<div className="min-h-0 flex-1 overflow-y-auto px-[11px] pb-3">
+					{sessions.length > 0 ? (
+						<div className="flex flex-col gap-2.5">
+							{sessions.map((session) => (
+								<SessionCard key={session.id} session={session} onOpen={() => onOpen(session)} />
+							))}
+						</div>
+					) : (
+						<div className="flex h-full min-h-[72px] items-center justify-center px-3 text-center text-[11px] text-passive">
+							No sessions
+						</div>
+					)}
 				</div>
+			)}
+		</section>
+	);
+}
+
+function PendingColumnSections({
+	sessions,
+	onOpen,
+}: {
+	sessions: WorkspaceSession[];
+	onOpen: (s: WorkspaceSession) => void;
+}) {
+	const pending = sessions.filter((session) => session.status === "idle");
+	const working = sessions.filter((session) => session.status !== "idle");
+	const idleHasSessions = pending.length > 0;
+	return (
+		<div
+			className={cn(
+				"grid min-h-0 flex-1 px-[11px] pb-3",
+				idleHasSessions ? "grid-rows-2" : "grid-rows-[minmax(0,1fr)_auto]",
+			)}
+		>
+			<PendingColumnSection label="Working" sessions={working} onOpen={onOpen} />
+			<PendingColumnSection
+				label="Idle"
+				sessions={pending}
+				onOpen={onOpen}
+				separated
+				collapsedWhenEmpty
+			/>
+		</div>
+	);
+}
+
+function PendingColumnSection({
+	label,
+	onOpen,
+	sessions,
+	collapsedWhenEmpty = false,
+	separated = false,
+}: {
+	label: string;
+	onOpen: (s: WorkspaceSession) => void;
+	sessions: WorkspaceSession[];
+	collapsedWhenEmpty?: boolean;
+	separated?: boolean;
+}) {
+	const isCollapsed = collapsedWhenEmpty && sessions.length === 0;
+	return (
+		<section
+			aria-label={`${label} sessions in pending column`}
+			className={cn(
+				"flex min-h-0 flex-col overflow-hidden",
+				separated && "border-t border-border",
+				separated && "pt-2",
+			)}
+		>
+			<div className={cn("flex shrink-0 items-center gap-2 px-1", isCollapsed ? "pb-0" : "pb-2")}>
+				<span className="text-[10.5px] font-semibold uppercase tracking-[0.08em] text-passive">{label}</span>
+				<span className="ml-auto font-mono text-[10px] leading-none text-passive">{sessions.length}</span>
 			</div>
+			{!isCollapsed && (
+				<div className="min-h-0 flex-1 overflow-y-auto">
+					{sessions.length > 0 ? (
+						<div className="flex flex-col gap-2">
+							{sessions.map((session) => (
+								<SessionCard key={session.id} session={session} onOpen={() => onOpen(session)} />
+							))}
+						</div>
+					) : (
+						<div className="flex h-full min-h-[48px] items-center justify-center px-3 text-center text-[11px] text-passive">
+							No sessions
+						</div>
+					)}
+				</div>
+			)}
 		</section>
 	);
 }
@@ -365,6 +449,10 @@ function sessionBadge(session: WorkspaceSession): { label: string; className: st
 			return { label: "Merged", className: "text-passive" };
 		case "terminated":
 			return { label: "Terminated", className: "text-passive" };
+		case "idle":
+			return { label: "Idle", className: "text-passive" };
+		case "working":
+			return { label: "Working", className: "text-working" };
 		default:
 			return { label: "Working", className: "text-working" };
 	}
