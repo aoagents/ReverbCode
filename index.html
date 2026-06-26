@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dark/Light Mode Toggle</title>
+    <style>
+        :root {
+            --bg-primary: #ffffff;
+            --bg-secondary: #f5f5f5;
+            --bg-card: #ffffff;
+            --text-primary: #1a1a1a;
+            --text-secondary: #666666;
+            --border-color: #e0e0e0;
+            --shadow: rgba(0, 0, 0, 0.1);
+            --toggle-bg: #e0e0e0;
+            --toggle-active: #3b82f6;
+        }
+
+        .dark {
+            --bg-primary: #1a1a1a;
+            --bg-secondary: #2d2d2d;
+            --bg-card: #252525;
+            --text-primary: #ffffff;
+            --text-secondary: #a0a0a0;
+            --border-color: #404040;
+            --shadow: rgba(0, 0, 0, 0.3);
+            --toggle-bg: #404040;
+            --toggle-active: #60a5fa;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background-color 0.3s ease, color 0.3s ease;
+        }
+
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 40px;
+            max-width: 400px;
+            width: 90%;
+            box-shadow: 0 4px 20px var(--shadow);
+            transition: background-color 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+        }
+
+        .card-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 24px;
+        }
+
+        h1 {
+            font-size: 24px;
+            font-weight: 600;
+            color: var(--text-primary);
+            transition: color 0.3s ease;
+        }
+
+        p {
+            color: var(--text-secondary);
+            line-height: 1.6;
+            margin-bottom: 20px;
+            transition: color 0.3s ease;
+        }
+
+        .toggle-container {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .toggle-label {
+            font-size: 14px;
+            color: var(--text-secondary);
+            transition: color 0.3s ease;
+        }
+
+        .toggle {
+            position: relative;
+            width: 56px;
+            height: 28px;
+            background: var(--toggle-bg);
+            border-radius: 28px;
+            cursor: pointer;
+            transition: background-color 0.3s ease;
+        }
+
+        .toggle::after {
+            content: '';
+            position: absolute;
+            top: 4px;
+            left: 4px;
+            width: 20px;
+            height: 20px;
+            background: #ffffff;
+            border-radius: 50%;
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+        }
+
+        .toggle.active {
+            background: var(--toggle-active);
+        }
+
+        .toggle.active::after {
+            transform: translateX(28px);
+        }
+
+        .icon {
+            width: 20px;
+            height: 20px;
+            color: var(--text-secondary);
+            transition: color 0.3s ease;
+        }
+
+        .demo-section {
+            margin-top: 24px;
+            padding-top: 24px;
+            border-top: 1px solid var(--border-color);
+        }
+
+        .demo-section h2 {
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 12px;
+            transition: color 0.3s ease;
+        }
+
+        .demo-section p {
+            font-size: 14px;
+            margin-bottom: 8px;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 4px 12px;
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 500;
+            margin-top: 12px;
+            transition: background-color 0.3s ease, color 0.3s ease;
+        }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="card-header">
+            <h1>Theme Toggle</h1>
+            <div class="toggle-container">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="5"></circle>
+                    <line x1="12" y1="1" x2="12" y2="3"></line>
+                    <line x1="12" y1="21" x2="12" y2="23"></line>
+                    <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+                    <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+                    <line x1="1" y1="12" x2="3" y2="12"></line>
+                    <line x1="21" y1="12" x2="23" y2="12"></line>
+                    <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+                    <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+                </svg>
+                <div class="toggle" id="themeToggle" role="button" aria-label="Toggle dark mode" tabindex="0"></div>
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+                </svg>
+            </div>
+        </div>
+        <p>
+            This is a demonstration of a dark/light mode toggle. Click the pill-shaped switch above to toggle between themes.
+        </p>
+        <div class="demo-section">
+            <h2>Theme Demo Content</h2>
+            <p>Notice how all colors smoothly transition when you switch themes. The preference is saved to localStorage.</p>
+            <span class="badge" id="currentTheme">Light Mode</span>
+        </div>
+    </div>
+
+    <script>
+        const toggle = document.getElementById('themeToggle');
+        const themeLabel = document.getElementById('currentTheme');
+        const STORAGE_KEY = 'theme-preference';
+
+        // Read from localStorage on load
+        const savedTheme = localStorage.getItem(STORAGE_KEY);
+        if (savedTheme === 'dark') {
+            document.body.classList.add('dark');
+            toggle.classList.add('active');
+            themeLabel.textContent = 'Dark Mode';
+        }
+
+        // Toggle theme on click
+        toggle.addEventListener('click', () => {
+            document.body.classList.toggle('dark');
+            toggle.classList.toggle('active');
+
+            const isDark = document.body.classList.contains('dark');
+            themeLabel.textContent = isDark ? 'Dark Mode' : 'Light Mode';
+
+            // Persist to localStorage
+            localStorage.setItem(STORAGE_KEY, isDark ? 'dark' : 'light');
+        });
+
+        // Support keyboard accessibility
+        toggle.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                toggle.click();
+            }
+        });
+    </script>
+</body>
+</html>
