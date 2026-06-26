@@ -33,12 +33,16 @@ var _ ports.Reviewer = (*Reviewer)(nil)
 
 // reviewerAllowedTools is the read-only tool allowlist the reviewer launches
 // with. The reviewer runs headless (no human to approve prompts) but must stay
-// read-only, so instead of bypassPermissions — which skips the permission
-// system entirely and ignores allow/deny rules — it launches in the default
-// mode where these rules are honored: allow rules auto-approve without
-// prompting, so the reviewer can read the checkout and run the few commands it
-// needs (git diff/log/show to inspect the PR, gh to post the review, and
-// `ao review submit` to record the verdict) without stalling.
+// read-only. It launches in default mode (not auto, and not bypassPermissions —
+// which skips the permission system entirely and ignores allow/deny rules). In
+// default mode the allow rules auto-approve without prompting, so the reviewer
+// can read the checkout and run the few commands it needs (git diff/log/show to
+// inspect the PR, gh to post the review, and `ao review submit` to record the
+// verdict) without stalling, while any tool that is neither allowed nor denied —
+// including a filesystem-mutating Bash command — prompts and, with no human on
+// the pane, stalls rather than executing. That is what makes read-only an
+// enforced guarantee rather than a classifier-dependent one: auto mode would let
+// a "safe"-classified shell write through, default mode cannot.
 var reviewerAllowedTools = []string{
 	"Read",
 	"Grep",
@@ -70,10 +74,13 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 		WorkspacePath: inv.WorkspacePath,
 		Prompt:        inv.Prompt,
 		SystemPrompt:  inv.SystemPrompt,
-		// Launch off bypassPermissions so the allow/deny lists are enforced.
-		// Set an explicit non-bypass mode instead of deferring to the user's
-		// Claude defaultMode, which may itself be bypassPermissions.
-		Permissions:     ports.PermissionModeAuto,
+		// Launch in default mode, not bypassPermissions (which ignores the
+		// allow/deny lists) and not auto (which would auto-approve an unlisted,
+		// classifier-"safe" shell write). Default mode honors the allowlist and
+		// stalls every other tool, so read-only is enforced rather than left to
+		// the auto classifier. Set it explicitly instead of deferring to the
+		// user's Claude defaultMode, which may itself be bypassPermissions.
+		Permissions:     ports.PermissionModeDefault,
 		AllowedTools:    reviewerAllowedTools,
 		DisallowedTools: reviewerDisallowedTools,
 	})

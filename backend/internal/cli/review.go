@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"strings"
@@ -67,7 +68,7 @@ func newReviewSubmitCommand(ctx *commandContext) *cobra.Command {
 	cmd.Flags().StringVar(&opts.session, "session", "", "Worker session id (or pass it as the positional argument)")
 	cmd.Flags().StringVar(&opts.runID, "run", "", "Review run id (required)")
 	cmd.Flags().StringVar(&opts.verdict, "verdict", "", "Review verdict: approved or changes_requested (required)")
-	cmd.Flags().StringVar(&opts.body, "body", "", "Path to a Markdown file with the review body")
+	cmd.Flags().StringVar(&opts.body, "body", "", "Path to a Markdown file with the review body, or - to read it from stdin")
 	cmd.Flags().StringVar(&opts.bodyText, "body-text", "", "Review body as inline Markdown (use instead of --body when no file should be written)")
 	return cmd
 }
@@ -96,6 +97,12 @@ func (c *commandContext) submitReview(cmd *cobra.Command, args []string, opts re
 	switch {
 	case opts.bodyText != "":
 		body = opts.bodyText
+	case path == "-":
+		raw, err := io.ReadAll(cmd.InOrStdin())
+		if err != nil {
+			return usageError{fmt.Errorf("read body from stdin: %w", err)}
+		}
+		body = string(raw)
 	case path != "":
 		raw, err := os.ReadFile(path)
 		if err != nil {

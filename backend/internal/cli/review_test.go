@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -78,6 +79,32 @@ func TestReviewSubmitReadsInlineBody(t *testing.T) {
 	}
 	if req.Body != "please fix" {
 		t.Fatalf("inline body not forwarded; request = %+v", req)
+	}
+}
+
+func TestReviewSubmitReadsBodyFromStdin(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, capture := reviewServer(t, http.StatusOK, `{"review":{"verdict":"changes_requested"}}`)
+	writeRunFileFor(t, cfg, srv)
+
+	// Markdown a real review carries: quotes, backticks, $ and a backslash — the
+	// characters that break a double-quoted --body-text arg. Stdin passes them
+	// through untouched.
+	md := "Found a bug in `cmd \"run\"`: $HOME isn't escaped (see C:\\path)."
+	deps := aliveDeps()
+	deps.In = strings.NewReader(md)
+
+	_, errOut, err := executeCLI(t, deps,
+		"review", "submit", "mer-1", "--run", "run-1", "--verdict", "changes_requested", "--body", "-")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	var req submitReviewRequest
+	if err := json.Unmarshal([]byte(capture.body), &req); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if req.Body != md {
+		t.Fatalf("stdin body not forwarded verbatim; got %q want %q", req.Body, md)
 	}
 }
 

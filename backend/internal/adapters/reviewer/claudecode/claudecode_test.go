@@ -45,11 +45,13 @@ func TestReviewCommandLaunchesReadOnlyOffBypass(t *testing.T) {
 		t.Fatalf("ReviewCommand: %v", err)
 	}
 
-	// The allowlist is what enforces read-only, so it must launch in an
-	// explicit non-bypass mode: bypassPermissions ignores allow/deny rules
-	// entirely, and an empty mode would defer to a user's defaultMode.
-	if agent.got.Permissions != ports.PermissionModeAuto {
-		t.Fatalf("reviewer must launch in auto permission mode; got %q", agent.got.Permissions)
+	// The allowlist is what enforces read-only, so it must launch in default
+	// mode: bypassPermissions ignores allow/deny rules entirely, auto would
+	// auto-approve unlisted classifier-"safe" shell writes, and an empty mode
+	// would defer to a user's defaultMode. Default mode honors the allowlist and
+	// stalls every other tool.
+	if agent.got.Permissions != ports.PermissionModeDefault {
+		t.Fatalf("reviewer must launch in default permission mode; got %q", agent.got.Permissions)
 	}
 	if !contains(agent.got.AllowedTools, "Read") || !contains(agent.got.AllowedTools, "Bash(ao review submit:*)") {
 		t.Fatalf("allowlist missing read-only review tools: %#v", agent.got.AllowedTools)

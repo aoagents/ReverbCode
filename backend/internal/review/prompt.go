@@ -25,9 +25,11 @@ Do these steps in order:
 2. Post your review on the pull request with `+"`gh`"+`, with inline comments for specific findings:
    - If changes are needed, request changes.
    - If it is ready, approve it. GitHub does not let you approve a PR you opened; if the approval is rejected because you are the PR author, post the same review as a regular comment instead (a COMMENT-event review whose body states it is an approval).
-3. Record the result with AO by passing your full review inline:
+3. Record the result with AO. Pass your full review on stdin via a quoted heredoc so quotes, backticks, $, and backslashes in the Markdown are passed through literally and never break the shell or trigger expansion. Keep the closing REVIEW on its own line with no indentation:
 
-    ao review submit --session %s --run %s --verdict <approved|changes_requested> --body-text "<your full review as Markdown>"
+ao review submit --session %s --run %s --verdict <approved|changes_requested> --body - <<'REVIEW'
+<your full review as Markdown>
+REVIEW
 
 Only if step 2 genuinely fails on the provider, still run step 3 so the result is recorded.`,
 		spec.PRURL, spec.TargetSHA, spec.WorkerID, spec.RunID)
