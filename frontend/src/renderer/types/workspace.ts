@@ -96,6 +96,8 @@ export type WorkspaceSession = {
 	workspaceId: string;
 	workspaceName: string;
 	title: string;
+	/** Canonical tracker issue ID that spawned this session, e.g. "github:owner/repo#42". */
+	issueId?: string;
 	provider: AgentProvider;
 	kind?: SessionKind;
 	branch: string;

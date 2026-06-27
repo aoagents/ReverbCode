@@ -200,6 +200,7 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 			<Section className="inspector-section--separated" title="Overview">
 				<dl className="inspector-kv">
 					<Row k="Agent" v={session.provider} mono />
+					{session.issueId && <Row k="Issue" v={session.issueId} mono />}
 					<Row k="Branch" v={branchLabel} mono />
 					<Row k="Started" v={formatTimeCompact(session.createdAt ?? session.updatedAt)} mono />
 					<Row k="Session" v={session.id} mono />
