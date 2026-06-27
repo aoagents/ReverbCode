@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SessionPRSummary } from "../hooks/useSessionScmSummary";
-import { prAttentionItems, prDiffSummary, prStatusRows } from "./pr-display";
+import { prAttentionItems, prDiffSummary, prOpenUrl, prStatusRows } from "./pr-display";
 
 const summary = (overrides: Partial<SessionPRSummary> = {}): SessionPRSummary => ({
 	url: "https://github.com/acme/repo/pull/7",
@@ -97,6 +97,83 @@ describe("prAttentionItems", () => {
 		expect(items.find((item) => item.kind === "review_changes_requested")?.links[0]).toMatchObject({
 			label: "alice +5",
 			href: "https://github.com/acme/repo/pull/7#discussion_r1",
+		});
+	});
+
+	it("normalizes issue-shaped GitHub PR URLs for generic PR links", () => {
+		expect(
+			prOpenUrl(
+				summary({
+					url: "https://github.com/acme/repo/issues/7",
+					htmlUrl: "https://github.com/acme/repo/issues/7",
+					mergeability: { state: "mergeable", reasons: [], prUrl: "https://github.com/acme/repo/issues/7" },
+				}),
+			),
+		).toBe("https://github.com/acme/repo/pull/7");
+	});
+
+	it("falls back to the PR files view for requested changes without discussion links", () => {
+		const items = prAttentionItems(
+			summary({
+				url: "https://github.com/acme/repo/issues/7",
+				htmlUrl: "https://github.com/acme/repo/issues/7",
+				review: {
+					decision: "changes_requested",
+					hasUnresolvedHumanComments: true,
+					unresolvedBy: [],
+				},
+				mergeability: { state: "mergeable", reasons: [], prUrl: "https://github.com/acme/repo/issues/7" },
+			}),
+		);
+
+		expect(items.find((item) => item.kind === "review_changes_requested")?.links[0]).toMatchObject({
+			label: "Review files",
+			href: "https://github.com/acme/repo/pull/7/files",
+		});
+	});
+
+	it("preserves direct review discussion links when available", () => {
+		const items = prAttentionItems(
+			summary({
+				url: "https://github.com/acme/repo/issues/7",
+				htmlUrl: "https://github.com/acme/repo/issues/7",
+				review: {
+					decision: "changes_requested",
+					hasUnresolvedHumanComments: true,
+					unresolvedBy: [
+						{
+							reviewerId: "alice",
+							count: 1,
+							links: [{ url: "https://github.com/acme/repo/pull/7#discussion_r1", file: "main.go", line: 12 }],
+						},
+					],
+				},
+				mergeability: { state: "mergeable", reasons: [], prUrl: "https://github.com/acme/repo/issues/7" },
+			}),
+		);
+
+		expect(items.find((item) => item.kind === "review_changes_requested")?.links[0]?.href).toBe(
+			"https://github.com/acme/repo/pull/7#discussion_r1",
+		);
+	});
+
+	it("falls back to GitHub conflict resolution for merge conflicts", () => {
+		const items = prAttentionItems(
+			summary({
+				url: "https://github.com/acme/repo/issues/7",
+				htmlUrl: "https://github.com/acme/repo/issues/7",
+				mergeability: {
+					state: "conflicting",
+					reasons: [],
+					prUrl: "https://github.com/acme/repo/issues/7",
+					conflictFiles: [],
+				},
+			}),
+		);
+
+		expect(items.find((item) => item.kind === "merge_conflict")?.links[0]).toMatchObject({
+			label: "Resolve conflicts",
+			href: "https://github.com/acme/repo/pull/7/conflicts",
 		});
 	});
 

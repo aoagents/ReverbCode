@@ -177,9 +177,17 @@ export function prAttentionItems(pr: SessionPRSummary): PRAttentionItem[] {
 		const reviewers = pr.review.unresolvedBy.slice(0, 3);
 		const links = reviewers.map((reviewer) => ({
 			label: reviewerLabel(reviewer),
-			href: reviewer.links.find((link) => link.url)?.url || undefined,
+			href: reviewer.links.find((link) => link.url)?.url || prFilesUrl(pr),
 			title: `${reviewer.count} unresolved ${pluralize("comment", reviewer.count)}`,
 		}));
+		const fallbackFilesUrl = prFilesUrl(pr);
+		if (links.length === 0 && fallbackFilesUrl) {
+			links.push({
+				label: "Review files",
+				href: fallbackFilesUrl,
+				title: "Open changed files",
+			});
+		}
 		items.push({
 			kind: "review_changes_requested",
 			title: "Address requested changes",
@@ -198,6 +206,56 @@ export function prAttentionItems(pr: SessionPRSummary): PRAttentionItem[] {
 		});
 	}
 	return items;
+}
+
+export function prOpenUrl(pr: SessionPRSummary): string | undefined {
+	return (
+		normalizeGitHubPRUrl(pr.htmlUrl || pr.url, pr.number) ?? normalizeGitHubPRUrl(pr.mergeability.prUrl, pr.number)
+	);
+}
+
+function prFilesUrl(pr: SessionPRSummary): string | undefined {
+	return appendPRPath(prOpenUrl(pr), "files");
+}
+
+function prConflictsUrl(pr: SessionPRSummary): string | undefined {
+	return appendPRPath(prOpenUrl(pr), "conflicts");
+}
+
+function appendPRPath(url: string | undefined, segment: string): string | undefined {
+	if (!url) return undefined;
+	const parsed = parseURL(url);
+	if (!parsed) return undefined;
+	parsed.pathname = `${parsed.pathname.replace(/\/+$/, "")}/${segment}`;
+	parsed.search = "";
+	return parsed.toString();
+}
+
+function normalizeGitHubPRUrl(url: string | undefined, number: number): string | undefined {
+	const parsed = parseURL(url);
+	if (!parsed || parsed.hostname !== "github.com") return url || undefined;
+
+	const parts = parsed.pathname.split("/").filter(Boolean);
+	if (parts.length >= 4 && parts[2] === "pull" && Number(parts[3]) === number) {
+		parsed.pathname = `/${parts[0]}/${parts[1]}/pull/${number}`;
+		parsed.search = "";
+		return parsed.toString();
+	}
+	if (parts.length >= 4 && parts[2] === "issues" && Number(parts[3]) === number) {
+		parsed.pathname = `/${parts[0]}/${parts[1]}/pull/${number}`;
+		parsed.search = "";
+		return parsed.toString();
+	}
+	return url || undefined;
+}
+
+function parseURL(url: string | undefined): URL | undefined {
+	if (!url) return undefined;
+	try {
+		return new URL(url);
+	} catch {
+		return undefined;
+	}
 }
 
 function toCIState(value: string): SessionPRSummary["ci"]["state"] {
@@ -331,18 +389,26 @@ function mergeAttention(
 	fallback: string,
 	tone: PRDisplayTone,
 ): PRAttentionItem {
-	const fileLinks = (pr.mergeability.conflictFiles ?? []).slice(0, 3).map((file) => ({
+	const fileLinks: PRAttentionLink[] = (pr.mergeability.conflictFiles ?? []).slice(0, 3).map((file) => ({
 		label: file.path,
-		href: file.url || pr.mergeability.prUrl || undefined,
+		href: file.url || prConflictsUrl(pr),
 	}));
 	const reasonLinks =
 		fileLinks.length > 0
 			? []
 			: pr.mergeability.reasons.slice(0, 3).map((reason) => ({
 					label: mergeReasonLabel(reason),
-					href: pr.mergeability.prUrl || undefined,
+					href: prConflictsUrl(pr),
 				}));
 	const links = fileLinks.length > 0 ? fileLinks : reasonLinks;
+	const conflictsUrl = prConflictsUrl(pr);
+	if (links.length === 0 && kind === "merge_conflict" && conflictsUrl) {
+		links.push({
+			label: "Resolve conflicts",
+			href: conflictsUrl,
+			title: "Open GitHub conflict resolution",
+		});
+	}
 	return {
 		kind,
 		title,
