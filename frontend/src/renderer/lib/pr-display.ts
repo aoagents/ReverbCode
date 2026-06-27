@@ -209,7 +209,9 @@ export function prAttentionItems(pr: SessionPRSummary): PRAttentionItem[] {
 }
 
 export function prOpenUrl(pr: SessionPRSummary): string | undefined {
-	return normalizeGitHubPRUrl(pr.htmlUrl || pr.url, pr.number) ?? normalizeGitHubPRUrl(pr.mergeability.prUrl, pr.number);
+	return (
+		normalizeGitHubPRUrl(pr.htmlUrl || pr.url, pr.number) ?? normalizeGitHubPRUrl(pr.mergeability.prUrl, pr.number)
+	);
 }
 
 function prFilesUrl(pr: SessionPRSummary): string | undefined {
