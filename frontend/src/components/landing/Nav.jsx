@@ -2,7 +2,7 @@ import React from "react";
 import { Menu, X, ArrowUpRight, Github, Moon, Sun } from "lucide-react";
 import { motion } from "framer-motion";
 
-const LOGO_URL = "/ao-logo.png";
+const LOGO_URL = "/ao-logo-transparent.png";
 
 const navItems = [
   { label: "Features", href: "#features" },

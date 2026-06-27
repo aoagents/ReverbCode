@@ -17,7 +17,7 @@ const agents = [
     name: "Cursor",
     src: "/docs/logos/cursor.svg",
     alt: "Cursor",
-    className: "h-7 sm:h-8 lg:h-10",
+    className: "agent-logo-contrast h-7 sm:h-8 lg:h-10",
   },
   {
     name: "Aider",
@@ -29,7 +29,7 @@ const agents = [
     name: "OpenCode",
     src: "/docs/logos/opencode.svg",
     alt: "OpenCode",
-    className: "h-7 sm:h-8 lg:h-10",
+    className: "agent-logo-contrast h-7 sm:h-8 lg:h-10",
   },
 ];
 
@@ -61,11 +61,6 @@ export default function AgentsMarquee() {
         </div>
       </div>
 
-      <div className="container-page pb-8 flex flex-wrap items-center justify-between gap-3 font-mono text-[10px] uppercase tracking-[0.22em] text-[color:var(--fg-dim)]">
-        <span>↳ registry · backend/internal/adapters/agent/</span>
-        <span className="hidden sm:inline">↳ swap with <span className="text-[color:var(--accent)]">--worker-agent &lt;id&gt;</span></span>
-        <span>↳ 23 shipped</span>
-      </div>
     </section>
   );
 }

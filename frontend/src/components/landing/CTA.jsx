@@ -9,15 +9,8 @@ export default function CTA() {
       data-testid="cta-section"
       className="relative py-24 sm:py-32 border-t border-[color:var(--border)] overflow-hidden"
     >
-      <div
-        className="pointer-events-none absolute inset-0 opacity-60"
-        style={{
-          background:
-            "radial-gradient(ellipse at 50% 0%, rgba(77,141,255,0.18), transparent 60%)",
-        }}
-      />
       <div className="container-page relative">
-        <div className="surface-elev px-8 sm:px-14 py-14 sm:py-20 text-center glow-accent">
+        <div className="surface-elev px-8 sm:px-14 py-14 sm:py-20 text-center">
           <div className="inline-flex items-center gap-2 mb-8 px-3 py-1 rounded-full border border-[color:var(--border-strong)] bg-[color:var(--bg-deep)]">
             <span className="font-mono text-[10px] uppercase tracking-[0.22em] text-[color:var(--accent)]">
               $ ao spawn --prompt &quot;ship it&quot;

@@ -2,7 +2,7 @@ import React from "react";
 import { Github } from "lucide-react";
 import { docsUrl } from "@/lib/docs-url";
 
-const LOGO_URL = "/ao-logo.png";
+const LOGO_URL = "/ao-logo-transparent.png";
 
 export default function Footer() {
   return (
