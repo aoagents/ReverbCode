@@ -12,6 +12,7 @@ import SocialProof from "@/components/landing/SocialProof";
 import CTA from "@/components/landing/CTA";
 import Footer from "@/components/landing/Footer";
 import VideoSection from "@/components/landing/VideoSection";
+import DocsPage from "@/components/docs/DocsPage";
 
 const Landing = () => {
   React.useEffect(() => {
@@ -43,6 +44,7 @@ function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<Landing />} />
+        <Route path="/docs/*" element={<DocsPage />} />
         <Route path="*" element={<Landing />} />
       </Routes>
     </BrowserRouter>

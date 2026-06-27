@@ -53,9 +53,7 @@ export default function CTA() {
               <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-0.5" />
             </a>
             <a
-              href="https://github.com/AgentWrapper/agent-orchestrator/tree/main/docs"
-              target="_blank"
-              rel="noreferrer"
+              href="/docs/architecture"
               data-testid="cta-docs-btn"
               className="inline-flex items-center gap-2 bg-[color:var(--bg-deep)] text-[color:var(--fg)] font-semibold text-[15px] px-6 py-3.5 rounded-lg border border-[color:var(--border-strong)] hover:bg-[color:var(--bg-card-hover)] transition-colors"
             >

@@ -41,8 +41,8 @@ export default function Footer() {
             title="Resources"
             links={[
               { label: "GitHub", href: "https://github.com/AgentWrapper/agent-orchestrator" },
-              { label: "Architecture docs", href: "https://github.com/AgentWrapper/agent-orchestrator/blob/main/docs/architecture.md" },
-              { label: "CLI reference", href: "https://github.com/AgentWrapper/agent-orchestrator/tree/main/docs/cli" },
+              { label: "Architecture docs", href: "/docs/architecture" },
+              { label: "CLI reference", href: "/docs/cli" },
               { label: "Releases", href: "https://github.com/AgentWrapper/agent-orchestrator/releases" },
             ]}
           />
@@ -88,8 +88,8 @@ function FooterCol({ title, links }) {
           <li key={l.label}>
             <a
               href={l.href}
-              target={l.href.startsWith("#") ? undefined : "_blank"}
-              rel={l.href.startsWith("#") ? undefined : "noreferrer"}
+              target={l.href.startsWith("#") || l.href.startsWith("/") ? undefined : "_blank"}
+              rel={l.href.startsWith("#") || l.href.startsWith("/") ? undefined : "noreferrer"}
               className="text-[13.5px] text-[color:var(--fg-muted)] hover:text-[color:var(--fg)] transition-colors"
             >
               {l.label}
