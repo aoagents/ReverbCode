@@ -1,0 +1,117 @@
+{
+  "theme": "light",
+  "archetype": "4",
+  "archetype_name": "Swiss & High-Contrast",
+  "colors": {
+    "background": {
+      "primary": "#FAFAFA",
+      "secondary": "#F3F4F6",
+      "glass": "rgba(255, 255, 255, 0.7)"
+    },
+    "text": {
+      "primary": "#0F172A",
+      "secondary": "#475569",
+      "muted": "#94A3B8"
+    },
+    "accent": {
+      "primary": "#E07A5F",
+      "secondary": "#E85D04",
+      "hover": "#DC2626"
+    },
+    "borders": {
+      "light": "rgba(15, 23, 42, 0.08)",
+      "medium": "rgba(15, 23, 42, 0.15)"
+    }
+  },
+  "typography": {
+    "fonts": {
+      "heading": "Cabinet Grotesk",
+      "body": "IBM Plex Sans",
+      "mono": "JetBrains Mono"
+    },
+    "scales": {
+      "h1": "text-5xl sm:text-6xl tracking-tighter leading-none font-black",
+      "h2": "text-3xl sm:text-4xl tracking-tight leading-tight font-bold",
+      "h3": "text-xl sm:text-2xl tracking-tight font-semibold",
+      "body": "text-base leading-relaxed text-slate-700",
+      "mono": "text-sm tracking-wide"
+    }
+  },
+  "spacing": {
+    "container": "max-w-7xl mx-auto px-6 sm:px-12 lg:px-16",
+    "section": "py-24 sm:py-32",
+    "bento_gap": "gap-6 sm:gap-8"
+  },
+  "layout": {
+    "strategy": "Asymmetric grids, strong left-alignment. 'Bento Box' pattern for features with tight grids. Unconventional overlapping of the hero copy with the code block.",
+    "components": [
+      {
+        "name": "Hero",
+        "description": "Left-aligned bold text for 'ReverbCode', large JetBrains Mono terminal block. Muted coral primary CTA (GitHub Install) and secondary CTA (Docs).",
+        "test_id": "hero-section"
+      },
+      {
+        "name": "LiveDemo",
+        "description": "Terminal-styled premium code block showing `ao start`, `ao spawn`. Dark slate background to contrast the light theme.",
+        "test_id": "live-demo-terminal"
+      },
+      {
+        "name": "AgentsMarquee",
+        "description": "Scrolling marquee showing supported agents (Claude Code, Codex, Cursor, OpenCode, Aider, Amp, Goose, Copilot, Grok, Qwen, Kimi, Crush, Cline, Droid, Devin, Auggie, Continue, Kiro, Kilocode).",
+        "test_id": "agents-marquee"
+      },
+      {
+        "name": "HowItWorks",
+        "description": "4-step flow: Register repo \u2192 Spawn session \u2192 Agent works in worktree \u2192 Auto-routes feedback.",
+        "test_id": "how-it-works"
+      },
+      {
+        "name": "FeaturesBento",
+        "description": "Bento grid features: Agent-agnostic (23+ adapters), Isolated git worktrees, Live PR observation, Loopback daemon, CDC event stream, Lifecycle manager.",
+        "test_id": "features-grid"
+      },
+      {
+        "name": "ArchitectureDiagram",
+        "description": "Visual diagram showing CLI/Electron -> Daemon -> Adapters (Agent/Runtime/Workspace/SCM) with Daemon at center.",
+        "test_id": "architecture-diagram"
+      },
+      {
+        "name": "SocialProof",
+        "description": "GitHub stats: 7.7k stars, 1.1k forks, 44+ contributors. Used-by/testimonial cards mimicking GitHub PR comments.",
+        "test_id": "social-proof"
+      },
+      {
+        "name": "Footer",
+        "description": "Footer with GitHub link, docs, ao-agents.com",
+        "test_id": "footer"
+      }
+    ]
+  },
+  "visual_enhancers": {
+    "textures": "Subtle noise overlay (SVG pattern), 1px solid grid lines revealing the structure.",
+    "shadows": "Sharp drop-shadows (e.g., 4px 4px 0px rgba(15, 23, 42, 1)) for a 'DevTool' Swiss look.",
+    "borders": "Expose the skeleton via border-collapse patterns. `border-slate-200`."
+  },
+  "images": [
+    {
+      "category": "background",
+      "url": "https://images.pexels.com/photos/1029622/pexels-photo-1029622.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "description": "Clean white abstract architecture to be used behind the architecture section or hero."
+    },
+    {
+      "category": "texture",
+      "url": "https://images.pexels.com/photos/4252522/pexels-photo-4252522.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "description": "Abstract paper pattern for feature cards subtle background."
+    }
+  ],
+  "instructions_to_main_agent": [
+    "Strictly follow the color palette: Stark White/Off-white base, Deep Slate text, and Muted Coral/Warm Amber accent. Do NOT use purple or teal.",
+    "Use pure HTML + Tailwind for structural layouts. Avoid Shadcn generic components for marketing layout unless heavily customized.",
+    "Install `lucide-react` for icons, `react-fast-marquee` for the agents' logo soup, and `framer-motion` for staggered entrance.",
+    "Include specific features mentioned: 23+ harness adapters, Isolated git worktrees, Live PR observation, Loopback daemon, CDC event stream, Lifecycle manager.",
+    "Use Cabinet Grotesk for Headings, IBM Plex Sans for body text, and JetBrains Mono for code blocks. Inject Google Fonts in index.html.",
+    "Build the live demo code block to look premium (macOS/Terminal window style with red/yellow/green dots).",
+    "Ensure all interactive elements have data-testid attributes.",
+    "Tagline to use: 'The orchestration layer for parallel AI coding agents'."
+  ]
+}
