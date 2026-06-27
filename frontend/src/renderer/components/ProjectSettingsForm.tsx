@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 
 type Project = components["schemas"]["Project"];
 type ProjectConfig = components["schemas"]["ProjectConfig"];
+type TrackerIntakeConfig = components["schemas"]["TrackerIntakeConfig"];
 
 const PERMISSION_MODE_OPTIONS = [
 	{ value: "default", label: "Default" },
@@ -66,6 +67,7 @@ export function ProjectSettingsForm({ projectId }: { projectId: string }) {
 function SettingsBody({ project, projectId, onSaved }: { project: Project; projectId: string; onSaved: () => void }) {
 	const queryClient = useQueryClient();
 	const config = project.config ?? {};
+	const intake = config.trackerIntake ?? {};
 	const [form, setForm] = useState({
 		defaultBranch: config.defaultBranch ?? project.defaultBranch ?? "",
 		sessionPrefix: config.sessionPrefix ?? "",
@@ -74,10 +76,36 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 		model: config.agentConfig?.model ?? "",
 		permissions: config.agentConfig?.permissions ?? "",
 		reviewerHarness: config.reviewers?.[0]?.harness ?? "",
+		intakeEnabled: intake.enabled ?? false,
+		intakeRepo: intake.repo ?? "",
+		// Labels edit as a comma-separated list so contributors never touch raw JSON.
+		intakeLabels: (intake.labels ?? []).join(", "),
+		intakeAssignee: intake.assignee ?? "",
+		intakeLimit: intake.limit ? String(intake.limit) : "",
 	});
 	const [savedAt, setSavedAt] = useState<number | null>(null);
 	const [validationError, setValidationError] = useState<string | null>(null);
 	const missingRequiredAgent = form.workerAgent === "" || form.orchestratorAgent === "";
+	const intakeLabelList = parseLabels(form.intakeLabels);
+	// Mirror the daemon's guard so enabling intake without a rule is caught inline.
+	const intakeNeedsRule = form.intakeEnabled && intakeLabelList.length === 0 && form.intakeAssignee.trim() === "";
+
+	// Build the trackerIntake block from the form, preserving any hidden fields the
+	// form does not expose. Provider is pinned to github (the only one) when on.
+	// Omitted entirely when disabled and unconfigured so the config can store NULL.
+	const buildIntake = (): TrackerIntakeConfig | undefined => {
+		const limit = Number.parseInt(form.intakeLimit, 10);
+		const next: TrackerIntakeConfig = {
+			...intake,
+			enabled: form.intakeEnabled || undefined,
+			provider: form.intakeEnabled ? "github" : undefined,
+			repo: form.intakeRepo.trim() || undefined,
+			labels: intakeLabelList.length ? intakeLabelList : undefined,
+			assignee: form.intakeAssignee.trim() || undefined,
+			limit: Number.isFinite(limit) && limit > 0 ? limit : undefined,
+		};
+		return blankToUndefined(next);
+	};
 
 	const mutation = useMutation({
 		mutationFn: async () => {
@@ -95,6 +123,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 					permissions: form.permissions || undefined,
 				}),
 				reviewers: form.reviewerHarness ? [{ harness: form.reviewerHarness }] : undefined,
+				trackerIntake: buildIntake(),
 			};
 			const { error } = await apiClient.PUT("/api/v1/projects/{id}/config", {
 				params: { path: { id: projectId } },
@@ -118,6 +147,10 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				setSavedAt(null);
 				if (missingRequiredAgent) {
 					setValidationError("Worker and orchestrator agents are required.");
+					return;
+				}
+				if (intakeNeedsRule) {
+					setValidationError("Enabling intake requires at least one label or assignee.");
 					return;
 				}
 				setValidationError(null);
@@ -219,6 +252,74 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				</CardContent>
 			</Card>
 
+			<Card>
+				<CardHeader>
+					<CardTitle className="text-[13px]">Tracker intake</CardTitle>
+				</CardHeader>
+				<CardContent className="flex flex-col gap-4">
+					<p className="text-[12px] leading-5 text-muted-foreground">
+						Auto-spawn worker sessions from matching tracker issues. Read-only toward the tracker: matching issues spawn
+						sessions; the tracker is not commented on or transitioned.
+					</p>
+					<label className="flex items-center gap-2.5 text-[13px] text-foreground">
+						<input
+							type="checkbox"
+							className="h-4 w-4 accent-accent"
+							checked={form.intakeEnabled}
+							onChange={(e) => setForm((f) => ({ ...f, intakeEnabled: e.target.checked }))}
+						/>
+						Enable issue intake
+					</label>
+					{form.intakeEnabled && (
+						<>
+							<Field label="Repository" htmlFor="intakeRepo">
+								<input
+									id="intakeRepo"
+									className="h-8 w-full rounded-md border border-input bg-transparent px-2.5 text-[13px] text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
+									value={form.intakeRepo}
+									onChange={(e) => setForm((f) => ({ ...f, intakeRepo: e.target.value }))}
+									placeholder="owner/repo (defaults to git origin)"
+								/>
+							</Field>
+							<Field label="Labels" htmlFor="intakeLabels">
+								<input
+									id="intakeLabels"
+									className="h-8 w-full rounded-md border border-input bg-transparent px-2.5 text-[13px] text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
+									value={form.intakeLabels}
+									onChange={(e) => setForm((f) => ({ ...f, intakeLabels: e.target.value }))}
+									placeholder="comma-separated, e.g. agent-ready, bug"
+								/>
+							</Field>
+							<Field label="Assignee" htmlFor="intakeAssignee">
+								<input
+									id="intakeAssignee"
+									className="h-8 w-full rounded-md border border-input bg-transparent px-2.5 text-[13px] text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
+									value={form.intakeAssignee}
+									onChange={(e) => setForm((f) => ({ ...f, intakeAssignee: e.target.value }))}
+									placeholder="github login, or * for any"
+								/>
+							</Field>
+							<Field label="Per-poll limit" htmlFor="intakeLimit">
+								<input
+									id="intakeLimit"
+									type="number"
+									min={0}
+									className="h-8 w-full rounded-md border border-input bg-transparent px-2.5 text-[13px] text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
+									value={form.intakeLimit}
+									onChange={(e) => setForm((f) => ({ ...f, intakeLimit: e.target.value }))}
+									placeholder="(adapter default)"
+								/>
+							</Field>
+							{intakeNeedsRule && (
+								<p className="text-[12px] leading-5 text-error">
+									Enabling intake requires at least one label or assignee.
+								</p>
+							)}
+						</>
+					)}
+				</CardContent>
+			</Card>
+
 			<div className="flex items-center gap-3">
 				<Button type="submit" variant="primary" disabled={mutation.isPending}>
 					{mutation.isPending ? "Saving…" : "Save changes"}
@@ -313,4 +414,13 @@ function CenteredNote({ children }: { children: React.ReactNode }) {
 // rather than an empty {} the daemon would persist.
 function blankToUndefined<T extends object>(obj: T): T | undefined {
 	return Object.values(obj).some((v) => v !== undefined) ? obj : undefined;
+}
+
+// Split the comma-separated labels field into the daemon's string[], trimming
+// each entry and dropping blanks so a trailing comma never sends an empty label.
+function parseLabels(value: string): string[] {
+	return value
+		.split(",")
+		.map((label) => label.trim())
+		.filter((label) => label.length > 0);
 }

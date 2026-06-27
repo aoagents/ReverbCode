@@ -274,6 +274,14 @@ function SessionCard({ session, onOpen }: { session: WorkspaceSession; onOpen: (
 					<span className={cn("h-[7px] w-[7px] rounded-full bg-current")} />
 					{badge.label}
 				</span>
+				{session.issueId && (
+					<span
+						className="inline-flex max-w-[13rem] items-center truncate rounded-[4px] bg-[color-mix(in_srgb,var(--accent)_12%,transparent)] px-1.5 py-0.5 font-mono text-[10px] text-accent"
+						title={`Intake issue: ${session.issueId}`}
+					>
+						{session.issueId}
+					</span>
+				)}
 				<span className="ml-auto shrink-0 font-mono text-[10.5px] tracking-[0.04em] text-passive">
 					{agentLabel(session.provider)}
 				</span>

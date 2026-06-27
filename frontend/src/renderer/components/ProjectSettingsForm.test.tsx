@@ -200,4 +200,121 @@ describe("ProjectSettingsForm", () => {
 		expect(await screen.findAllByText("Worker and orchestrator agents are required.")).toHaveLength(2);
 		expect(putMock).not.toHaveBeenCalled();
 	});
+
+	it("enables tracker intake and saves a structured rule from the form", async () => {
+		getMock.mockResolvedValue({
+			data: {
+				status: "ok",
+				project: {
+					id: "proj-1",
+					name: "Project One",
+					kind: "single_repo",
+					path: "/repo/project-one",
+					repo: "git@github.com:acme/project-one.git",
+					defaultBranch: "main",
+					config: {
+						worker: { agent: "codex" },
+						orchestrator: { agent: "claude-code" },
+					},
+				},
+			},
+			error: undefined,
+		});
+
+		renderSettings();
+
+		await userEvent.click(await screen.findByLabelText("Enable issue intake"));
+		await userEvent.type(screen.getByLabelText("Labels"), "agent-ready, bug");
+		await userEvent.type(screen.getByLabelText("Per-poll limit"), "5");
+
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		const body = putMock.mock.calls[0][1].body.config;
+		expect(body.trackerIntake).toEqual({
+			enabled: true,
+			provider: "github",
+			labels: ["agent-ready", "bug"],
+			limit: 5,
+		});
+	});
+
+	it("loads an existing tracker intake rule and preserves it on save", async () => {
+		getMock.mockResolvedValue({
+			data: {
+				status: "ok",
+				project: {
+					id: "proj-1",
+					name: "Project One",
+					kind: "single_repo",
+					path: "/repo/project-one",
+					repo: "git@github.com:acme/project-one.git",
+					defaultBranch: "main",
+					config: {
+						worker: { agent: "codex" },
+						orchestrator: { agent: "claude-code" },
+						trackerIntake: {
+							enabled: true,
+							provider: "github",
+							repo: "acme/project-one",
+							labels: ["agent-ready", "bug"],
+							assignee: "alice",
+							limit: 7,
+						},
+					},
+				},
+			},
+			error: undefined,
+		});
+
+		renderSettings();
+
+		expect(await screen.findByLabelText("Enable issue intake")).toBeChecked();
+		expect(screen.getByLabelText("Repository")).toHaveValue("acme/project-one");
+		expect(screen.getByLabelText("Labels")).toHaveValue("agent-ready, bug");
+		expect(screen.getByLabelText("Assignee")).toHaveValue("alice");
+		expect(screen.getByLabelText("Per-poll limit")).toHaveValue(7);
+
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		const body = putMock.mock.calls[0][1].body.config;
+		expect(body.trackerIntake).toEqual({
+			enabled: true,
+			provider: "github",
+			repo: "acme/project-one",
+			labels: ["agent-ready", "bug"],
+			assignee: "alice",
+			limit: 7,
+		});
+	});
+
+	it("blocks saving when intake is enabled without a label or assignee", async () => {
+		getMock.mockResolvedValue({
+			data: {
+				status: "ok",
+				project: {
+					id: "proj-1",
+					name: "Project One",
+					kind: "single_repo",
+					path: "/repo/project-one",
+					repo: "",
+					defaultBranch: "main",
+					config: {
+						worker: { agent: "codex" },
+						orchestrator: { agent: "claude-code" },
+					},
+				},
+			},
+			error: undefined,
+		});
+
+		renderSettings();
+
+		await userEvent.click(await screen.findByLabelText("Enable issue intake"));
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		expect(await screen.findAllByText("Enabling intake requires at least one label or assignee.")).not.toHaveLength(0);
+		expect(putMock).not.toHaveBeenCalled();
+	});
 });

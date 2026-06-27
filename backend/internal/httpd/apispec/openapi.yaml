@@ -1828,6 +1828,8 @@ components:
           items:
             type: string
           type: array
+        trackerIntake:
+          $ref: '#/components/schemas/TrackerIntakeConfig'
         worker:
           $ref: '#/components/schemas/RoleOverride'
       type: object
@@ -2402,6 +2404,25 @@ components:
       - verdict
       - body
       - githubReviewId
+      type: object
+    TrackerIntakeConfig:
+      properties:
+        assignee:
+          type: string
+        enabled:
+          type: boolean
+        labels:
+          items:
+            type: string
+          type: array
+        limit:
+          type: integer
+        provider:
+          enum:
+          - github
+          type: string
+        repo:
+          type: string
       type: object
     WorkspaceRepo:
       properties:
