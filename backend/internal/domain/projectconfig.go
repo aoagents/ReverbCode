@@ -14,9 +14,8 @@ import (
 //
 // Only fields with a live consumer are modeled: DefaultBranch, Env, Symlinks,
 // PostCreate, AgentConfig, and the role overrides are consumed at spawn;
-// SessionPrefix feeds the display prefix. Settings whose consumers do not yet
-// exist (tracker/SCM per-project config, prompt rules) are intentionally absent
-// and land in focused follow-up PRs alongside the code that reads them.
+// SessionPrefix feeds the display prefix. TrackerIntake feeds the background
+// issue-intake loop.
 type ProjectConfig struct {
 	// DefaultBranch is the base branch new session worktrees are created from.
 	DefaultBranch string `json:"defaultBranch,omitempty"`
@@ -41,6 +40,32 @@ type ProjectConfig struct {
 	// triggered. It is configured independently of the Worker override; an empty
 	// list falls back to the worker's own harness (see ResolveReviewerHarness).
 	Reviewers []ReviewerConfig `json:"reviewers,omitempty"`
+
+	// TrackerIntake controls issue-driven worker spawning. It is opt-in and
+	// read-only toward the tracker in v1: matching issues spawn sessions, but the
+	// tracker is not commented on or transitioned.
+	TrackerIntake TrackerIntakeConfig `json:"trackerIntake,omitempty"`
+}
+
+// TrackerIntakeConfig controls the first issue-intake slice for a project.
+// Enabled requires at least one explicit eligibility rule so turning intake on
+// cannot accidentally drain an entire issue backlog.
+type TrackerIntakeConfig struct {
+	Enabled bool `json:"enabled,omitempty"`
+	// Provider defaults to github when Enabled is true.
+	Provider TrackerProvider `json:"provider,omitempty" enum:"github"`
+	// Repo is the provider-native repository key ("owner/repo" for GitHub). When
+	// empty, the intake loop derives it from the project's repo origin URL.
+	Repo string `json:"repo,omitempty"`
+	// Labels narrows eligible issues. All labels are forwarded to the provider's
+	// list filter; providers decide whether the match is all-of or provider-native.
+	Labels []string `json:"labels,omitempty"`
+	// Assignee narrows eligible issues to one assignee. Provider-specific values
+	// such as "*" are passed through unchanged.
+	Assignee string `json:"assignee,omitempty"`
+	// Limit caps the number of issues fetched per poll. Zero lets the adapter use
+	// its default.
+	Limit int `json:"limit,omitempty"`
 }
 
 // ReviewerConfig names one reviewer agent by harness. The harness is drawn from
@@ -92,6 +117,7 @@ func (c ProjectConfig) WithDefaults() ProjectConfig {
 	if c.DefaultBranch == "" {
 		c.DefaultBranch = def.DefaultBranch
 	}
+	c.TrackerIntake = c.TrackerIntake.WithDefaults()
 	return c
 }
 
@@ -127,6 +153,58 @@ func (c ProjectConfig) Validate() error {
 		if !rv.Harness.IsKnown() {
 			return fmt.Errorf("reviewers[%d].harness: unknown harness %q", i, rv.Harness)
 		}
+	}
+	if err := c.TrackerIntake.Validate(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// WithDefaults fills the provider only when intake is enabled. Disabled intake
+// leaves the zero value untouched so empty project configs still store as NULL.
+func (c TrackerIntakeConfig) WithDefaults() TrackerIntakeConfig {
+	if c.Enabled && c.Provider == "" {
+		c.Provider = TrackerProviderGitHub
+	}
+	return c
+}
+
+// Validate rejects accidental broad intake and unknown providers.
+func (c TrackerIntakeConfig) Validate() error {
+	if !c.Enabled {
+		return nil
+	}
+	c = c.WithDefaults()
+	if c.Provider != TrackerProviderGitHub {
+		return fmt.Errorf("trackerIntake.provider: unknown provider %q", c.Provider)
+	}
+	repo := strings.TrimSpace(c.Repo)
+	if repo != c.Repo {
+		return fmt.Errorf("trackerIntake.repo: must be provider-native without surrounding whitespace")
+	}
+	if repo != "" && strings.ContainsAny(repo, " \t\r\n") {
+		return fmt.Errorf("trackerIntake.repo: must be provider-native without whitespace")
+	}
+	hasLabel := false
+	for i, label := range c.Labels {
+		trimmed := strings.TrimSpace(label)
+		if trimmed == "" {
+			return fmt.Errorf("trackerIntake.labels[%d]: must not be empty", i)
+		}
+		if trimmed != label {
+			return fmt.Errorf("trackerIntake.labels[%d]: must not contain surrounding whitespace", i)
+		}
+		hasLabel = true
+	}
+	assignee := strings.TrimSpace(c.Assignee)
+	if assignee != c.Assignee {
+		return fmt.Errorf("trackerIntake.assignee: must not contain surrounding whitespace")
+	}
+	if !hasLabel && assignee == "" {
+		return fmt.Errorf("trackerIntake: enabled intake requires at least one label or assignee rule")
+	}
+	if c.Limit < 0 {
+		return fmt.Errorf("trackerIntake.limit: must be non-negative")
 	}
 	return nil
 }
