@@ -63,9 +63,9 @@
     "zod": "3.24.4"
   },
   "scripts": {
-    "start": "craco start",
-    "build": "craco build",
-    "test": "craco test",
+    "start": "npm --prefix docs-app run dev",
+    "build": "npm --prefix docs-app run build",
+    "test": "npm --prefix docs-app run build",
     "docs:dev": "npm --prefix docs-app run dev",
     "docs:build": "npm --prefix docs-app run build",
     "docs:start": "npm --prefix docs-app run start"
