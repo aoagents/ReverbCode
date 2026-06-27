@@ -1,5 +1,6 @@
 import React from "react";
 import { Github } from "lucide-react";
+import { docsUrl } from "@/lib/docs-url";
 
 const LOGO_URL = "https://customer-assets.emergentagent.com/job_orchestrator-hub-21/artifacts/buzj94q2_ao-logo.svg";
 
@@ -41,8 +42,8 @@ export default function Footer() {
             title="Resources"
             links={[
               { label: "GitHub", href: "https://github.com/AgentWrapper/agent-orchestrator" },
-              { label: "Architecture docs", href: "/docs/architecture" },
-              { label: "CLI reference", href: "/docs/cli" },
+              { label: "Architecture docs", href: docsUrl("architecture") },
+              { label: "CLI reference", href: docsUrl("cli") },
               { label: "Releases", href: "https://github.com/AgentWrapper/agent-orchestrator/releases" },
             ]}
           />

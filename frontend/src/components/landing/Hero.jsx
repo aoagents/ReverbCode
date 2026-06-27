@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { ArrowRight, Github, BookOpen, Star, GitFork, Users } from "lucide-react";
 import { motion } from "framer-motion";
+import { docsUrl } from "@/lib/docs-url";
 
 const scripts = [
   {
@@ -211,7 +212,7 @@ export default function Hero() {
                 <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-0.5" />
               </a>
               <a
-                href="/docs"
+                href={docsUrl()}
                 data-testid="hero-secondary-cta"
                 className="inline-flex items-center gap-2 bg-[color:var(--bg-card)] text-[color:var(--fg)] font-semibold text-[14px] px-5 py-3 rounded-lg border border-[color:var(--border-strong)] hover:bg-[color:var(--bg-card-hover)] transition-colors"
               >

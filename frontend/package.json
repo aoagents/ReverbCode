@@ -65,7 +65,10 @@
   "scripts": {
     "start": "craco start",
     "build": "craco build",
-    "test": "craco test"
+    "test": "craco test",
+    "docs:dev": "npm --prefix docs-app run dev",
+    "docs:build": "npm --prefix docs-app run build",
+    "docs:start": "npm --prefix docs-app run start"
   },
   "browserslist": {
     "production": [
