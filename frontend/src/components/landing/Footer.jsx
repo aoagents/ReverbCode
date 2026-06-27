@@ -2,7 +2,7 @@ import React from "react";
 import { Github } from "lucide-react";
 import { docsUrl } from "@/lib/docs-url";
 
-const LOGO_URL = "https://customer-assets.emergentagent.com/job_orchestrator-hub-21/artifacts/buzj94q2_ao-logo.svg";
+const LOGO_URL = "/ao-logo.png";
 
 export default function Footer() {
   return (
@@ -13,13 +13,13 @@ export default function Footer() {
       <div className="container-page py-16">
         <div className="grid md:grid-cols-12 gap-10">
           <div className="md:col-span-5">
-            <div className="flex items-center gap-2.5 mb-4">
+            <div className="inline-flex h-10 items-center gap-2.5 mb-4">
               <img
                 src={LOGO_URL}
                 alt="Agent Orchestrator"
-                className="w-10 h-10 object-contain"
+                className="block h-10 w-10 shrink-0 object-contain"
               />
-              <span className="font-display font-bold text-lg tracking-tight text-[color:var(--fg)]">
+              <span className="font-display font-bold text-lg leading-none tracking-tight text-[color:var(--fg)]">
                 Agent Orchestrator
               </span>
             </div>

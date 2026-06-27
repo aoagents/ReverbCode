@@ -1,24 +1,46 @@
 import React from "react";
 
-const row1 = [
-  "Claude Code", "Codex", "Cursor", "OpenCode", "Aider", "Amp",
-  "Goose", "Copilot", "Grok", "Qwen", "Kimi",
-];
-const row2 = [
-  "Crush", "Cline", "Droid", "Devin", "Auggie", "Continue", "Kiro", "Kilocode",
-  "Roo", "Plandex", "Sweep", "Tabby",
+const agents = [
+  {
+    name: "Claude Code",
+    src: "/docs/logos/claude-code.svg",
+    alt: "Claude Code",
+    className: "h-7 sm:h-8 lg:h-10",
+  },
+  {
+    name: "Codex",
+    src: "/docs/logos/codex.svg",
+    alt: "Codex",
+    className: "h-7 sm:h-8 lg:h-10 rounded-md",
+  },
+  {
+    name: "Cursor",
+    src: "/docs/logos/cursor.svg",
+    alt: "Cursor",
+    className: "h-7 sm:h-8 lg:h-10",
+  },
+  {
+    name: "Aider",
+    src: "/docs/logos/aider.png",
+    alt: "Aider",
+    className: "h-6 sm:h-7 lg:h-8",
+  },
+  {
+    name: "OpenCode",
+    src: "/docs/logos/opencode.svg",
+    alt: "OpenCode",
+    className: "h-7 sm:h-8 lg:h-10",
+  },
 ];
 
 export default function AgentsMarquee() {
-  const r1 = [...row1, ...row1];
-  const r2 = [...row2, ...row2];
   return (
     <section
       id="agents"
       data-testid="agents-marquee"
       className="relative border-y border-[color:var(--border)] bg-[color:var(--bg-deep)] overflow-hidden"
     >
-      <div className="container-page py-12 flex flex-wrap items-baseline gap-5 justify-between">
+      <div className="container-page py-7 flex flex-wrap items-baseline gap-5 justify-between">
         <div className="flex items-baseline gap-4">
           <span className="serial-num text-xs font-mono">01 - coverage</span>
           <h2 className="font-display font-bold text-2xl sm:text-3xl tracking-tight leading-none text-[color:var(--fg)]">
@@ -31,15 +53,10 @@ export default function AgentsMarquee() {
         </p>
       </div>
 
-      <div className="relative space-y-3 pb-12">
-        <div className="marquee-track">
-          {r1.map((a, i) => (
-            <AgentChip key={`a-${i}`} name={a} />
-          ))}
-        </div>
-        <div className="marquee-track marquee-track-reverse marquee-track-slow">
-          {r2.map((a, i) => (
-            <AgentChip key={`b-${i}`} name={a} />
+      <div className="container-page pb-6">
+        <div className="mx-auto grid max-w-2xl grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-x-0 gap-y-4 items-end justify-items-center">
+          {agents.map((agent) => (
+            <AgentLogo key={agent.name} agent={agent} />
           ))}
         </div>
       </div>
@@ -53,12 +70,19 @@ export default function AgentsMarquee() {
   );
 }
 
-function AgentChip({ name }) {
+function AgentLogo({ agent }) {
   return (
-    <div className="mx-1.5 inline-flex items-center gap-2 px-4 py-2 rounded-full border border-[color:var(--border-strong)] bg-[color:var(--bg-card)] hover:border-[color:var(--accent)] hover:bg-[color:var(--accent-soft)] transition-colors whitespace-nowrap">
-      <span className="w-1.5 h-1.5 rounded-full bg-[color:var(--accent)]" />
-      <span className="font-mono text-[12px] font-medium text-[color:var(--fg)]">{name}</span>
-      <span className="font-mono text-[10px] text-[color:var(--fg-dim)]">/adapter</span>
+    <div className="group flex min-h-[60px] w-full flex-col items-center justify-end gap-2">
+      <div className="flex h-9 sm:h-10 lg:h-11 items-end justify-center">
+        <img
+          src={agent.src}
+          alt={agent.alt}
+          className={`${agent.className} max-w-[56px] object-contain transition-transform duration-300 group-hover:-translate-y-0.5`}
+        />
+      </div>
+      <div className="font-mono text-[14px] sm:text-[16px] lg:text-[18px] leading-none tracking-[0.06em] text-[color:var(--fg-dim)]">
+        {agent.name}
+      </div>
     </div>
   );
 }

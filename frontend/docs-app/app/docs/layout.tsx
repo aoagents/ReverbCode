@@ -82,16 +82,16 @@ export default function Layout({ children }: { children: ReactNode }) {
 				links={links}
 				nav={{
 					title: (
-						<span className="flex items-center gap-2 font-semibold">
+						<span className="inline-flex h-[22px] items-center gap-2 font-semibold">
 							<Image
 								src="/ao-logo.png"
 								alt=""
 								aria-hidden
 								width={22}
 								height={22}
-								className="h-[22px] w-[22px] rounded-[5px] object-cover"
+								className="block h-[22px] w-[22px] shrink-0 rounded-[5px] object-cover"
 							/>
-							<span className="text-[var(--color-text-primary)]">AO</span>
+							<span className="leading-none text-[var(--color-text-primary)]">AO</span>
 						</span>
 					),
 				}}

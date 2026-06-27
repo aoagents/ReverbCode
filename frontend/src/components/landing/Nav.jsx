@@ -2,7 +2,7 @@ import React from "react";
 import { Menu, X, ArrowUpRight, Github, Moon, Sun } from "lucide-react";
 import { motion } from "framer-motion";
 
-const LOGO_URL = "https://customer-assets.emergentagent.com/job_orchestrator-hub-21/artifacts/buzj94q2_ao-logo.svg";
+const LOGO_URL = "/ao-logo.png";
 
 const navItems = [
   { label: "Features", href: "#features" },
@@ -33,13 +33,13 @@ export default function Nav() {
       className="sticky top-0 z-40 bg-[color:var(--nav-bg)] backdrop-blur-xl border-b border-[color:var(--border)]"
     >
       <div className="container-page h-16 flex items-center justify-between">
-        <a href="#top" data-testid="nav-logo" className="flex items-center gap-2.5 group">
+        <a href="#top" data-testid="nav-logo" className="inline-flex h-10 items-center gap-2.5 group">
           <img
             src={LOGO_URL}
             alt="Agent Orchestrator"
-            className="w-10 h-10 object-contain"
+            className="block h-10 w-10 shrink-0 object-contain"
           />
-          <span className="font-display font-bold text-[15px] tracking-tight text-[color:var(--fg)]">
+          <span className="font-display font-bold text-[15px] leading-none tracking-tight text-[color:var(--fg)]">
             Agent Orchestrator
           </span>
         </a>
