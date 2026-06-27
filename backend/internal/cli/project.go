@@ -85,18 +85,29 @@ type roleOverride struct {
 	AgentConfig agentConfig `json:"agentConfig,omitempty"`
 }
 
+// trackerIntakeConfig mirrors domain.TrackerIntakeConfig.
+type trackerIntakeConfig struct {
+	Enabled  bool     `json:"enabled,omitempty"`
+	Provider string   `json:"provider,omitempty"`
+	Repo     string   `json:"repo,omitempty"`
+	Labels   []string `json:"labels,omitempty"`
+	Assignee string   `json:"assignee,omitempty"`
+	Limit    int      `json:"limit,omitempty"`
+}
+
 // projectConfig mirrors the daemon's typed domain.ProjectConfig for the CLI
 // client. The CLI sets common fields via flags and the whole object via
 // --config-json.
 type projectConfig struct {
-	DefaultBranch string            `json:"defaultBranch,omitempty"`
-	SessionPrefix string            `json:"sessionPrefix,omitempty"`
-	Env           map[string]string `json:"env,omitempty"`
-	Symlinks      []string          `json:"symlinks,omitempty"`
-	PostCreate    []string          `json:"postCreate,omitempty"`
-	AgentConfig   agentConfig       `json:"agentConfig,omitempty"`
-	Worker        roleOverride      `json:"worker,omitempty"`
-	Orchestrator  roleOverride      `json:"orchestrator,omitempty"`
+	DefaultBranch string              `json:"defaultBranch,omitempty"`
+	SessionPrefix string              `json:"sessionPrefix,omitempty"`
+	Env           map[string]string   `json:"env,omitempty"`
+	Symlinks      []string            `json:"symlinks,omitempty"`
+	PostCreate    []string            `json:"postCreate,omitempty"`
+	AgentConfig   agentConfig         `json:"agentConfig,omitempty"`
+	Worker        roleOverride        `json:"worker,omitempty"`
+	Orchestrator  roleOverride        `json:"orchestrator,omitempty"`
+	TrackerIntake trackerIntakeConfig `json:"trackerIntake,omitempty"`
 }
 
 // setConfigRequest mirrors the daemon's SetConfigInput body for

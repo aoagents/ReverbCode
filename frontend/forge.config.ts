@@ -1,5 +1,6 @@
 import type { ForgeConfig } from "@electron-forge/shared-types";
 import { VitePlugin } from "@electron-forge/plugin-vite";
+import type { NotaryToolCredentials } from "@electron/notarize/lib/types";
 import MakerNSIS from "./makers/maker-nsis";
 
 const config: ForgeConfig = {
@@ -28,9 +29,8 @@ const config: ForgeConfig = {
 				: undefined,
 		osxNotarize: process.env.AO_NOTARY_PROFILE
 			? ({
-					tool: "notarytool",
 					keychainProfile: process.env.AO_NOTARY_PROFILE,
-				} as unknown as ForgeConfig["packagerConfig"]["osxNotarize"])
+				} satisfies NotaryToolCredentials)
 			: process.env.APPLE_ID
 				? {
 						appleId: process.env.APPLE_ID,
