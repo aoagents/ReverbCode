@@ -258,8 +258,8 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				</CardHeader>
 				<CardContent className="flex flex-col gap-4">
 					<p className="text-[12px] leading-5 text-muted-foreground">
-						Auto-spawn worker sessions from matching tracker issues. Read-only toward the tracker: matching
-						issues spawn sessions; the tracker is not commented on or transitioned.
+						Auto-spawn worker sessions from matching tracker issues. Read-only toward the tracker: matching issues spawn
+						sessions; the tracker is not commented on or transitioned.
 					</p>
 					<label className="flex items-center gap-2.5 text-[13px] text-foreground">
 						<input

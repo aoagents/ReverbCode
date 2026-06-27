@@ -314,9 +314,7 @@ describe("ProjectSettingsForm", () => {
 		await userEvent.click(await screen.findByLabelText("Enable issue intake"));
 		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
-		expect(
-			await screen.findAllByText("Enabling intake requires at least one label or assignee."),
-		).not.toHaveLength(0);
+		expect(await screen.findAllByText("Enabling intake requires at least one label or assignee.")).not.toHaveLength(0);
 		expect(putMock).not.toHaveBeenCalled();
 	});
 });

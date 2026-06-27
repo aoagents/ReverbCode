@@ -151,9 +151,7 @@ describe("SessionInspector tabs", () => {
 	});
 
 	it("shows the intake issue id in the summary overview when present", () => {
-		renderWithQuery(
-			<SessionInspector session={{ ...session([]), issueId: "github:acme/project-one#42" }} />,
-		);
+		renderWithQuery(<SessionInspector session={{ ...session([]), issueId: "github:acme/project-one#42" }} />);
 
 		expect(screen.getByText("Issue")).toBeInTheDocument();
 		expect(screen.getByText("github:acme/project-one#42")).toBeInTheDocument();
