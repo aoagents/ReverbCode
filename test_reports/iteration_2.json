@@ -1,0 +1,25 @@
+{
+  "summary": "Frontend-only smoke + functional test of the rebuilt ReverbCode editorial-brutalist landing page. All 39 expected data-testids are present. Navigation, anchor scrolling, hero CTAs, demo tabs/typewriter/copy, architecture diagram, testimonials, stats, footer, and mobile nav toggle all work. Zero console errors on initial load and after demo interactions. No actual horizontal scroll on the page (body has overflow-x:hidden); large scrollWidth values originate from the intentional ticker/marquee tracks, which is explicitly allowed by the spec.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Hero AgentPane appears to use a rolling buffer (text length oscillated 192 -> 115 between samples). The PRD wording says 'text content grows over time as new lines are added'. Current implementation does animate (new lines append) but also trims oldest lines so total visible length is not monotonically increasing. This matches a terminal feed UX and is acceptable, but worth confirming with the user.",
+    "Architecture diagram renders 2 SVG nodes inside [data-testid='architecture-diagram'] (pulse wires + structure). All 6 port labels (Agent/Runtime/Workspace/SCM/Tracker/Reviewer) and both clients (ao CLI, Electron) are present in the DOM.",
+    "Nav contains 7 anchors (logo + 4 section links + 2 GitHub CTAs). The 4 section links text-match exactly '01. MANIFESTO', '02. THE KIT', '03. INNARDS', '04. GET IT' as specified.",
+    "Mobile (390px): nav-mobile-toggle is visible and opens a panel that exposes the 4 section nav links + 3 extra (logo + 2 CTAs).",
+    "All external CTAs (hero-primary-cta, hero-secondary-cta, cta-github-btn, cta-docs-btn, footer-github-link) have target=_blank and point to github.com/AgentWrapper/agent-orchestrator (and docs subpaths) as expected.",
+    "Demo: clicking demo-tab-spawn after install had typed 319 chars resets the code block to 7 chars and re-types, confirming typewriter restarts on tab switch. demo-copy-btn copies 417-char joined code to clipboard."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (not in scope)", "frontend": "100%"},
+  "seed_data_creation": "none",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Landing is static, no backend calls. body has overflow-x:hidden so document.scrollWidth being larger than innerWidth is expected (caused by .ticker-track and .agents-marquee tracks). Verify horizontal overflow only via window.scrollX after a scrollTo, not via scrollWidth alone. All testids confirmed: ticker-bar, site-nav, hero-section, hero-primary-cta, hero-secondary-cta, fleet-pane-0..3, agents-marquee, features-grid, feature-article-01..05, how-it-works, step-01..04, architecture-diagram, live-demo-terminal, demo-tab-install/spawn/ci, demo-code-block, demo-copy-btn, social-proof, testimonial-0..3, cta-section, cta-github-btn, cta-docs-btn, footer, footer-github-link, nav-mobile-toggle."
+}
