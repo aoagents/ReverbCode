@@ -22,11 +22,13 @@
 ### Task 1: Typed error for un-resumable restore (fixes the 500)
 
 **Files:**
+
 - Modify: `backend/internal/session_manager/manager.go` (sentinel near line 25; the "nothing to resume from" return at line 480)
 - Modify: `backend/internal/service/session/service.go` (`toAPIError`, near line 450)
 - Test: `backend/internal/service/session/service_test.go` (new test for the mapping)
 
 **Interfaces:**
+
 - Produces: `sessionmanager.ErrNotResumable` (a sentinel `error`), and the wire contract `409` with code `SESSION_NOT_RESUMABLE` from `POST /api/v1/sessions/{id}/restore` when a terminated session has neither `agent_session_id` nor `prompt`. Task 2 (frontend) consumes the `SESSION_NOT_RESUMABLE` code.
 
 - [ ] **Step 1: Write the failing test**
@@ -117,12 +119,14 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ### Task 2: Restore-unavailable popup + recreate via existing orchestrator endpoint
 
 **Files:**
+
 - Modify: `frontend/src/renderer/lib/spawn-orchestrator.ts` (optional `clean` param)
 - Create: `frontend/src/renderer/components/RestoreUnavailableDialog.tsx` (the popup)
 - Modify: `frontend/src/renderer/components/TerminalPane.tsx` (route `SESSION_NOT_RESUMABLE` to the dialog)
 - Test: `frontend/src/renderer/lib/spawn-orchestrator.test.ts` (new; clean param)
 
 **Interfaces:**
+
 - Consumes from Task 1: the restore response error envelope `{ code: "SESSION_NOT_RESUMABLE", message, ... }`.
 - Consumes existing: `spawnOrchestrator(projectId, clean?)` (extended here), `isOrchestrator(session)` from `frontend/src/renderer/types/workspace.ts`, `apiClient`/`apiErrorMessage` from `lib/api-client`, `workspaceQueryKey` already imported in `TerminalPane.tsx`.
 - Produces: `RestoreUnavailableDialog` React component with props `{ open: boolean; session: SessionView; onOpenChange: (open: boolean) => void; onRecreated: (newOrchestratorId: string) => void }`.
@@ -251,9 +255,7 @@ export function RestoreUnavailableDialog({ open, session, onOpenChange, onRecrea
 			<Dialog.Portal>
 				<Dialog.Overlay className="fixed inset-0 z-50 bg-black/50" />
 				<Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[420px] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-surface p-5 shadow-lg">
-					<Dialog.Title className="text-sm font-medium text-foreground">
-						Session can no longer be restored
-					</Dialog.Title>
+					<Dialog.Title className="text-sm font-medium text-foreground">Session can no longer be restored</Dialog.Title>
 					<Dialog.Description className="mt-2 text-[13px] text-muted-foreground">
 						{orchestrator
 							? "This orchestrator has no saved agent session to resume. You can create a new orchestrator on the same branch; its committed work is preserved and the old worktree is cleaned."
@@ -287,45 +289,47 @@ In `frontend/src/renderer/components/TerminalPane.tsx`, add state and a dialog m
 Add state near the other `useState` hooks in `AttachedTerminal`:
 
 ```tsx
-	const [restoreUnavailable, setRestoreUnavailable] = useState(false);
+const [restoreUnavailable, setRestoreUnavailable] = useState(false);
 ```
 
 Replace the `catch`/error handling inside `restoreSession` so a `SESSION_NOT_RESUMABLE` code opens the dialog instead of setting the inline error. The `restoreError` returned by `apiClient.POST` is the parsed error envelope, so read its `code`:
 
 ```tsx
-		try {
-			const { error: restoreError } = await apiClient.POST("/api/v1/sessions/{sessionId}/restore", {
-				params: { path: { sessionId: session.id } },
-			});
-			if (restoreError) {
-				const code = (restoreError as { code?: string }).code;
-				if (code === "SESSION_NOT_RESUMABLE") {
-					setRestoreUnavailable(true);
-					return;
-				}
-				throw new Error(apiErrorMessage(restoreError, "Unable to restore session"));
-			}
-			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
-		} catch (err) {
-			setRestoreError(err instanceof Error ? err.message : "Unable to restore session");
-		} finally {
-			setIsRestoring(false);
+try {
+	const { error: restoreError } = await apiClient.POST("/api/v1/sessions/{sessionId}/restore", {
+		params: { path: { sessionId: session.id } },
+	});
+	if (restoreError) {
+		const code = (restoreError as { code?: string }).code;
+		if (code === "SESSION_NOT_RESUMABLE") {
+			setRestoreUnavailable(true);
+			return;
 		}
+		throw new Error(apiErrorMessage(restoreError, "Unable to restore session"));
+	}
+	await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+} catch (err) {
+	setRestoreError(err instanceof Error ? err.message : "Unable to restore session");
+} finally {
+	setIsRestoring(false);
+}
 ```
 
 Mount the dialog inside the component's returned JSX (e.g. just before the closing tag of the root `div` in `AttachedTerminal`, alongside the other absolutely-positioned children):
 
 ```tsx
-			{session && (
-				<RestoreUnavailableDialog
-					open={restoreUnavailable}
-					session={session}
-					onOpenChange={setRestoreUnavailable}
-					onRecreated={async () => {
-						await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
-					}}
-				/>
-			)}
+{
+	session && (
+		<RestoreUnavailableDialog
+			open={restoreUnavailable}
+			session={session}
+			onOpenChange={setRestoreUnavailable}
+			onRecreated={async () => {
+				await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+			}}
+		/>
+	);
+}
 ```
 
 Add the import at the top of the file:
