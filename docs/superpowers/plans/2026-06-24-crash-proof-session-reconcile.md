@@ -35,10 +35,12 @@
 ## Task 1: Widen `runtimeController` with `IsAlive` and adopt-alive live pass
 
 **Files:**
+
 - Modify: `backend/internal/session_manager/manager.go:64-67` (interface), add methods near `manager.go:558-623`
 - Test: `backend/internal/session_manager/manager_test.go:138-152` (fake), new test fn
 
 **Interfaces:**
+
 - Consumes: `domain.SessionRecord` (`.IsTerminated`, `.Metadata.WorkspacePath`, `.Metadata.Branch`, `.Metadata.RuntimeHandleID`); `runtimeHandle(meta)` -> `ports.RuntimeHandle`; `workspaceInfo(rec)` -> `ports.WorkspaceInfo`; `m.workspace.StashUncommitted`, `m.lcm.MarkTerminated`, `m.store.ListAllSessions`.
 - Produces: `func (m *Manager) reconcileLive(ctx context.Context, rec domain.SessionRecord) error`; widened `runtimeController` with `IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool, error)`.
 
@@ -210,10 +212,12 @@ git -c user.email=dev@theharshitsingh.com commit -m "feat(session): reconcile li
 ## Task 2: Reap pass and the `Reconcile` entry point
 
 **Files:**
+
 - Modify: `backend/internal/session_manager/manager.go` (add `reconcileReap`, `Reconcile`; the latter reuses the existing `RestoreAll` body)
 - Test: `backend/internal/session_manager/manager_test.go`
 
 **Interfaces:**
+
 - Consumes: `m.store.ListAllSessions`, `m.runtime.IsAlive`, `m.runtime.Destroy`, `reconcileLive` (Task 1), the existing `RestoreAll` method (`manager.go:637`).
 - Produces: `func (m *Manager) Reconcile(ctx context.Context) error`; `func (m *Manager) reconcileReap(ctx context.Context, rec domain.SessionRecord) error`.
 
@@ -334,7 +338,7 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 }
 ```
 
-> Note: the live pass re-reads `rec.IsTerminated` from the pre-pass snapshot, so a session terminated *by* the live pass is not also reaped in the same run. That is fine: its tmux is already gone (that is why it was terminated), so reaping would be a no-op anyway.
+> Note: the live pass re-reads `rec.IsTerminated` from the pre-pass snapshot, so a session terminated _by_ the live pass is not also reaped in the same run. That is fine: its tmux is already gone (that is why it was terminated), so reaping would be a no-op anyway.
 
 - [ ] **Step 4: Run the tests, verify they pass**
 
@@ -354,11 +358,13 @@ git -c user.email=dev@theharshitsingh.com commit -m "feat(session): reconcile re
 ## Task 3: Wire `Reconcile` into daemon boot
 
 **Files:**
+
 - Modify: `backend/internal/daemon/lifecycle_wiring.go:64-67` (interface)
 - Modify: `backend/internal/daemon/daemon.go:144-149` (boot call)
 - Test: `backend/internal/daemon/wiring_test.go`
 
 **Interfaces:**
+
 - Consumes: `Manager.Reconcile` (Task 2).
 - Produces: `sessionLifecycle` interface gains `Reconcile(ctx context.Context) error`.
 
@@ -429,9 +435,11 @@ git -c user.email=dev@theharshitsingh.com commit -m "feat(daemon): run Reconcile
 ## Task 4: Integration test over the sqlite store
 
 **Files:**
+
 - Modify: `backend/internal/integration/lifecycle_sqlite_test.go`
 
 **Interfaces:**
+
 - Consumes: the real `Manager.Reconcile`, a real sqlite store, and the test's runtime fake (find how this file already fakes the runtime; reuse it, scripting `IsAlive` per handle).
 
 - [ ] **Step 1: Read the existing integration harness**
@@ -498,10 +506,12 @@ git -c user.email=dev@theharshitsingh.com commit -m "test(integration): reconcil
 ## Task 5: Frontend wedged-orphan kill+replace branch
 
 **Files:**
+
 - Modify: `frontend/src/main.ts` (in `startDaemonInner`, around lines 457-495)
 - Test: `frontend/src/main.test.ts` or the existing main-process test file
 
 **Interfaces:**
+
 - Consumes: existing `inspectExistingDaemon`, `resolveDaemonFromPort`, `readDaemonProbe`, `killDaemon`, `parseRunFile`/`defaultRunFilePath`, `expectedDaemonPort`.
 - Produces: a pure decision helper, e.g. `function planDaemonTakeover(probe: DaemonProbe | null): "reuse" | "replace"`, unit-testable without spawning.
 
@@ -553,22 +563,26 @@ export function planDaemonTakeover(probe: DaemonProbe | null): "reuse" | "replac
 Then, in `startDaemonInner`, after the existing `inspectExistingDaemon` + `resolveDaemonFromPort` attach attempts fail (i.e. just before `spawn`), add: probe the expected port; if something answers but is unhealthy, SIGTERM the holder via the run-file PID and wait for the port to free before spawning. Concretely, before the `spawn(...)` at line 505:
 
 ```ts
-	// A process may hold the port without being a healthy daemon we can attach to
-	// (wedged orphan from a crash, or a PID-dead-but-port-held run-file). Spawning
-	// then would make the Go child collide and exit 1. Detect it and clear it.
-	const holderProbe = await readDaemonProbe(expectedDaemonPort(process.env));
-	if (planDaemonTakeover(holderProbe) === "replace" && holderProbe) {
-		const runFile = parseRunFile(await readRunFileSafe(defaultRunFilePath()));
-		if (runFile?.pid) {
+// A process may hold the port without being a healthy daemon we can attach to
+// (wedged orphan from a crash, or a PID-dead-but-port-held run-file). Spawning
+// then would make the Go child collide and exit 1. Detect it and clear it.
+const holderProbe = await readDaemonProbe(expectedDaemonPort(process.env));
+if (planDaemonTakeover(holderProbe) === "replace" && holderProbe) {
+	const runFile = parseRunFile(await readRunFileSafe(defaultRunFilePath()));
+	if (runFile?.pid) {
+		try {
+			process.kill(-runFile.pid, "SIGTERM");
+		} catch {
 			try {
-				process.kill(-runFile.pid, "SIGTERM");
+				process.kill(runFile.pid, "SIGTERM");
 			} catch {
-				try { process.kill(runFile.pid, "SIGTERM"); } catch { /* already gone */ }
+				/* already gone */
 			}
 		}
-		await waitForPortFree(expectedDaemonPort(process.env), 8_000);
-		await rmRunFileSafe(defaultRunFilePath());
 	}
+	await waitForPortFree(expectedDaemonPort(process.env), 8_000);
+	await rmRunFileSafe(defaultRunFilePath());
+}
 ```
 
 > Use the file's existing run-file read/parse helpers (`parseRunFile`, `defaultRunFilePath`). If `readRunFileSafe`/`rmRunFileSafe`/`waitForPortFree` do not exist, add small local helpers: `readRunFileSafe` wraps `fs.readFile` returning `""` on ENOENT; `rmRunFileSafe` wraps `fs.rm` ignoring ENOENT; `waitForPortFree` polls `readDaemonProbe` until it returns null or the timeout elapses. Keep each to a few lines, matching the file's existing async style.

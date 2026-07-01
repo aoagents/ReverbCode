@@ -44,7 +44,13 @@ test("buildTelemetryBootstrap returns null when no home dir is available", async
 
 test("computeLaunchUpdate flags the first ever launch and emits no return", () => {
 	const { next, outcome } = computeLaunchUpdate(null, "2026-06-29");
-	expect(outcome).toMatchObject({ isFirstLaunch: true, isReturnDay: false, returnCount: 0, isRetained: false, daysSinceInstall: 0 });
+	expect(outcome).toMatchObject({
+		isFirstLaunch: true,
+		isReturnDay: false,
+		returnCount: 0,
+		isRetained: false,
+		daysSinceInstall: 0,
+	});
 	expect(next).toEqual({ installDay: "2026-06-29", lastActiveDay: "2026-06-29", distinctActiveDays: 1 });
 });
 
@@ -59,7 +65,13 @@ test("computeLaunchUpdate ignores same-day relaunches", () => {
 test("computeLaunchUpdate counts a new calendar day as a return", () => {
 	const prev = { installDay: "2026-06-29", lastActiveDay: "2026-06-29", distinctActiveDays: 1 };
 	const { next, outcome } = computeLaunchUpdate(prev, "2026-06-30");
-	expect(outcome).toMatchObject({ isFirstLaunch: false, isReturnDay: true, returnCount: 1, isRetained: false, daysSinceInstall: 1 });
+	expect(outcome).toMatchObject({
+		isFirstLaunch: false,
+		isReturnDay: true,
+		returnCount: 1,
+		isRetained: false,
+		daysSinceInstall: 1,
+	});
 	expect(next.distinctActiveDays).toBe(2);
 });
 

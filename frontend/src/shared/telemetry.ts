@@ -59,7 +59,10 @@ function dayDiff(fromDay: string, toDay: string): number {
 // and today's date, returns the next state to persist and the funnel outcome.
 // Install day counts as the first distinct active day but is NOT a return; each
 // later distinct day increments returnCount. Retention triggers at the magic number.
-export function computeLaunchUpdate(prev: LaunchState | null, today: string): { next: LaunchState; outcome: LaunchOutcome } {
+export function computeLaunchUpdate(
+	prev: LaunchState | null,
+	today: string,
+): { next: LaunchState; outcome: LaunchOutcome } {
 	if (!prev) {
 		return {
 			next: { installDay: today, lastActiveDay: today, distinctActiveDays: 1 },
@@ -127,7 +130,11 @@ async function loadLaunchState(dataDir: string): Promise<LaunchState | null> {
 			typeof parsed.lastActiveDay === "string" &&
 			typeof parsed.distinctActiveDays === "number"
 		) {
-			return { installDay: parsed.installDay, lastActiveDay: parsed.lastActiveDay, distinctActiveDays: parsed.distinctActiveDays };
+			return {
+				installDay: parsed.installDay,
+				lastActiveDay: parsed.lastActiveDay,
+				distinctActiveDays: parsed.distinctActiveDays,
+			};
 		}
 	} catch {
 		// Missing or unreadable file means this is treated as the first launch.
