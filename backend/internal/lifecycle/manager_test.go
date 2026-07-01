@@ -196,14 +196,64 @@ func TestActivity_WaitingInputEntryAndExitEmitTelemetry(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if len(sink.events) != 2 {
-		t.Fatalf("events = %#v, want waiting_input entered/exited", sink.events)
+	// The first signal also emits first_agent_output; filter to the
+	// waiting_input lifecycle events this test is about.
+	var waiting []ports.TelemetryEvent
+	for _, ev := range sink.events {
+		if strings.HasPrefix(ev.Name, "ao.session.waiting_input_") {
+			waiting = append(waiting, ev)
+		}
 	}
-	if sink.events[0].Name != "ao.session.waiting_input_entered" || sink.events[1].Name != "ao.session.waiting_input_exited" {
-		t.Fatalf("event names = %#v", []string{sink.events[0].Name, sink.events[1].Name})
+	if len(waiting) != 2 {
+		t.Fatalf("waiting events = %#v, want entered/exited", sink.events)
 	}
-	if got := sink.events[1].Payload["dwell_ms"]; got != int64(3000) {
+	if waiting[0].Name != "ao.session.waiting_input_entered" || waiting[1].Name != "ao.session.waiting_input_exited" {
+		t.Fatalf("event names = %#v", []string{waiting[0].Name, waiting[1].Name})
+	}
+	if got := waiting[1].Payload["dwell_ms"]; got != int64(3000) {
 		t.Fatalf("dwell_ms = %#v, want 3000", got)
+	}
+}
+
+func TestActivity_FirstSignalEmitsFirstAgentOutputOncePerSpawn(t *testing.T) {
+	st := newFakeStore()
+	sink := &telemetrySink{}
+	m := New(st, nil, WithTelemetry(sink))
+	now := time.Unix(200, 0).UTC()
+	m.clock = func() time.Time { return now }
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:        "mer-1",
+		ProjectID: "mer",
+		Harness:   domain.AgentHarness("claude-code"),
+		Activity:  domain.Activity{State: domain.ActivityIdle, LastActivityAt: now.Add(-time.Minute)},
+	}
+
+	// First signal -> first_agent_output.
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityActive, Timestamp: now}); err != nil {
+		t.Fatal(err)
+	}
+	// Subsequent signals must NOT re-emit first_agent_output.
+	now = now.Add(time.Second)
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityIdle, Timestamp: now}); err != nil {
+		t.Fatal(err)
+	}
+
+	count := 0
+	var first ports.TelemetryEvent
+	for _, ev := range sink.events {
+		if ev.Name == "ao.session.first_agent_output" {
+			count++
+			first = ev
+		}
+	}
+	if count != 1 {
+		t.Fatalf("first_agent_output count = %d, want 1 (events=%#v)", count, sink.events)
+	}
+	if first.Payload["state"] != string(domain.ActivityActive) {
+		t.Fatalf("first_agent_output state = %#v, want active", first.Payload["state"])
+	}
+	if first.Payload["harness"] != "claude-code" {
+		t.Fatalf("first_agent_output harness = %#v, want claude-code", first.Payload["harness"])
 	}
 }
 

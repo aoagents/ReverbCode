@@ -29,6 +29,26 @@ describe("telemetry sanitizers", () => {
 		expect(routeProps).toEqual({ surface: "project_board" });
 	});
 
+	it("keeps the first-launch flag on ao.app.active and drops everything else", async () => {
+		const props = await sanitizeRendererProperties("ao.app.active", {
+			channel: "renderer",
+			is_first_launch: true,
+			secret: "drop-me",
+		});
+		expect(props).toEqual({ channel: "renderer", is_first_launch: true });
+	});
+
+	it("allowlists only the retention fields on ao.app.returned", async () => {
+		const props = await sanitizeRendererProperties("ao.app.returned", {
+			return_count: 4,
+			is_retained: true,
+			days_since_install: 12,
+			pathname: "/projects/demo",
+		});
+		expect(props).toEqual({ return_count: 4, is_retained: true, days_since_install: 12 });
+		expect(props).not.toHaveProperty("pathname");
+	});
+
 	it("strips exception details down to coarse metadata", async () => {
 		const props = await sanitizeRendererExceptionProperties(new TypeError("local path /tmp/private"), {
 			source: "window-error",

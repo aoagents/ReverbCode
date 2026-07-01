@@ -67,6 +67,22 @@ var remotePayloadAllowlist = map[string]map[string]struct{}{
 		"status":        {},
 		"status_family": {},
 	},
+	"ao.onboarding.first_pr_merged": {},
+	"ao.onboarding.prereqs_checked": {
+		"all_ok":     {},
+		"git_ok":     {},
+		"github_ok":  {},
+		"harness_ok": {},
+		"runtime_ok": {},
+	},
+	"ao.onboarding.prereqs_ready": {},
+	"ao.onboarding.first_pr_raised": {
+		"state": {},
+	},
+	"ao.onboarding.first_pr_reviewed": {
+		"decision": {},
+	},
+	"ao.onboarding.first_pr_revised": {},
 	"ao.onboarding.first_project_added": {
 		"has_git_remote": {},
 		"kind":           {},
@@ -80,6 +96,23 @@ var remotePayloadAllowlist = map[string]map[string]struct{}{
 		"has_git_remote": {},
 		"kind":           {},
 	},
+	"ao.session.first_agent_output": {
+		"harness": {},
+		"state":   {},
+	},
+	"ao.session.pr_merged": {
+		"state": {},
+	},
+	"ao.session.pr_raised": {
+		"ci":           {},
+		"mergeability": {},
+		"review":       {},
+		"state":        {},
+	},
+	"ao.session.pr_reviewed": {
+		"decision": {},
+	},
+	"ao.session.pr_revised": {},
 	"ao.session.spawn_failed": {
 		"component":   {},
 		"duration_ms": {},

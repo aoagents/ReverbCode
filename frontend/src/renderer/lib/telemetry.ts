@@ -136,6 +136,12 @@ export async function sanitizeRendererProperties(
 	switch (event) {
 		case "ao.app.active":
 			if (properties?.channel === "renderer") safe.channel = "renderer";
+			if (typeof properties?.is_first_launch === "boolean") safe.is_first_launch = properties.is_first_launch;
+			break;
+		case "ao.app.returned":
+			if (typeof properties?.return_count === "number") safe.return_count = properties.return_count;
+			if (typeof properties?.is_retained === "boolean") safe.is_retained = properties.is_retained;
+			if (typeof properties?.days_since_install === "number") safe.days_since_install = properties.days_since_install;
 			break;
 		case "ao.renderer.route_viewed":
 			if (typeof properties?.surface === "string" && properties.surface.trim() !== "") {
@@ -224,8 +230,24 @@ export async function initTelemetry(): Promise<boolean> {
 			build_mode: import.meta.env.DEV ? "dev" : "packaged",
 		});
 		bindErrorHandlers();
-		posthog.capture("ao.app.active", await sanitizeRendererProperties("ao.app.active", { channel: "renderer" }));
+		posthog.capture(
+			"ao.app.active",
+			await sanitizeRendererProperties("ao.app.active", {
+				channel: "renderer",
+				is_first_launch: bootstrap.isFirstLaunch,
+			}),
+		);
 		posthog.capture("ao.renderer.loaded");
+		if (bootstrap.isReturnDay) {
+			posthog.capture(
+				"ao.app.returned",
+				await sanitizeRendererProperties("ao.app.returned", {
+					return_count: bootstrap.returnCount,
+					is_retained: bootstrap.isRetained,
+					days_since_install: bootstrap.daysSinceInstall,
+				}),
+			);
+		}
 		return true;
 	})().catch(() => false);
 	return initPromise;
