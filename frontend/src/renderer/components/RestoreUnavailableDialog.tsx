@@ -3,6 +3,7 @@ import { Loader2 } from "lucide-react";
 import { useState } from "react";
 import { Button } from "./ui/button";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
+import { captureRendererEvent } from "../lib/telemetry";
 import { isOrchestratorSession } from "../types/workspace";
 import type { WorkspaceSession } from "../types/workspace";
 
@@ -21,11 +22,23 @@ export function RestoreUnavailableDialog({ open, session, onOpenChange, onRecrea
 	const recreate = async () => {
 		setBusy(true);
 		setError(undefined);
+		void captureRendererEvent("ao.renderer.orchestrator_spawn_requested", {
+			project_id: session.workspaceId,
+			source: "restore_dialog",
+		});
 		try {
 			const id = await spawnOrchestrator(session.workspaceId, true);
+			void captureRendererEvent("ao.renderer.orchestrator_spawn_succeeded", {
+				project_id: session.workspaceId,
+				source: "restore_dialog",
+			});
 			onOpenChange(false);
 			onRecreated(id);
 		} catch (err) {
+			void captureRendererEvent("ao.renderer.orchestrator_spawn_failed", {
+				project_id: session.workspaceId,
+				source: "restore_dialog",
+			});
 			setError(err instanceof Error ? err.message : "Failed to create orchestrator");
 		} finally {
 			setBusy(false);
@@ -37,9 +50,7 @@ export function RestoreUnavailableDialog({ open, session, onOpenChange, onRecrea
 			<Dialog.Portal>
 				<Dialog.Overlay className="fixed inset-0 z-50 bg-black/50" />
 				<Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[420px] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-surface p-5 shadow-lg">
-					<Dialog.Title className="text-sm font-medium text-foreground">
-						Session can no longer be restored
-					</Dialog.Title>
+					<Dialog.Title className="text-sm font-medium text-foreground">Session can no longer be restored</Dialog.Title>
 					<Dialog.Description className="mt-2 text-[13px] text-muted-foreground">
 						{orchestrator
 							? "This orchestrator has no saved agent session to resume. You can create a new orchestrator on the same branch; its committed work is preserved and the old worktree is cleaned."

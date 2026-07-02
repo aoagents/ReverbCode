@@ -29,6 +29,26 @@ describe("telemetry sanitizers", () => {
 		expect(routeProps).toEqual({ surface: "project_board" });
 	});
 
+	it("keeps the first-launch flag on ao.app.active and drops everything else", async () => {
+		const props = await sanitizeRendererProperties("ao.app.active", {
+			channel: "renderer",
+			is_first_launch: true,
+			secret: "drop-me",
+		});
+		expect(props).toEqual({ channel: "renderer", is_first_launch: true });
+	});
+
+	it("allowlists only the retention fields on ao.app.returned", async () => {
+		const props = await sanitizeRendererProperties("ao.app.returned", {
+			return_count: 4,
+			is_retained: true,
+			days_since_install: 12,
+			pathname: "/projects/demo",
+		});
+		expect(props).toEqual({ return_count: 4, is_retained: true, days_since_install: 12 });
+		expect(props).not.toHaveProperty("pathname");
+	});
+
 	it("strips exception details down to coarse metadata", async () => {
 		const props = await sanitizeRendererExceptionProperties(new TypeError("local path /tmp/private"), {
 			source: "window-error",
@@ -110,5 +130,85 @@ describe("telemetry sanitizers", () => {
 		expect(sanitizeReplayRequestName("https://api.example.com/endpoint?token=secret")).toBe(
 			"https://api.example.com/endpoint",
 		);
+	});
+
+	it("hashes project ids and drops everything else on CTA triads", async () => {
+		const triads = [
+			"ao.renderer.task_create_requested",
+			"ao.renderer.task_create_succeeded",
+			"ao.renderer.task_create_failed",
+			"ao.renderer.session_kill_requested",
+			"ao.renderer.session_kill_succeeded",
+			"ao.renderer.session_kill_failed",
+			"ao.renderer.settings_save_requested",
+			"ao.renderer.settings_save_succeeded",
+			"ao.renderer.settings_save_failed",
+		];
+		for (const event of triads) {
+			const props = await sanitizeRendererProperties(event, {
+				project_id: "demo-project",
+				title: "raw user text",
+				error: "raw error with /Users/alice/path",
+			});
+			expect(Object.keys(props)).toEqual(["project_id_hash"]);
+		}
+	});
+
+	it("keeps only the source enum on orchestrator_spawn events", async () => {
+		const props = await sanitizeRendererProperties("ao.renderer.orchestrator_spawn_requested", {
+			project_id: "demo-project",
+			source: "board",
+		});
+		expect(Object.keys(props).sort()).toEqual(["project_id_hash", "source"]);
+		expect(props.source).toBe("board");
+
+		const badSource = await sanitizeRendererProperties("ao.renderer.orchestrator_spawn_failed", {
+			project_id: "demo-project",
+			source: "/Users/alice/private",
+		});
+		expect(badSource).not.toHaveProperty("source");
+	});
+
+	it("keeps only enum values on notification events", async () => {
+		expect(await sanitizeRendererProperties("ao.renderer.notification_opened", { target: "pr" })).toEqual({
+			target: "pr",
+		});
+		expect(await sanitizeRendererProperties("ao.renderer.notification_opened", { target: "http://x" })).toEqual({});
+		expect(await sanitizeRendererProperties("ao.renderer.notification_marked_read", { scope: "all" })).toEqual({
+			scope: "all",
+		});
+		expect(await sanitizeRendererProperties("ao.renderer.notification_marked_read", { scope: "everything" })).toEqual(
+			{},
+		);
+	});
+
+	it("whitelists coarse daemon failure fields and drops messages", async () => {
+		const props = await sanitizeRendererProperties("ao.renderer.daemon_failure", {
+			daemon_state: "error",
+			code: "spawn_failed",
+			exit_code: 1,
+			signal: "SIGKILL",
+			message: "spawn /Users/alice/ao failed",
+		});
+		expect(props).toEqual({ daemon_state: "error", code: "spawn_failed", exit_code: 1, signal: "SIGKILL" });
+	});
+
+	it("whitelists normalized api_error fields", async () => {
+		const props = await sanitizeRendererProperties("ao.renderer.api_error", {
+			operation: "GET /api/v1/projects/:id",
+			error_category: "http_5xx",
+			status: 500,
+			body: "raw response body",
+		});
+		expect(props).toEqual({ operation: "GET /api/v1/projects/:id", error_category: "http_5xx", status: 500 });
+	});
+
+	it("keeps only the reason enum on terminal_attach_failed", async () => {
+		expect(await sanitizeRendererProperties("ao.renderer.terminal_attach_failed", { reason: "open_timeout" })).toEqual({
+			reason: "open_timeout",
+		});
+		expect(
+			await sanitizeRendererProperties("ao.renderer.terminal_attach_failed", { reason: "something else" }),
+		).toEqual({});
 	});
 });

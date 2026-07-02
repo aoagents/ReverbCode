@@ -19,7 +19,7 @@ save/restore middle.
 2. **The "last-stop manifest" is the existing SQLite state, not a new file.**
    `ListAllSessions` already records id, kind (worker/orchestrator), harness,
    `is_terminated`, and `Metadata{branch, workspacePath, agentSessionId,
-   prompt}`. The `session_worktrees` table already has a `preserved_ref` column
+prompt}`. The `session_worktrees` table already has a `preserved_ref` column
    (migration 0009) that nothing currently writes. No manifest.json, no new
    migration, no new format. The manifest is a query.
 3. **Uncommitted work is captured as a git commit object pointed to by a ref**
@@ -29,7 +29,7 @@ save/restore middle.
    the stable key the rest of the system already uses.
 4. **Untracked files: respect `.gitignore`.** Build the preserve commit through
    a temp index (`GIT_INDEX_FILE=<tmp> git add -A; git write-tree; git
-   commit-tree`) so tracked + staged + new (non-ignored) files are captured,
+commit-tree`) so tracked + staged + new (non-ignored) files are captured,
    side-effect-free, without mutating the working tree or the stash stack.
    Ignored paths (`node_modules/`, build output, ignored `.env`) are skipped.
    Log a one-line count of skipped ignored paths so it is never silent. (Chosen
@@ -84,6 +84,7 @@ save/restore middle.
 ## Tasks (smallest coherent diff first; each ends with ONE runnable check)
 
 ### Task 1 — `ForceDestroy` on the workspace port + gitworktree adapter
+
 Add `ForceDestroy(ctx, info) error` to the `ports.Workspace` interface and the
 gitworktree adapter. It runs `git worktree remove --force <path>`, then prune,
 then `os.RemoveAll` as a backstop. New arg builder in `commands.go`; leave the
@@ -93,6 +94,7 @@ comment that ForceDestroy is only safe after the work is captured.
 `ForceDestroy`, and asserts the path is gone and the worktree is deregistered.
 
 ### Task 2 — `StashUncommitted` + `ApplyPreserved` on the gitworktree adapter
+
 - `StashUncommitted(ctx, info) (ref string, err error)`: build the preserve
   commit via a temp index that respects `.gitignore`
   (`GIT_INDEX_FILE=<tmp> git add -A` → `git write-tree` → `git commit-tree`),
@@ -104,11 +106,12 @@ comment that ForceDestroy is only safe after the work is captured.
   the commit). On clean success delete the ref (`git update-ref -d`); on
   conflict, keep the ref, leave conflict markers, return a sentinel the caller
   logs.
-**Check:** Go test that round-trips a tracked edit AND a new non-ignored file
-through StashUncommitted → ForceDestroy → re-add → ApplyPreserved and asserts
-both reappear; and that a path matched by `.gitignore` does NOT reappear.
+  **Check:** Go test that round-trips a tracked edit AND a new non-ignored file
+  through StashUncommitted → ForceDestroy → re-add → ApplyPreserved and asserts
+  both reappear; and that a path matched by `.gitignore` does NOT reappear.
 
 ### Task 3 — `SaveAndTeardownAll` + `RestoreAll` on the session manager
+
 - `SaveAndTeardownAll(ctx)`: `ListAllSessions`; for each live (non-terminated)
   session with a non-empty `Metadata.WorkspacePath`: `StashUncommitted` →
   `UpsertSessionWorktree(preserved_ref=...)` (commit) → `MarkTerminated`
@@ -127,24 +130,26 @@ both reappear; and that a path matched by `.gitignore` does NOT reappear.
     gate on `preserved_ref` being non-empty: a clean worktree at shutdown
     writes a row with an empty `preserved_ref` and must still be restored.
     No new column is needed (consistent with Task 6 leaving `state` alone).
-**Check:** Go test with fakes asserting (a) save calls capture-then-force in
-order and writes preserved_ref before ForceDestroy, (b) RestoreAll restores BOTH
-a worker and an orchestrator, (c) a session the user killed before shutdown is
-not resurrected.
+    **Check:** Go test with fakes asserting (a) save calls capture-then-force in
+    order and writes preserved_ref before ForceDestroy, (b) RestoreAll restores BOTH
+    a worker and an orchestrator, (c) a session the user killed before shutdown is
+    not resurrected.
 
 ### Task 4 — Wire into daemon boot/shutdown (`daemon.go`)
+
 - After `startSession` returns and before `srv.Run(ctx)`: call `RestoreAll`
   (best-effort; log failures; never block boot).
 - After `srv.Run(ctx)` returns and before the store closes: call
   `SaveAndTeardownAll` with a fresh bounded context (not the cancelled `ctx`).
 - Expose the manager (or a minimal `LifecycleSaver`/`LifecycleRestorer` seam)
   from the wiring up to `Run`.
-**Check:** Manual run documented in report — spawn a session, edit a tracked
-file + add a new file, `POST /shutdown`; assert worktree removed and
-`refs/ao/preserved/<id>` exists; restart daemon; assert worktree re-created and
-both edits reapplied. Plus `go build ./backend/...` green.
+  **Check:** Manual run documented in report — spawn a session, edit a tracked
+  file + add a new file, `POST /shutdown`; assert worktree removed and
+  `refs/ao/preserved/<id>` exists; restart daemon; assert worktree re-created and
+  both edits reapplied. Plus `go build ./backend/...` green.
 
 ### Task 5 — Frontend: call `/shutdown` before kill (`main.ts`)
+
 In `before-quit`: `event.preventDefault()` once, `await fetch(
 http://127.0.0.1:<port>/shutdown, {method:'POST'})` with an ~8s bounded timeout
 (port from the running.json the app already reads), then `killDaemon` +
@@ -153,6 +158,7 @@ http://127.0.0.1:<port>/shutdown, {method:'POST'})` with an ~8s bounded timeout
 log shows the save ran and exited cleanly (not just SIGTERM-killed).
 
 ### Task 6 — Trim the over-built `session_worktrees.state` enum usage
+
 No schema change. Ensure the save/restore code reads/writes only `preserved_ref`
 and leaves `state` at its default; add `ponytail:` comments noting the enum is
 unused multi-repo scaffolding.
@@ -208,6 +214,5 @@ endpoint. No new file, migration, format, or endpoint.
 ## Execution order
 
 Tasks are sequential where coupled: Task 2 shares the gitworktree adapter with
-Task 1 (do 1 then 2, same package); Task 3 depends on 1 + 2; Task 4 depends on
-3. Task 5 (frontend) and Task 6 (storage cleanup) are independent and can run
+Task 1 (do 1 then 2, same package); Task 3 depends on 1 + 2; Task 4 depends on 3. Task 5 (frontend) and Task 6 (storage cleanup) are independent and can run
 anytime. Suggested order: 1 → 2 → 3 → 4, then 5 and 6.

@@ -411,6 +411,7 @@ async function refreshDaemonStatus(): Promise<DaemonStatus> {
 		setDaemonStatus({
 			state: "stopped",
 			message: "AO daemon is no longer reachable.",
+			code: "daemon_unreachable",
 		});
 	}
 	return daemonStatus;
@@ -451,6 +452,7 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		setDaemonStatus({
 			state: "stopped",
 			message: "AO_DAEMON_COMMAND is not configured; renderer uses loopback REST when available.",
+			code: "not_configured",
 		});
 		return daemonStatus;
 	}
@@ -507,7 +509,12 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 	// process.kill(pid, 0) does not kill; it throws iff the PID is not live.
 	let holderPidAlive = false;
 	if (runFilePid) {
-		try { process.kill(runFilePid, 0); holderPidAlive = true; } catch { holderPidAlive = false; }
+		try {
+			process.kill(runFilePid, 0);
+			holderPidAlive = true;
+		} catch {
+			holderPidAlive = false;
+		}
 	}
 	if (shouldReplacePortHolder(orphanProbe, holderPidAlive)) {
 		// Use the run-file PID when available; fall back to the probe's reported
@@ -543,6 +550,7 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		setDaemonStatus({
 			state: "error",
 			message: `Bundled AO daemon binary was not found at ${launch.command}. Rebuild the desktop package.`,
+			code: "binary_missing",
 		});
 		return daemonStatus;
 	}
@@ -631,6 +639,7 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 			state: "ready",
 			port: process.env.AO_PORT ? Number(process.env.AO_PORT) : undefined,
 			message: "Daemon port not confirmed from logs or running.json; assuming the configured port.",
+			code: "port_unconfirmed",
 		});
 	}, PORT_DISCOVERY_TIMEOUT_MS);
 
@@ -639,7 +648,7 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		if (daemonProcess !== child) return;
 		daemonProcess = null;
 		if (daemonStoppingProcess === child) daemonStoppingProcess = null;
-		setDaemonStatus({ state: "error", message: error.message });
+		setDaemonStatus({ state: "error", message: error.message, code: "spawn_failed" });
 	});
 
 	child.once("exit", (code, signal) => {
@@ -650,6 +659,9 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		setDaemonStatus({
 			state: "stopped",
 			message: signal ? `Daemon exited with ${signal}` : `Daemon exited with code ${code ?? "unknown"}`,
+			code: "exited",
+			exitCode: code,
+			signal,
 		});
 	});
 

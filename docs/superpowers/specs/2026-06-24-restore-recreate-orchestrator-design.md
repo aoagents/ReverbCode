@@ -70,6 +70,7 @@ must REUSE the existing branch, so it goes through the existing-branch attach
 ### Backend
 
 #### 1. Typed error for un-resumable restore (fixes the 500)
+
 - Add sentinel in `session_manager` (next to the existing sentinels near
   `manager.go:25`):
   ```go
@@ -88,6 +89,7 @@ must REUSE the existing branch, so it goes through the existing-branch attach
   ```
 
 #### 2. Recreate: REUSE the existing `POST /api/v1/orchestrators` (clean=true)
+
 **Discovery during planning:** the recreate capability already ships. No new
 endpoint or manager method is needed.
 
@@ -96,7 +98,7 @@ endpoint or manager method is needed.
 - `Service.SpawnOrchestrator(ctx, projectID, clean)`
   (`service/session/service.go:263`): when `clean` is true it kills any active
   orchestrators for the project, then `Spawn(SpawnConfig{ProjectID, Kind:
-  orchestrator})`.
+orchestrator})`.
 - `Spawn` with no branch defaults to the canonical orchestrator branch
   `ao/<prefix>-orchestrator` (`defaultSessionBranch`). That is the SAME branch
   the dead orchestrator used.
@@ -135,7 +137,7 @@ route, no `RecreateOrchestrator`, no OpenAPI/spec regen.
     orchestrator"** → calls the existing `spawnOrchestrator` helper
     (`frontend/src/renderer/lib/spawn-orchestrator.ts`) extended with a `clean`
     argument: `spawnOrchestrator(projectId, true)` → `POST /api/v1/orchestrators
-    {projectId, clean:true}`, with a loading state; on success, invalidate
+{projectId, clean:true}`, with a loading state; on success, invalidate
     workspace queries and select the returned new orchestrator id; "Cancel"
     closes.
   - If `kind === "worker"`: explanatory text + "Close" only (no recreate).

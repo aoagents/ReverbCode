@@ -82,6 +82,21 @@ func Run() error {
 		return err
 	}
 
+	// Onboarding funnel telemetry. A single durable milestone marker gates the
+	// once-per-install events across the CDC subscriber and the prereqs probe.
+	onboardingMilestones := newMilestoneStore(cfg.DataDir)
+	// Turn live PR row changes into funnel telemetry (pr_raised = activation,
+	// pr_merged = success) plus their once-per-install onboarding milestones.
+	// Unsubscribe on shutdown so the broadcaster drops the closure.
+	unsubscribeOnboarding := startOnboardingCDC(cdcPipe.Broadcaster, telemetrySink, onboardingMilestones, log)
+	defer unsubscribeOnboarding()
+	// Stage 4: probe local prereqs off the boot path and emit prereqs_checked /
+	// prereqs_ready. The app supervisor starts the daemon on first launch, so
+	// this seeds the funnel without a first-run wizard.
+	go emitPrereqsTelemetry(ctx, telemetrySink, onboardingMilestones, func() bool {
+		return onboardingMilestones.claimed("prereqs_ready")
+	})
+
 	// Terminal streaming: the selected runtime (tmux on macOS/Linux, conpty on Windows) supplies the
 	// attach Stream and liveness; the CDC broadcaster feeds the session-state channel. The manager
 	// is handed to httpd, which mounts it at /mux. Raw PTY bytes never flow

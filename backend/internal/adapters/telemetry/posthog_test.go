@@ -134,6 +134,51 @@ func TestPostHogSinkSanitizesPayloads(t *testing.T) {
 	}
 }
 
+func TestSanitizeRemotePayload_FunnelEventsAllowlisted(t *testing.T) {
+	cases := []struct {
+		event   string
+		payload map[string]any
+		want    map[string]any
+	}{
+		{
+			event:   "ao.session.first_agent_output",
+			payload: map[string]any{"state": "active", "harness": "claude-code", "secret": "drop"},
+			want:    map[string]any{"state": "active", "harness": "claude-code"},
+		},
+		{
+			event:   "ao.session.pr_raised",
+			payload: map[string]any{"state": "open", "ci": "pending", "review": "none", "mergeability": "unknown", "url": "https://x/y"},
+			want:    map[string]any{"state": "open", "ci": "pending", "review": "none", "mergeability": "unknown"},
+		},
+		{
+			event:   "ao.onboarding.first_pr_raised",
+			payload: map[string]any{"state": "open", "url": "https://x/y"},
+			want:    map[string]any{"state": "open"},
+		},
+		{
+			event:   "ao.session.pr_reviewed",
+			payload: map[string]any{"decision": "approved", "url": "https://x/y"},
+			want:    map[string]any{"decision": "approved"},
+		},
+		{
+			event:   "ao.onboarding.prereqs_checked",
+			payload: map[string]any{"git_ok": true, "runtime_ok": true, "harness_ok": false, "github_ok": true, "all_ok": false, "path": "/Users/x"},
+			want:    map[string]any{"git_ok": true, "runtime_ok": true, "harness_ok": false, "github_ok": true, "all_ok": false},
+		},
+	}
+	for _, tc := range cases {
+		got := sanitizeRemotePayload(tc.event, tc.payload)
+		if len(got) != len(tc.want) {
+			t.Fatalf("%s: sanitized = %#v, want %#v", tc.event, got, tc.want)
+		}
+		for k, v := range tc.want {
+			if got[k] != v {
+				t.Fatalf("%s: key %q = %#v, want %#v", tc.event, k, got[k], v)
+			}
+		}
+	}
+}
+
 type roundTripClient func(*http.Request) (*http.Response, error)
 
 func (f roundTripClient) Do(req *http.Request) (*http.Response, error) { return f(req) }

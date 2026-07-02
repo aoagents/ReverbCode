@@ -144,7 +144,8 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 		return nil
 	}
 	next.Activity = act
-	if next.FirstSignalAt.IsZero() {
+	firstSignalThisSpawn := next.FirstSignalAt.IsZero()
+	if firstSignalThisSpawn {
 		next.FirstSignalAt = timeOr(s.Timestamp, now)
 	}
 	if s.State == domain.ActivityExited {
@@ -165,6 +166,11 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 		}
 	}
 	waitingEvents := m.waitingInputEvents(next, prevState, prevAt, now)
+	if firstSignalThisSpawn {
+		if ev, ok := m.firstAgentOutputEvent(next, now); ok {
+			waitingEvents = append(waitingEvents, ev)
+		}
+	}
 	m.mu.Unlock()
 	for _, ev := range waitingEvents {
 		m.emitTelemetry(ctx, ev)
@@ -210,6 +216,30 @@ func (m *Manager) waitingInputEvents(next domain.SessionRecord, prevState domain
 		})
 	}
 	return events
+}
+
+// firstAgentOutputId reports the first authoritative activity signal for the
+// current spawn as a funnel-relevant fact. FirstSignalAt is per-spawn (cleared
+// on MarkSpawned), so this fires once per spawn/restore; the onboarding funnel
+// takes the first occurrence per install via the shared distinct_id.
+func (m *Manager) firstAgentOutputEvent(next domain.SessionRecord, now time.Time) (ports.TelemetryEvent, bool) {
+	if m.telemetry == nil {
+		return ports.TelemetryEvent{}, false
+	}
+	projectID := next.ProjectID
+	sessionID := next.ID
+	return ports.TelemetryEvent{
+		Name:       "ao.session.first_agent_output",
+		Source:     "lifecycle",
+		OccurredAt: now.UTC(),
+		Level:      ports.TelemetryLevelInfo,
+		ProjectID:  &projectID,
+		SessionID:  &sessionID,
+		Payload: map[string]any{
+			"state":   string(next.Activity.State),
+			"harness": string(next.Harness),
+		},
+	}, true
 }
 
 func (m *Manager) emitTelemetry(ctx context.Context, ev ports.TelemetryEvent) {

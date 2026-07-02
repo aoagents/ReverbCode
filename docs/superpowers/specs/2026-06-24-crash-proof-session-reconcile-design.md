@@ -58,7 +58,7 @@ restore logic in as one branch. Iterating `ListAllSessions`:
 
 Reconcile iterates `ListAllSessions` and acts per session:
 
-| DB state                      | tmux via `IsAlive(handle)` | Action                                                              |
+| DB state                      | tmux via `IsAlive(handle)` | Action                                                             |
 | ----------------------------- | -------------------------- | ------------------------------------------------------------------ |
 | `is_terminated=0`             | alive                      | **Adopt** — no-op, leave live. Agent keeps running.                |
 | `is_terminated=0`             | gone                       | `StashUncommitted` (best-effort) -> `MarkTerminated`. No relaunch. |

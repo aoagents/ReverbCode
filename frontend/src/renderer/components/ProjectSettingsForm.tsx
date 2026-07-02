@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
+import { captureRendererEvent } from "../lib/telemetry";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { RequiredAgentField } from "./CreateProjectAgentSheet";
 import { DashboardSubhead } from "./DashboardSubhead";
@@ -81,6 +82,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 
 	const mutation = useMutation({
 		mutationFn: async () => {
+			void captureRendererEvent("ao.renderer.settings_save_requested", { project_id: projectId });
 			// PUT replaces the whole config; merge the edited fields over what loaded
 			// so we don't drop env/symlinks/postCreate the form doesn't expose.
 			const next: ProjectConfig = {
@@ -103,10 +105,14 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 			if (error) throw new Error(apiErrorMessage(error));
 		},
 		onSuccess: () => {
+			void captureRendererEvent("ao.renderer.settings_save_succeeded", { project_id: projectId });
 			setSavedAt(Date.now());
 			setValidationError(null);
 			void queryClient.invalidateQueries({ queryKey: ["project", projectId] });
 			onSaved();
+		},
+		onError: () => {
+			void captureRendererEvent("ao.renderer.settings_save_failed", { project_id: projectId });
 		},
 	});
 
