@@ -559,15 +559,19 @@ func TestSpawnOrchestratorNoCleanSkipsKills(t *testing.T) {
 }
 
 type fakePRClaimer struct {
-	out errorFreeClaimOutcome
-	err error
+	out     errorFreeClaimOutcome
+	err     error
+	claimed *domain.PullRequest
 }
 
 type errorFreeClaimOutcome struct {
 	ports.ClaimOutcome
 }
 
-func (f fakePRClaimer) ClaimPR(context.Context, domain.PullRequest, []domain.PullRequestCheck, []domain.PullRequestReviewThread, []domain.PullRequestComment, ports.ReviewWriteMode, bool) (ports.ClaimOutcome, error) {
+func (f fakePRClaimer) ClaimPR(_ context.Context, pr domain.PullRequest, _ []domain.PullRequestCheck, _ []domain.PullRequestReviewThread, _ []domain.PullRequestComment, _ ports.ReviewWriteMode, _ bool) (ports.ClaimOutcome, error) {
+	if f.claimed != nil {
+		*f.claimed = pr
+	}
 	return f.out.ClaimOutcome, f.err
 }
 
@@ -614,6 +618,7 @@ func TestClaimPRMapsObserverAndStoreErrors(t *testing.T) {
 		{"missing scm", NewWithDeps(Deps{Store: st}), ErrSCMUnavailable},
 		{"not found", NewWithDeps(Deps{Store: st, PRClaimer: fakePRClaimer{}, SCM: fakeSCM{fetchErr: ports.ErrSCMNotFound}}), ErrPRNotFound},
 		{"closed", NewWithDeps(Deps{Store: st, PRClaimer: fakePRClaimer{}, SCM: fakeSCM{obs: ports.SCMObservation{Fetched: true, Provider: "github", Host: "github.com", Repo: "acme/repo", PR: ports.SCMPRObservation{URL: "https://github.com/acme/repo/pull/7", Number: 7, Closed: true}}}}), ErrPRNotOpen},
+		{"merged", NewWithDeps(Deps{Store: st, PRClaimer: fakePRClaimer{}, SCM: fakeSCM{obs: ports.SCMObservation{Fetched: true, Provider: "github", Host: "github.com", Repo: "acme/repo", PR: ports.SCMPRObservation{URL: "https://github.com/acme/repo/pull/7", Number: 7, Merged: true}}}}), ErrPRNotOpen},
 		{"active owner", NewWithDeps(Deps{Store: st, PRClaimer: fakePRClaimer{err: ports.PRClaimedByActiveSessionError{Owner: "mer-2"}}, SCM: fakeSCM{obs: ports.SCMObservation{Fetched: true, Provider: "github", Host: "github.com", Repo: "acme/repo", PR: ports.SCMPRObservation{URL: "https://github.com/acme/repo/pull/7", Number: 7}}}}), ports.ErrPRClaimedByActiveSession},
 	}
 	for _, tc := range cases {
@@ -634,6 +639,32 @@ func TestClaimPRMapsObserverAndStoreErrors(t *testing.T) {
 	if len(res.TakenOverFrom) != 1 || res.TakenOverFrom[0] != "mer-2" || len(res.PRs) != 1 || res.PRs[0].URL == "" {
 		t.Fatalf("claim result = %+v", res)
 	}
+
+	t.Run("open draft", func(t *testing.T) {
+		var claimed domain.PullRequest
+		svc := NewWithDeps(Deps{
+			Store:     st,
+			PRClaimer: fakePRClaimer{claimed: &claimed},
+			SCM: fakeSCM{obs: ports.SCMObservation{
+				Fetched:  true,
+				Provider: "github",
+				Host:     "github.com",
+				Repo:     "acme/repo",
+				PR: ports.SCMPRObservation{
+					URL:    "https://github.com/acme/repo/pull/7",
+					Number: 7,
+					Draft:  true,
+				},
+			}},
+		})
+
+		if _, err := svc.ClaimPR(context.Background(), "mer-1", "7", ClaimPROptions{}); err != nil {
+			t.Fatalf("ClaimPR(open draft): %v", err)
+		}
+		if !claimed.Draft {
+			t.Fatalf("claimed PR draft = false, want true")
+		}
+	})
 }
 
 func TestListPRsOrdersActiveBeforeClosedThenUpdatedDesc(t *testing.T) {

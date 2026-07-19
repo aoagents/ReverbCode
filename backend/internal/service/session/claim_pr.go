@@ -20,7 +20,7 @@ var (
 	ErrInvalidPRRef = errors.New("session: invalid pr ref")
 	// ErrPRNotFound is returned when the SCM provider has no matching pull request.
 	ErrPRNotFound = errors.New("session: pr not found")
-	// ErrPRNotOpen is returned when a PR is draft, merged, or closed and therefore cannot be claimed.
+	// ErrPRNotOpen is returned when a PR is merged or closed and therefore cannot be claimed.
 	ErrPRNotOpen = errors.New("session: pr not open")
 	// ErrSCMUnavailable is returned when live SCM facts cannot be fetched.
 	ErrSCMUnavailable = errors.New("session: scm unavailable")
@@ -105,7 +105,7 @@ func (s *Service) ClaimPR(ctx context.Context, id domain.SessionID, ref string, 
 	if obs.PR.URL == "" {
 		obs.PR.URL = prURL
 	}
-	if obs.PR.Draft || obs.PR.Merged || obs.PR.Closed {
+	if obs.PR.Merged || obs.PR.Closed {
 		return ClaimPRResult{}, ErrPRNotOpen
 	}
 	reviewMode, err := s.enrichClaimReviews(ctx, refSpec, &obs)
