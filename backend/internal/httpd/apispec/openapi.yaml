@@ -330,6 +330,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
       summary: List all registered projects (active + degraded)
       tags:
       - projects
@@ -366,6 +372,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
       summary: Register a new project from a git repository path
       tags:
       - projects
@@ -405,6 +417,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
       summary: Remove a project; stops sessions, cleans workspaces, unregisters
       tags:
       - projects
@@ -437,6 +455,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
       summary: Fetch one project; discriminates ok vs degraded
       tags:
       - projects
@@ -482,6 +506,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
       summary: Replace a project's per-project config
       tags:
       - projects
@@ -521,6 +551,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
         "501":
           content:
             application/json:
@@ -548,6 +584,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/ResolveCommentsResponse'
           description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
         "404":
           content:
             application/json:
@@ -560,6 +602,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
         "501":
           content:
             application/json:
@@ -624,6 +672,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
       summary: List sessions
       tags:
       - sessions
@@ -660,6 +714,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
       summary: Spawn a new agent session
       tags:
       - sessions
@@ -693,6 +753,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
       summary: Fetch one session
       tags:
       - sessions
@@ -833,6 +899,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
       summary: Mark a session terminated and tear down runtime/workspace resources
       tags:
       - sessions
@@ -1140,6 +1212,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
       summary: Restore a terminated session
       tags:
       - sessions
@@ -1161,12 +1239,24 @@ paths:
               schema:
                 $ref: '#/components/schemas/ListReviewsResponse'
           description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
         "422":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
         "501":
           content:
             application/json:
@@ -1218,6 +1308,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
         "501":
           content:
             application/json:
@@ -1263,6 +1359,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
         "501":
           content:
             application/json:
@@ -1308,6 +1410,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
       summary: Undo a partially-completed spawn (delete seed row, or kill if spawn
         output exists)
       tags:
@@ -1354,6 +1462,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
       summary: Send a message to a running session's agent
       tags:
       - sessions
