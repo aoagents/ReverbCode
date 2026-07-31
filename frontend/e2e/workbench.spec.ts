@@ -7,24 +7,24 @@ import { expect, test } from "@playwright/test";
 
 test("renders the orchestrator-first workbench shell", async ({ page }) => {
 	await page.goto("/");
-	// The single pinned Orchestrator anchor + the Projects group + a name-only worker row.
-	await expect(page.getByRole("button", { name: "Orchestrator", exact: true })).toBeVisible();
+	// The pinned board anchor + the Projects group + a title-based worker row.
+	await expect(page.getByRole("button", { name: "Orchestrator board" })).toBeVisible();
 	await expect(page.getByText("Projects")).toBeVisible();
-	await expect(page.getByRole("button", { name: "fix-webgl-fallback", exact: true })).toBeVisible();
-	// Orchestrator side rail = the quiet Workers list.
-	await expect(page.getByText("Workers", { exact: true })).toBeVisible();
+	await expect(page.getByRole("button", { name: "Open Restore fallback renderer after WebGL init fails" })).toBeVisible();
+	await expect(page.getByRole("button", { name: "Open Split terminal mux responsibilities" })).toBeVisible();
 });
 
 test("deep-links into a worker session", async ({ page }) => {
-	await page.goto("/#/workspaces/api-gateway/sessions/refactor-mux");
-	// Worker view = emdash three-pane with the Git review rail.
-	await expect(page.getByText("Changed")).toBeVisible();
-	await expect(page.getByRole("button", { name: /Commit & Push/ })).toBeVisible();
+	await page.goto("/#/projects/api-gateway/sessions/refactor-mux");
+	// Worker view = terminal plus the inspector rail for the fixture's no-PR state.
+	await expect(page.getByText("No pull request opened yet.")).toBeVisible();
+	await expect(page.getByRole("banner").getByText("feat/refactor-mux", { exact: true })).toBeVisible();
 });
 
 test("drilling into a worker opens its Git review rail", async ({ page }) => {
 	await page.goto("/");
-	await page.getByRole("button", { name: "refactor-mux", exact: true }).click();
-	await expect(page.getByRole("button", { name: /Commit & Push/ })).toBeVisible();
-	await expect(page.getByText("internal/mux/terminal_mux.go")).toBeVisible();
+	await page.getByRole("button", { name: "Open Split terminal mux responsibilities" }).click();
+	await expect(page).toHaveURL(/projects\/api-gateway\/sessions\/refactor-mux/);
+	await expect(page.getByRole("tab", { name: "Summary" })).toBeVisible();
+	await expect(page.getByText("internal/mux/terminal_mux.go")).toHaveCount(0);
 });

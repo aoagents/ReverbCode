@@ -8,8 +8,10 @@ export default defineConfig({
 	webServer: {
 		// dev:web serves the renderer alone (VITE_NO_ELECTRON=1) — no Electron child to
 		// launch, which is all the browser-based e2e suite needs.
-		command: "npm run dev:web -- --port 5173",
+		command:
+			"VITE_AO_API_BASE_URL=http://127.0.0.1:5173 npm run dev:web -- --host 127.0.0.1 --port 5173 --strictPort",
 		port: 5173,
-		reuseExistingServer: !process.env.CI,
+		// Never attach to an unrelated renderer already listening on the e2e port.
+		reuseExistingServer: false,
 	},
 });
