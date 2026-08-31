@@ -419,9 +419,9 @@ func (m *Manager) RollbackSpawn(ctx context.Context, id domain.SessionID) (delet
 }
 
 // Kill records terminal intent with the LCM, then tears down the runtime and
-// workspace. A workspace teardown refused by the worktree-remove safety
-// (uncommitted work) is never forced: the session still terminates and Kill
-// succeeds with freed=false, signalling the workspace was preserved.
+// workspace. Workspace teardown is best-effort: any refusal or filesystem
+// failure preserves the worktree, while the session still terminates and Kill
+// succeeds with freed=false.
 //
 // A session whose runtime handle or workspace path is missing (e.g. spawn
 // failed partway, handle lost after a crash) is still terminated — the destroy
@@ -454,10 +454,11 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 	freed := false
 	if ws.Path != "" {
 		if err := m.workspace.Destroy(ctx, ws); err != nil {
-			if errors.Is(err, ports.ErrWorkspaceDirty) {
-				return false, nil
+			if !errors.Is(err, ports.ErrWorkspaceDirty) {
+				m.logger.Warn("kill: workspace teardown failed; preserving workspace",
+					"sessionID", id, "path", ws.Path, "error", err)
 			}
-			return false, fmt.Errorf("kill %s: workspace: %w", id, err)
+			return false, nil
 		}
 		freed = true
 	}

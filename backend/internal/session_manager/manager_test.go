@@ -559,14 +559,26 @@ func TestKill_DirtyWorkspaceTerminatesAndPreserves(t *testing.T) {
 	}
 }
 
-// TestKill_OtherWorkspaceErrorStillFails: only the typed dirty refusal is a
-// success-with-preserved-workspace; any other teardown failure keeps erroring.
-func TestKill_OtherWorkspaceErrorStillFails(t *testing.T) {
-	m, st, _, ws := newManager()
+// TestKill_WorkspaceErrorTerminatesAndPreserves: a filesystem teardown failure
+// must not strand an exited session as non-terminal. The runtime is gone, the
+// worktree remains available for inspection, and freed=false reports that the
+// workspace was preserved.
+func TestKill_WorkspaceErrorTerminatesAndPreserves(t *testing.T) {
+	m, st, rt, ws := newManager()
 	st.sessions["mer-1"] = mkLive("mer-1")
-	ws.destroyErr = errors.New("disk on fire")
-	if _, err := m.Kill(ctx, "mer-1"); err == nil || !strings.Contains(err.Error(), "disk on fire") {
-		t.Fatalf("kill err = %v, want workspace error surfaced", err)
+	ws.destroyErr = errors.New("worktree is in use")
+	freed, err := m.Kill(ctx, "mer-1")
+	if err != nil {
+		t.Fatalf("kill workspace error = %v, want nil", err)
+	}
+	if freed {
+		t.Fatal("freed = true, want false for preserved workspace")
+	}
+	if rt.destroyed != 1 {
+		t.Fatal("runtime should be destroyed")
+	}
+	if !st.sessions["mer-1"].IsTerminated {
+		t.Fatal("session should remain terminated when workspace teardown fails")
 	}
 }
 func TestRestore_ReopensTerminal(t *testing.T) {
