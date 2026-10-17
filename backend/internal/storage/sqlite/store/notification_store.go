@@ -117,7 +117,7 @@ func notificationFromGen(row gen.Notification) domain.NotificationRecord {
 		Title:     row.Title,
 		Body:      row.Body,
 		Status:    row.Status,
-		CreatedAt: row.CreatedAt,
+		CreatedAt: utcTime(row.CreatedAt),
 	}
 }
 

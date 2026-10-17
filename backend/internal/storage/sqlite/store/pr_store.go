@@ -389,7 +389,7 @@ func prRowFromGen(p gen.PR) domain.PullRequest {
 		CI:                       p.CIState,
 		Review:                   p.ReviewDecision,
 		Mergeability:             p.Mergeability,
-		UpdatedAt:                p.UpdatedAt,
+		UpdatedAt:                utcTime(p.UpdatedAt),
 		Provider:                 p.Provider,
 		Host:                     p.Host,
 		Repo:                     p.Repo,
@@ -427,7 +427,7 @@ func genCheckParams(prURL string, c domain.PullRequestCheck) gen.UpsertPRCheckPa
 	}
 	return gen.UpsertPRCheckParams{
 		PRURL: prURL, Name: c.Name, CommitHash: c.CommitHash,
-		Status: status, URL: c.URL, LogTail: c.LogTail, CreatedAt: c.CreatedAt,
+		Status: status, URL: c.URL, LogTail: c.LogTail, CreatedAt: utcTime(c.CreatedAt),
 		Conclusion: c.Conclusion, Details: c.Details,
 	}
 }
@@ -436,14 +436,14 @@ func checkRowFromGen(c gen.PRCheck) domain.PullRequestCheck {
 	return domain.PullRequestCheck{
 		Name: c.Name, CommitHash: c.CommitHash, Status: c.Status,
 		Conclusion: c.Conclusion, URL: c.URL, Details: c.Details,
-		LogTail: c.LogTail, CreatedAt: c.CreatedAt,
+		LogTail: c.LogTail, CreatedAt: utcTime(c.CreatedAt),
 	}
 }
 
 func genCommentParams(prURL string, c domain.PullRequestComment) gen.InsertPRCommentParams {
 	return gen.InsertPRCommentParams{
 		PRURL: prURL, CommentID: c.ID, Author: c.Author, File: c.File,
-		Line: int64(c.Line), Body: c.Body, Resolved: c.Resolved, CreatedAt: c.CreatedAt,
+		Line: int64(c.Line), Body: c.Body, Resolved: c.Resolved, CreatedAt: utcTime(c.CreatedAt),
 		ThreadID: c.ThreadID, URL: c.URL, IsBot: boolInt(c.IsBot),
 	}
 }
@@ -451,7 +451,7 @@ func genCommentParams(prURL string, c domain.PullRequestComment) gen.InsertPRCom
 func genLegacyCommentParams(prURL string, c domain.PullRequestComment) gen.InsertLegacyPRCommentParams {
 	return gen.InsertLegacyPRCommentParams{
 		PRURL: prURL, CommentID: c.ID, Author: c.Author, File: c.File,
-		Line: int64(c.Line), Body: c.Body, Resolved: c.Resolved, CreatedAt: c.CreatedAt,
+		Line: int64(c.Line), Body: c.Body, Resolved: c.Resolved, CreatedAt: utcTime(c.CreatedAt),
 		ThreadID: "", URL: "", IsBot: 0,
 	}
 }
@@ -460,7 +460,7 @@ func commentFromGen(c gen.PRComment) domain.PullRequestComment {
 	return domain.PullRequestComment{
 		ThreadID: c.ThreadID, ID: c.CommentID, Author: c.Author,
 		File: c.File, Line: int(c.Line), Body: c.Body, URL: c.URL,
-		Resolved: c.Resolved, IsBot: c.IsBot != 0, CreatedAt: c.CreatedAt,
+		Resolved: c.Resolved, IsBot: c.IsBot != 0, CreatedAt: utcTime(c.CreatedAt),
 	}
 }
 
@@ -469,7 +469,7 @@ func genReviewThreadParams(prURL string, th domain.PullRequestReviewThread) gen.
 		PRURL: prURL, ThreadID: th.ThreadID, Path: th.Path,
 		Line: int64(th.Line), Resolved: boolInt(th.Resolved),
 		IsBot: boolInt(th.IsBot), SemanticHash: th.SemanticHash,
-		UpdatedAt: th.UpdatedAt,
+		UpdatedAt: utcTime(th.UpdatedAt),
 	}
 }
 
@@ -477,7 +477,7 @@ func reviewThreadFromGen(th gen.PRReviewThread) domain.PullRequestReviewThread {
 	return domain.PullRequestReviewThread{
 		ThreadID: th.ThreadID, Path: th.Path, Line: int(th.Line),
 		Resolved: th.Resolved != 0, IsBot: th.IsBot != 0,
-		SemanticHash: th.SemanticHash, UpdatedAt: th.UpdatedAt,
+		SemanticHash: th.SemanticHash, UpdatedAt: utcTime(th.UpdatedAt),
 	}
 }
 
@@ -489,8 +489,8 @@ func boolInt(v bool) int64 {
 }
 
 func timeFromNull(t sql.NullTime) time.Time {
-	if !t.Valid {
+	if !t.Valid || t.Time.IsZero() {
 		return time.Time{}
 	}
-	return t.Time
+	return t.Time.UTC()
 }

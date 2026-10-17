@@ -96,6 +96,12 @@ func TestSessionsAPI_ActivityRecorderErrorIs500(t *testing.T) {
 
 	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/activity", `{"state":"exited"}`)
 	assertErrorCode(t, body, status, http.StatusInternalServerError, "INTERNAL_ERROR")
+
+	var got errorBody
+	mustJSON(t, body, &got)
+	if got.Message != "Internal server error: boom" {
+		t.Fatalf("message = %q, want %q", got.Message, "Internal server error: boom")
+	}
 }
 
 func TestSessionsAPI_ActivityWithoutRecorderIs501(t *testing.T) {

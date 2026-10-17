@@ -84,7 +84,7 @@ func NewWithDeps(d Deps) *Service {
 func (m *Service) List(ctx context.Context) ([]Summary, error) {
 	projects, err := m.store.ListProjects(ctx)
 	if err != nil {
-		return nil, apierr.Internal("PROJECTS_LIST_FAILED", "Failed to load projects")
+		return nil, apierr.Internal("PROJECTS_LIST_FAILED", "Failed to load projects: "+err.Error())
 	}
 	out := make([]Summary, 0, len(projects))
 	for _, row := range projects {
@@ -106,7 +106,7 @@ func (m *Service) Get(ctx context.Context, id domain.ProjectID) (GetResult, erro
 	}
 	row, ok, err := m.store.GetProject(ctx, string(id))
 	if err != nil {
-		return GetResult{}, apierr.Internal("PROJECT_LOAD_FAILED", "Failed to load project")
+		return GetResult{}, apierr.Internal("PROJECT_LOAD_FAILED", "Failed to load project: "+err.Error())
 	}
 	if !ok || !row.ArchivedAt.IsZero() {
 		return GetResult{}, apierr.NotFound("PROJECT_NOT_FOUND", "Unknown project")
@@ -115,7 +115,7 @@ func (m *Service) Get(ctx context.Context, id domain.ProjectID) (GetResult, erro
 	if row.Kind.WithDefault() == domain.ProjectKindWorkspace {
 		repos, err := m.store.ListWorkspaceRepos(ctx, row.ID)
 		if err != nil {
-			return GetResult{}, apierr.Internal("PROJECT_LOAD_FAILED", "Failed to load workspace repositories")
+			return GetResult{}, apierr.Internal("PROJECT_LOAD_FAILED", "Failed to load workspace repositories: "+err.Error())
 		}
 		p.WorkspaceRepos = workspaceReposFromRecords(repos)
 	}
@@ -146,7 +146,7 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 
 	projectCountBefore, err := m.activeProjectCount(ctx)
 	if err != nil {
-		return Project{}, apierr.Internal("PROJECT_LOAD_FAILED", "Failed to load project")
+		return Project{}, apierr.Internal("PROJECT_LOAD_FAILED", "Failed to load project: "+err.Error())
 	}
 
 	name := string(id)
@@ -158,7 +158,7 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 	}
 
 	if existing, ok, err := m.store.FindProjectByPath(ctx, path); err != nil {
-		return Project{}, apierr.Internal("PROJECT_LOAD_FAILED", "Failed to load project")
+		return Project{}, apierr.Internal("PROJECT_LOAD_FAILED", "Failed to load project: "+err.Error())
 	} else if ok {
 		return Project{}, apierr.Conflict("PATH_ALREADY_REGISTERED", "A project at this path is already registered", map[string]any{
 			"existingProjectId":  existing.ID,
@@ -166,7 +166,7 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 		})
 	}
 	if existing, ok, err := m.store.GetProject(ctx, string(id)); err != nil {
-		return Project{}, apierr.Internal("PROJECT_LOAD_FAILED", "Failed to load project")
+		return Project{}, apierr.Internal("PROJECT_LOAD_FAILED", "Failed to load project: "+err.Error())
 	} else if ok && existing.ArchivedAt.IsZero() && existing.Path != path {
 		return Project{}, apierr.Conflict("ID_ALREADY_REGISTERED", "A project with this id is already registered for a different path", map[string]any{
 			"existingProjectId":  existing.ID,
@@ -199,7 +199,7 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 		row.Kind = domain.ProjectKindWorkspace
 		row.RepoOriginURL = resolveGitOriginURL(path)
 		if err := m.store.UpsertWorkspaceProject(ctx, row, repos); err != nil {
-			return Project{}, apierr.Internal("PROJECT_ADD_FAILED", "Failed to register workspace project")
+			return Project{}, apierr.Internal("PROJECT_ADD_FAILED", "Failed to register workspace project: "+err.Error())
 		}
 		m.emitProjectAdded(row, projectCountBefore == 0)
 		p := projectFromRow(row)
@@ -221,7 +221,7 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 	}
 	row.RepoOriginURL = resolveGitOriginURL(path)
 	if err := m.store.UpsertProject(ctx, row); err != nil {
-		return Project{}, apierr.Internal("PROJECT_ADD_FAILED", "Failed to register project")
+		return Project{}, apierr.Internal("PROJECT_ADD_FAILED", "Failed to register project: "+err.Error())
 	}
 	m.emitProjectAdded(row, projectCountBefore == 0)
 	return projectFromRow(row), nil
@@ -277,14 +277,14 @@ func (m *Service) SetConfig(ctx context.Context, id domain.ProjectID, in SetConf
 	}
 	row, ok, err := m.store.GetProject(ctx, string(id))
 	if err != nil {
-		return Project{}, apierr.Internal("PROJECT_LOAD_FAILED", "Failed to load project")
+		return Project{}, apierr.Internal("PROJECT_LOAD_FAILED", "Failed to load project: "+err.Error())
 	}
 	if !ok || !row.ArchivedAt.IsZero() {
 		return Project{}, apierr.NotFound("PROJECT_NOT_FOUND", "Unknown project")
 	}
 	row.Config = in.Config
 	if err := m.store.UpsertProject(ctx, row); err != nil {
-		return Project{}, apierr.Internal("PROJECT_CONFIG_UPDATE_FAILED", "Failed to update project config")
+		return Project{}, apierr.Internal("PROJECT_CONFIG_UPDATE_FAILED", "Failed to update project config: "+err.Error())
 	}
 	return projectFromRow(row), nil
 }
@@ -336,7 +336,7 @@ func (m *Service) Remove(ctx context.Context, id domain.ProjectID) (RemoveResult
 	}
 	row, ok, err := m.store.GetProject(ctx, string(id))
 	if err != nil {
-		return RemoveResult{}, apierr.Internal("PROJECT_REMOVE_FAILED", "Failed to remove project")
+		return RemoveResult{}, apierr.Internal("PROJECT_REMOVE_FAILED", "Failed to remove project: "+err.Error())
 	}
 	if !ok || !row.ArchivedAt.IsZero() {
 		return RemoveResult{}, apierr.NotFound("PROJECT_NOT_FOUND", "Unknown project")
@@ -348,7 +348,7 @@ func (m *Service) Remove(ctx context.Context, id domain.ProjectID) (RemoveResult
 	}
 	ok, err = m.store.ArchiveProject(ctx, string(id), time.Now())
 	if err != nil {
-		return RemoveResult{}, apierr.Internal("PROJECT_REMOVE_FAILED", "Failed to remove project")
+		return RemoveResult{}, apierr.Internal("PROJECT_REMOVE_FAILED", "Failed to remove project: "+err.Error())
 	}
 	if !ok {
 		return RemoveResult{}, apierr.NotFound("PROJECT_NOT_FOUND", "Unknown project")

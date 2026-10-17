@@ -7,6 +7,7 @@ import {
 	useMarkNotificationReadMutation,
 	useNotificationsQuery,
 } from "../hooks/useNotificationsQuery";
+import { apiErrorMessage } from "../lib/api-client";
 import { aoBridge } from "../lib/bridge";
 import { formatTimeCompact } from "../lib/format-time";
 import { createNotificationsTransport, type NotificationDTO, unreadNotificationsQueryKey } from "../lib/notifications";
@@ -36,19 +37,26 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 	const openTarget = useCallback(
 		(notification: NotificationDTO) => {
 			const target = notification.target;
+
 			if (target.kind === "pr" && target.prUrl) {
 				window.open(target.prUrl, "_blank", "noopener,noreferrer");
+
 				return;
 			}
+
 			const sessionId = target.sessionId || notification.sessionId;
+
 			if (!sessionId) return;
+
 			if (notification.projectId) {
 				void navigate({
 					to: "/projects/$projectId/sessions/$sessionId",
 					params: { projectId: notification.projectId, sessionId },
 				});
+
 				return;
 			}
+
 			void navigate({ to: "/sessions/$sessionId", params: { sessionId } });
 		},
 		[navigate],
@@ -60,25 +68,28 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 		return aoBridge.notifications.onClick((id) => {
 			const current = queryClient.getQueryData<NotificationDTO[]>(unreadNotificationsQueryKey) ?? [];
 			const notification = current.find((item) => item.id === id);
+
 			if (notification) openTarget(notification);
 		});
 	}, [openTarget, queryClient]);
 
 	const markOneRead = async (id: string) => {
 		setActionError(null);
+
 		try {
 			await markRead.mutateAsync(id);
 		} catch (error) {
-			setActionError(error instanceof Error ? error.message : "Could not mark notification read");
+			setActionError(apiErrorMessage(error, "Could not mark notification read"));
 		}
 	};
 
 	const markAll = async () => {
 		setActionError(null);
+
 		try {
 			await markAllRead.mutateAsync();
 		} catch (error) {
-			setActionError(error instanceof Error ? error.message : "Could not mark notifications read");
+			setActionError(apiErrorMessage(error, "Could not mark notifications read"));
 		}
 	};
 
@@ -117,7 +128,9 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 					<div className="border-b border-border px-3 py-2 text-[12px] text-error">{actionError}</div>
 				) : null}
 				{notificationsQuery.isError && unreadCount === 0 ? (
-					<div className="px-3 py-8 text-center text-[13px] text-muted-foreground">Could not load notifications.</div>
+					<div className="px-3 py-8 text-center text-[13px] text-muted-foreground">
+						{apiErrorMessage(notificationsQuery.error, "Could not load notifications.")}
+					</div>
 				) : unreadCount === 0 ? (
 					<div className="px-3 py-8 text-center text-[13px] text-muted-foreground">No unread notifications.</div>
 				) : (
@@ -140,18 +153,15 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 	);
 }
 
-function NotificationItem({
-	disabled,
-	notification,
-	onMarkRead,
-	onOpen,
-}: {
+function NotificationItem(props: {
 	disabled: boolean;
 	notification: NotificationDTO;
 	onMarkRead: (id: string) => Promise<void>;
 	onOpen: (notification: NotificationDTO) => void;
 }) {
+	const { disabled, notification, onMarkRead, onOpen } = props;
 	const Icon = notificationIcon(notification.type);
+
 	return (
 		<div className="grid grid-cols-[26px_minmax(0,1fr)_auto] gap-2 rounded-md px-2 py-2.5">
 			<div

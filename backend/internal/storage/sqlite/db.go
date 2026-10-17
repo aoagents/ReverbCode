@@ -29,11 +29,14 @@ var migrationsFS embed.FS
 
 // pragmas are applied on every connection open. WAL + NORMAL lets readers run
 // concurrently with the writer; busy_timeout absorbs brief writer contention;
-// foreign_keys enforces the cascades and the CDC triggers' lookups.
+// foreign_keys enforces the cascades and the CDC triggers' lookups; _timezone=UTC
+// ensures modernc.org/sqlite converts bound time.Time values to UTC before
+// formatting so unnamed fixed-offset locations never serialize as "-0400 -0400".
 const pragmas = "?_pragma=journal_mode(WAL)" +
 	"&_pragma=busy_timeout(5000)" +
 	"&_pragma=foreign_keys(ON)" +
-	"&_pragma=synchronous(NORMAL)"
+	"&_pragma=synchronous(NORMAL)" +
+	"&_timezone=UTC"
 
 // maxReaders caps the reader pool. WAL allows many concurrent readers.
 const maxReaders = 8
@@ -50,12 +53,13 @@ const maxReaders = 8
 //   - a READER pool (readDB, MaxOpenConns=maxReaders): all reads scale across
 //     it; WAL readers see the latest committed snapshot.
 func Open(dataDir string) (*Store, error) {
+	ensureDriverRegistered()
 	if err := os.MkdirAll(dataDir, 0o750); err != nil {
 		return nil, fmt.Errorf("create data dir: %w", err)
 	}
 	dsn := "file:" + filepath.Join(dataDir, "ao.db") + pragmas
 
-	writeDB, err := sql.Open("sqlite", dsn)
+	writeDB, err := sql.Open(driverName, dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite writer: %w", err)
 	}
@@ -66,7 +70,7 @@ func Open(dataDir string) (*Store, error) {
 		return nil, err
 	}
 
-	readDB, err := sql.Open("sqlite", dsn)
+	readDB, err := sql.Open(driverName, dsn)
 	if err != nil {
 		_ = writeDB.Close()
 		return nil, fmt.Errorf("open sqlite reader: %w", err)

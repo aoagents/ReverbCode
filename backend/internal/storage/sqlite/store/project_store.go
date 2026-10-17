@@ -45,7 +45,7 @@ func (s *Store) UpsertWorkspaceProject(ctx context.Context, r domain.ProjectReco
 				Name:          repo.Name,
 				RelativePath:  repo.RelativePath,
 				RepoOriginURL: repo.RepoOriginURL,
-				RegisteredAt:  repo.RegisteredAt,
+				RegisteredAt:  utcTime(repo.RegisteredAt),
 			}); err != nil {
 				return err
 			}
@@ -67,7 +67,7 @@ func (s *Store) ListWorkspaceRepos(ctx context.Context, projectID string) ([]dom
 			Name:          row.Name,
 			RelativePath:  row.RelativePath,
 			RepoOriginURL: row.RepoOriginURL,
-			RegisteredAt:  row.RegisteredAt,
+			RegisteredAt:  utcTime(row.RegisteredAt),
 		})
 	}
 	return out, nil
@@ -80,7 +80,7 @@ func upsertProject(ctx context.Context, q *gen.Queries, r domain.ProjectRecord, 
 		Path:          r.Path,
 		RepoOriginURL: r.RepoOriginURL,
 		DisplayName:   r.DisplayName,
-		RegisteredAt:  r.RegisteredAt,
+		RegisteredAt:  utcTime(r.RegisteredAt),
 		ArchivedAt:    nullTime(r.ArchivedAt),
 		Config:        config,
 		Kind:          string(kind),
@@ -144,12 +144,12 @@ func projectRowFromGen(p gen.Project) domain.ProjectRecord {
 		Path:          p.Path,
 		RepoOriginURL: p.RepoOriginURL,
 		DisplayName:   p.DisplayName,
-		RegisteredAt:  p.RegisteredAt,
+		RegisteredAt:  utcTime(p.RegisteredAt),
 		Kind:          domain.ProjectKind(p.Kind).WithDefault(),
 		Config:        unmarshalProjectConfig(p.Config),
 	}
-	if p.ArchivedAt.Valid {
-		r.ArchivedAt = p.ArchivedAt.Time
+	if p.ArchivedAt.Valid && !p.ArchivedAt.Time.IsZero() {
+		r.ArchivedAt = p.ArchivedAt.Time.UTC()
 	}
 	return r
 }
@@ -188,5 +188,5 @@ func nullTime(t time.Time) sql.NullTime {
 	if t.IsZero() {
 		return sql.NullTime{}
 	}
-	return sql.NullTime{Time: t, Valid: true}
+	return sql.NullTime{Time: t.UTC(), Valid: true}
 }

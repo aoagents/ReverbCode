@@ -111,6 +111,10 @@ func writeReviewError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, reviewsvc.ErrAgentBinaryNotFound):
 		envelope.WriteAPIError(w, r, http.StatusUnprocessableEntity, "unprocessable", "REVIEWER_BINARY_NOT_FOUND", err.Error(), nil)
 	default:
-		envelope.WriteAPIError(w, r, http.StatusInternalServerError, "internal", "REVIEW_OPERATION_FAILED", "Review operation failed", nil)
+		msg := "Review operation failed: unknown error"
+		if err != nil && err.Error() != "" {
+			msg = "Review operation failed: " + err.Error()
+		}
+		envelope.WriteAPIError(w, r, http.StatusInternalServerError, "internal", "REVIEW_OPERATION_FAILED", msg, nil)
 	}
 }

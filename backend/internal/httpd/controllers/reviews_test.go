@@ -59,3 +59,17 @@ func TestReviewsTrigger_MissingReviewerBinaryReturns422WithCause(t *testing.T) {
 		t.Fatalf("message = %q, want reviewer binary cause", got.Message)
 	}
 }
+
+func TestReviewsTrigger_UnexpectedErrorReturns500WithCause(t *testing.T) {
+	srv := newReviewTestServer(t, &fakeReviewService{triggerErr: fmt.Errorf("tmux pane spawn failed")})
+
+	body, status, headers := doRequest(t, srv, "POST", "/api/v1/sessions/mer-1/reviews/trigger", "")
+	assertJSON(t, headers)
+	assertErrorCode(t, body, status, http.StatusInternalServerError, "REVIEW_OPERATION_FAILED")
+
+	var got errorBody
+	mustJSON(t, body, &got)
+	if !strings.Contains(got.Message, "tmux pane spawn failed") {
+		t.Fatalf("message = %q, want underlying review error cause", got.Message)
+	}
+}

@@ -71,6 +71,12 @@ func TestProjectsAPI_GetEmptyResultIs500(t *testing.T) {
 
 	assertErrorCode(t, body, status, http.StatusInternalServerError, "INTERNAL_ERROR")
 
+	var got errorBody
+	mustJSON(t, body, &got)
+	if !strings.Contains(got.Message, "GetResult has neither Project nor Degraded set") {
+		t.Fatalf("message = %q, want underlying empty-result cause", got.Message)
+	}
+
 }
 
 func newTestServer(t *testing.T) *httptest.Server {
@@ -568,6 +574,12 @@ func assertErrorCode(t *testing.T, body []byte, status, wantStatus int, wantCode
 	if got.Code != wantCode {
 
 		t.Fatalf("code = %q, want %q\nbody=%s", got.Code, wantCode, body)
+
+	}
+
+	if got.Message == "" || got.Message == "Internal server error" {
+
+		t.Fatalf("message = %q, want diagnostic error message (never bare \"Internal server error\")\nbody=%s", got.Message, body)
 
 	}
 

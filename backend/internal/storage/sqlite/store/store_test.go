@@ -2,7 +2,9 @@ package store_test
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"path/filepath"
 	"reflect"
 	"sync"
 	"testing"
@@ -819,5 +821,81 @@ func TestUpsertSessionWorktreeEmptyStateDefaultsToActive(t *testing.T) {
 	}
 	if got.State != "active" {
 		t.Fatalf("State = %q, want %q", got.State, "active")
+	}
+}
+
+func TestSessionTimestampsNormalizeUnnamedFixedOffsetAndTolerateMalformedRows(t *testing.T) {
+	dir := t.TempDir()
+	s, err := sqlite.Open(dir)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	ctx := context.Background()
+	seedProject(t, s, "tz")
+
+	// Unnamed fixed-offset Location previously serialized as
+	// "2026-10-17 11:19:16.938849 -0400 -0400", which modernc.org/sqlite could
+	// not parse back on read.
+	unnamedOffset := time.FixedZone("", -4*3600)
+	ts := time.Date(2026, 10, 17, 11, 19, 16, 938849000, unnamedOffset)
+
+	rec := sampleRecord("tz")
+	rec.CreatedAt = ts
+	rec.UpdatedAt = ts
+	rec.Activity.LastActivityAt = ts
+
+	created, err := s.CreateSession(ctx, rec)
+	if err != nil {
+		t.Fatalf("CreateSession with unnamed FixedZone: %v", err)
+	}
+	if created.CreatedAt.Location() != time.UTC {
+		t.Fatalf("CreatedAt location = %v, want UTC", created.CreatedAt.Location())
+	}
+
+	got, ok, err := s.GetSession(ctx, created.ID)
+	if err != nil || !ok {
+		t.Fatalf("GetSession after unnamed FixedZone write: ok=%v err=%v", ok, err)
+	}
+	if !got.CreatedAt.Equal(ts) || got.CreatedAt.Location() != time.UTC {
+		t.Fatalf("CreatedAt = %v (%v), want %v (UTC)", got.CreatedAt, got.CreatedAt.Location(), ts.UTC())
+	}
+
+	// Inject legacy malformed timestamp text ("-0400 -0400") and corrupt text
+	// directly into SQLite to verify the defensive driver and store scanners
+	// never fail ListAllSessions or GetSession.
+	rawDB, err := sql.Open("sqlite", "file:"+filepath.Join(dir, "ao.db"))
+	if err != nil {
+		t.Fatalf("open raw sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = rawDB.Close() })
+
+	if _, err := rawDB.ExecContext(ctx,
+		`UPDATE sessions SET created_at = ?, activity_last_at = ?, first_signal_at = ? WHERE id = ?`,
+		"2026-10-17 11:19:16.938849 -0400 -0400",
+		"not-a-valid-timestamp",
+		"2026-10-17T15:19:16Z",
+		created.ID,
+	); err != nil {
+		t.Fatalf("raw update sessions: %v", err)
+	}
+
+	reloaded, ok, err := s.GetSession(ctx, created.ID)
+	if err != nil || !ok {
+		t.Fatalf("GetSession with raw malformed timestamps: ok=%v err=%v", ok, err)
+	}
+	if !reloaded.CreatedAt.Equal(ts) {
+		t.Fatalf("reloaded CreatedAt = %v, want %v", reloaded.CreatedAt, ts.UTC())
+	}
+	if !reloaded.Activity.LastActivityAt.IsZero() {
+		t.Fatalf("corrupt last_activity_at should degrade to zero time, got %v", reloaded.Activity.LastActivityAt)
+	}
+	if reloaded.FirstSignalAt.IsZero() || reloaded.FirstSignalAt.Location() != time.UTC {
+		t.Fatalf("RFC3339 first_signal_at = %v (%v), want non-zero UTC", reloaded.FirstSignalAt, reloaded.FirstSignalAt.Location())
+	}
+
+	all, err := s.ListAllSessions(ctx)
+	if err != nil || len(all) != 1 {
+		t.Fatalf("ListAllSessions with malformed timestamps: len=%d err=%v", len(all), err)
 	}
 }

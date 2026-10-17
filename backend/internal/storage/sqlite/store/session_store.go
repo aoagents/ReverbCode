@@ -26,6 +26,11 @@ func (s *Store) CreateSession(ctx context.Context, rec domain.SessionRecord) (do
 		return domain.SessionRecord{}, fmt.Errorf("next session num for %s: %w", rec.ProjectID, err)
 	}
 	rec.ID = domain.SessionID(fmt.Sprintf("%s-%d", rec.ProjectID, num))
+	rec.Kind = normalizeSessionKind(rec.Kind)
+	rec.FirstSignalAt = utcTime(rec.FirstSignalAt)
+	rec.CreatedAt = utcTime(rec.CreatedAt)
+	rec.UpdatedAt = utcTime(rec.UpdatedAt)
+	rec.Activity = normalActivity(rec.Activity, rec.UpdatedAt)
 	if err := s.qw.InsertSession(ctx, recordToInsert(rec, num)); err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("insert session %s: %w", rec.ID, err)
 	}
@@ -48,7 +53,7 @@ func (s *Store) RenameSession(ctx context.Context, id domain.SessionID, displayN
 	rows, err := s.qw.RenameSession(ctx, gen.RenameSessionParams{
 		ID:          id,
 		DisplayName: displayName,
-		UpdatedAt:   updatedAt,
+		UpdatedAt:   utcTime(updatedAt),
 	})
 	if err != nil {
 		return false, fmt.Errorf("rename session %s: %w", id, err)
@@ -66,7 +71,7 @@ func (s *Store) SetSessionPreviewURL(ctx context.Context, id domain.SessionID, p
 	rows, err := s.qw.SetSessionPreviewURL(ctx, gen.SetSessionPreviewURLParams{
 		ID:         id,
 		PreviewURL: previewURL,
-		UpdatedAt:  updatedAt,
+		UpdatedAt:  utcTime(updatedAt),
 	})
 	if err != nil {
 		return false, fmt.Errorf("set preview url for session %s: %w", id, err)
@@ -191,12 +196,12 @@ func rowToRecord(row gen.Session) domain.SessionRecord {
 		ID:          row.ID,
 		ProjectID:   row.ProjectID,
 		IssueID:     row.IssueID,
-		Kind:        row.Kind,
+		Kind:        normalizeSessionKind(row.Kind),
 		Harness:     row.Harness,
 		DisplayName: row.DisplayName,
 		Activity: domain.Activity{
-			State:          row.ActivityState,
-			LastActivityAt: row.ActivityLastAt,
+			State:          normalizeActivityState(row.ActivityState),
+			LastActivityAt: utcTime(row.ActivityLastAt),
 		},
 		FirstSignalAt: nullTimeToTime(row.FirstSignalAt),
 		IsTerminated:  row.IsTerminated,
@@ -209,8 +214,8 @@ func rowToRecord(row gen.Session) domain.SessionRecord {
 			PreviewURL:      row.PreviewURL,
 			PreviewRevision: row.PreviewRevision,
 		},
-		CreatedAt: row.CreatedAt,
-		UpdatedAt: row.UpdatedAt,
+		CreatedAt: utcTime(row.CreatedAt),
+		UpdatedAt: utcTime(row.UpdatedAt),
 	}
 }
 
@@ -221,7 +226,7 @@ func recordToInsert(rec domain.SessionRecord, num int64) gen.InsertSessionParams
 		ProjectID:       rec.ProjectID,
 		Num:             num,
 		IssueID:         rec.IssueID,
-		Kind:            rec.Kind,
+		Kind:            normalizeSessionKind(rec.Kind),
 		Harness:         rec.Harness,
 		DisplayName:     rec.DisplayName,
 		ActivityState:   activity.State,
@@ -235,8 +240,8 @@ func recordToInsert(rec domain.SessionRecord, num int64) gen.InsertSessionParams
 		Prompt:          rec.Metadata.Prompt,
 		PreviewURL:      rec.Metadata.PreviewURL,
 		PreviewRevision: rec.Metadata.PreviewRevision,
-		CreatedAt:       rec.CreatedAt,
-		UpdatedAt:       rec.UpdatedAt,
+		CreatedAt:       utcTime(rec.CreatedAt),
+		UpdatedAt:       utcTime(rec.UpdatedAt),
 	}
 }
 
@@ -245,7 +250,7 @@ func recordToUpdate(rec domain.SessionRecord) gen.UpdateSessionParams {
 	return gen.UpdateSessionParams{
 		ID:              rec.ID,
 		IssueID:         rec.IssueID,
-		Kind:            rec.Kind,
+		Kind:            normalizeSessionKind(rec.Kind),
 		Harness:         rec.Harness,
 		DisplayName:     rec.DisplayName,
 		ActivityState:   activity.State,
@@ -259,35 +264,60 @@ func recordToUpdate(rec domain.SessionRecord) gen.UpdateSessionParams {
 		Prompt:          rec.Metadata.Prompt,
 		PreviewURL:      rec.Metadata.PreviewURL,
 		PreviewRevision: rec.Metadata.PreviewRevision,
-		UpdatedAt:       rec.UpdatedAt,
+		UpdatedAt:       utcTime(rec.UpdatedAt),
+	}
+}
+
+func utcTime(t time.Time) time.Time {
+	if t.IsZero() {
+		return time.Time{}
+	}
+	return t.UTC()
+}
+
+func normalizeSessionKind(k domain.SessionKind) domain.SessionKind {
+	switch k {
+	case domain.KindWorker, domain.KindOrchestrator:
+		return k
+	default:
+		return domain.KindWorker
+	}
+}
+
+func normalizeActivityState(s domain.ActivityState) domain.ActivityState {
+	switch s {
+	case domain.ActivityActive, domain.ActivityIdle, domain.ActivityWaitingInput, domain.ActivityExited, "blocked":
+		return s
+	default:
+		return domain.ActivityIdle
 	}
 }
 
 // nullTimeToTime / timeToNullTime bridge the nullable first_signal_at column
 // to the domain's zero-time convention (zero = no signal received yet).
 func nullTimeToTime(t sql.NullTime) time.Time {
-	if !t.Valid {
+	if !t.Valid || t.Time.IsZero() {
 		return time.Time{}
 	}
-	return t.Time
+	return t.Time.UTC()
 }
 
 func timeToNullTime(t time.Time) sql.NullTime {
 	if t.IsZero() {
 		return sql.NullTime{}
 	}
-	return sql.NullTime{Time: t, Valid: true}
+	return sql.NullTime{Time: t.UTC(), Valid: true}
 }
 
 func normalActivity(a domain.Activity, fallback time.Time) domain.Activity {
-	if a.State == "" {
-		a.State = domain.ActivityIdle
-	}
+	a.State = normalizeActivityState(a.State)
 	if a.LastActivityAt.IsZero() {
 		a.LastActivityAt = fallback
 	}
 	if a.LastActivityAt.IsZero() {
 		a.LastActivityAt = time.Now().UTC()
+	} else {
+		a.LastActivityAt = a.LastActivityAt.UTC()
 	}
 	return a
 }

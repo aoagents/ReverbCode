@@ -15,10 +15,9 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-// TestRequestLoggerRecords5xxCause: the wire envelope collapses unrecognized
-// service errors into "Internal server error", so the access log line is the
-// only place the cause can survive. A 500 must carry it; a typed 4xx (whose
-// envelope already explains itself) must not.
+// TestRequestLoggerRecords5xxCause verifies that both the wire envelope and the
+// access log line include the underlying service error on a 500, while a typed
+// 4xx logs no raw error attribute.
 func TestRequestLoggerRecords5xxCause(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -53,6 +52,9 @@ func TestRequestLoggerRecords5xxCause(t *testing.T) {
 			}
 			if !strings.Contains(got, tc.wantInLog) {
 				t.Fatalf("log line missing %q:\n%s", tc.wantInLog, got)
+			}
+			if !strings.Contains(rec.Body.String(), tc.wantInLog) {
+				t.Fatalf("response body missing %q:\n%s", tc.wantInLog, rec.Body.String())
 			}
 			if len(sink.events) != 1 || sink.events[0].Name != "ao.http.5xx" {
 				t.Fatalf("telemetry events = %#v, want one ao.http.5xx event", sink.events)

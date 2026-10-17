@@ -72,7 +72,11 @@ func writePRError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, prsvc.ErrNothingToResolve):
 		envelope.WriteAPIError(w, r, http.StatusUnprocessableEntity, "unprocessable", "NOTHING_TO_RESOLVE", "No unresolved review threads to resolve", nil)
 	default:
-		envelope.WriteAPIError(w, r, http.StatusInternalServerError, "internal", "PR_OPERATION_FAILED", "PR operation failed", nil)
+		msg := "PR operation failed: unknown error"
+		if err != nil && err.Error() != "" {
+			msg = "PR operation failed: " + err.Error()
+		}
+		envelope.WriteAPIError(w, r, http.StatusInternalServerError, "internal", "PR_OPERATION_FAILED", msg, nil)
 	}
 }
 

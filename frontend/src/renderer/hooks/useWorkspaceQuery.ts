@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import type { components } from "../../api/schema";
-import { apiClient, hasTrustedApiBaseUrl } from "../lib/api-client";
+import { apiClient, apiErrorMessage, hasTrustedApiBaseUrl } from "../lib/api-client";
 import { mockWorkspaces } from "../lib/mock-data";
 import {
 	type PRState,
@@ -10,11 +10,19 @@ import {
 	type WorkspaceSummary,
 } from "../types/workspace";
 
+function toPRState(state: string): PRState {
+	if (state === "draft" || state === "merged" || state === "closed") {
+		return state;
+	}
+
+	return "open";
+}
+
 function toPullRequestFacts(pr: components["schemas"]["SessionPRFacts"]): PullRequestFacts {
 	return {
 		url: pr.url,
 		number: pr.number,
-		state: pr.state as PRState,
+		state: toPRState(pr.state),
 		ci: pr.ci,
 		review: pr.review,
 		mergeability: pr.mergeability,
@@ -24,12 +32,14 @@ function toPullRequestFacts(pr: components["schemas"]["SessionPRFacts"]): PullRe
 }
 
 export const workspaceQueryKey = ["workspaces"] as const;
+
 const usePreviewData = import.meta.env.VITE_NO_ELECTRON === "1";
 
 async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 	if (usePreviewData) {
 		return mockWorkspaces;
 	}
+
 	if (!hasTrustedApiBaseUrl()) {
 		return [];
 	}
@@ -37,7 +47,17 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 	const [{ data: projectsData, error: projectsError }, { data: sessionsData, error: sessionsError }] =
 		await Promise.all([apiClient.GET("/api/v1/projects"), apiClient.GET("/api/v1/sessions")]);
 
-	if (projectsError || sessionsError) throw projectsError ?? sessionsError;
+	if (projectsError) {
+		throw projectsError instanceof Error
+			? projectsError
+			: new Error(apiErrorMessage(projectsError, "Could not load projects"));
+	}
+
+	if (sessionsError) {
+		throw sessionsError instanceof Error
+			? sessionsError
+			: new Error(apiErrorMessage(sessionsError, "Could not load sessions"));
+	}
 
 	return (projectsData?.projects ?? []).map((project) => ({
 		id: project.id,

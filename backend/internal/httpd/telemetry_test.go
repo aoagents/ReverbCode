@@ -109,6 +109,9 @@ func TestRecoverTelemetryEmitsPanicEvent(t *testing.T) {
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500", rec.Code)
 	}
+	if !strings.Contains(rec.Body.String(), "Internal server error: panic: boom") {
+		t.Fatalf("body = %q, want panic cause included", rec.Body.String())
+	}
 	var panicPayload, fiveXXPayload map[string]any
 	for _, ev := range sink.events {
 		switch ev.Name {

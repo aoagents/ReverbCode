@@ -77,7 +77,7 @@ func (c *ProjectsController) get(w http.ResponseWriter, r *http.Request) {
 	}
 	resp, err := newGetProjectResponse(got)
 	if err != nil {
-		envelope.WriteAPIError(w, r, http.StatusInternalServerError, "internal", "INTERNAL_ERROR", "Internal server error", nil)
+		envelope.WriteError(w, r, err)
 		return
 	}
 	envelope.WriteJSON(w, http.StatusOK, resp)

@@ -5,6 +5,7 @@ import { Plus } from "lucide-react";
 import { type AttentionZone, type WorkspaceSession, attentionZone, workerSessions } from "../types/workspace";
 import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { apiErrorMessage } from "../lib/api-client";
 import { DashboardSubhead } from "./DashboardSubhead";
 import { OrchestratorIcon } from "./icons";
 import { NewTaskDialog } from "./NewTaskDialog";
@@ -29,6 +30,7 @@ type Column = {
 	dotGlow: boolean;
 	titleClass: string;
 };
+
 const COLUMNS: Column[] = [
 	{
 		level: "working",
@@ -71,17 +73,21 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const all = workspaceQuery.data ?? [];
 	const workspaces = projectId ? all.filter((w) => w.id === projectId) : all;
 	const sessions = workspaces.flatMap((w) => workerSessions(w.sessions));
+
 	const orchestrator = projectId
 		? workspaces[0]?.sessions.find((session) => session.kind === "orchestrator" && session.status !== "terminated")
 		: undefined;
+
 	const [isNewTaskOpen, setIsNewTaskOpen] = useState(false);
 	const [isSpawning, setIsSpawning] = useState(false);
 
 	const byZone = new Map<AttentionZone, WorkspaceSession[]>();
+
 	for (const session of sessions) {
 		const zone = attentionZone(session);
 		(byZone.get(zone) ?? byZone.set(zone, []).get(zone)!).push(session);
 	}
+
 	const done = byZone.get("done") ?? [];
 	// Collapsed by default, like agent-orchestrator's done-bar: finished and
 	// killed sessions cost one quiet line under the board until expanded.
@@ -95,14 +101,18 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 
 	const openOrchestrator = async () => {
 		if (!projectId) return;
+
 		if (orchestrator) {
 			void navigate({
 				to: "/projects/$projectId/sessions/$sessionId",
 				params: { projectId, sessionId: orchestrator.id },
 			});
+
 			return;
 		}
+
 		setIsSpawning(true);
+
 		try {
 			const sessionId = await spawnOrchestrator(projectId);
 			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
@@ -158,7 +168,9 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 
 			<div className="min-h-0 flex-1 overflow-hidden p-[18px]">
 				{workspaceQuery.isError ? (
-					<p className="py-10 text-center text-[12px] text-passive">Could not load sessions.</p>
+					<p className="py-10 text-center text-[12px] text-passive">
+						{apiErrorMessage(workspaceQuery.error, "Could not load sessions.")}
+					</p>
 				) : (
 					<div className="grid h-full grid-cols-4 gap-2">
 						{COLUMNS.map((col) => (
@@ -222,15 +234,13 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	);
 }
 
-function ZoneColumn({
-	col,
-	sessions,
-	onOpen,
-}: {
+function ZoneColumn(props: {
 	col: Column;
 	sessions: WorkspaceSession[];
 	onOpen: (s: WorkspaceSession) => void;
 }) {
+	const { col, sessions, onOpen } = props;
+
 	return (
 		<section
 			className="flex min-w-0 flex-col overflow-hidden rounded-[13px]"
@@ -258,11 +268,13 @@ function ZoneColumn({
 	);
 }
 
-function SessionCard({ session, onOpen }: { session: WorkspaceSession; onOpen: () => void }) {
+function SessionCard(props: { session: WorkspaceSession; onOpen: () => void }) {
+	const { session, onOpen } = props;
 	const badge = sessionBadge(session);
 	const branch = session.branch || "";
 	const showBranch = branch !== "" && !sameLabel(branch, session.title) && !sameLabel(branch, session.id);
 	const prSummaries = sessionPRDisplaySummaries(session, useSessionScmSummary(session.id).data);
+
 	return (
 		<button
 			className="w-full rounded-[7px] border border-border bg-surface text-left transition-colors hover:border-border-strong"
@@ -307,8 +319,10 @@ function SessionCard({ session, onOpen }: { session: WorkspaceSession; onOpen: (
 	);
 }
 
-function BoardPRSummary({ className, pr }: { className?: string; pr: SessionPRSummary }) {
+function BoardPRSummary(props: { className?: string; pr: SessionPRSummary }) {
+	const { className, pr } = props;
 	const diffSummary = prDiffSummary(pr);
+
 	return (
 		<div className={cn("flex min-w-0 flex-col gap-1", className)}>
 			<span>
@@ -327,6 +341,7 @@ function sameLabel(a: string, b: string): boolean {
 			.toLowerCase()
 			.replace(/^(feat|fix|chore|refactor|session)\//, "")
 			.replace(/[^a-z0-9]+/g, "");
+
 	return normalize(a) === normalize(b);
 }
 
@@ -341,7 +356,7 @@ function agentLabel(provider: WorkspaceSession["provider"]): string {
 	}
 }
 
-function sessionBadge(session: WorkspaceSession): { label: string; className: string } {
+function sessionBadge(session: WorkspaceSession) {
 	switch (session.status) {
 		case "needs_input":
 			return { label: "Input needed", className: "text-warning" };

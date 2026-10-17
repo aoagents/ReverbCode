@@ -1,61 +1,121 @@
 import { renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
-
-const { getMock, hasTrustedApiBaseUrlMock } = vi.hoisted(() => ({
-	getMock: vi.fn(),
-	hasTrustedApiBaseUrlMock: vi.fn(() => true),
-}));
-
-vi.mock("../lib/api-client", () => ({
-	apiClient: { GET: getMock },
-	hasTrustedApiBaseUrl: hasTrustedApiBaseUrlMock,
-}));
-
+import { setApiBaseUrl } from "../lib/api-client";
 import { useWorkspaceQuery } from "./useWorkspaceQuery";
 
-function wrapper({ children }: { children: ReactNode }) {
+function wrapper(props: { children: ReactNode }) {
 	// The hook pins its own retry policy; retryDelay 0 keeps the error tests fast.
 	const queryClient = new QueryClient({ defaultOptions: { queries: { retryDelay: 0 } } });
-	return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
+
+	return <QueryClientProvider client={queryClient}>{props.children}</QueryClientProvider>;
 }
 
-function respondWith(payload: {
-	projects?: { data?: unknown; error?: unknown };
-	sessions?: { data?: unknown; error?: unknown };
-}) {
-	getMock.mockImplementation(async (url: string) => {
-		if (url === "/api/v1/projects") return payload.projects ?? { data: { projects: [] }, error: undefined };
-		if (url === "/api/v1/sessions") return payload.sessions ?? { data: { sessions: [] }, error: undefined };
+type TestProject = {
+	id: string;
+	name: string;
+	path: string;
+};
+
+type TestSessionPR = {
+	number: number;
+	state: string;
+	url: string;
+	ci: string;
+	review: string;
+	mergeability: string;
+	reviewComments: boolean;
+	updatedAt: string;
+};
+
+type TestSession = {
+	id: string;
+	projectId: string;
+	terminalHandleId?: string;
+	displayName?: string;
+	harness?: string;
+	branch?: string;
+	status?: string;
+	isTerminated: boolean;
+	updatedAt: string;
+	prs?: TestSessionPR[];
+};
+
+type TestErrorBody = {
+	error: string;
+	code: string;
+	message: string;
+	requestId: string;
+};
+
+type EndpointResponse = {
+	status?: number;
+	body?: { projects: TestProject[] } | { sessions: TestSession[] } | TestErrorBody;
+	rejectWith?: Error;
+};
+
+function respondWith(
+	projectsResponse: EndpointResponse | undefined,
+	sessionsResponse: EndpointResponse | undefined,
+) {
+	return vi.spyOn(globalThis, "fetch").mockImplementation(async (input: RequestInfo | URL) => {
+		const url = input instanceof Request ? input.url : input.toString();
+
+		if (url.endsWith("/api/v1/projects")) {
+			if (projectsResponse?.rejectWith) {
+				throw projectsResponse.rejectWith;
+			}
+
+			return new Response(JSON.stringify(projectsResponse?.body ?? { projects: [] }), {
+				status: projectsResponse?.status ?? 200,
+				headers: { "Content-Type": "application/json" },
+			});
+		}
+
+		if (url.endsWith("/api/v1/sessions")) {
+			if (sessionsResponse?.rejectWith) {
+				throw sessionsResponse.rejectWith;
+			}
+
+			return new Response(JSON.stringify(sessionsResponse?.body ?? { sessions: [] }), {
+				status: sessionsResponse?.status ?? 200,
+				headers: { "Content-Type": "application/json" },
+			});
+		}
+
 		throw new Error(`unexpected GET ${url}`);
 	});
 }
 
 beforeEach(() => {
-	getMock.mockReset();
-	hasTrustedApiBaseUrlMock.mockReset().mockReturnValue(true);
+	setApiBaseUrl("http://127.0.0.1:3001");
+});
+
+afterEach(() => {
+	vi.restoreAllMocks();
+	setApiBaseUrl("http://127.0.0.1:3001");
 });
 
 describe("useWorkspaceQuery", () => {
 	it("returns an empty workspace list while the daemon base URL is untrusted", async () => {
-		hasTrustedApiBaseUrlMock.mockReturnValue(false);
+		const fetchSpy = vi.spyOn(globalThis, "fetch");
+		setApiBaseUrl(null);
 
 		const { result } = renderHook(() => useWorkspaceQuery(), { wrapper });
 
 		await waitFor(() => expect(result.current.isSuccess).toBe(true));
 		expect(result.current.data).toEqual([]);
-		expect(getMock).not.toHaveBeenCalled();
+		expect(fetchSpy).not.toHaveBeenCalled();
 	});
 
 	it("maps projects and their sessions, applying provider/status/title fallbacks", async () => {
-		respondWith({
-			projects: {
-				data: { projects: [{ id: "proj-1", name: "my-app", path: "/home/me/my-app" }] },
-				error: undefined,
+		respondWith(
+			{
+				body: { projects: [{ id: "proj-1", name: "my-app", path: "/home/me/my-app" }] },
 			},
-			sessions: {
-				data: {
+			{
+				body: {
 					sessions: [
 						{
 							id: "sess-1",
@@ -82,9 +142,8 @@ describe("useWorkspaceQuery", () => {
 						{ id: "sess-3", projectId: "proj-2", isTerminated: false, updatedAt: "2026-06-10T16:15:04Z" },
 					],
 				},
-				error: undefined,
 			},
-		});
+		);
 
 		const { result } = renderHook(() => useWorkspaceQuery(), { wrapper });
 		await waitFor(() => expect(result.current.isSuccess).toBe(true));
@@ -110,10 +169,10 @@ describe("useWorkspaceQuery", () => {
 	});
 
 	it("maps each session's prs straight from the session list", async () => {
-		respondWith({
-			projects: { data: { projects: [{ id: "proj-1", name: "my-app", path: "/p" }] }, error: undefined },
-			sessions: {
-				data: {
+		respondWith(
+			{ body: { projects: [{ id: "proj-1", name: "my-app", path: "/p" }] } },
+			{
+				body: {
 					sessions: [
 						{
 							id: "sess-1",
@@ -143,9 +202,8 @@ describe("useWorkspaceQuery", () => {
 						},
 					],
 				},
-				error: undefined,
 			},
-		});
+		);
 
 		const { result } = renderHook(() => useWorkspaceQuery(), { wrapper });
 		await waitFor(() => expect(result.current.isSuccess).toBe(true));
@@ -168,10 +226,10 @@ describe("useWorkspaceQuery", () => {
 	});
 
 	it("preserves backend merged status for terminated merged sessions", async () => {
-		respondWith({
-			projects: { data: { projects: [{ id: "proj-1", name: "my-app", path: "/p" }] }, error: undefined },
-			sessions: {
-				data: {
+		respondWith(
+			{ body: { projects: [{ id: "proj-1", name: "my-app", path: "/p" }] } },
+			{
+				body: {
 					sessions: [
 						{
 							id: "sess-1",
@@ -182,9 +240,8 @@ describe("useWorkspaceQuery", () => {
 						},
 					],
 				},
-				error: undefined,
 			},
-		});
+		);
 
 		const { result } = renderHook(() => useWorkspaceQuery(), { wrapper });
 		await waitFor(() => expect(result.current.isSuccess).toBe(true));
@@ -193,10 +250,10 @@ describe("useWorkspaceQuery", () => {
 	});
 
 	it("falls back to terminated for terminated sessions without a known backend status", async () => {
-		respondWith({
-			projects: { data: { projects: [{ id: "proj-1", name: "my-app", path: "/p" }] }, error: undefined },
-			sessions: {
-				data: {
+		respondWith(
+			{ body: { projects: [{ id: "proj-1", name: "my-app", path: "/p" }] } },
+			{
+				body: {
 					sessions: [
 						{
 							id: "sess-1",
@@ -207,9 +264,8 @@ describe("useWorkspaceQuery", () => {
 						},
 					],
 				},
-				error: undefined,
 			},
-		});
+		);
 
 		const { result } = renderHook(() => useWorkspaceQuery(), { wrapper });
 		await waitFor(() => expect(result.current.isSuccess).toBe(true));
@@ -219,7 +275,7 @@ describe("useWorkspaceQuery", () => {
 
 	it("surfaces a projects fetch error", async () => {
 		const failure = new TypeError("Failed to fetch");
-		respondWith({ projects: { data: undefined, error: failure } });
+		respondWith({ rejectWith: failure }, undefined);
 
 		const { result } = renderHook(() => useWorkspaceQuery(), { wrapper });
 
@@ -229,14 +285,35 @@ describe("useWorkspaceQuery", () => {
 
 	it("surfaces a sessions fetch error even when projects load", async () => {
 		const failure = new Error("sessions backend down");
-		respondWith({
-			projects: { data: { projects: [{ id: "proj-1", name: "my-app", path: "/p" }] }, error: undefined },
-			sessions: { data: undefined, error: failure },
-		});
+		respondWith(
+			{ body: { projects: [{ id: "proj-1", name: "my-app", path: "/p" }] } },
+			{ rejectWith: failure },
+		);
 
 		const { result } = renderHook(() => useWorkspaceQuery(), { wrapper });
 
 		await waitFor(() => expect(result.current.isError).toBe(true), { timeout: 3_000 });
 		expect(result.current.error).toBe(failure);
+	});
+
+	it("converts plain openapi-fetch error bodies into Error instances with the backend message", async () => {
+		respondWith(
+			{ body: { projects: [{ id: "proj-1", name: "my-app", path: "/p" }] } },
+			{
+				status: 500,
+				body: {
+					error: "Internal server error",
+					code: "internal_error",
+					message: "failed to list sessions: scan created_at",
+					requestId: "req-123",
+				},
+			},
+		);
+
+		const { result } = renderHook(() => useWorkspaceQuery(), { wrapper });
+
+		await waitFor(() => expect(result.current.isError).toBe(true), { timeout: 3_000 });
+		expect(result.current.error).toBeInstanceOf(Error);
+		expect(result.current.error?.message).toBe("failed to list sessions: scan created_at");
 	});
 });

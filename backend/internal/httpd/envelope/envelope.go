@@ -12,9 +12,8 @@ import (
 )
 
 // errCapture is a request-scoped slot WriteError records the raw service error
-// into. The wire envelope deliberately hides internals behind "Internal server
-// error", which previously meant a 500's cause was lost entirely — the access
-// log reads the captured error back so the daemon log keeps the diagnosis.
+// into so the request logger and 5xx telemetry middleware can inspect the
+// original error value after the handler returns.
 type errCapture struct{ err error }
 
 type errCaptureKey struct{}
@@ -64,17 +63,26 @@ func WriteAPIError(w http.ResponseWriter, r *http.Request, status int, kind, cod
 
 // WriteError is the single path from any service error to the wire envelope. It
 // renders an *apierr.Error (anywhere in the chain) using its Kind, and falls
-// back to a 500 for any other error so internal details never leak. This is the
-// only place an apierr.Kind is translated into an HTTP status and wire word.
+// back to a 500 carrying the underlying error cause so callers never receive a
+// bare, context-free "Internal server error". This is the only place an
+// apierr.Kind is translated into an HTTP status and wire word.
 func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 	captureError(r, err)
 	var e *apierr.Error
 	if errors.As(err, &e) {
 		status, kind := httpStatus(e.Kind)
-		WriteAPIError(w, r, status, kind, e.Code, e.Message, e.Details)
+		msg := e.Message
+		if msg == "" && err != nil {
+			msg = err.Error()
+		}
+		WriteAPIError(w, r, status, kind, e.Code, msg, e.Details)
 		return
 	}
-	WriteAPIError(w, r, http.StatusInternalServerError, "internal", "INTERNAL_ERROR", "Internal server error", nil)
+	msg := "Internal server error: unknown error"
+	if err != nil && err.Error() != "" {
+		msg = "Internal server error: " + err.Error()
+	}
+	WriteAPIError(w, r, http.StatusInternalServerError, "internal", "INTERNAL_ERROR", msg, nil)
 }
 
 // httpStatus maps a semantic failure Kind to its HTTP status and wire word.

@@ -116,7 +116,7 @@ func (s *Store) MarkReviewRunDelivered(ctx context.Context, id string, delivered
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	n, err := s.qw.MarkReviewRunDelivered(ctx, gen.MarkReviewRunDeliveredParams{
-		DeliveredAt: sql.NullTime{Time: deliveredAt, Valid: true},
+		DeliveredAt: sql.NullTime{Time: utcTime(deliveredAt), Valid: true},
 		ID:          id,
 	})
 	if err != nil {
@@ -172,15 +172,15 @@ func reviewFromRow(r gen.Review) domain.Review {
 		Harness:          r.Harness,
 		PRURL:            r.PRURL,
 		ReviewerHandleID: r.ReviewerHandleID,
-		CreatedAt:        r.CreatedAt,
-		UpdatedAt:        r.UpdatedAt,
+		CreatedAt:        utcTime(r.CreatedAt),
+		UpdatedAt:        utcTime(r.UpdatedAt),
 	}
 }
 
 func reviewRunFromRow(r gen.ReviewRun) domain.ReviewRun {
 	var deliveredAt *time.Time
-	if r.DeliveredAt.Valid {
-		t := r.DeliveredAt.Time
+	if r.DeliveredAt.Valid && !r.DeliveredAt.Time.IsZero() {
+		t := r.DeliveredAt.Time.UTC()
 		deliveredAt = &t
 	}
 	return domain.ReviewRun{
@@ -194,7 +194,7 @@ func reviewRunFromRow(r gen.ReviewRun) domain.ReviewRun {
 		Verdict:        r.Verdict,
 		Body:           r.Body,
 		GithubReviewID: r.GithubReviewID,
-		CreatedAt:      r.CreatedAt,
+		CreatedAt:      utcTime(r.CreatedAt),
 		DeliveredAt:    deliveredAt,
 	}
 }

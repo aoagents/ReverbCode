@@ -2,10 +2,12 @@ package controllers_test
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
@@ -156,4 +158,19 @@ func TestPRsRoutes_ResolveComments_422(t *testing.T) {
 	body, status, headers := doRequest(t, srv, "POST", "/api/v1/prs/1/resolve-comments", "")
 	assertJSON(t, headers)
 	assertErrorCode(t, body, status, http.StatusUnprocessableEntity, "NOTHING_TO_RESOLVE")
+}
+
+func TestPRsRoutes_Merge_500IncludesCause(t *testing.T) {
+	svc := &fakePRService{mergeErr: errors.New("gh api rate limit exceeded")}
+	srv := newPRTestServer(t, svc)
+
+	body, status, headers := doRequest(t, srv, "POST", "/api/v1/prs/1/merge", "")
+	assertJSON(t, headers)
+	assertErrorCode(t, body, status, http.StatusInternalServerError, "PR_OPERATION_FAILED")
+
+	var got errorBody
+	mustJSON(t, body, &got)
+	if !strings.Contains(got.Message, "gh api rate limit exceeded") {
+		t.Fatalf("message = %q, want underlying merge error cause", got.Message)
+	}
 }

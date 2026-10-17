@@ -49,7 +49,7 @@ func recoverTelemetry(log *slog.Logger, sink ports.EventSink) func(http.Handler)
 							},
 						})
 					}
-					writeRecoveredError(w, r)
+					writeRecoveredError(w, r, rec)
 				}
 			}()
 			next.ServeHTTP(w, r)
@@ -57,12 +57,14 @@ func recoverTelemetry(log *slog.Logger, sink ports.EventSink) func(http.Handler)
 	}
 }
 
-func writeRecoveredError(w http.ResponseWriter, r *http.Request) {
+func writeRecoveredError(w http.ResponseWriter, r *http.Request, rec any) {
+	msg := fmt.Sprintf("Internal server error: panic: %v", rec)
 	if strings.HasPrefix(r.URL.Path, "/api/") {
-		envelope.WriteAPIError(w, r, http.StatusInternalServerError, "internal_error", "INTERNAL_ERROR", "Internal server error", nil)
+		envelope.WriteAPIError(w, r, http.StatusInternalServerError, "internal_error", "INTERNAL_ERROR", msg, nil)
 		return
 	}
 	envelope.WriteJSON(w, http.StatusInternalServerError, map[string]any{
-		"status": "error",
+		"status":  "error",
+		"message": msg,
 	})
 }

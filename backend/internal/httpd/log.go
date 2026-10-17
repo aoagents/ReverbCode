@@ -25,8 +25,8 @@ import (
 // this middleware must be mounted after it.
 //
 // A 5xx line additionally carries the raw service error recorded by
-// envelope.WriteError: the wire envelope hides internals ("Internal server
-// error"), so without this the cause of a 500 was lost entirely.
+// envelope.WriteError so structured logs and 5xx telemetry can inspect the
+// original error value.
 func requestLogger(log *slog.Logger, sink ports.EventSink) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
